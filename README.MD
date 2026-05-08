@@ -172,6 +172,7 @@ Open `http://<host>/` in a browser.
 | **Backgrounds** | Click to switch the base tile layer. Active layer shows ✓. |
 | **Reset Map** | Restores the default centre and zoom; clears all selections. |
 | **Admin** | Opens the admin configuration page. |
+| **Kiosk Mode** | Reloads in kiosk mode: full screen, partial sidebar (Trackers, Aid Stations, iGates), all visible courses displayed. Footer shows Reset Map and Exit buttons. |
 
 ### Tracker Clicks (three-click cycle)
 
@@ -193,14 +194,14 @@ so tracker dots are always visible even when they overlap fixed-location markers
 
 ### Kiosk Mode
 
-Append `?kiosk=1` to the URL to enter kiosk mode, intended for unattended displays:
+Click **Kiosk Mode** in the sidebar, or append `?kiosk=1` to the URL. Intended for unattended displays:
 
-- Sidebar is hidden.
-- All courses are activated automatically.
+- Browser enters full screen automatically.
+- Sidebar shows Trackers, Aid Stations, and iGates only; Courses and Backgrounds are hidden.
+- Courses that were visible in normal mode remain visible; hidden courses stay hidden.
 - The first background tile layer is selected automatically.
-- Tracker labels use the same compact style as normal mode.
-- Tracker dots blink on new beacons exactly as in normal mode.
-- A **Reset Map** button appears in the lower-left corner of the map.
+- Tracker labels and dot blinking work exactly as in normal mode.
+- Footer shows small **Reset Map** and **Exit** buttons. Reset Map restores the default view and clears all selections. Exit returns to normal mode.
 
 ---
 
