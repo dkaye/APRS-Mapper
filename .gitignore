@@ -4,3 +4,4 @@ admin/password.txt
 configs/*.yaml
 configs/*.yml
 temp/
+publish.sh
