@@ -1034,7 +1034,7 @@ function loadCourseLayer(file) {
 		const customLayer = L.geoJSON(null, {
 			pointToLayer(feature, latlng) {
 				const p      = feature.properties || {};
-				const color  = p['marker-color'] ? '#' + p['marker-color'] : (courseColors[file] || DEFAULT_COURSE_COLOR);
+				const color  = courseColors[file] || (p['marker-color'] ? '#' + p['marker-color'] : DEFAULT_COURSE_COLOR);
 				const radius = Math.round((parseFloat(p['marker-size']) || 1) * 8);
 				const m = L.circleMarker(latlng, {
 					radius, color, fillColor: color, fillOpacity: 0.85, weight: 1.5
@@ -1059,7 +1059,6 @@ function loadCourseLayer(file) {
 }
 
 function setCourseStyle(file, color) {
-	courseColors[file] = color;
 	if (courseLayers[file]) courseLayers[file].setStyle({ color, fillColor: color, weight: 3, opacity: 0.9 });
 }
 
@@ -1084,9 +1083,11 @@ function applyCourses(courses) {
 		emptyEl.style.display = 'none';
 		container.innerHTML = '';
 		courses.forEach(course => {
-			courseColors[course.file] = course.color || DEFAULT_COURSE_COLOR;
+			if (course.color) courseColors[course.file] = course.color;
+			else delete courseColors[course.file];
+			if (courseLayers[course.file]) setCourseStyle(course.file, courseColors[course.file] || DEFAULT_COURSE_COLOR);
 			if (!coursesInitialized) loadCourseLayer(course.file);
-			const color  = courseColors[course.file];
+			const color  = courseColors[course.file] || DEFAULT_COURSE_COLOR;
 			const active = !!courseLayers[course.file];
 			const row    = document.createElement('div');   row.className = 'm-course-row';
 			const label  = document.createElement('label'); label.className = 'm-course-label'; label.title = 'Tap to change colour';
@@ -1114,10 +1115,12 @@ function applyCourses(courses) {
 	section.style.display = '';
 	container.innerHTML = '';
 	courses.forEach(course => {
-		courseColors[course.file] = course.color || DEFAULT_COURSE_COLOR;
+		if (course.color) courseColors[course.file] = course.color;
+		else delete courseColors[course.file];
+		if (courseLayers[course.file]) setCourseStyle(course.file, courseColors[course.file] || DEFAULT_COURSE_COLOR);
 		if (kiosk) { if (!courseLayers[course.file]) loadCourseLayer(course.file); return; }
 		if (!coursesInitialized) loadCourseLayer(course.file);
-		const color  = courseColors[course.file];
+		const color  = courseColors[course.file] || DEFAULT_COURSE_COLOR;
 		const active = !!courseLayers[course.file];
 		const item   = document.createElement('div');   item.className = 'sidebar-item course-item';
 		const label  = document.createElement('label'); label.className = 'course-label'; label.title = 'Click to change color';

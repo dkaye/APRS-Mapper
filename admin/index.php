@@ -1133,9 +1133,9 @@ function buildCourseRow(c) {
     const { wrap: fileWrap, sel: fileSel } = makeFileSelect(c.file || '');
     fields.appendChild(fileWrap);
 
-    const colorWrap  = document.createElement('label');
+    const colorWrap  = document.createElement('div');
     colorWrap.className = 'field-wrap';
-    colorWrap.style.cssText = 'display:flex;align-items:center;gap:4px;cursor:pointer';
+    colorWrap.style.cssText = 'display:flex;align-items:center;gap:4px';
     const colorLbl   = document.createElement('span');
     colorLbl.className = 'field-label';
     colorLbl.textContent = 'Color';
@@ -1143,10 +1143,34 @@ function buildCourseRow(c) {
     colorInput.type  = 'color';
     colorInput.className = 'f-ccolor';
     colorInput.value = c.color || '#2196f3';
+    colorInput.dataset.custom = c.color ? '1' : '0';
     colorInput.style.cssText = 'width:36px;height:24px;padding:1px;border:1px solid #555;border-radius:3px;cursor:pointer;background:none';
-    colorInput.addEventListener('input', () => markDirty());
+    colorInput.style.opacity = c.color ? '1' : '0.35';
+    colorInput.title = c.color ? 'Course color' : 'Click to set a custom color';
+    colorInput.addEventListener('input', () => {
+        colorInput.dataset.custom = '1';
+        colorInput.style.opacity = '1';
+        colorInput.title = 'Course color';
+        resetBtn.style.display = '';
+        markDirty();
+    });
+    const resetBtn = document.createElement('button');
+    resetBtn.type = 'button';
+    resetBtn.textContent = '×';
+    resetBtn.title = 'Remove custom color';
+    resetBtn.style.cssText = 'background:none;border:none;color:#888;font-size:14px;cursor:pointer;padding:0 2px;line-height:1';
+    resetBtn.style.display = c.color ? '' : 'none';
+    resetBtn.addEventListener('click', () => {
+        colorInput.dataset.custom = '0';
+        colorInput.value = '#2196f3';
+        colorInput.style.opacity = '0.35';
+        colorInput.title = 'Click to set a custom color';
+        resetBtn.style.display = 'none';
+        markDirty();
+    });
     colorWrap.appendChild(colorLbl);
     colorWrap.appendChild(colorInput);
+    colorWrap.appendChild(resetBtn);
     fields.appendChild(colorWrap);
 
     const dot = document.createElement('span');
@@ -1450,11 +1474,13 @@ function collectConfig() {
 
     const courses = [];
     document.querySelectorAll('#courses-list > .list-row').forEach(row => {
-        courses.push({
-            name:  row.querySelector('.f-cname').value.trim(),
-            file:  row.querySelector('.f-file').value.trim(),
-            color: row.querySelector('.f-ccolor').value
-        });
+        const colorEl = row.querySelector('.f-ccolor');
+        const course  = {
+            name: row.querySelector('.f-cname').value.trim(),
+            file: row.querySelector('.f-file').value.trim(),
+        };
+        if (colorEl.dataset.custom === '1') course.color = colorEl.value;
+        courses.push(course);
     });
 
     const aidstations = [];
