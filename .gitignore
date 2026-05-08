@@ -1,0 +1,6 @@
+.DS_Store
+trackers.json
+admin/password.txt
+configs/*.yaml
+configs/*.yml
+temp/
