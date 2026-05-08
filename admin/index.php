@@ -1714,18 +1714,27 @@ async function doSaveAs() {
             const cfg = collectConfig();
             const errors = validateConfig(cfg);
             if (errors.length) { warn.textContent = errors[0]; warn.style.display = ''; saveBtn.disabled = false; return; }
-            const r = await fetch('?saveversion', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, cfg })
-            });
-            const result = await r.json();
-            if (r.ok && result.ok) {
+            const [rLive, rVer] = await Promise.all([
+                fetch('?save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(cfg)
+                }),
+                fetch('?saveversion', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, cfg })
+                })
+            ]);
+            const result = await rVer.json();
+            if (rVer.ok && result.ok && rLive.ok) {
+                isDirty = false;
                 close();
                 setStatus(`Saved "${name}" ✓`, 'ok', 4000);
                 document.getElementById('current-file').textContent = name + '.yaml';
             } else {
-                warn.textContent = result.error || 'Save failed';
+                const liveResult = rLive.ok ? null : await rLive.json();
+                warn.textContent = result.error || liveResult?.error || 'Save failed';
                 warn.style.display = '';
             }
         } catch {
