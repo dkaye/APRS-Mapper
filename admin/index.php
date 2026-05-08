@@ -462,12 +462,14 @@ function buildConfigYaml($cfg, $history = []) {
     $L[] = '# GPX/KML/GeoJSON overlays listed in the sidebar. Click a name to toggle it on/off.';
     $L[] = '# Multiple courses may be active simultaneously.';
     $L[] = '# Files live in the configs/ subdirectory.';
-    $L[] = '#   name : label shown in the sidebar';
-    $L[] = '#   file : filename  (supported extensions: .gpx  .kml  .geojson  .json)';
+    $L[] = '#   name  : label shown in the sidebar';
+    $L[] = '#   file  : filename  (supported extensions: .gpx  .kml  .geojson  .json)';
+    $L[] = '#   color : hex color for the course line/markers (e.g. #2196f3)';
     $L[] = 'courses:';
     foreach ($cfg['courses'] ?? [] as $c) {
-        $L[] = '  - name: ' . ys($c['name'] ?? '');
-        $L[] = '    file: ' . ys($c['file'] ?? '');
+        $L[] = '  - name:  ' . ys($c['name'] ?? '');
+        $L[] = '    file:  ' . ys($c['file'] ?? '');
+        if (!empty($c['color'])) $L[] = '    color: ' . ys($c['color']);
     }
     $L[] = '';
     $L[] = '# ── Aid Stations ──────────────────────────────────────────────────────────────';
@@ -1131,6 +1133,22 @@ function buildCourseRow(c) {
     const { wrap: fileWrap, sel: fileSel } = makeFileSelect(c.file || '');
     fields.appendChild(fileWrap);
 
+    const colorWrap  = document.createElement('label');
+    colorWrap.className = 'field-wrap';
+    colorWrap.style.cssText = 'display:flex;align-items:center;gap:4px;cursor:pointer';
+    const colorLbl   = document.createElement('span');
+    colorLbl.className = 'field-label';
+    colorLbl.textContent = 'Color';
+    const colorInput = document.createElement('input');
+    colorInput.type  = 'color';
+    colorInput.className = 'f-ccolor';
+    colorInput.value = c.color || '#2196f3';
+    colorInput.style.cssText = 'width:36px;height:24px;padding:1px;border:1px solid #555;border-radius:3px;cursor:pointer;background:none';
+    colorInput.addEventListener('input', () => markDirty());
+    colorWrap.appendChild(colorLbl);
+    colorWrap.appendChild(colorInput);
+    fields.appendChild(colorWrap);
+
     const dot = document.createElement('span');
     dot.className = 'file-status';
     fields.appendChild(dot);
@@ -1433,8 +1451,9 @@ function collectConfig() {
     const courses = [];
     document.querySelectorAll('#courses-list > .list-row').forEach(row => {
         courses.push({
-            name: row.querySelector('.f-cname').value.trim(),
-            file: row.querySelector('.f-file').value.trim()
+            name:  row.querySelector('.f-cname').value.trim(),
+            file:  row.querySelector('.f-file').value.trim(),
+            color: row.querySelector('.f-ccolor').value
         });
     });
 

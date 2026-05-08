@@ -1084,7 +1084,7 @@ function applyCourses(courses) {
 		emptyEl.style.display = 'none';
 		container.innerHTML = '';
 		courses.forEach(course => {
-			if (!courseColors[course.file]) courseColors[course.file] = DEFAULT_COURSE_COLOR;
+			if (!courseColors[course.file]) courseColors[course.file] = course.color || DEFAULT_COURSE_COLOR;
 			if (!coursesInitialized) loadCourseLayer(course.file);
 			const color  = courseColors[course.file];
 			const active = !!courseLayers[course.file];
@@ -1114,7 +1114,7 @@ function applyCourses(courses) {
 	section.style.display = '';
 	container.innerHTML = '';
 	courses.forEach(course => {
-		if (!courseColors[course.file]) courseColors[course.file] = DEFAULT_COURSE_COLOR;
+		if (!courseColors[course.file]) courseColors[course.file] = course.color || DEFAULT_COURSE_COLOR;
 		if (kiosk) { if (!courseLayers[course.file]) loadCourseLayer(course.file); return; }
 		if (!coursesInitialized) loadCourseLayer(course.file);
 		const color  = courseColors[course.file];
