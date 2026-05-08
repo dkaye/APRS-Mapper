@@ -852,6 +852,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
         <div class="sec-body">
             <div id="courses-list"></div>
             <button class="add-btn" onclick="addCourse()">+ Add Course</button>
+            <button class="add-btn" onclick="saveColors()" style="margin-left:6px">Save Colors</button>
             <button class="add-btn" onclick="doManageLocationFiles()" style="margin-left:6px">Manage Location Files…</button>
         </div>
     </div>
@@ -1142,27 +1143,16 @@ function buildCourseRow(c) {
     const colorInput = document.createElement('input');
     colorInput.type  = 'color';
     colorInput.className = 'f-ccolor';
-    // Show current display color: localStorage > config > default
     const _lsColors = (() => { try { return JSON.parse(localStorage.getItem('aprs_course_colors') || '{}'); } catch { return {}; } })();
     colorInput.value = _lsColors[c.file] || c.color || '#2196f3';
-    colorInput.dataset.savedcolor = c.color || '';   // what's actually in the YAML
+    colorInput.dataset.savedcolor = c.color || '';
     colorInput.style.cssText = 'width:36px;height:24px;padding:1px;border:1px solid #555;border-radius:3px;cursor:pointer;background:none';
-    colorInput.title = c.color ? 'Saved color — click 💾 to update' : 'Current color — click 💾 to save to YAML';
-    colorInput.addEventListener('input', () => markDirty());
-    const saveColorBtn = document.createElement('button');
-    saveColorBtn.type = 'button';
-    saveColorBtn.textContent = '💾';
-    saveColorBtn.title = 'Save this color to the YAML';
-    saveColorBtn.style.cssText = 'background:none;border:none;font-size:13px;cursor:pointer;padding:0 1px;line-height:1';
-    saveColorBtn.addEventListener('click', async () => {
+    colorInput.addEventListener('input', () => {
         const col = colorInput.value;
-        colorInput.dataset.savedcolor = col;
         const lsc = (() => { try { return JSON.parse(localStorage.getItem('aprs_course_colors') || '{}'); } catch { return {}; } })();
         lsc[c.file] = col;
         localStorage.setItem('aprs_course_colors', JSON.stringify(lsc));
-        colorInput.title = 'Saved color — click 💾 to update';
-        clearColorBtn.style.display = '';
-        await doSave();
+        markDirty();
     });
     const clearColorBtn = document.createElement('button');
     clearColorBtn.type = 'button';
@@ -1172,13 +1162,11 @@ function buildCourseRow(c) {
     clearColorBtn.style.display = c.color ? '' : 'none';
     clearColorBtn.addEventListener('click', () => {
         colorInput.dataset.savedcolor = '';
-        colorInput.title = 'Current color — click 💾 to save to YAML';
         clearColorBtn.style.display = 'none';
         markDirty();
     });
     colorWrap.appendChild(colorLbl);
     colorWrap.appendChild(colorInput);
-    colorWrap.appendChild(saveColorBtn);
     colorWrap.appendChild(clearColorBtn);
     fields.appendChild(colorWrap);
 
@@ -1198,6 +1186,14 @@ function appendCourse(c, attach) {
 }
 
 function addCourse() { appendCourse({}, dragAdder['courses-list']); markDirty(); }
+
+async function saveColors() {
+    document.querySelectorAll('#courses-list > .list-row').forEach(row => {
+        const colorEl = row.querySelector('.f-ccolor');
+        if (colorEl) colorEl.dataset.savedcolor = colorEl.value;
+    });
+    await doSave();
+}
 
 // ── Manage Location Files modal ───────────────────────────────────────────────
 
