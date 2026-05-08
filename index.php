@@ -1099,8 +1099,8 @@ function applyCourses(courses) {
 		container.innerHTML = '';
 		const savedColors = loadSavedColors();
 		courses.forEach(course => {
-			if (course.color) { courseColors[course.file] = course.color; saveCourseColor(course.file, course.color); }
-			else if (savedColors[course.file]) courseColors[course.file] = savedColors[course.file];
+			if (savedColors[course.file]) courseColors[course.file] = savedColors[course.file];
+			else if (course.color) courseColors[course.file] = course.color;
 			else delete courseColors[course.file];
 			if (courseLayers[course.file]) setCourseStyle(course.file, courseColors[course.file] || DEFAULT_COURSE_COLOR);
 			if (!coursesInitialized) loadCourseLayer(course.file);
@@ -1139,8 +1139,8 @@ function applyCourses(courses) {
 	container.innerHTML = '';
 	const savedColors = loadSavedColors();
 	courses.forEach(course => {
-		if (course.color) { courseColors[course.file] = course.color; saveCourseColor(course.file, course.color); }
-		else if (savedColors[course.file]) courseColors[course.file] = savedColors[course.file];
+		if (savedColors[course.file]) courseColors[course.file] = savedColors[course.file];
+		else if (course.color) courseColors[course.file] = course.color;
 		else delete courseColors[course.file];
 		if (courseLayers[course.file]) setCourseStyle(course.file, courseColors[course.file] || DEFAULT_COURSE_COLOR);
 		if (kiosk) { if (!courseLayers[course.file]) loadCourseLayer(course.file); return; }

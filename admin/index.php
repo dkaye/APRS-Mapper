@@ -1142,35 +1142,44 @@ function buildCourseRow(c) {
     const colorInput = document.createElement('input');
     colorInput.type  = 'color';
     colorInput.className = 'f-ccolor';
-    colorInput.value = c.color || '#2196f3';
-    colorInput.dataset.custom = c.color ? '1' : '0';
+    // Show current display color: localStorage > config > default
+    const _lsColors = (() => { try { return JSON.parse(localStorage.getItem('aprs_course_colors') || '{}'); } catch { return {}; } })();
+    colorInput.value = _lsColors[c.file] || c.color || '#2196f3';
+    colorInput.dataset.savedcolor = c.color || '';   // what's actually in the YAML
     colorInput.style.cssText = 'width:36px;height:24px;padding:1px;border:1px solid #555;border-radius:3px;cursor:pointer;background:none';
-    colorInput.style.opacity = c.color ? '1' : '0.35';
-    colorInput.title = c.color ? 'Course color' : 'Click to set a custom color';
-    colorInput.addEventListener('input', () => {
-        colorInput.dataset.custom = '1';
-        colorInput.style.opacity = '1';
-        colorInput.title = 'Course color';
-        resetBtn.style.display = '';
-        markDirty();
+    colorInput.title = c.color ? 'Saved color — click 💾 to update' : 'Current color — click 💾 to save to YAML';
+    colorInput.addEventListener('input', () => markDirty());
+    const saveColorBtn = document.createElement('button');
+    saveColorBtn.type = 'button';
+    saveColorBtn.textContent = '💾';
+    saveColorBtn.title = 'Save this color to the YAML';
+    saveColorBtn.style.cssText = 'background:none;border:none;font-size:13px;cursor:pointer;padding:0 1px;line-height:1';
+    saveColorBtn.addEventListener('click', async () => {
+        const col = colorInput.value;
+        colorInput.dataset.savedcolor = col;
+        const lsc = (() => { try { return JSON.parse(localStorage.getItem('aprs_course_colors') || '{}'); } catch { return {}; } })();
+        lsc[c.file] = col;
+        localStorage.setItem('aprs_course_colors', JSON.stringify(lsc));
+        colorInput.title = 'Saved color — click 💾 to update';
+        clearColorBtn.style.display = '';
+        await doSave();
     });
-    const resetBtn = document.createElement('button');
-    resetBtn.type = 'button';
-    resetBtn.textContent = '×';
-    resetBtn.title = 'Remove custom color';
-    resetBtn.style.cssText = 'background:none;border:none;color:#888;font-size:14px;cursor:pointer;padding:0 2px;line-height:1';
-    resetBtn.style.display = c.color ? '' : 'none';
-    resetBtn.addEventListener('click', () => {
-        colorInput.dataset.custom = '0';
-        colorInput.value = '#2196f3';
-        colorInput.style.opacity = '0.35';
-        colorInput.title = 'Click to set a custom color';
-        resetBtn.style.display = 'none';
+    const clearColorBtn = document.createElement('button');
+    clearColorBtn.type = 'button';
+    clearColorBtn.textContent = '×';
+    clearColorBtn.title = 'Remove saved color from YAML';
+    clearColorBtn.style.cssText = 'background:none;border:none;color:#888;font-size:14px;cursor:pointer;padding:0 2px;line-height:1';
+    clearColorBtn.style.display = c.color ? '' : 'none';
+    clearColorBtn.addEventListener('click', () => {
+        colorInput.dataset.savedcolor = '';
+        colorInput.title = 'Current color — click 💾 to save to YAML';
+        clearColorBtn.style.display = 'none';
         markDirty();
     });
     colorWrap.appendChild(colorLbl);
     colorWrap.appendChild(colorInput);
-    colorWrap.appendChild(resetBtn);
+    colorWrap.appendChild(saveColorBtn);
+    colorWrap.appendChild(clearColorBtn);
     fields.appendChild(colorWrap);
 
     const dot = document.createElement('span');
@@ -1479,7 +1488,7 @@ function collectConfig() {
             name: row.querySelector('.f-cname').value.trim(),
             file: row.querySelector('.f-file').value.trim(),
         };
-        if (colorEl.dataset.custom === '1') course.color = colorEl.value;
+        if (colorEl.dataset.savedcolor) course.color = colorEl.dataset.savedcolor;
         courses.push(course);
     });
 
