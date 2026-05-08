@@ -178,13 +178,19 @@ body { display: flex; }
     font-size: 12px; color: #555; cursor: pointer; text-align: center; text-decoration: none;
 }
 #admin-btn:hover { background: #d8d8d8; }
-
-.kiosk-reset-btn {
-    padding: 8px 18px; background: rgba(255,255,255,0.92); border: 1px solid #bbb;
-    border-radius: 4px; font-size: 13px; font-family: arial,helvetica,sans-serif;
-    color: #333; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,.2);
+#kiosk-btn {
+    display: block; width: 100%; margin-top: 6px; padding: 6px 0;
+    background: #e8e8e8; border: 1px solid #bbb; border-radius: 4px;
+    font-size: 12px; color: #555; cursor: pointer; text-align: center; text-decoration: none;
 }
-.kiosk-reset-btn:hover { background: #fff; }
+#kiosk-btn:hover { background: #d8d8d8; }
+
+.kiosk-footer-btn {
+    padding: 2px 8px; background: rgba(255,255,255,0.85); border: 1px solid #bbb;
+    border-radius: 3px; font-size: 11px; font-family: arial,helvetica,sans-serif;
+    color: #333; cursor: pointer; margin-right: 4px; vertical-align: middle;
+}
+.kiosk-footer-btn:hover { background: #fff; }
 
 .coord-popup-inner {
     display: flex; align-items: center; gap: 6px;
@@ -397,9 +403,12 @@ body { display: flex; }
 		<div id="backgrounds"></div>
 	</div>
 
-	<hr class="section-divider">
-	<button id="reset-btn">Reset Map</button>
-	<a href="/admin/" id="admin-btn">Admin</a>
+	<div id="sidebar-footer">
+		<hr class="section-divider">
+		<button id="reset-btn">Reset Map</button>
+		<a href="/admin/" id="admin-btn">Admin</a>
+		<a href="?kiosk=1" id="kiosk-btn">Kiosk Mode</a>
+	</div>
 </div>
 
 <!-- ── Shared map ──────────────────────────────────────────────────────── -->
@@ -468,13 +477,33 @@ if (isMobile) L.control.zoom({ position: 'topright' }).addTo(map);
 map.createPane('trackerPane');
 map.getPane('trackerPane').style.zIndex = 450;
 
+// ── Kiosk mode (desktop only) ─────────────────────────────────────────────
+const kiosk = !isMobile && new URLSearchParams(location.search).get('kiosk') === '1';
+let kioskBgApplied = false;
+
 new (L.Control.extend({
 	onAdd() {
 		const d = L.DomUtil.create('div', 'leaflet-control-attribution');
-		d.innerHTML = isMobile
-			? 'MARS APRS v1.2 beta &copy; 2026 Doug Kaye (K6DRK)'
-			: 'Marin Amateur Radio Society APRS Tracking v1.2 beta &copy; 2026 Doug Kaye (K6DRK)';
-		if (isMobile) d.style.fontSize = '10px';
+		if (kiosk) {
+			const resetBtn = L.DomUtil.create('button', 'kiosk-footer-btn', d);
+			resetBtn.textContent = 'Reset Map';
+			L.DomEvent.on(resetBtn, 'click', () => {
+				clearAllSelections();
+				map.setView([defaultView.lat, defaultView.lon], defaultView.zoom);
+			});
+			L.DomEvent.disableClickPropagation(resetBtn);
+			const exitBtn = L.DomUtil.create('button', 'kiosk-footer-btn', d);
+			exitBtn.textContent = 'Exit';
+			L.DomEvent.on(exitBtn, 'click', () => { location.href = location.pathname; });
+			L.DomEvent.disableClickPropagation(exitBtn);
+			const txt = L.DomUtil.create('span', '', d);
+			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.3 beta &copy; 2026 Doug Kaye (K6DRK)';
+		} else {
+			d.innerHTML = isMobile
+				? 'MARS APRS v1.3 beta &copy; 2026 Doug Kaye (K6DRK)'
+				: 'Marin Amateur Radio Society APRS Tracking v1.3 beta &copy; 2026 Doug Kaye (K6DRK)';
+			if (isMobile) d.style.fontSize = '10px';
+		}
 		return d;
 	}
 }))({ position: isMobile ? 'bottomright' : 'bottomleft' }).addTo(map);
@@ -496,21 +525,11 @@ let currentTileLayer = L.tileLayer(currentBgUrl, {
 	maxZoom: 19
 }).addTo(map);
 
-// ── Kiosk mode (desktop only) ─────────────────────────────────────────────
-const kiosk = !isMobile && new URLSearchParams(location.search).get('kiosk') === '1';
-let kioskBgApplied = false;
 if (kiosk) {
-	document.getElementById('sidebar').style.display = 'none';
-	const ResetCtrl = L.Control.extend({
-		onAdd() {
-			const btn = L.DomUtil.create('button', 'kiosk-reset-btn');
-			btn.textContent = 'Reset Map';
-			L.DomEvent.on(btn, 'click', () => map.setView([defaultView.lat, defaultView.lon], defaultView.zoom));
-			L.DomEvent.disableClickPropagation(btn);
-			return btn;
-		}
-	});
-	new ResetCtrl({ position: 'bottomleft' }).addTo(map);
+	document.getElementById('courses-section').style.display = 'none';
+	document.getElementById('backgrounds-section').style.display = 'none';
+	document.getElementById('sidebar-footer').style.display = 'none';
+	document.documentElement.requestFullscreen().catch(() => {});
 }
 
 // ── State ─────────────────────────────────────────────────────────────────
@@ -523,6 +542,7 @@ const lastBeacons          = {};
 const blinkTimers          = {};
 const DEFAULT_COURSE_COLOR = '#2196f3';
 const LS_COURSE_COLORS     = 'aprs_course_colors';
+const LS_COURSE_ACTIVE     = 'aprs_course_active';
 
 function loadSavedColors() {
 	try { return JSON.parse(localStorage.getItem(LS_COURSE_COLORS) || '{}'); } catch { return {}; }
@@ -531,6 +551,13 @@ function saveCourseColor(file, color) {
 	const m = loadSavedColors();
 	m[file] = color;
 	localStorage.setItem(LS_COURSE_COLORS, JSON.stringify(m));
+}
+function loadActiveFiles() {
+	try { const v = localStorage.getItem(LS_COURSE_ACTIVE); return v ? new Set(JSON.parse(v)) : null; }
+	catch { return null; }
+}
+function saveActiveFiles() {
+	localStorage.setItem(LS_COURSE_ACTIVE, JSON.stringify(Object.keys(courseLayers)));
 }
 
 let selectedCallsign   = null;
@@ -1125,6 +1152,7 @@ function applyCourses(courses) {
 			cb.addEventListener('change', () => {
 				if (!cb.checked) { if (courseLayers[course.file]) { map.removeLayer(courseLayers[course.file]); delete courseLayers[course.file]; } }
 				else { if (!courseLayers[course.file]) loadCourseLayer(course.file); else reorderCourseLayers(); }
+				saveActiveFiles();
 			});
 			row.appendChild(label); row.appendChild(cb);
 			container.appendChild(row);
@@ -1137,16 +1165,26 @@ function applyCourses(courses) {
 	const section   = document.getElementById('courses-section');
 	const container = document.getElementById('courses');
 	if (!courses.length) { section.style.display = 'none'; return; }
-	section.style.display = '';
+	section.style.display = kiosk ? 'none' : '';
 	container.innerHTML = '';
-	const savedColors = loadSavedColors();
+	const savedColors    = loadSavedColors();
+	const activeFiles    = loadActiveFiles();
+	const wasInitialized = coursesInitialized;
 	courses.forEach(course => {
 		if (savedColors[course.file]) courseColors[course.file] = savedColors[course.file];
 		else if (course.color) courseColors[course.file] = course.color;
 		else delete courseColors[course.file];
 		if (courseLayers[course.file]) setCourseStyle(course.file, courseColors[course.file] || DEFAULT_COURSE_COLOR);
-		if (kiosk) { if (!courseLayers[course.file]) loadCourseLayer(course.file); return; }
-		if (!coursesInitialized) loadCourseLayer(course.file);
+		if (kiosk) {
+			const shouldLoad = activeFiles === null || activeFiles.has(course.file);
+			if (shouldLoad) { if (!courseLayers[course.file]) loadCourseLayer(course.file); }
+			else { if (courseLayers[course.file]) { map.removeLayer(courseLayers[course.file]); delete courseLayers[course.file]; } }
+			return;
+		}
+		if (!wasInitialized) {
+			const shouldLoad = activeFiles === null || activeFiles.has(course.file);
+			if (shouldLoad) loadCourseLayer(course.file);
+		}
 		const color  = courseColors[course.file] || DEFAULT_COURSE_COLOR;
 		const active = !!courseLayers[course.file];
 		const item   = document.createElement('div');   item.className = 'sidebar-item course-item';
@@ -1166,11 +1204,13 @@ function applyCourses(courses) {
 		checkbox.addEventListener('change', () => {
 			if (!checkbox.checked) { if (courseLayers[course.file]) { map.removeLayer(courseLayers[course.file]); delete courseLayers[course.file]; } }
 			else { if (!courseLayers[course.file]) loadCourseLayer(course.file); else reorderCourseLayers(); }
+			saveActiveFiles();
 		});
 		item.appendChild(label); item.appendChild(checkbox);
 		container.appendChild(item);
 	});
 	coursesInitialized = true;
+	if (!wasInitialized) saveActiveFiles();
 }
 
 function applyIgates(igates) {

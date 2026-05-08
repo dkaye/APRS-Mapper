@@ -206,8 +206,7 @@ Append `?kiosk=1` to the URL to enter kiosk mode, intended for unattended displa
 
 ## Admin Page
 
-Open `http://<host>/admin/` in a browser. A username/password prompt appears on first visit
-(credentials stored in `admin/password.txt`).
+Open `http://<host>/admin/` in a browser.
 
 The admin page allows editing all sections of `config.yaml`:
 
@@ -248,5 +247,4 @@ Packets that do not contain a recognisable position are still used to update the
 |------|-------------------|-----|
 | `trackers.json` | writable by daemon process | Updated every ~5 s by `aprsDaemon.php` |
 | `config.yaml` | writable by web process | Saved by `admin/index.php` |
-| `admin/password.txt` | readable by web process | HTTP Basic Auth credentials |
 | Course files (`*.gpx`, `*.json`, etc.) | readable by web process | Served directly to browser |
