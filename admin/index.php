@@ -809,6 +809,9 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
                     <label for="map-zoom">Zoom</label>
                     <input type="number" id="map-zoom" min="0" max="19" step="1" style="width:70px" oninput="markDirty()">
                 </div>
+                <div class="map-field" style="align-self:flex-end;margin-bottom:2px">
+                    <button class="add-btn" onclick="useCurrentMap()" title="Populate fields from the currently displayed map">Use Current Map</button>
+                </div>
             </div>
             <div class="map-hint">Zoom: 0=world &nbsp;5=country &nbsp;10=city &nbsp;13=neighbourhood &nbsp;15=street &nbsp;19=max</div>
         </div>
@@ -857,7 +860,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
     </div>
 </div>
 
-<div id="page-footer">MARS APRS Map Admin &copy; 2026 Doug Kaye (K6DRK)</div>
+<div id="page-footer">MARS APRS Map Admin v1.1 beta &copy; 2026 Doug Kaye (K6DRK)</div>
 
 <script>
 'use strict';
@@ -1484,6 +1487,21 @@ function populateForm(cfg) {
     document.getElementById('courses-list').innerHTML = '';
     (cfg.courses || []).forEach(c => appendCourse(c));
     dragAdder['courses-list'] = initDrag('courses-list');
+}
+
+// ── Use Current Map ───────────────────────────────────────────────────────────
+
+function useCurrentMap() {
+    const raw = localStorage.getItem('aprs_map_view');
+    if (!raw) {
+        alert('No map position found.\nOpen the main map page and pan/zoom to the desired view, then try again.');
+        return;
+    }
+    const v = JSON.parse(raw);
+    document.getElementById('map-lat').value  = v.lat;
+    document.getElementById('map-lon').value  = v.lon;
+    document.getElementById('map-zoom').value = v.zoom;
+    markDirty();
 }
 
 // ── Load live config.yaml from server ────────────────────────────────────────

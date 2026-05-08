@@ -472,8 +472,8 @@ new (L.Control.extend({
 	onAdd() {
 		const d = L.DomUtil.create('div', 'leaflet-control-attribution');
 		d.innerHTML = isMobile
-			? 'MARS APRS &copy; 2026 Doug Kaye (K6DRK)'
-			: 'Marin Amateur Radio Society APRS Tracking &copy; 2026 Doug Kaye (K6DRK)';
+			? 'MARS APRS v1.1 beta &copy; 2026 Doug Kaye (K6DRK)'
+			: 'Marin Amateur Radio Society APRS Tracking v1.1 beta &copy; 2026 Doug Kaye (K6DRK)';
 		if (isMobile) d.style.fontSize = '10px';
 		return d;
 	}
@@ -518,6 +518,7 @@ const markers              = {};
 const trackerPopups        = {};
 const courseLayers         = {};
 const courseColors         = {};
+let   courseOrder          = [];
 const lastBeacons          = {};
 const blinkTimers          = {};
 const DEFAULT_COURSE_COLOR = '#2196f3';
@@ -1025,13 +1026,32 @@ function applyBackgrounds(backgrounds) {
 function loadCourseLayer(file) {
 	const ext = file.split('.').pop().toLowerCase();
 	let layer;
-	if      (ext === 'gpx')                       layer = omnivore.gpx(file);
-	else if (ext === 'kml')                       layer = omnivore.kml(file);
-	else if (ext === 'geojson' || ext === 'json') layer = omnivore.geojson(file);
-	else return false;
+	if (ext === 'gpx') {
+		layer = omnivore.gpx(file);
+	} else if (ext === 'kml') {
+		layer = omnivore.kml(file);
+	} else if (ext === 'geojson' || ext === 'json') {
+		const customLayer = L.geoJSON(null, {
+			pointToLayer(feature, latlng) {
+				const p      = feature.properties || {};
+				const color  = p['marker-color'] ? '#' + p['marker-color'] : (courseColors[file] || DEFAULT_COURSE_COLOR);
+				const radius = Math.round((parseFloat(p['marker-size']) || 1) * 8);
+				const m = L.circleMarker(latlng, {
+					radius, color, fillColor: color, fillOpacity: 0.85, weight: 1.5
+				});
+				const label = p.title || p.name || p.description;
+				if (label) m.bindTooltip(label, { direction: 'right', sticky: false });
+				return m;
+			}
+		});
+		layer = omnivore.geojson(file, null, customLayer);
+	} else {
+		return false;
+	}
 	layer.on('ready', () => {
 		const c = courseColors[file];
-		if (c) layer.setStyle({ color: c, weight: 3, opacity: 0.9 });
+		if (c) layer.setStyle({ color: c, fillColor: c, weight: 3, opacity: 0.9 });
+		reorderCourseLayers();
 	});
 	layer.addTo(map);
 	courseLayers[file] = layer;
@@ -1040,11 +1060,19 @@ function loadCourseLayer(file) {
 
 function setCourseStyle(file, color) {
 	courseColors[file] = color;
-	if (courseLayers[file]) courseLayers[file].setStyle({ color, weight: 3, opacity: 0.9 });
+	if (courseLayers[file]) courseLayers[file].setStyle({ color, fillColor: color, weight: 3, opacity: 0.9 });
+}
+
+function reorderCourseLayers() {
+	for (let i = courseOrder.length - 1; i >= 0; i--) {
+		const layer = courseLayers[courseOrder[i]];
+		if (layer) layer.bringToFront();
+	}
 }
 
 function applyCourses(courses) {
-	const newFiles = new Set(courses.map(c => c.file));
+	courseOrder = courses.map(c => c.file);
+	const newFiles = new Set(courseOrder);
 	Object.keys(courseLayers).forEach(file => {
 		if (!newFiles.has(file)) { map.removeLayer(courseLayers[file]); delete courseLayers[file]; }
 	});
@@ -1070,7 +1098,7 @@ function applyCourses(courses) {
 			cb.addEventListener('click', e => e.stopPropagation());
 			cb.addEventListener('change', () => {
 				if (!cb.checked) { if (courseLayers[course.file]) { map.removeLayer(courseLayers[course.file]); delete courseLayers[course.file]; } }
-				else { if (!courseLayers[course.file]) loadCourseLayer(course.file); }
+				else { if (!courseLayers[course.file]) loadCourseLayer(course.file); else reorderCourseLayers(); }
 			});
 			row.appendChild(label); row.appendChild(cb);
 			container.appendChild(row);
@@ -1101,7 +1129,7 @@ function applyCourses(courses) {
 		checkbox.addEventListener('click', e => e.stopPropagation());
 		checkbox.addEventListener('change', () => {
 			if (!checkbox.checked) { if (courseLayers[course.file]) { map.removeLayer(courseLayers[course.file]); delete courseLayers[course.file]; } }
-			else { if (!courseLayers[course.file]) loadCourseLayer(course.file); }
+			else { if (!courseLayers[course.file]) loadCourseLayer(course.file); else reorderCourseLayers(); }
 		});
 		item.appendChild(label); item.appendChild(checkbox);
 		container.appendChild(item);
@@ -1192,6 +1220,15 @@ function applyAidStations(stations) {
 
 	section.style.display = aidMarkers.length ? '' : 'none';
 }
+
+map.on('moveend', function() {
+	const c = map.getCenter();
+	localStorage.setItem('aprs_map_view', JSON.stringify({
+		lat:  parseFloat(c.lat.toFixed(6)),
+		lon:  parseFloat(c.lng.toFixed(6)),
+		zoom: map.getZoom()
+	}));
+});
 
 // ── Map interactions ───────────────────────────────────────────────────────
 map.on('contextmenu', function(e) {
