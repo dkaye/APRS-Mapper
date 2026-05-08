@@ -522,6 +522,16 @@ let   courseOrder          = [];
 const lastBeacons          = {};
 const blinkTimers          = {};
 const DEFAULT_COURSE_COLOR = '#2196f3';
+const LS_COURSE_COLORS     = 'aprs_course_colors';
+
+function loadSavedColors() {
+	try { return JSON.parse(localStorage.getItem(LS_COURSE_COLORS) || '{}'); } catch { return {}; }
+}
+function saveCourseColor(file, color) {
+	const m = loadSavedColors();
+	m[file] = color;
+	localStorage.setItem(LS_COURSE_COLORS, JSON.stringify(m));
+}
 
 let selectedCallsign   = null;
 let trackerClickCount  = 0;
@@ -1075,6 +1085,11 @@ function applyCourses(courses) {
 	Object.keys(courseLayers).forEach(file => {
 		if (!newFiles.has(file)) { map.removeLayer(courseLayers[file]); delete courseLayers[file]; }
 	});
+	// Prune localStorage entries for courses no longer in the config
+	const saved = loadSavedColors();
+	let pruned = false;
+	Object.keys(saved).forEach(f => { if (!newFiles.has(f)) { delete saved[f]; pruned = true; } });
+	if (pruned) localStorage.setItem(LS_COURSE_COLORS, JSON.stringify(saved));
 
 	if (isMobile) {
 		const container = document.getElementById('m-courses-list');
@@ -1082,8 +1097,10 @@ function applyCourses(courses) {
 		if (!courses.length) { container.innerHTML = ''; emptyEl.style.display = ''; return; }
 		emptyEl.style.display = 'none';
 		container.innerHTML = '';
+		const savedColors = loadSavedColors();
 		courses.forEach(course => {
-			if (course.color) courseColors[course.file] = course.color;
+			if (course.color) { courseColors[course.file] = course.color; saveCourseColor(course.file, course.color); }
+			else if (savedColors[course.file]) courseColors[course.file] = savedColors[course.file];
 			else delete courseColors[course.file];
 			if (courseLayers[course.file]) setCourseStyle(course.file, courseColors[course.file] || DEFAULT_COURSE_COLOR);
 			if (!coursesInitialized) loadCourseLayer(course.file);
@@ -1093,7 +1110,13 @@ function applyCourses(courses) {
 			const label  = document.createElement('label'); label.className = 'm-course-label'; label.title = 'Tap to change colour';
 			const nameEl = document.createElement('span');  nameEl.className = 'm-course-name'; nameEl.textContent = course.name; nameEl.style.color = color;
 			const cInput = document.createElement('input'); cInput.type = 'color'; cInput.value = color; cInput.className = 'm-course-color-input';
-			cInput.addEventListener('input', e => { const c = e.target.value; nameEl.style.color = c; setCourseStyle(course.file, c); });
+			cInput.addEventListener('input', e => {
+				const c = e.target.value;
+				nameEl.style.color = c;
+				courseColors[course.file] = c;
+				saveCourseColor(course.file, c);
+				setCourseStyle(course.file, c);
+			});
 			label.appendChild(nameEl); label.appendChild(cInput);
 			const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = active; cb.className = 'm-checkbox';
 			cb.addEventListener('click', e => e.stopPropagation());
@@ -1114,8 +1137,10 @@ function applyCourses(courses) {
 	if (!courses.length) { section.style.display = 'none'; return; }
 	section.style.display = '';
 	container.innerHTML = '';
+	const savedColors = loadSavedColors();
 	courses.forEach(course => {
-		if (course.color) courseColors[course.file] = course.color;
+		if (course.color) { courseColors[course.file] = course.color; saveCourseColor(course.file, course.color); }
+		else if (savedColors[course.file]) courseColors[course.file] = savedColors[course.file];
 		else delete courseColors[course.file];
 		if (courseLayers[course.file]) setCourseStyle(course.file, courseColors[course.file] || DEFAULT_COURSE_COLOR);
 		if (kiosk) { if (!courseLayers[course.file]) loadCourseLayer(course.file); return; }
@@ -1126,7 +1151,13 @@ function applyCourses(courses) {
 		const label  = document.createElement('label'); label.className = 'course-label'; label.title = 'Click to change color';
 		const nameEl = document.createElement('span');  nameEl.className = 'course-name'; nameEl.textContent = course.name; nameEl.style.color = color;
 		const cInput = document.createElement('input'); cInput.type = 'color'; cInput.value = color; cInput.className = 'course-color-input';
-		cInput.addEventListener('input', e => { const c = e.target.value; nameEl.style.color = c; setCourseStyle(course.file, c); });
+		cInput.addEventListener('input', e => {
+			const c = e.target.value;
+			nameEl.style.color = c;
+			courseColors[course.file] = c;
+			saveCourseColor(course.file, c);
+			setCourseStyle(course.file, c);
+		});
 		label.appendChild(nameEl); label.appendChild(cInput);
 		const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = active; checkbox.className = 'course-checkbox'; checkbox.title = 'Show / hide course';
 		checkbox.addEventListener('click', e => e.stopPropagation());
