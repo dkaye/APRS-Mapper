@@ -197,8 +197,12 @@ The Origin marker is removed by clicking **Reset Map**.
 
 ### Z-ordering
 
-Tracker markers are rendered in a dedicated Leaflet pane above aid station and iGate markers,
-so tracker dots are always visible even when they overlap fixed-location markers.
+Map layers are rendered in the following order, top to bottom:
+
+1. **Trackers** — always on top
+2. **Aid Stations**
+3. **Courses**
+4. **iGates** — always underneath the others
 
 ### Kiosk Mode
 

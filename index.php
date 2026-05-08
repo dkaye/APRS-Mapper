@@ -476,6 +476,10 @@ if (isMobile) L.control.zoom({ position: 'topright' }).addTo(map);
 
 map.createPane('trackerPane');
 map.getPane('trackerPane').style.zIndex = 450;
+map.createPane('aidPane');
+map.getPane('aidPane').style.zIndex = 430;
+map.createPane('igatePane');
+map.getPane('igatePane').style.zIndex = 390;
 
 // ── Kiosk mode (desktop only) ─────────────────────────────────────────────
 const kiosk = !isMobile && new URLSearchParams(location.search).get('kiosk') === '1';
@@ -1231,7 +1235,7 @@ function applyIgates(igates) {
 		if (isNaN(lat) || isNaN(lon)) return;
 		const latlng = [lat, lon];
 		const m = L.circleMarker(latlng, {
-			radius: isMobile ? 7 : 6, color: '#222', weight: 1.5, fillColor: '#111', fillOpacity: 0.9
+			pane: 'igatePane', radius: isMobile ? 7 : 6, color: '#222', weight: 1.5, fillColor: '#111', fillOpacity: 0.9
 		}).addTo(map);
 		m.bindTooltip(g.name, { permanent: false, direction: 'right', className: 'tracker-label', offset: [8, 0] });
 
@@ -1273,7 +1277,7 @@ function applyAidStations(stations) {
 		if (isNaN(lat) || isNaN(lon)) return;
 		const latlng = [lat, lon];
 		const m = L.circleMarker(latlng, {
-			radius: isMobile ? 7 : 6, color: '#222', weight: 1.5, fillColor: '#111', fillOpacity: 0.9
+			pane: 'aidPane', radius: isMobile ? 7 : 6, color: '#222', weight: 1.5, fillColor: '#111', fillOpacity: 0.9
 		}).addTo(map);
 		m.bindTooltip(g.name, { permanent: false, direction: 'right', className: 'tracker-label', offset: [8, 0] });
 
