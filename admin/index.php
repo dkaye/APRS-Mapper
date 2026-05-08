@@ -863,7 +863,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
     </div>
 </div>
 
-<div id="page-footer">MARS APRS Map Admin v1.1 beta &copy; 2026 Doug Kaye (K6DRK)</div>
+<div id="page-footer">MARS APRS Map Admin v1.2 beta &copy; 2026 Doug Kaye (K6DRK)</div>
 
 <script>
 'use strict';

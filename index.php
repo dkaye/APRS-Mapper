@@ -472,8 +472,8 @@ new (L.Control.extend({
 	onAdd() {
 		const d = L.DomUtil.create('div', 'leaflet-control-attribution');
 		d.innerHTML = isMobile
-			? 'MARS APRS v1.1 beta &copy; 2026 Doug Kaye (K6DRK)'
-			: 'Marin Amateur Radio Society APRS Tracking v1.1 beta &copy; 2026 Doug Kaye (K6DRK)';
+			? 'MARS APRS v1.2 beta &copy; 2026 Doug Kaye (K6DRK)'
+			: 'Marin Amateur Radio Society APRS Tracking v1.2 beta &copy; 2026 Doug Kaye (K6DRK)';
 		if (isMobile) d.style.fontSize = '10px';
 		return d;
 	}
@@ -696,6 +696,8 @@ function clearAllSelections() {
 	if (selectedAidIdx  >= 0) { setAidTooltip(selectedAidIdx, false);     aidMarkers[selectedAidIdx]?.el.classList.remove('selected');   selectedAidIdx  = -1; aidClickCount  = 0; }
 	selectedCallsign = null; trackerClickCount = 0;
 	document.querySelectorAll('.legend-item, .m-legend-item').forEach(el => el.classList.remove('selected'));
+	if (originMarker) { originMarker.remove(); originMarker = null; origin = null; }
+	map.closePopup();
 }
 
 // ── iGate click cycle ──────────────────────────────────────────────────────
