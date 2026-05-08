@@ -182,10 +182,18 @@ Open `http://<host>/` in a browser.
 
 Clicking a different tracker at any point restarts the cycle for that tracker.
 
-### Right-click
+### Origin, Distance, and Bearing
 
-Right-clicking anywhere on the map shows a popup with the latitude/longitude of that point
-and a copy-to-clipboard button.
+Right-clicking anywhere on the map places a red **Origin** marker at that point. Hovering over
+the Origin marker (or tapping it on mobile) shows its latitude/longitude with a copy-to-clipboard
+button. Right-clicking again moves the Origin to the new location.
+
+Once an Origin is set, **left-clicking** anywhere on the map shows a popup at the clicked point
+with the straight-line distance (in miles) and bearing from the Origin — for example,
+`2.4 mi · 143° SE`. This makes it easy to measure range and direction from a fixed reference
+point to any tracker or map feature.
+
+The Origin marker is removed by clicking **Reset Map**.
 
 ### Z-ordering
 
