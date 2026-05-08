@@ -33,7 +33,6 @@ aprsDaemon.php  ──writes──▶  trackers.json
 | `trackers.json` | Live tracker state written by daemon, read by browser via `?json` endpoint |
 | `index.php` | Leaflet map page; also serves `?json` and `?config` API endpoints |
 | `admin/index.php` | Password-protected web GUI for editing `config.yaml` |
-| `publish.sh` | rsync script that deploys to the Raspberry Pi |
 
 ---
 
@@ -240,19 +239,6 @@ the save request is sent.
 
 Packets that do not contain a recognisable position are still used to update the
 "last heard" timestamp for the callsign.
-
----
-
-## Deploying to the Raspberry Pi
-
-```bash
-./publish.sh
-```
-
-This runs `rsync -rv *` to copy all project files to `pi@192.168.0.50:/var/www/html/` and
-then sets `config.yaml` to mode `666` so the web process can write it via the admin page.
-
-Edit `publish.sh` to change the target host or path.
 
 ---
 
