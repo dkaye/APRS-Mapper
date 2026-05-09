@@ -9,9 +9,10 @@
  * Layout is chosen via CSS media query (≤767 px = mobile).
  *
  * Endpoints:
- *   (none)   HTML/JS Leaflet map page
- *   ?json    Live tracker status from trackers.json
- *   ?config  Map/background/course/tracker config from config.yaml (ETag-cached)
+ *   (none)          HTML/JS Leaflet map page
+ *   ?json           Live tracker status from trackers.json
+ *   ?config         Map/background/course/tracker config from config.yaml (ETag-cached)
+ *   ?clientstatus   Apache worker stats + connected client IPs (server-side only)
  */
 
 $trackerStatusFilename = 'trackers.json';
@@ -50,6 +51,38 @@ if (isset($_GET['config'])) {
 		'courses'     => $courses,
 		'aidstations' => $cfg['aidstations'] ?? [],
 		'igates'      => $cfg['igates'] ?? [],
+	]);
+	exit;
+}
+
+if (isset($_GET['clientstatus'])) {
+	header('Content-Type: application/json');
+	$stats = [];
+	$raw = @file_get_contents('http://localhost/server-status?auto');
+	if ($raw !== false) {
+		foreach (explode("\n", $raw) as $line) {
+			$line = trim($line);
+			$pos  = strpos($line, ': ');
+			if ($pos !== false) $stats[substr($line, 0, $pos)] = substr($line, $pos + 2);
+		}
+	}
+	$clients = [];
+	exec("ss -tn state established 'sport = :80' 2>/dev/null", $ssLines);
+	foreach (array_slice($ssLines, 1) as $line) {
+		$parts = preg_split('/\s+/', trim($line));
+		if (count($parts) >= 5 && preg_match('/^(\d{1,3}(?:\.\d{1,3}){3})/', $parts[4], $m)) {
+			$clients[] = $m[1];
+		}
+	}
+	$counts = array_count_values($clients);
+	arsort($counts);
+	echo json_encode([
+		'busy'    => isset($stats['BusyWorkers']) ? (int)$stats['BusyWorkers']   : null,
+		'idle'    => isset($stats['IdleWorkers'])  ? (int)$stats['IdleWorkers']   : null,
+		'rps'     => isset($stats['ReqPerSec'])    ? (float)$stats['ReqPerSec']   : null,
+		'uptime'  => $stats['ServerUptime'] ?? null,
+		'clients' => $counts,
+		'total'   => count($clients),
 	]);
 	exit;
 }
@@ -370,6 +403,44 @@ body { display: flex; }
     #sheet-tabs { height: 40px; flex-shrink: 0; }
     #sheet-body { flex: 1; overflow-y: auto; }
 }
+
+/* ── Clients modal ─────────────────────────────────────────────────────── */
+#clients-modal {
+    position: fixed; inset: 0; z-index: 10000;
+    display: flex; align-items: center; justify-content: center;
+}
+#clients-backdrop {
+    position: absolute; inset: 0; background: rgba(0,0,0,0.45);
+}
+#clients-box {
+    position: relative; background: #fff; border-radius: 8px;
+    padding: 18px 22px; min-width: 280px; max-width: 420px; width: 90%;
+    box-shadow: 0 4px 24px rgba(0,0,0,.35); z-index: 1;
+    font-family: arial, helvetica, sans-serif; font-size: 13px;
+}
+#clients-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 14px; font-size: 14px; font-weight: bold;
+}
+#clients-close {
+    background: none; border: none; font-size: 20px; line-height: 1;
+    cursor: pointer; color: #888; padding: 0 2px;
+}
+#clients-close:hover { color: #000; }
+.clients-stat {
+    display: flex; justify-content: space-between; padding: 4px 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+.clients-stat-label { color: #666; }
+.clients-stat-value { font-weight: 600; }
+.clients-ip-list { margin-top: 14px; }
+.clients-ip-title { font-weight: bold; color: #444; margin-bottom: 6px; }
+.clients-ip-row {
+    display: flex; justify-content: space-between;
+    padding: 3px 0; font-family: monospace; font-size: 12px;
+    border-bottom: 1px solid #f8f8f8;
+}
+.clients-none { color: #aaa; font-style: italic; }
 </style>
 </head>
 <body>
@@ -503,9 +574,16 @@ new (L.Control.extend({
 			const txt = L.DomUtil.create('span', '', d);
 			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.3 beta &copy; 2026 Doug Kaye (K6DRK)';
 		} else {
-			d.innerHTML = isMobile
+			if (!isMobile) {
+				const clientsBtn = L.DomUtil.create('button', 'kiosk-footer-btn', d);
+				clientsBtn.textContent = 'Clients';
+				L.DomEvent.on(clientsBtn, 'click', openClientsModal);
+				L.DomEvent.disableClickPropagation(clientsBtn);
+			}
+			const ftxt = L.DomUtil.create('span', '', d);
+			ftxt.innerHTML = isMobile
 				? 'MARS APRS v1.3 beta &copy; 2026 Doug Kaye (K6DRK)'
-				: 'Marin Amateur Radio Society APRS Tracking v1.3 beta &copy; 2026 Doug Kaye (K6DRK)';
+				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.3 beta &copy; 2026 Doug Kaye (K6DRK)';
 			if (isMobile) d.style.fontSize = '10px';
 		}
 		return d;
@@ -1359,11 +1437,62 @@ document.getElementById('reset-map-btn').addEventListener('click', function() {
 // ── bfcache reload ─────────────────────────────────────────────────────────
 window.addEventListener('pageshow', e => { if (e.persisted) location.reload(); });
 
+// ── Clients modal ────────────────────────────────────────────────────────────
+function openClientsModal() {
+	document.getElementById('clients-modal').style.display = 'flex';
+	fetchClients();
+}
+function closeClientsModal() {
+	document.getElementById('clients-modal').style.display = 'none';
+}
+document.getElementById('clients-close').addEventListener('click', closeClientsModal);
+document.getElementById('clients-backdrop').addEventListener('click', closeClientsModal);
+
+async function fetchClients() {
+	const body = document.getElementById('clients-body');
+	body.innerHTML = 'Loading&hellip;';
+	try {
+		const r = await fetch('index.php?clientstatus');
+		const d = await r.json();
+		const fmtRps = d.rps !== null ? d.rps.toFixed(3) : '–';
+		let html = '';
+		html += `<div class="clients-stat"><span class="clients-stat-label">Active workers</span><span class="clients-stat-value">${d.busy ?? '–'}</span></div>`;
+		html += `<div class="clients-stat"><span class="clients-stat-label">Idle workers</span><span class="clients-stat-value">${d.idle ?? '–'}</span></div>`;
+		html += `<div class="clients-stat"><span class="clients-stat-label">Requests / sec</span><span class="clients-stat-value">${fmtRps}</span></div>`;
+		if (d.uptime) html += `<div class="clients-stat"><span class="clients-stat-label">Server uptime</span><span class="clients-stat-value">${d.uptime}</span></div>`;
+		html += `<div class="clients-ip-list">`;
+		html += `<div class="clients-ip-title">TCP connections on :80 &mdash; ${d.total} total</div>`;
+		const entries = Object.entries(d.clients || {});
+		if (entries.length) {
+			entries.forEach(([ip, n]) => {
+				html += `<div class="clients-ip-row"><span>${ip}</span><span>${n} conn</span></div>`;
+			});
+		} else {
+			html += `<div class="clients-none">None</div>`;
+		}
+		html += `</div>`;
+		body.innerHTML = html;
+	} catch(e) {
+		body.innerHTML = '<span style="color:#c00">Failed to fetch status.</span>';
+	}
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────
 loadConfig();
 setInterval(loadConfig, 5000);
 updateMap();
 setInterval(updateMap, 5000);
 </script>
+
+<div id="clients-modal" style="display:none">
+	<div id="clients-backdrop"></div>
+	<div id="clients-box">
+		<div id="clients-header">
+			<span>Connected Clients</span>
+			<button id="clients-close">&times;</button>
+		</div>
+		<div id="clients-body"></div>
+	</div>
+</div>
 </body>
 </html>
