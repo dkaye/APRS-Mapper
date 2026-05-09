@@ -478,7 +478,7 @@ body { display: flex; }
 	<div id="sidebar-footer">
 		<hr class="section-divider">
 		<button id="reset-btn">Reset Map</button>
-		<a href="/admin/" id="admin-btn">Admin</a>
+		<a href="admin/" id="admin-btn">Admin</a>
 		<a href="?kiosk=1" id="kiosk-btn">Kiosk Mode</a>
 	</div>
 </div>

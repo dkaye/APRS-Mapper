@@ -762,7 +762,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
         <span id="current-file">config.yaml</span>
     </div>
     <div id="hdr-right">
-        <a href="/">View Map</a>
+        <a href="../">View Map</a>
         <a href="?logout" class="signout">Sign out</a>
         <span id="status"></span>
         <button class="sec-btn" onclick="doLoadModal()">Load…</button>
