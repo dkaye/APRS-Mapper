@@ -538,12 +538,8 @@ body { font-family: arial, helvetica, sans-serif; font-size: 14px; background: #
 #hdr-left { display: flex; flex-direction: column; gap: 2px; }
 #hdr h1 { font-size: 16px; font-weight: bold; letter-spacing: .02em; }
 #current-file { font-size: 12px; color: #8aafc8; font-family: monospace; letter-spacing: .01em; }
-#hdr-right { display: flex; align-items: center; gap: 14px; }
-#hdr a { color: #adc8e6; font-size: 13px; text-decoration: none; }
-#hdr a:hover { color: #fff; }
-#hdr a.signout { color: #c8a8a8; }
-#hdr a.signout:hover { color: #ffaaaa; }
-#status { font-size: 13px; min-width: 110px; text-align: right; }
+#hdr-right { display: flex; align-items: center; gap: 10px; }
+#status { font-size: 13px; min-width: 110px; text-align: right; margin-right: 4px; }
 .st-dirty  { color: #f0c060; }
 .st-ok     { color: #7ed97e; }
 .st-error  { color: #ff7c7c; }
@@ -762,9 +758,9 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
         <span id="current-file">config.yaml</span>
     </div>
     <div id="hdr-right">
-        <a href="../">View Map</a>
-        <a href="?logout" class="signout">Sign out</a>
         <span id="status"></span>
+        <button class="sec-btn" onclick="location.href='../'">Return to Map</button>
+        <button class="sec-btn" onclick="location.href='?logout'">Sign out</button>
         <button class="sec-btn" onclick="doLoadModal()">Load…</button>
         <button class="sec-btn" onclick="doSaveAs()">Save As…</button>
         <button class="save-btn" id="save-btn" onclick="doUpdate()">Update</button>
