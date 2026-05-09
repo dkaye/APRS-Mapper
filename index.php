@@ -155,8 +155,10 @@ body { display: flex; }
 .section-heading {
     font-size: 13px; color: #555; text-transform: uppercase;
     letter-spacing: 0.05em; margin-bottom: 3px;
+    display: flex; justify-content: space-between; align-items: center;
 }
 .section-heading.top   { margin-top: 0; }
+.section-collapsed { display: none !important; }
 .section-heading.below { margin-top: 8px; }
 .section-divider { border: none; border-top: 1px solid #ccc; margin: 6px 0 4px; }
 
@@ -175,24 +177,26 @@ body { display: flex; }
 
 .sidebar-item {
     display: flex; justify-content: space-between; align-items: center;
-    font-size: 13px; padding: 4px 4px; border-radius: 4px;
+    font-size: 13px; padding: 4px 0 4px 4px; border-radius: 4px;
     cursor: pointer; margin-bottom: 2px; color: #333; position: relative;
 }
 .sidebar-item:hover { background: #e0e0e0; }
-.course-item  { cursor: default; padding: 2px 4px; margin-bottom: 1px; }
+.course-item  { cursor: default; padding: 2px 0 2px 4px; margin-bottom: 1px; }
 .course-label { flex: 1; display: flex; align-items: center; cursor: pointer; min-width: 0; }
 .course-name  { flex: 1; }
 .course-name:hover { text-decoration: underline; }
 .course-color-input { position: absolute; width: 0; height: 0; border: none; padding: 0; overflow: hidden; }
-.course-checkbox, .bg-checkbox {
+.course-checkbox, .bg-checkbox, .section-toggle {
     appearance: none; -webkit-appearance: none;
     width: 14px; height: 14px; flex-shrink: 0; margin: 0;
     border: 1.5px solid #aaa; border-radius: 2px; background: #fff;
 }
 .course-checkbox { cursor: pointer; }
 .bg-checkbox     { pointer-events: none; }
+.section-toggle  { cursor: pointer; }
 .course-checkbox:checked,
-.bg-checkbox:checked {
+.bg-checkbox:checked,
+.section-toggle:checked {
     border-color: #222;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpolyline points='1.5,6 4.5,9.5 10.5,2.5' stroke='%23000' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     background-repeat: no-repeat; background-position: center; background-size: 10px;
@@ -444,30 +448,30 @@ body { display: flex; }
 
 <!-- ── Desktop sidebar ─────────────────────────────────────────────────── -->
 <div id="sidebar">
-	<div class="section-heading top">Trackers</div>
+	<div class="section-heading top"><span>Trackers</span><input type="checkbox" class="section-toggle" id="toggle-trackers" checked></div>
 	<div id="legend"></div>
 
 	<div id="courses-section" style="display:none">
 		<hr class="section-divider">
-		<div class="section-heading">Courses</div>
+		<div class="section-heading"><span>Courses</span><input type="checkbox" class="section-toggle" id="toggle-courses" checked></div>
 		<div id="courses"></div>
 	</div>
 
 	<div id="aidstations-section" style="display:none">
 		<hr class="section-divider">
-		<div class="section-heading">Aid Stations</div>
+		<div class="section-heading"><span>Aid Stations</span><input type="checkbox" class="section-toggle" id="toggle-aidstations" checked></div>
 		<div id="aidstations"></div>
 	</div>
 
 	<div id="igates-section" style="display:none">
 		<hr class="section-divider">
-		<div class="section-heading">iGates</div>
+		<div class="section-heading"><span>iGates</span><input type="checkbox" class="section-toggle" id="toggle-igates" checked></div>
 		<div id="igates"></div>
 	</div>
 
 	<div id="backgrounds-section" style="display:none">
 		<hr class="section-divider">
-		<div class="section-heading">Backgrounds</div>
+		<div class="section-heading"><span>Backgrounds</span><input type="checkbox" class="section-toggle" id="toggle-backgrounds" checked></div>
 		<div id="backgrounds"></div>
 	</div>
 
@@ -568,6 +572,13 @@ new (L.Control.extend({
 	onAdd() {
 		const d = L.DomUtil.create('div', 'leaflet-control-attribution');
 		if (kiosk) {
+			const sidebarBtn = L.DomUtil.create('button', 'kiosk-footer-btn', d);
+			sidebarBtn.textContent = 'Sidebar';
+			L.DomEvent.on(sidebarBtn, 'click', () => {
+				const sb = document.getElementById('sidebar');
+				sb.style.display = sb.style.display === 'none' ? '' : 'none';
+			});
+			L.DomEvent.disableClickPropagation(sidebarBtn);
 			const resetBtn = L.DomUtil.create('button', 'kiosk-footer-btn', d);
 			resetBtn.textContent = 'Reset Map';
 			L.DomEvent.on(resetBtn, 'click', () => {
@@ -1484,6 +1495,34 @@ async function fetchClients() {
 		body.innerHTML = '<span style="color:#c00">Failed to fetch status.</span>';
 	}
 }
+
+// ── Sidebar section toggles ───────────────────────────────────────────────
+const LS_SIDEBAR_STATE = 'aprs_sidebar_state';
+(function initSectionToggles() {
+	const sections = [
+		{ id: 'toggle-trackers',    content: 'legend' },
+		{ id: 'toggle-courses',     content: 'courses' },
+		{ id: 'toggle-aidstations', content: 'aidstations' },
+		{ id: 'toggle-igates',      content: 'igates' },
+		{ id: 'toggle-backgrounds', content: 'backgrounds' },
+	];
+	let state = {};
+	try { state = JSON.parse(localStorage.getItem(LS_SIDEBAR_STATE) || '{}'); } catch {}
+	sections.forEach(({ id, content }) => {
+		const cb = document.getElementById(id);
+		const ct = document.getElementById(content);
+		if (!cb || !ct) return;
+		if (state[id] === false) { cb.checked = false; ct.classList.add('section-collapsed'); }
+		cb.addEventListener('change', () => {
+			ct.classList.toggle('section-collapsed', !cb.checked);
+			try {
+				const s = JSON.parse(localStorage.getItem(LS_SIDEBAR_STATE) || '{}');
+				s[id] = cb.checked;
+				localStorage.setItem(LS_SIDEBAR_STATE, JSON.stringify(s));
+			} catch {}
+		});
+	});
+})();
 
 // ── Init ───────────────────────────────────────────────────────────────────
 loadConfig();
