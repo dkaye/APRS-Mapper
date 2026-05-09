@@ -163,16 +163,19 @@ Open `http://<host>/` in a browser.
 
 ### Sidebar
 
+Each section heading has a checkbox on the right. Uncheck to collapse that section to its title only, saving vertical space. State is saved across page reloads.
+
 | Section | Behaviour |
 |---------|-----------|
 | **Trackers** | Listed by ID. Coloured dot and elapsed time update every 5 s. |
-| **Courses** | Click a name to toggle the overlay on/off. Active courses show ✓. |
+| **Courses** | Click a name to toggle the overlay on/off. Click the colour swatch to change the course colour. |
 | **Aid Stations** | Click to zoom to location and show name label; click again to reset. |
 | **iGates** | Same as aid stations. |
 | **Backgrounds** | Click to switch the base tile layer. Active layer shows ✓. |
-| **Reset Map** | Restores the default centre and zoom; clears all selections. |
+| **Reset Map** | Restores the default centre and zoom; clears all selections and the Origin marker. |
 | **Admin** | Opens the admin configuration page. |
-| **Kiosk Mode** | Reloads in kiosk mode: full screen, partial sidebar (Trackers, Aid Stations, iGates), all visible courses displayed. Footer shows Reset Map and Exit buttons. |
+| **Kiosk Mode** | Reloads in kiosk mode (see below). |
+| **Clients** | Opens a modal showing Apache worker stats and connected client IP addresses. |
 
 ### Tracker Clicks (three-click cycle)
 
@@ -213,7 +216,10 @@ Click **Kiosk Mode** in the sidebar, or append `?kiosk=1` to the URL. Intended f
 - Courses that were visible in normal mode remain visible; hidden courses stay hidden.
 - The first background tile layer is selected automatically.
 - Tracker labels and dot blinking work exactly as in normal mode.
-- Footer shows small **Reset Map** and **Exit** buttons. Reset Map restores the default view and clears all selections. Exit returns to normal mode.
+- Footer shows three small buttons:
+  - **Sidebar** — shows or hides the sidebar. State is remembered across kiosk sessions.
+  - **Reset Map** — restores the default view and clears all selections and the Origin marker.
+  - **Exit** — returns to normal mode.
 
 ---
 

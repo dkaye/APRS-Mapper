@@ -576,7 +576,9 @@ new (L.Control.extend({
 			sidebarBtn.textContent = 'Sidebar';
 			L.DomEvent.on(sidebarBtn, 'click', () => {
 				const sb = document.getElementById('sidebar');
-				sb.style.display = sb.style.display === 'none' ? '' : 'none';
+				const hidden = sb.style.display !== 'none';
+				sb.style.display = hidden ? 'none' : '';
+				localStorage.setItem('aprs_kiosk_sidebar', hidden ? '0' : '1');
 			});
 			L.DomEvent.disableClickPropagation(sidebarBtn);
 			const resetBtn = L.DomUtil.create('button', 'kiosk-footer-btn', d);
@@ -591,7 +593,7 @@ new (L.Control.extend({
 			L.DomEvent.on(exitBtn, 'click', () => { location.href = location.pathname; });
 			L.DomEvent.disableClickPropagation(exitBtn);
 			const txt = L.DomUtil.create('span', '', d);
-			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.3 beta &copy; 2026 Doug Kaye (K6DRK)';
+			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.4 beta &copy; 2026 Doug Kaye (K6DRK)';
 		} else {
 			if (!isMobile) {
 				const clientsBtn = L.DomUtil.create('button', 'kiosk-footer-btn', d);
@@ -601,8 +603,8 @@ new (L.Control.extend({
 			}
 			const ftxt = L.DomUtil.create('span', '', d);
 			ftxt.innerHTML = isMobile
-				? 'MARS APRS v1.3 beta &copy; 2026 Doug Kaye (K6DRK)'
-				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.3 beta &copy; 2026 Doug Kaye (K6DRK)';
+				? 'MARS APRS v1.4 beta &copy; 2026 Doug Kaye (K6DRK)'
+				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.4 beta &copy; 2026 Doug Kaye (K6DRK)';
 			if (isMobile) d.style.fontSize = '10px';
 		}
 		return d;
@@ -630,6 +632,8 @@ if (kiosk) {
 	document.getElementById('courses-section').style.display = 'none';
 	document.getElementById('backgrounds-section').style.display = 'none';
 	document.getElementById('sidebar-footer').style.display = 'none';
+	if (localStorage.getItem('aprs_kiosk_sidebar') === '0')
+		document.getElementById('sidebar').style.display = 'none';
 	document.documentElement.requestFullscreen().catch(() => {});
 }
 
