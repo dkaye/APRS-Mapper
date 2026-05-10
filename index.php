@@ -111,7 +111,7 @@ html, body { width: 100%; height: 100%; overflow: hidden;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', arial, sans-serif; }
 
 @keyframes blink-anim { 50% { opacity: 0; } }
-.blinking { animation: blink-anim 0.8s steps(2,end) infinite; }
+.blinking { animation: blink-anim 0.4s steps(2,end) infinite; }
 
 .tracker-label {
     background: none; border: none; box-shadow: none;
@@ -806,7 +806,7 @@ function triggerBlink(callsign) {
 	const item = document.getElementById(id);
 	if (item) item.classList.add('blinking');
 	const el = markers[callsign]?.getElement();
-	if (el) el.style.animation = 'blink-anim 0.8s steps(2,end) infinite';
+	if (el) el.style.animation = 'blink-anim 0.4s steps(2,end) infinite';
 	blinkTimers[callsign] = setTimeout(() => {
 		if (item) item.classList.remove('blinking');
 		const e2 = markers[callsign]?.getElement();
@@ -817,7 +817,7 @@ function triggerBlink(callsign) {
 
 function triggerDotBlink(d) {
 	const el = d.m.getElement();
-	if (el) { el.style.animation = 'blink-anim 0.8s steps(2,end) infinite'; setTimeout(() => { el.style.animation = ''; }, 5000); }
+	if (el) { el.style.animation = 'blink-anim 0.4s steps(2,end) infinite'; setTimeout(() => { el.style.animation = ''; }, 5000); }
 	d.el.classList.add('blinking');
 	setTimeout(() => d.el.classList.remove('blinking'), 5000);
 }
