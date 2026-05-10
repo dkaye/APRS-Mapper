@@ -981,9 +981,9 @@ function buildTrackerRow(t) {
     row.appendChild(makeDragHandle());
     const fields  = document.createElement('div');
     fields.className = 'row-fields';
-    fields.appendChild(fieldLabel('Callsign', 'f-cs',   t.callsign, '110px', { placeholder: 'W6SG-4' }));
-    fields.appendChild(fieldLabel('ID',       'f-id',   t.id,        '45px', { placeholder: 'S4'     }));
-    fields.appendChild(fieldLabel('Name',     'f-name', t.name,     '130px', { placeholder: 'Alice'  }));
+    fields.appendChild(fieldLabel('Callsign', 'f-cs',   t.callsign, '110px'));
+    fields.appendChild(fieldLabel('ID',       'f-id',   t.id,        '45px'));
+    fields.appendChild(fieldLabel('Name',     'f-name', t.name,     '130px'));
     row.appendChild(fields);
     row.appendChild(makeDeleteBtn());
     return row;
@@ -1407,9 +1407,9 @@ function buildIgateRow(g) {
     row.appendChild(makeDragHandle());
     const fields  = document.createElement('div');
     fields.className = 'row-fields';
-    fields.appendChild(fieldLabel('Name', 'f-iname', g.name, '160px', { placeholder: 'K6ABC-10' }));
-    fields.appendChild(fieldLabel('Lat',  'f-ilat',  g.lat,  '120px', { type: 'number', step: 'any', placeholder: '37.8725'   }));
-    fields.appendChild(fieldLabel('Lon',  'f-ilon',  g.lon,  '130px', { type: 'number', step: 'any', placeholder: '-122.5441' }));
+    fields.appendChild(fieldLabel('Name', 'f-iname', g.name, '160px'));
+    fields.appendChild(fieldLabel('Lat',  'f-ilat',  g.lat,  '120px', { type: 'number', step: 'any' }));
+    fields.appendChild(fieldLabel('Lon',  'f-ilon',  g.lon,  '130px', { type: 'number', step: 'any' }));
     row.appendChild(fields);
     row.appendChild(makeDeleteBtn());
     return row;
@@ -1432,9 +1432,9 @@ function buildAidRow(g) {
     row.appendChild(makeDragHandle());
     const fields  = document.createElement('div');
     fields.className = 'row-fields';
-    fields.appendChild(fieldLabel('Name', 'f-aname', g.name, '160px', { placeholder: 'Aid Station 1' }));
-    fields.appendChild(fieldLabel('Lat',  'f-alat',  g.lat,  '120px', { type: 'number', step: 'any', placeholder: '37.8725'   }));
-    fields.appendChild(fieldLabel('Lon',  'f-alon',  g.lon,  '130px', { type: 'number', step: 'any', placeholder: '-122.5441' }));
+    fields.appendChild(fieldLabel('Name', 'f-aname', g.name, '160px'));
+    fields.appendChild(fieldLabel('Lat',  'f-alat',  g.lat,  '120px', { type: 'number', step: 'any' }));
+    fields.appendChild(fieldLabel('Lon',  'f-alon',  g.lon,  '130px', { type: 'number', step: 'any' }));
     row.appendChild(fields);
     row.appendChild(makeDeleteBtn());
     return row;
