@@ -566,7 +566,7 @@ map.getPane('igatePane').style.zIndex = 390;
 
 // ── Kiosk mode (desktop only) ─────────────────────────────────────────────
 const kiosk = !isMobile && new URLSearchParams(location.search).get('kiosk') === '1';
-let kioskBgApplied = false;
+let backgroundsInitialized = false;
 
 new (L.Control.extend({
 	onAdd() {
@@ -648,6 +648,7 @@ const blinkTimers          = {};
 const DEFAULT_COURSE_COLOR = '#2196f3';
 const LS_COURSE_COLORS     = 'aprs_course_colors';
 const LS_COURSE_ACTIVE     = 'aprs_course_active';
+const LS_BG                = 'aprs_bg_url';
 
 function loadSavedColors() {
 	try { return JSON.parse(localStorage.getItem(LS_COURSE_COLORS) || '{}'); } catch { return {}; }
@@ -1106,6 +1107,21 @@ function applyTrackerConfig(trackers) {
 }
 
 function applyBackgrounds(backgrounds) {
+	// On first call (any mode), restore the previously selected background from localStorage.
+	if (!backgroundsInitialized && backgrounds.length) {
+		backgroundsInitialized = true;
+		const savedUrl = localStorage.getItem(LS_BG);
+		if (savedUrl) {
+			const bg = backgrounds.find(b => b.url === savedUrl);
+			if (bg && bg.url !== currentBgUrl) {
+				map.removeLayer(currentTileLayer);
+				currentBgUrl = bg.url;
+				currentTileLayer = L.tileLayer(bg.url, { attribution: bg.attribution, maxZoom: 19 }).addTo(map);
+				Object.values(courseLayers).forEach(l => l.bringToFront());
+			}
+		}
+	}
+
 	if (isMobile) {
 		const section   = document.getElementById('m-backgrounds-section');
 		const container = document.getElementById('m-backgrounds-list');
@@ -1119,6 +1135,7 @@ function applyBackgrounds(backgrounds) {
 			row.appendChild(name); row.appendChild(dot);
 			row.addEventListener('click', () => {
 				currentBgUrl = bg.url;
+				localStorage.setItem(LS_BG, bg.url);
 				map.removeLayer(currentTileLayer);
 				currentTileLayer = L.tileLayer(bg.url, { attribution: bg.attribution, maxZoom: 19 }).addTo(map);
 				Object.values(courseLayers).forEach(l => l.bringToFront());
@@ -1130,20 +1147,8 @@ function applyBackgrounds(backgrounds) {
 		return;
 	}
 
-	// desktop
-	if (kiosk) {
-		if (!kioskBgApplied && backgrounds.length) {
-			kioskBgApplied = true;
-			const bg = backgrounds[0];
-			if (bg.url !== currentBgUrl) {
-				map.removeLayer(currentTileLayer);
-				currentBgUrl = bg.url;
-				currentTileLayer = L.tileLayer(bg.url, { attribution: bg.attribution, maxZoom: 19 }).addTo(map);
-				Object.values(courseLayers).forEach(l => l.bringToFront());
-			}
-		}
-		return;
-	}
+	if (kiosk) return;
+
 	const section   = document.getElementById('backgrounds-section');
 	const container = document.getElementById('backgrounds');
 	if (!backgrounds.length) { section.style.display = 'none'; return; }
@@ -1157,6 +1162,7 @@ function applyBackgrounds(backgrounds) {
 		item.appendChild(nameEl); item.appendChild(checkEl);
 		item.addEventListener('click', () => {
 			currentBgUrl = bg.url;
+			localStorage.setItem(LS_BG, bg.url);
 			map.removeLayer(currentTileLayer);
 			currentTileLayer = L.tileLayer(bg.url, { attribution: bg.attribution, maxZoom: 19 }).addTo(map);
 			Object.values(courseLayers).forEach(l => l.bringToFront());
