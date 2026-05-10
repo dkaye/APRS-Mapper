@@ -595,6 +595,8 @@ input[type=text], input[type=number] {
     transition: border-color .15s;
 }
 input[type=text]:focus, input[type=number]:focus { outline: none; border-color: #2980b9; }
+input.field-error { border-color: #e74c3c !important; background: #fff5f5 !important; }
+input.field-error:focus { border-color: #e74c3c !important; }
 input[type=number]::-webkit-inner-spin-button,
 input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 input[type=number] { -moz-appearance: textfield; appearance: textfield; }
@@ -1856,17 +1858,46 @@ async function doLoadModal() {
     cancelBtn.addEventListener('click', close);
 }
 
+function highlightErrorFields(errs) {
+    errs.forEach(err => {
+        if (/^Map: lat/i.test(err))  { document.getElementById('map-lat')?.classList.add('field-error');  return; }
+        if (/^Map: lon/i.test(err))  { document.getElementById('map-lon')?.classList.add('field-error');  return; }
+        if (/^Map: zoom/i.test(err)) { document.getElementById('map-zoom')?.classList.add('field-error'); return; }
+
+        const tm = err.match(/^Tracker (\d+): (callsign|ID)/i);
+        if (tm) {
+            const row = document.querySelectorAll('#trackers-list > .list-row')[+tm[1] - 1];
+            row?.querySelector(tm[2].toLowerCase() === 'callsign' ? '.f-cs' : '.f-id')?.classList.add('field-error');
+            return;
+        }
+        const am = err.match(/^Aid Station (\d+): (lat|lon)/i);
+        if (am) {
+            const row = document.querySelectorAll('#aidstations-list > .list-row')[+am[1] - 1];
+            row?.querySelector(am[2].toLowerCase() === 'lat' ? '.f-alat' : '.f-alon')?.classList.add('field-error');
+            return;
+        }
+        const im = err.match(/^iGate (\d+): (lat|lon)/i);
+        if (im) {
+            const row = document.querySelectorAll('#igates-list > .list-row')[+im[1] - 1];
+            row?.querySelector(im[2].toLowerCase() === 'lat' ? '.f-ilat' : '.f-ilon')?.classList.add('field-error');
+        }
+    });
+    document.querySelector('input.field-error')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
 function showErrors(errs) {
     const box = document.getElementById('error-box');
     box.style.display = 'block';
     box.innerHTML = errs.map(e => `<div>⚠ ${e}</div>`).join('');
     box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    highlightErrorFields(errs);
 }
 
 function hideErrors() {
     const box = document.getElementById('error-box');
     box.style.display = 'none';
     box.innerHTML = '';
+    document.querySelectorAll('input.field-error').forEach(el => el.classList.remove('field-error'));
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
