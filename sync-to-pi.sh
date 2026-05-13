@@ -17,8 +17,7 @@ rsync -avz --delete --omit-dir-times --no-perms \
   --exclude='aprs-daemon.service' \
   --exclude='aprs-daemon.sh' \
   --exclude='temp/' \
-  --exclude='configs/*.yaml' \
-  --exclude='configs/*.yml' \
+  --exclude='events/' \
+  --exclude='pi-tools/' \
   --exclude='sync-to-pi.sh' \
-  --exclude='admin/password.txt' \
   "$SRC" "$DST"

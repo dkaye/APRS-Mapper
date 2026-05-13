@@ -43,13 +43,15 @@ if (isset($_GET['config'])) {
 	               fn($c) => isset($c['file']) && file_exists(__DIR__ . '/' . $c['file'])));
 	header('Content-Type: application/json');
 	echo json_encode([
-		'event'       => $cfg['event'] ?? '',
-		'map'         => $cfg['map'],
-		'trackers'    => $cfg['trackers'],
-		'backgrounds' => $cfg['backgrounds'],
-		'courses'     => $courses,
-		'aidstations' => $cfg['aidstations'] ?? [],
-		'igates'      => $cfg['igates'] ?? [],
+		'event'          => $cfg['event'] ?? '',
+		'legend'         => $cfg['legend'] ?? '',
+		'tracker_style'  => $cfg['tracker_style'] ?? [],
+		'map'            => $cfg['map'],
+		'trackers'       => $cfg['trackers'],
+		'backgrounds'    => $cfg['backgrounds'],
+		'courses'        => $courses,
+		'aidstations'    => $cfg['aidstations'] ?? [],
+		'igates'         => $cfg['igates'] ?? [],
 	]);
 	exit;
 }
@@ -91,6 +93,12 @@ $_m    = parseConfigYaml('config.yaml')['map'] ?? [];
 $_lat  = isset($_m['lat'])  ? (float)$_m['lat']  : 37.5;
 $_lon  = isset($_m['lon'])  ? (float)$_m['lon']  : -122.0;
 $_zoom = isset($_m['zoom']) ? (int)$_m['zoom']   : 10;
+
+$_clientIp = trim($_SERVER['HTTP_CF_CONNECTING_IP']
+    ?? (isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? explode(',', $_SERVER['HTTP_X_FORWARDED_FOR'])[0] : null)
+    ?? $_SERVER['REMOTE_ADDR']);
+$_serverIp = trim(shell_exec("hostname -I 2>/dev/null") ?: '');
+$_serverIp = $_serverIp ? explode(' ', $_serverIp)[0] : $_SERVER['SERVER_ADDR'];
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -116,7 +124,14 @@ html, body { width: 100%; height: 100%; overflow: hidden;
 .tracker-label {
     background: none; border: none; box-shadow: none;
     font-weight: bold; font-size: 12px; white-space: nowrap;
+    color: var(--tracker-label-color, #000);
 }
+.place-label {
+    background: none; border: none; box-shadow: none;
+    font-weight: bold; font-size: 12px; white-space: nowrap;
+    color: #000;
+}
+.tracker-marker { background: none !important; border: none !important; box-shadow: none !important; }
 
 .coord-popup .leaflet-popup-content-wrapper { padding: 0; border-radius: 6px; }
 .coord-popup .leaflet-popup-content { margin: 0; }
@@ -442,6 +457,32 @@ body { display: flex; }
     border-bottom: 1px solid #f8f8f8;
 }
 .clients-none { color: #aaa; font-style: italic; }
+
+/* ── Connection modal ──────────────────────────────────────────────────── */
+#conn-modal {
+    position: fixed; inset: 0; z-index: 10000;
+    display: flex; align-items: center; justify-content: center;
+}
+#conn-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+#conn-box {
+    position: relative; background: #fff; border-radius: 8px;
+    padding: 18px 22px; min-width: 260px;
+    box-shadow: 0 4px 24px rgba(0,0,0,.35); z-index: 1;
+    font-family: arial, helvetica, sans-serif; font-size: 13px;
+}
+#conn-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 14px; font-size: 14px; font-weight: bold;
+}
+#conn-close {
+    background: none; border: none; font-size: 20px; line-height: 1;
+    cursor: pointer; color: #888; padding: 0 2px;
+}
+#conn-close:hover { color: #000; }
+.conn-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid #f0f0f0; gap: 16px; }
+.conn-row:last-child { border-bottom: none; }
+.conn-label { color: #666; white-space: nowrap; }
+.conn-value { font-family: monospace; font-size: 13px; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -542,6 +583,18 @@ body { display: flex; }
 	</div>
 </div>
 
+<div id="conn-modal" style="display:none">
+	<div id="conn-backdrop"></div>
+	<div id="conn-box">
+		<div id="conn-header">
+			<span>Connection</span>
+			<button id="conn-close">&times;</button>
+		</div>
+		<div class="conn-row"><span class="conn-label">Client</span><span id="conn-client" class="conn-value"></span></div>
+		<div class="conn-row"><span class="conn-label">Server</span><span id="conn-server" class="conn-value"></span></div>
+	</div>
+</div>
+
 <script>
 'use strict';
 
@@ -550,12 +603,15 @@ const isMobile = window.matchMedia('(max-width: 767px)').matches ||
 
 // ── Map init ──────────────────────────────────────────────────────────────
 let defaultView = { lat: <?= $_lat ?>, lon: <?= $_lon ?>, zoom: <?= $_zoom ?> };
+const clientIp = '<?= htmlspecialchars($_clientIp) ?>';
+const serverIp = '<?= htmlspecialchars($_serverIp) ?>';
 let mapViewInitialized = true;
 
 const map = L.map('map', { zoomControl: !isMobile })
 	.setView([defaultView.lat, defaultView.lon], defaultView.zoom);
 
 if (isMobile) L.control.zoom({ position: 'topright' }).addTo(map);
+if (!isMobile) L.control.scale({ position: 'bottomright', imperial: true, metric: false }).addTo(map);
 
 map.createPane('trackerPane');
 map.getPane('trackerPane').style.zIndex = 450;
@@ -593,9 +649,17 @@ new (L.Control.extend({
 			L.DomEvent.on(exitBtn, 'click', () => { location.href = location.pathname; });
 			L.DomEvent.disableClickPropagation(exitBtn);
 			const txt = L.DomUtil.create('span', '', d);
-			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.4 beta &copy; 2026 Doug Kaye (K6DRK)';
+			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.5 beta &copy; 2026 Doug Kaye (K6DRK)';
 		} else {
 			if (!isMobile) {
+				const exitBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
+				exitBtn2.textContent = 'Exit';
+				L.DomEvent.on(exitBtn2, 'click', () => fetch('http://localhost:8080/exit').catch(() => {}));
+				L.DomEvent.disableClickPropagation(exitBtn2);
+				const connBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
+				connBtn2.textContent = 'IP';
+				L.DomEvent.on(connBtn2, 'click', openConnModal);
+				L.DomEvent.disableClickPropagation(connBtn2);
 				const clientsBtn = L.DomUtil.create('button', 'kiosk-footer-btn', d);
 				clientsBtn.textContent = 'Clients';
 				L.DomEvent.on(clientsBtn, 'click', openClientsModal);
@@ -603,8 +667,8 @@ new (L.Control.extend({
 			}
 			const ftxt = L.DomUtil.create('span', '', d);
 			ftxt.innerHTML = isMobile
-				? 'MARS APRS v1.4 beta &copy; 2026 Doug Kaye (K6DRK)'
-				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.4 beta &copy; 2026 Doug Kaye (K6DRK)';
+				? 'MARS APRS v1.5 beta &copy; 2026 Doug Kaye (K6DRK)'
+				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.5 beta &copy; 2026 Doug Kaye (K6DRK)';
 			if (isMobile) d.style.fontSize = '10px';
 		}
 		return d;
@@ -622,6 +686,17 @@ if (!isMobile) {
 	}))({ position: 'bottomleft' }).addTo(map);
 }
 
+let legendDiv;
+if (!isMobile) {
+	new (L.Control.extend({
+		onAdd() {
+			legendDiv = L.DomUtil.create('div', '');
+			legendDiv.style.cssText = 'font-size:13px;font-family:arial,helvetica,sans-serif;color:#000;padding:6px 10px;display:none;white-space:pre-line;line-height:1.5;pointer-events:none;max-width:260px;border:1px solid #000;background:rgba(255,255,255,0.15)';
+			return legendDiv;
+		}
+	}))({ position: 'bottomleft' }).addTo(map);
+}
+
 let currentBgUrl     = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 let currentTileLayer = L.tileLayer(currentBgUrl, {
 	attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -629,9 +704,9 @@ let currentTileLayer = L.tileLayer(currentBgUrl, {
 }).addTo(map);
 
 if (kiosk) {
-	document.getElementById('courses-section').style.display = 'none';
 	document.getElementById('backgrounds-section').style.display = 'none';
 	document.getElementById('sidebar-footer').style.display = 'none';
+	document.querySelectorAll('.section-toggle').forEach(el => el.style.display = 'none');
 	if (localStorage.getItem('aprs_kiosk_sidebar') === '0')
 		document.getElementById('sidebar').style.display = 'none';
 	document.documentElement.requestFullscreen().catch(() => {});
@@ -640,6 +715,7 @@ if (kiosk) {
 // ── State ─────────────────────────────────────────────────────────────────
 const markers              = {};
 const trackerPopups        = {};
+let   trackerStyle         = { icon: 'circle', size: 8, labelColor: '#000000' };
 const courseLayers         = {};
 const courseColors         = {};
 let   courseOrder          = [];
@@ -768,13 +844,58 @@ if (!isMobile) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
-function markerOptions(color) {
-	return {
-		radius: isMobile ? 9 : 8, color: '#333',
-		weight: isMobile ? 1.5 : 1,
-		fillColor: color, fillOpacity: isMobile ? 0.9 : 0.85,
-		pane: 'trackerPane'
-	};
+function makeTrackerIcon(shape, fillColor, size) {
+	const sz = Math.max(4, Math.min(20, size || 8));
+	const d = sz * 2, c = sz, r = sz - 1.5;
+	let inner;
+	switch (shape) {
+		case 'square':
+			inner = `<rect x="1.5" y="1.5" width="${d-3}" height="${d-3}"/>`;
+			break;
+		case 'diamond':
+			inner = `<polygon points="${c},1 ${d-1},${c} ${c},${d-1} 1,${c}"/>`;
+			break;
+		case 'triangle':
+			inner = `<polygon points="${c},1 ${d-1},${d-1} 1,${d-1}"/>`;
+			break;
+		case 'star': {
+			const pts = [];
+			for (let i = 0; i < 10; i++) {
+				const a  = (i * 36 - 90) * Math.PI / 180;
+				const rr = i % 2 === 0 ? r : r * 0.42;
+				pts.push(`${(c + rr * Math.cos(a)).toFixed(2)},${(c + rr * Math.sin(a)).toFixed(2)}`);
+			}
+			inner = `<polygon points="${pts.join(' ')}"/>`;
+			break;
+		}
+		case 'xmark': {
+			const hw = sz * 5 / 18, al = sz * 5 / 6, k = 0.7071;
+			const xp = (x, y) => (c + (x - y) * k).toFixed(1) + ',' + (c + (x + y) * k).toFixed(1);
+			inner = `<polygon points="${
+				[[-hw,-al],[hw,-al],[hw,-hw],[al,-hw],[al,hw],[hw,hw],[hw,al],[-hw,al],[-hw,hw],[-al,hw],[-al,-hw],[-hw,-hw]]
+				.map(([x, y]) => xp(x, y)).join(' ')}"/>`;
+			break;
+		}
+		case 'hexagon': {
+			const pts = [];
+			for (let i = 0; i < 6; i++) {
+				const a = (i * 60 - 90) * Math.PI / 180;
+				pts.push(`${(c + r * Math.cos(a)).toFixed(2)},${(c + r * Math.sin(a)).toFixed(2)}`);
+			}
+			inner = `<polygon points="${pts.join(' ')}"/>`;
+			break;
+		}
+		case 'person': {
+			const hr = Math.round(r * 0.38), hy = Math.round(sz * 0.35) + hr;
+			const by = hy + Math.round(hr * 1.3), bw = Math.round(r * 0.55);
+			inner = `<circle cx="${c}" cy="${hy}" r="${hr}"/><polygon points="${c},${by} ${c-bw},${d-1.5} ${c+bw},${d-1.5}"/>`;
+			break;
+		}
+		default:
+			inner = `<circle cx="${c}" cy="${c}" r="${r}"/>`;
+	}
+	const svg = `<svg width="${d}" height="${d}" xmlns="http://www.w3.org/2000/svg"><g fill="${fillColor}" stroke="#333" stroke-width="1.5" stroke-linejoin="round">${inner}</g></svg>`;
+	return L.divIcon({ html: svg, className: 'tracker-marker', iconSize: [d, d], iconAnchor: [sz, sz], popupAnchor: [0, -sz] });
 }
 
 function popupHtml(t) {
@@ -837,7 +958,7 @@ function clearAllSelections() {
 function setIgateTooltip(idx, permanent) {
 	const d = igateMarkers[idx]; if (!d) return;
 	d.m.unbindTooltip();
-	d.m.bindTooltip(d.name, { permanent, direction: 'right', className: 'tracker-label', offset: [8, 0] });
+	d.m.bindTooltip(d.name, { permanent, direction: 'right', className: 'place-label', offset: [8, 0] });
 }
 
 function onIgateClick(idx) {
@@ -866,7 +987,7 @@ function onIgateClick(idx) {
 function setAidTooltip(idx, permanent) {
 	const d = aidMarkers[idx]; if (!d) return;
 	d.m.unbindTooltip();
-	d.m.bindTooltip(d.name, { permanent, direction: 'right', className: 'tracker-label', offset: [8, 0] });
+	d.m.bindTooltip(d.name, { permanent, direction: 'right', className: 'place-label', offset: [8, 0] });
 }
 
 function onAidClick(idx) {
@@ -933,16 +1054,17 @@ function updateDesktopLegend(trackers) {
 
 	sorted.forEach(t => {
 		const hasPos = t.lat !== null && t.lon !== null;
+		const hasBeacon = t.lastUpdate > 0;
 		let item = document.getElementById('legend-' + t.callsign);
 		if (!item) {
 			item = document.createElement('div');
 			item.id = 'legend-' + t.callsign;
 			item.dataset.callsign = t.callsign;
-			item.className = 'legend-item' + (hasPos ? ' clickable' : '');
+			item.className = 'legend-item' + (hasBeacon ? ' clickable' : '');
 			item.innerHTML = `<span class="legend-dot"></span>`
 			               + `<span class="legend-text"><span class="legend-id">${t.id}</span> <span class="legend-name">${t.name}</span></span>`
 			               + `<span class="legend-time">${t.time}</span>`;
-			if (hasPos) item.addEventListener('click', () => onLegendClick(t.callsign));
+			if (hasBeacon) item.addEventListener('click', () => onLegendClick(t.callsign));
 			legend.appendChild(item);
 		}
 		const color = t.color || 'red';
@@ -951,7 +1073,7 @@ function updateDesktopLegend(trackers) {
 		item.querySelector('.legend-id').textContent        = t.id;
 		item.querySelector('.legend-name').textContent      = t.name;
 		item.querySelector('.legend-time').textContent      = t.time;
-		if (hasPos && !item.classList.contains('clickable')) {
+		if (hasBeacon && !item.classList.contains('clickable')) {
 			item.classList.add('clickable');
 			item.addEventListener('click', () => onLegendClick(t.callsign));
 		}
@@ -1020,14 +1142,16 @@ function updateMap() {
 			located.forEach(t => {
 				const latlng = [t.lat, t.lon];
 				const color  = t.color || 'red';
+				const sz     = trackerStyle.size;
+				const icon   = makeTrackerIcon(trackerStyle.icon, color, sz);
 				if (markers[t.callsign]) {
 					markers[t.callsign].setLatLng(latlng);
-					markers[t.callsign].setStyle(markerOptions(color));
+					markers[t.callsign].setIcon(icon);
 					if (trackerPopups[t.callsign]) trackerPopups[t.callsign].setContent(popupHtml(t));
-					markers[t.callsign].setTooltipContent(t.id);
+					markers[t.callsign].setTooltipContent(kiosk ? (t.name || t.id) : t.id);
 				} else {
-					const m = L.circleMarker(latlng, markerOptions(color)).addTo(map);
-					const popup = L.popup({ closeButton: isMobile, autoPan: false, offset: [0, isMobile ? -10 : -8] })
+					const m = L.marker(latlng, { icon, pane: 'trackerPane' }).addTo(map);
+					const popup = L.popup({ closeButton: isMobile, autoPan: false })
 						.setContent(popupHtml(t));
 					trackerPopups[t.callsign] = popup;
 					if (isMobile) {
@@ -1039,9 +1163,9 @@ function updateMap() {
 						m.on('mouseover', function() { popup.setLatLng(m.getLatLng()).openOn(map); });
 						m.on('mouseout',  function() { map.closePopup(popup); });
 					}
-					m.bindTooltip(t.id, {
+					m.bindTooltip(kiosk ? (t.name || t.id) : t.id, {
 						permanent: true, direction: 'right',
-						className: 'tracker-label', offset: [isMobile ? 10 : 8, 0]
+						className: 'tracker-label', offset: [sz + 2, 0]
 					});
 					markers[t.callsign] = m;
 				}
@@ -1064,13 +1188,28 @@ function loadConfig() {
 }
 
 function applyConfig(cfg) {
-	if (cfg.event !== undefined) applyEvent(cfg.event);
+	if (cfg.event          !== undefined) applyEvent(cfg.event);
+	if (cfg.legend         !== undefined) applyLegend(cfg.legend);
+	if (cfg.tracker_style  !== undefined) applyTrackerStyle(cfg.tracker_style);
 	if (cfg.map)         applyMapConfig(cfg.map);
 	if (cfg.trackers)    applyTrackerConfig(cfg.trackers);
 	if (cfg.backgrounds) applyBackgrounds(cfg.backgrounds);
 	if (cfg.courses)     applyCourses(cfg.courses);
 	if (cfg.aidstations) applyAidStations(cfg.aidstations);
 	if (cfg.igates)      applyIgates(cfg.igates);
+}
+
+function applyTrackerStyle(style) {
+	trackerStyle.icon       = style?.icon        || 'circle';
+	trackerStyle.size       = parseInt(style?.size) || 8;
+	trackerStyle.labelColor = style?.label_color || '#000000';
+	document.documentElement.style.setProperty('--tracker-label-color', trackerStyle.labelColor);
+}
+
+function applyLegend(text) {
+	if (!legendDiv) return;
+	legendDiv.textContent   = (kiosk && text) ? text : '';
+	legendDiv.style.display = (kiosk && text) ? '' : 'none';
 }
 
 function applyEvent(name) {
@@ -1276,7 +1415,7 @@ function applyCourses(courses) {
 	const section   = document.getElementById('courses-section');
 	const container = document.getElementById('courses');
 	if (!courses.length) { section.style.display = 'none'; return; }
-	section.style.display = kiosk ? 'none' : '';
+	section.style.display = '';
 	container.innerHTML = '';
 	const savedColors    = loadSavedColors();
 	const activeFiles    = loadActiveFiles();
@@ -1286,18 +1425,20 @@ function applyCourses(courses) {
 		else if (course.color) courseColors[course.file] = course.color;
 		else delete courseColors[course.file];
 		if (courseLayers[course.file]) setCourseStyle(course.file, courseColors[course.file] || DEFAULT_COURSE_COLOR);
-		if (kiosk) {
-			const shouldLoad = activeFiles === null || activeFiles.has(course.file);
-			if (shouldLoad) { if (!courseLayers[course.file]) loadCourseLayer(course.file); }
-			else { if (courseLayers[course.file]) { map.removeLayer(courseLayers[course.file]); delete courseLayers[course.file]; } }
-			return;
-		}
 		if (!wasInitialized) {
 			const shouldLoad = activeFiles === null || activeFiles.has(course.file);
 			if (shouldLoad) loadCourseLayer(course.file);
 		}
 		const color  = courseColors[course.file] || DEFAULT_COURSE_COLOR;
 		const active = !!courseLayers[course.file];
+		if (kiosk) {
+			if (!active) return;
+			const item   = document.createElement('div');  item.className = 'sidebar-item course-item';
+			const nameEl = document.createElement('span'); nameEl.className = 'course-name'; nameEl.textContent = course.name; nameEl.style.color = color;
+			item.appendChild(nameEl);
+			container.appendChild(item);
+			return;
+		}
 		const item   = document.createElement('div');   item.className = 'sidebar-item course-item';
 		const label  = document.createElement('label'); label.className = 'course-label'; label.title = 'Click to change color';
 		const nameEl = document.createElement('span');  nameEl.className = 'course-name'; nameEl.textContent = course.name; nameEl.style.color = color;
@@ -1333,7 +1474,7 @@ function applyIgates(igates) {
 	igateMarkers.forEach(d => d.m.remove());
 	igateMarkers = []; selectedIgateIdx = -1; igateClickCount = 0;
 
-	if (!igates || !igates.length) { section.style.display = 'none'; return; }
+	if (kiosk || !igates || !igates.length) { section.style.display = 'none'; return; }
 	section.style.display = '';
 	container.innerHTML = '';
 
@@ -1344,7 +1485,7 @@ function applyIgates(igates) {
 		const m = L.circleMarker(latlng, {
 			pane: 'igatePane', radius: isMobile ? 7 : 6, color: '#222', weight: 1.5, fillColor: '#111', fillOpacity: 0.9
 		}).addTo(map);
-		m.bindTooltip(g.name, { permanent: false, direction: 'right', className: 'tracker-label', offset: [8, 0] });
+		m.bindTooltip(g.name, { permanent: false, direction: 'right', className: 'place-label', offset: [8, 0] });
 
 		let item;
 		if (isMobile) {
@@ -1386,7 +1527,7 @@ function applyAidStations(stations) {
 		const m = L.circleMarker(latlng, {
 			pane: 'aidPane', radius: isMobile ? 7 : 6, color: '#222', weight: 1.5, fillColor: '#111', fillOpacity: 0.9
 		}).addTo(map);
-		m.bindTooltip(g.name, { permanent: false, direction: 'right', className: 'tracker-label', offset: [8, 0] });
+		m.bindTooltip(g.name, { permanent: kiosk, direction: 'right', className: 'place-label', offset: [8, 0] });
 
 		let item;
 		if (isMobile) {
@@ -1467,6 +1608,17 @@ document.getElementById('reset-map-btn').addEventListener('click', function() {
 window.addEventListener('pageshow', e => { if (e.persisted) location.reload(); });
 
 // ── Clients modal ────────────────────────────────────────────────────────────
+function openConnModal() {
+	document.getElementById('conn-client').textContent = clientIp;
+	document.getElementById('conn-server').textContent = serverIp;
+	document.getElementById('conn-modal').style.display = 'flex';
+}
+function closeConnModal() {
+	document.getElementById('conn-modal').style.display = 'none';
+}
+document.getElementById('conn-close').addEventListener('click', closeConnModal);
+document.getElementById('conn-backdrop').addEventListener('click', closeConnModal);
+
 function openClientsModal() {
 	document.getElementById('clients-modal').style.display = 'flex';
 	fetchClients();

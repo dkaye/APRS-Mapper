@@ -24,7 +24,7 @@
  * Missing sections default to null (map) or [] (lists).
  */
 function parseConfigYaml($filename) {
-	$result = ['event' => '', 'map' => null, 'trackers' => [], 'backgrounds' => [], 'courses' => [], 'aidstations' => [], 'igates' => []];
+	$result = ['event' => '', 'legend' => '', 'tracker_style' => [], 'map' => null, 'trackers' => [], 'backgrounds' => [], 'courses' => [], 'aidstations' => [], 'igates' => []];
 	if (!file_exists($filename)) return $result;
 
 	$lines   = file($filename, FILE_IGNORE_NEW_LINES);
@@ -41,12 +41,13 @@ function parseConfigYaml($filename) {
 			$value = trim($m[2]);
 			if ($value === '') {
 				// Section header
-				if ($item !== null && $section !== null && $section !== 'map') {
+				if ($item !== null && $section !== null && $section !== 'map' && $section !== 'tracker_style') {
 					$result[$section][] = $item;
 					$item = null;
 				}
 				$section = $m[1];
 				if ($section === 'map') $result['map'] = [];
+				elseif ($section === 'tracker_style') $result['tracker_style'] = [];
 			} else {
 				// Top-level scalar (e.g. event: My Race 2026)
 				$result[$m[1]] = yamlScalar($value);
@@ -67,8 +68,8 @@ function parseConfigYaml($filename) {
 		if (preg_match('/^\s+(\w+)\s*:\s*(.*)$/', $line, $m)) {
 			$k = trim($m[1]);
 			$v = yamlScalar(trim($m[2]));
-			if ($section === 'map') {
-				$result['map'][$k] = $v;
+			if ($section === 'map' || $section === 'tracker_style') {
+				$result[$section][$k] = $v;
 			} elseif ($item !== null) {
 				$item[$k] = $v;
 			}
@@ -77,7 +78,7 @@ function parseConfigYaml($filename) {
 	}
 
 	// Flush last open list item
-	if ($item !== null && $section !== null && $section !== 'map') {
+	if ($item !== null && $section !== null && $section !== 'map' && $section !== 'tracker_style') {
 		$result[$section][] = $item;
 	}
 
@@ -89,14 +90,16 @@ function parseConfigYaml($filename) {
  */
 function yamlScalar($str) {
 	if ($str === '') return '';
-	// Strip surrounding quotes
 	if (strlen($str) >= 2) {
 		$q = $str[0];
-		if (($q === '"' || $q === "'") && $str[-1] === $q) {
+		if ($q === '"' && $str[-1] === $q) {
+			$inner = substr($str, 1, -1);
+			return str_replace(['\\n', '\\"', '\\\\'], ["\n", '"', '\\'], $inner);
+		}
+		if ($q === "'" && $str[-1] === $q) {
 			return substr($str, 1, -1);
 		}
 	}
-	// Numeric
 	if (is_numeric($str)) return $str + 0;
 	return $str;
 }

@@ -22,7 +22,16 @@ session_start();
 
 $configPath   = __DIR__ . '/../config.yaml';
 $passwordFile = __DIR__ . '/password.txt';
-$versionsDir  = __DIR__ . '/../configs';	// named config snapshots live here
+$eventsDir    = __DIR__ . '/../events';    // event directories live here
+
+// Determine current active event directory (from symlink target)
+$currentEventDir = null;
+if (is_link($configPath)) {
+	$target = readlink($configPath);
+	if ($target && preg_match('|^events/([^/]+)/event\.yaml$|', $target, $m)) {
+		$currentEventDir = $eventsDir . '/' . $m[1];
+	}
+}
 
 // ── Authentication ────────────────────────────────────────────────────────────
 
@@ -52,7 +61,7 @@ $authed = isset($_SESSION['aprs_admin_authed']) && $_SESSION['aprs_admin_authed'
 
 if (!$authed) {
     // AJAX endpoints return 401 JSON; all other requests get the login form
-    if (isset($_GET['load']) || isset($_GET['save']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile'])) {
+    if (isset($_GET['load']) || isset($_GET['save']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib'])) {
         header('Content-Type: application/json');
         http_response_code(401);
         echo json_encode(['error' => 'Session expired — reload and log in again']);
@@ -129,13 +138,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['save'])) {
     exit;
 }
 
-// ── AJAX: list saved versions ─────────────────────────────────────────────────
+// ── AJAX: list events ────────────────────────────────────────────────────────
 
 if (isset($_GET['versions'])) {
     $list = [];
-    if (is_dir($versionsDir)) {
-        foreach (glob($versionsDir . '/*.yaml') ?: [] as $f) {
-            $list[] = ['name' => basename($f, '.yaml'), 'mtime' => filemtime($f)];
+    if (is_dir($eventsDir)) {
+        foreach (glob($eventsDir . '/*/event.yaml') ?: [] as $f) {
+            $eventName = basename(dirname($f));
+            $list[] = ['name' => $eventName, 'mtime' => filemtime($f), 'active' => ($currentEventDir && realpath($currentEventDir) === realpath(dirname($f)))];
         }
     }
     usort($list, fn($a, $b) => $b['mtime'] <=> $a['mtime']);
@@ -144,7 +154,7 @@ if (isset($_GET['versions'])) {
     exit;
 }
 
-// ── AJAX: save a named version ────────────────────────────────────────────────
+// ── AJAX: save a named event ─────────────────────────────────────────────────
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveversion'])) {
     header('Content-Type: application/json');
@@ -153,34 +163,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveversion'])) {
     if (!is_array($data) || !isset($data['name']) || !isset($data['cfg'])) {
         http_response_code(400); echo json_encode(['error' => 'Invalid request']); exit;
     }
-    $name = trim($data['name']);
-    if (!preg_match('/^[a-zA-Z0-9 _\-\.]{1,80}$/', $name)) {
+    $eventName = trim($data['name']);
+    if (!preg_match('/^[a-zA-Z0-9 _\-\.]{1,80}$/', $eventName)) {
         http_response_code(400); echo json_encode(['error' => 'Name may only contain letters, numbers, spaces, hyphens, underscores, periods (max 80 chars)']); exit;
     }
-    if (!is_dir($versionsDir)) mkdir($versionsDir, 0755, true);
-    $path     = $versionsDir . '/' . $name . '.yaml';
+    $eventPath = $eventsDir . '/' . $eventName;
+    if (!is_dir($eventPath)) mkdir($eventPath, 0755, true);
+
+    // Update course paths in the config to point to events/<eventName>/...
+    $cfg = $data['cfg'];
+    foreach (($cfg['courses'] ?? []) as $i => $c) {
+        if (isset($c['file']) && preg_match('|^events/[^/]+/(.+)$|', $c['file'], $m)) {
+            $cfg['courses'][$i]['file'] = 'events/' . $eventName . '/' . $m[1];
+        }
+    }
+
+    $path     = $eventPath . '/event.yaml';
     $existing = file_exists($path) ? file_get_contents($path) : '';
     $history  = extractHistory($existing);
     array_unshift($history, gmdate('Y-m-d H:i:s') . ' UTC');
-    $yaml = buildConfigYaml($data['cfg'], $history);
+    $yaml = buildConfigYaml($cfg, $history);
     if (file_put_contents($path, $yaml, LOCK_EX) === false) {
-        http_response_code(500); echo json_encode(['error' => 'Cannot write version file — check permissions']); exit;
+        http_response_code(500); echo json_encode(['error' => 'Cannot write event file — check permissions']); exit;
     }
     echo json_encode(['ok' => true]);
     exit;
 }
 
-// ── AJAX: load a named version ────────────────────────────────────────────────
+// ── AJAX: load a named event ──────────────────────────────────────────────────
 
 if (isset($_GET['loadversion'])) {
     header('Content-Type: application/json');
-    $name = trim($_GET['name'] ?? '');
-    if (!preg_match('/^[a-zA-Z0-9 _\-\.]{1,80}$/', $name)) {
+    $eventName = trim($_GET['name'] ?? '');
+    if (!preg_match('/^[a-zA-Z0-9 _\-\.]{1,80}$/', $eventName)) {
         http_response_code(400); echo json_encode(['error' => 'Invalid name']); exit;
     }
-    $path = $versionsDir . '/' . $name . '.yaml';
+    $path = $eventsDir . '/' . $eventName . '/event.yaml';
     if (!file_exists($path)) {
-        http_response_code(404); echo json_encode(['error' => 'Version not found']); exit;
+        http_response_code(404); echo json_encode(['error' => 'Event not found']); exit;
     }
     require_once __DIR__ . '/../config_parse.php';
     $cfg = parseConfigYaml($path);
@@ -212,17 +232,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['deleteversion'])) {
     exit;
 }
 
-// ── AJAX: list location files ─────────────────────────────────────────────────
+// ── AJAX: list location files in current event ────────────────────────────────
 
 if (isset($_GET['locationfiles'])) {
     header('Content-Type: application/json');
     $exts  = ['gpx', 'kml', 'geojson', 'json'];
     $files = [];
-    if (is_dir($versionsDir)) {
-        foreach (glob($versionsDir . '/*') ?: [] as $f) {
+    if ($currentEventDir && is_dir($currentEventDir)) {
+        foreach (glob($currentEventDir . '/*') ?: [] as $f) {
             $ext = strtolower(pathinfo($f, PATHINFO_EXTENSION));
             if (in_array($ext, $exts, true) && is_file($f)) {
-                $files[] = ['path' => 'configs/' . basename($f), 'mtime' => filemtime($f)];
+                $eventName = basename($currentEventDir);
+                $files[] = ['path' => 'events/' . $eventName . '/' . basename($f), 'mtime' => filemtime($f)];
             }
         }
     }
@@ -248,22 +269,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['upload'])) {
         echo json_encode(['error' => 'Unsupported file type — use .gpx, .kml, .geojson, or .json']);
         exit;
     }
+    if (!$currentEventDir) {
+        http_response_code(400);
+        echo json_encode(['error' => 'No active event — cannot upload file']);
+        exit;
+    }
     $safeName = preg_replace('/[^a-zA-Z0-9_\-\.]/', '_', $origName);
-    if (!is_dir($versionsDir)) mkdir($versionsDir, 0755, true);
-    $dest = $versionsDir . '/' . $safeName;
+    if (!is_dir($currentEventDir)) mkdir($currentEventDir, 0755, true);
+    $dest = $currentEventDir . '/' . $safeName;
     if (!move_uploaded_file($_FILES['file']['tmp_name'], $dest)) {
         http_response_code(500);
         echo json_encode(['error' => 'Could not save file — check directory permissions']);
         exit;
     }
-    echo json_encode(['ok' => true, 'file' => 'configs/' . $safeName]);
+    $eventName = basename($currentEventDir);
+    echo json_encode(['ok' => true, 'file' => 'events/' . $eventName . '/' . $safeName]);
     exit;
 }
 
-// ── AJAX: rename a location file ─────────────────────────────────────────────
+// ── AJAX: rename a location file in current event ───────────────────────────
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['renamefile'])) {
     header('Content-Type: application/json');
+    if (!$currentEventDir) {
+        http_response_code(400); echo json_encode(['error' => 'No active event']); exit;
+    }
     $body    = file_get_contents('php://input');
     $data    = json_decode($body, true);
     $oldName = basename(trim($data['oldName'] ?? ''));
@@ -276,8 +306,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['renamefile'])) {
     if (!in_array(strtolower(pathinfo($newName, PATHINFO_EXTENSION)), $locExts, true)) {
         http_response_code(400); echo json_encode(['error' => 'Extension must be .gpx, .kml, .geojson, or .json']); exit;
     }
-    $oldPath = $versionsDir . '/' . $oldName;
-    $newPath = $versionsDir . '/' . $newName;
+    $oldPath = $currentEventDir . '/' . $oldName;
+    $newPath = $currentEventDir . '/' . $newName;
     if (!file_exists($oldPath)) {
         http_response_code(404); echo json_encode(['error' => 'File not found']); exit;
     }
@@ -287,7 +317,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['renamefile'])) {
     if (!rename($oldPath, $newPath)) {
         http_response_code(500); echo json_encode(['error' => 'Rename failed — check permissions']); exit;
     }
-    echo json_encode(['ok' => true, 'oldFile' => 'configs/' . $oldName, 'newFile' => 'configs/' . $newName]);
+    $eventName = basename($currentEventDir);
+    echo json_encode(['ok' => true, 'oldFile' => 'events/' . $eventName . '/' . $oldName, 'newFile' => 'events/' . $eventName . '/' . $newName]);
     exit;
 }
 
@@ -295,6 +326,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['renamefile'])) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['deletefile'])) {
     header('Content-Type: application/json');
+    if (!$currentEventDir) {
+        http_response_code(400); echo json_encode(['error' => 'No active event']); exit;
+    }
     $body = file_get_contents('php://input');
     $data = json_decode($body, true);
     $name = basename(trim($data['name'] ?? ''));
@@ -304,7 +338,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['deletefile'])) {
     if (!in_array(strtolower(pathinfo($name, PATHINFO_EXTENSION)), ['gpx', 'kml', 'geojson', 'json'], true)) {
         http_response_code(400); echo json_encode(['error' => 'Not a location file']); exit;
     }
-    $path = $versionsDir . '/' . $name;
+    $path = $currentEventDir . '/' . $name;
     if (!file_exists($path)) {
         http_response_code(404); echo json_encode(['error' => 'File not found']); exit;
     }
@@ -312,6 +346,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['deletefile'])) {
         http_response_code(500); echo json_encode(['error' => 'Delete failed — check permissions']); exit;
     }
     echo json_encode(['ok' => true]);
+    exit;
+}
+
+// ── AJAX: set active event ────────────────────────────────────────────────────
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['setactiveevent'])) {
+    header('Content-Type: application/json');
+    $body = file_get_contents('php://input');
+    $data = json_decode($body, true);
+    $eventName = trim($data['name'] ?? '');
+    if (!preg_match('/^[a-zA-Z0-9 _\-\.]{1,80}$/', $eventName)) {
+        http_response_code(400); echo json_encode(['error' => 'Invalid event name']); exit;
+    }
+    $eventPath = $eventsDir . '/' . $eventName . '/event.yaml';
+    if (!file_exists($eventPath)) {
+        http_response_code(404); echo json_encode(['error' => 'Event not found']); exit;
+    }
+    // Remove old symlink and create new one
+    if (file_exists($configPath) || is_link($configPath)) {
+        if (!unlink($configPath)) {
+            http_response_code(500); echo json_encode(['error' => 'Cannot update symlink — check permissions']); exit;
+        }
+    }
+    $targetPath = 'events/' . $eventName . '/event.yaml';
+    if (!symlink($targetPath, $configPath)) {
+        http_response_code(500); echo json_encode(['error' => 'Cannot create symlink — check permissions']); exit;
+    }
+    // Touch the symlink target so the daemon reloads config
+    touch(realpath($configPath));
+    echo json_encode(['ok' => true]);
+    exit;
+}
+
+// ── AJAX: background library ──────────────────────────────────────────────────
+
+if (isset($_GET['bglib'])) {
+    header('Content-Type: application/json');
+    require_once __DIR__ . '/../config_parse.php';
+    $seen = [];
+    $bgs  = [];
+    $scan = array_merge(
+        glob($versionsDir . '/*.yaml') ?: [],
+        file_exists($configPath) ? [$configPath] : []
+    );
+    foreach ($scan as $f) {
+        foreach (parseConfigYaml($f)['backgrounds'] ?? [] as $b) {
+            $key = trim($b['url'] ?? '');
+            if ($key && !isset($seen[$key])) {
+                $seen[$key] = true;
+                $bgs[] = ['name' => $b['name'] ?? '', 'url' => $key, 'attribution' => $b['attribution'] ?? ''];
+            }
+        }
+    }
+    usort($bgs, fn($a, $b) => strcmp($a['name'], $b['name']));
+    echo json_encode($bgs);
     exit;
 }
 
@@ -352,12 +441,20 @@ body {
     font-size: 14px; font-family: inherit;
 }
 .field input:focus { outline: none; border-color: #2980b9; }
+.btn-row { display: flex; gap: 10px; margin-top: 4px; }
 .submit-btn {
-    width: 100%; padding: 9px; background: #2980b9; color: #fff;
+    flex: 1; padding: 9px; background: #2980b9; color: #fff;
     border: none; border-radius: 4px; font-size: 14px;
     font-weight: bold; cursor: pointer;
 }
 .submit-btn:hover { background: #1f6da0; }
+.cancel-btn {
+    flex: 1; padding: 9px; background: #f0f0f0; color: #555;
+    border: 1px solid #ccc; border-radius: 4px; font-size: 14px;
+    font-weight: bold; cursor: pointer; text-decoration: none;
+    text-align: center;
+}
+.cancel-btn:hover { background: #e0e0e0; }
 .error {
     background: #fff0f0; border: 1px solid #f5c6c6; border-radius: 4px;
     padding: 8px 12px; color: #c0392b; font-size: 13px; margin-bottom: 14px;
@@ -377,7 +474,10 @@ body {
                 <label for="pw">Password</label>
                 <input type="password" id="pw" name="pw" autofocus autocomplete="current-password">
             </div>
-            <button type="submit" class="submit-btn">Sign In</button>
+            <div class="btn-row">
+                <button type="submit" class="submit-btn">Sign In</button>
+                <a href="../" class="cancel-btn">Cancel</a>
+            </div>
         </form>
     </div>
 </div>
@@ -424,6 +524,13 @@ function buildConfigYaml($cfg, $history = []) {
         $L[] = 'event: ' . ys($event);
         $L[] = '';
     }
+    $legend = trim($cfg['legend'] ?? '');
+    if ($legend !== '') {
+        $L[] = '# ── Legend ────────────────────────────────────────────────────────────────────';
+        $L[] = '# Multi-line text displayed in the lower-left corner of the map.';
+        $L[] = 'legend: ' . ym($legend);
+        $L[] = '';
+    }
     $L[] = '# ── Trackers ──────────────────────────────────────────────────────────────────';
     $L[] = '# One entry per tracked callsign.';
     $L[] = '#   callsign : APRS callsign (e.g. W6SG-4)';
@@ -435,6 +542,17 @@ function buildConfigYaml($cfg, $history = []) {
         $L[] = '    id: '       . ys($t['id']       ?? '');
         $L[] = '    name: '     . ys($t['name']     ?? '');
     }
+    $L[] = '';
+    $style = $cfg['tracker_style'] ?? [];
+    $L[] = '# ── Tracker style ─────────────────────────────────────────────────────────────';
+    $L[] = '# Controls the appearance of all tracker markers on the map.';
+    $L[] = '#   icon        : marker shape — circle, square, diamond, triangle, star, cross, person';
+    $L[] = '#   size        : marker radius in pixels, 4–20 (default: 8)';
+    $L[] = '#   label_color : hex color for the name/id label on the map (default: #000000)';
+    $L[] = 'tracker_style:';
+    $L[] = '  icon: '        . ys(trim($style['icon']        ?? 'circle') ?: 'circle');
+    $L[] = '  size: '        . max(4, min(20, (int)($style['size'] ?? 8)));
+    $L[] = '  label_color: ' . ys($style['label_color'] ?? '#000000');
     $L[] = '';
     $L[] = '# ── Map default view ──────────────────────────────────────────────────────────';
     $L[] = '# Sets the map center and zoom at page load and after second-clicking a tracker.';
@@ -497,6 +615,14 @@ function buildConfigYaml($cfg, $history = []) {
     }
     $L[] = '';
     return implode("\n", $L);
+}
+
+// Multi-line string: encode newlines as \n in a double-quoted YAML scalar
+function ym($v) {
+    $v = (string)$v;
+    if ($v === '') return "''";
+    $escaped = str_replace(['\\', '"', "\r", "\n"], ['\\\\', '\\"', '', '\\n'], $v);
+    return '"' . $escaped . '"';
 }
 
 // Bare YAML scalar; double-quotes only when the value requires it
@@ -600,6 +726,16 @@ input.field-error:focus { border-color: #e74c3c !important; }
 input[type=number]::-webkit-inner-spin-button,
 input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+
+/* ── Icon picker ── */
+.icon-picker { display: flex; gap: 3px; align-items: center; flex-wrap: wrap; }
+.icon-btn {
+    background: #fff; border: 1px solid #ccc; border-radius: 3px;
+    padding: 2px; cursor: pointer; display: inline-flex; align-items: center;
+    transition: border-color .15s, background .15s; line-height: 0;
+}
+.icon-btn:hover  { border-color: #2980b9; }
+.icon-btn.active { border-color: #2980b9; background: #ddeeff; }
 
 /* ── Delete button ── */
 .del-btn {
@@ -783,12 +919,48 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
         </div>
     </div>
 
+    <!-- ── Legend ── -->
+    <div class="section">
+        <div class="sec-title">Legend</div>
+        <div class="sec-body">
+            <div class="map-field" style="width:100%;max-width:500px">
+                <label for="f-legend">Map Legend Text</label>
+                <textarea id="f-legend" rows="6" style="width:100%;font-family:arial,helvetica,sans-serif;font-size:14px;resize:vertical" placeholder="Text displayed in the lower-left corner of the map." oninput="markDirty()"></textarea>
+            </div>
+        </div>
+    </div>
+
     <!-- ── Trackers ── -->
     <div class="section">
         <div class="sec-title">Trackers</div>
         <div class="sec-body">
             <div id="trackers-list"></div>
             <button class="add-btn" onclick="addTracker()">+ Add Tracker</button>
+        </div>
+    </div>
+
+    <!-- ── Tracker Style ── -->
+    <div class="section">
+        <div class="sec-title">Tracker Style</div>
+        <div class="sec-body">
+            <div style="display:flex;align-items:flex-end;gap:24px;flex-wrap:wrap">
+                <div class="field-label">
+                    <span>Icon</span>
+                    <div class="icon-picker" id="tracker-icon-picker"></div>
+                    <input type="hidden" id="f-tracker-icon" value="circle">
+                </div>
+                <div class="field-label">
+                    <span>Label Color</span>
+                    <input type="color" id="f-tracker-label-color" value="#000000"
+                        style="width:36px;height:28px;padding:1px;border:1px solid #555;border-radius:3px;cursor:pointer;background:none;display:block"
+                        oninput="markDirty()">
+                </div>
+                <div class="field-label">
+                    <span>Size (px)</span>
+                    <input type="number" id="f-tracker-size" value="8" min="4" max="20"
+                        style="width:52px" oninput="markDirty()">
+                </div>
+            </div>
         </div>
     </div>
 
@@ -861,7 +1033,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
     </div>
 </div>
 
-<div id="page-footer">MARS APRS Map Admin v1.4 beta &copy; 2026 Doug Kaye (K6DRK)</div>
+<div id="page-footer">MARS APRS Map Admin v1.5 beta &copy; 2026 Doug Kaye (K6DRK)</div>
 
 <script>
 'use strict';
@@ -974,6 +1146,17 @@ function fieldLabel(labelText, cls, value, width, extra) {
 
 // ── Tracker rows ──────────────────────────────────────────────────────────────
 
+const TRACKER_ICONS = [
+    { id: 'circle',   label: 'Circle',   path: '<circle cx="9" cy="9" r="7.5"/>' },
+    { id: 'square',   label: 'Square',   path: '<rect x="1.5" y="1.5" width="15" height="15"/>' },
+    { id: 'diamond',  label: 'Diamond',  path: '<polygon points="9,1 17,9 9,17 1,9"/>' },
+    { id: 'triangle', label: 'Triangle', path: '<polygon points="9,1 17,17 1,17"/>' },
+    { id: 'xmark',    label: 'X-Mark',   path: '<polygon points="12.5,2 16,5.5 12.5,9 16,12.5 12.5,16 9,12.5 5.5,16 2,12.5 5.5,9 2,5.5 5.5,2 9,5.5"/>' },
+    { id: 'star',     label: 'Star',     path: '<polygon points="9,1 10.8,6.6 16.6,6.5 11.9,9.9 13.7,15.5 9,12 4.3,15.5 6.1,9.9 1.4,6.5 7.2,6.6"/>' },
+    { id: 'hexagon',  label: 'Hexagon',  path: '<polygon points="9,1.5 15.5,5.25 15.5,12.75 9,16.5 2.5,12.75 2.5,5.25"/>' },
+    { id: 'person',   label: 'Person',   path: '<circle cx="9" cy="6" r="3"/><polygon points="9,10 5,16.5 13,16.5"/>' },
+];
+
 function buildTrackerRow(t) {
     const row     = document.createElement('div');
     row.className = 'list-row';
@@ -989,6 +1172,30 @@ function buildTrackerRow(t) {
     return row;
 }
 
+// ── Tracker style (global) ────────────────────────────────────────────────────
+
+function initTrackerStyleSection(style) {
+    const picker = document.getElementById('tracker-icon-picker');
+    picker.innerHTML = '';
+    const cur = style?.icon || 'circle';
+    TRACKER_ICONS.forEach(ic => {
+        const btn = document.createElement('button');
+        btn.type = 'button'; btn.title = ic.label; btn.dataset.icon = ic.id;
+        btn.className = 'icon-btn' + (cur === ic.id ? ' active' : '');
+        btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg"><g fill="#444" stroke="#222" stroke-width="1.2" stroke-linejoin="round">${ic.path}</g></svg>`;
+        btn.addEventListener('click', () => {
+            picker.querySelectorAll('.icon-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById('f-tracker-icon').value = ic.id;
+            markDirty();
+        });
+        picker.appendChild(btn);
+    });
+    document.getElementById('f-tracker-icon').value       = cur;
+    document.getElementById('f-tracker-label-color').value = style?.label_color || '#000000';
+    document.getElementById('f-tracker-size').value        = style?.size        || 8;
+}
+
 function appendTracker(t, attach) {
     const row = buildTrackerRow(t);
     document.getElementById('trackers-list').appendChild(row);
@@ -996,6 +1203,26 @@ function appendTracker(t, attach) {
 }
 
 function addTracker() { appendTracker({}, dragAdder['trackers-list']); markDirty(); }
+
+// ── Background library ────────────────────────────────────────────────────────
+
+const BG_DEFAULTS = [
+    { name: 'CartoDB Dark',        url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>' },
+    { name: 'CartoDB Light',       url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>' },
+    { name: 'Esri World Imagery',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',  attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics' },
+    { name: 'Esri World Topo',     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles &copy; Esri &mdash; Source: Esri, USGS, NOAA' },
+    { name: 'OpenStreetMap',       url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',              attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' },
+    { name: 'OpenTopoMap',         url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',                attribution: '&copy; <a href="https://opentopomap.org">OpenTopoMap</a> contributors' },
+    { name: 'USGS US Topo',        url: 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles courtesy of the <a href="https://usgs.gov/">U.S. Geological Survey</a>' },
+];
+
+let bgLibrary = [...BG_DEFAULTS];
+
+function mergeBgLibrary(serverBgs) {
+    const seen = new Set(serverBgs.map(b => b.url));
+    bgLibrary = [...serverBgs];
+    BG_DEFAULTS.forEach(b => { if (!seen.has(b.url)) bgLibrary.push(b); });
+}
 
 // ── Background rows ───────────────────────────────────────────────────────────
 
@@ -1032,7 +1259,45 @@ function appendBg(b, attach) {
     if (attach) attach(row);
 }
 
-function addBackground() { appendBg({}, dragAdder['backgrounds-list']); markDirty(); }
+function addBackground() {
+    const body = document.createElement('div');
+
+    const listLbl = document.createElement('div');
+    listLbl.className = 'modal-list-label';
+    listLbl.textContent = 'Select a tile provider:';
+    body.appendChild(listLbl);
+
+    const list = document.createElement('div');
+    list.className = 'modal-list';
+    let close;
+
+    bgLibrary.forEach(bg => {
+        const item = document.createElement('div');
+        item.className = 'modal-list-item';
+        const nameEl = document.createElement('span'); nameEl.className = 'item-name'; nameEl.textContent = bg.name;
+        item.appendChild(nameEl);
+        item.addEventListener('click', () => { appendBg(bg, dragAdder['backgrounds-list']); markDirty(); close(); });
+        list.appendChild(item);
+    });
+
+    const customItem = document.createElement('div');
+    customItem.className = 'modal-list-item';
+    const customSpan = document.createElement('span');
+    customSpan.className = 'item-name';
+    customSpan.style.cssText = 'font-style:italic;color:#2980b9';
+    customSpan.textContent = 'Custom URL…';
+    customItem.appendChild(customSpan);
+    customItem.addEventListener('click', () => { appendBg({}, dragAdder['backgrounds-list']); markDirty(); close(); });
+    list.appendChild(customItem);
+
+    body.appendChild(list);
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'modal-cancel-btn';
+    cancelBtn.textContent = 'Cancel';
+    close = openModal('Add Background', body, [cancelBtn]);
+    cancelBtn.addEventListener('click', close);
+}
 
 // ── Location files ────────────────────────────────────────────────────────────
 
@@ -1218,7 +1483,7 @@ async function doManageLocationFiles() {
     // File list
     const listLabel = document.createElement('div');
     listLabel.className = 'lf-section-label';
-    listLabel.textContent = 'Files in configs/';
+    listLabel.textContent = 'Course files in current event';
     body.appendChild(listLabel);
 
     const listWrap = document.createElement('div');
@@ -1460,6 +1725,12 @@ function collectConfig() {
         });
     });
 
+    const tracker_style = {
+        icon:        document.getElementById('f-tracker-icon').value || 'circle',
+        size:        parseInt(document.getElementById('f-tracker-size').value) || 8,
+        label_color: document.getElementById('f-tracker-label-color').value
+    };
+
     const map = {
         lat:  parseFloat(document.getElementById('map-lat').value),
         lon:  parseFloat(document.getElementById('map-lon').value),
@@ -1504,13 +1775,15 @@ function collectConfig() {
         });
     });
 
-    return { event: document.getElementById('f-event').value.trim(), trackers, map, backgrounds, courses, aidstations, igates };
+    return { event: document.getElementById('f-event').value.trim(), legend: document.getElementById('f-legend').value, tracker_style, trackers, map, backgrounds, courses, aidstations, igates };
 }
 
 // ── Populate form from a config object ───────────────────────────────────────
 
 function populateForm(cfg) {
-    document.getElementById('f-event').value = cfg.event || '';
+    document.getElementById('f-event').value  = cfg.event  || '';
+    document.getElementById('f-legend').value = cfg.legend || '';
+    initTrackerStyleSection(cfg.tracker_style || {});
 
     document.getElementById('trackers-list').innerHTML = '';
     (cfg.trackers || []).forEach(t => appendTracker(t));
@@ -1556,9 +1829,10 @@ function useCurrentMap() {
 
 async function doLoad() {
     try {
-        const [filesResp, cfgResp] = await Promise.all([fetch('?locationfiles'), fetch('?load')]);
+        const [filesResp, bgLibResp, cfgResp] = await Promise.all([fetch('?locationfiles'), fetch('?bglib'), fetch('?load')]);
         if (cfgResp.status === 401) { location.reload(); return; }
         if (filesResp.ok) locationFiles = await filesResp.json();
+        if (bgLibResp.ok) mergeBgLibrary(await bgLibResp.json());
         const cfg = await cfgResp.json();
         populateForm(cfg);
         isDirty = false;
@@ -1697,7 +1971,7 @@ async function doSaveAs() {
     if (versions.length) {
         const listLbl = document.createElement('div');
         listLbl.className = 'modal-list-label';
-        listLbl.textContent = 'Existing versions:';
+        listLbl.textContent = 'Existing events:';
         body.appendChild(listLbl);
 
         const list = document.createElement('div');
@@ -1714,12 +1988,12 @@ async function doSaveAs() {
 
     const saveBtn = document.createElement('button');
     saveBtn.className = 'save-btn';
-    saveBtn.textContent = 'Save';
+    saveBtn.textContent = 'Save as new event';
     const cancelBtn = document.createElement('button');
     cancelBtn.className = 'modal-cancel-btn';
     cancelBtn.textContent = 'Cancel';
 
-    const close = openModal('Save As…', body, [cancelBtn, saveBtn]);
+    const close = openModal('Save As New Event', body, [cancelBtn, saveBtn]);
     cancelBtn.addEventListener('click', close);
 
     const existingNames = new Set(versions.map(v => v.name));
@@ -1728,10 +2002,10 @@ async function doSaveAs() {
         if (existingNames.has(name)) {
             warn.textContent = `"${name}" already exists — saving will overwrite it.`;
             warn.style.display = '';
-            saveBtn.textContent = 'Overwrite';
+            saveBtn.textContent = 'Overwrite event';
         } else {
             warn.style.display = 'none';
-            saveBtn.textContent = 'Save';
+            saveBtn.textContent = 'Save as new event';
         }
     });
 
@@ -1799,20 +2073,72 @@ async function doLoadModal() {
     if (!versions.length) {
         const empty = document.createElement('div');
         empty.className = 'modal-empty';
-        empty.textContent = 'No saved versions yet.';
+        empty.textContent = 'No saved events yet.';
         list.appendChild(empty);
     }
 
     versions.forEach(v => {
         const row = document.createElement('div');
         row.className = 'modal-list-item';
-        const nameSpan = document.createElement('span'); nameSpan.className = 'item-name'; nameSpan.textContent = v.name;
-        const dateSpan = document.createElement('span'); dateSpan.className = 'item-date'; dateSpan.textContent = fmtDate(v.mtime);
-        const delBtn = document.createElement('button'); delBtn.className = 'item-del'; delBtn.textContent = '✕'; delBtn.title = 'Delete this version';
+        if (v.active) row.style.backgroundColor = '#e8f5e9';
+
+        const checkSpan = document.createElement('span');
+        checkSpan.textContent = v.active ? '✓ ' : '';
+        checkSpan.style.color = '#4caf50';
+        checkSpan.style.fontWeight = 'bold';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'item-name';
+        nameSpan.textContent = v.name;
+        if (v.active) nameSpan.style.fontWeight = 'bold';
+
+        const dateSpan = document.createElement('span');
+        dateSpan.className = 'item-date';
+        dateSpan.textContent = fmtDate(v.mtime);
+
+        const btnContainer = document.createElement('div');
+        btnContainer.style.display = 'flex'; btnContainer.style.gap = '4px';
+
+        const activateBtn = document.createElement('button');
+        activateBtn.className = 'item-action-btn';
+        activateBtn.textContent = v.active ? 'Active' : 'Activate';
+        activateBtn.disabled = v.active;
+        activateBtn.title = v.active ? 'This is the active event' : 'Make this the active event';
+        activateBtn.style.padding = '2px 8px';
+        activateBtn.style.fontSize = '12px';
+
+        activateBtn.addEventListener('click', async e => {
+            e.stopPropagation();
+            activateBtn.disabled = true;
+            try {
+                const r = await fetch('?setactiveevent', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: v.name })
+                });
+                const res = await r.json();
+                if (res.ok) {
+                    setStatus(`Activated event "${v.name}" ✓`, 'ok', 3000);
+                    location.reload();
+                } else {
+                    setStatus(res.error || 'Failed to activate event', 'error');
+                    activateBtn.disabled = v.active;
+                }
+            } catch (err) {
+                setStatus('Failed to activate event', 'error');
+                console.error(err);
+                activateBtn.disabled = v.active;
+            }
+        });
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'item-del';
+        delBtn.textContent = '✕';
+        delBtn.title = 'Delete this event';
 
         delBtn.addEventListener('click', async e => {
             e.stopPropagation();
-            if (!confirm(`Delete version "${v.name}"?`)) return;
+            if (!confirm(`Delete event "${v.name}"?`)) return;
             try {
                 const r = await fetch('?deleteversion', {
                     method: 'POST',
@@ -1823,7 +2149,14 @@ async function doLoadModal() {
             } catch {}
         });
 
-        row.appendChild(nameSpan); row.appendChild(dateSpan); row.appendChild(delBtn);
+        btnContainer.appendChild(activateBtn);
+        btnContainer.appendChild(delBtn);
+
+        row.appendChild(checkSpan);
+        row.appendChild(nameSpan);
+        row.appendChild(dateSpan);
+        row.appendChild(btnContainer);
+
         row.addEventListener('click', async () => {
             if (isDirty && !confirm(`Discard unsaved changes and load "${v.name}"?`)) return;
             close();
@@ -1837,11 +2170,22 @@ async function doLoadModal() {
                 if (filesResp.ok) locationFiles = await filesResp.json();
                 const cfg = await r.json();
                 populateForm(cfg);
-                isDirty = false;
-                setStatus(`Loaded "${v.name}" ✓`, 'ok', 4000);
-                document.getElementById('current-file').textContent = v.name + '.yaml';
+                // Auto-save so the map page picks up the new config immediately
+                const sv = await fetch('?save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(cfg)
+                });
+                if (sv.ok && (await sv.json()).ok) {
+                    isDirty = false;
+                    setStatus(`Loaded "${v.name}" ✓`, 'ok', 4000);
+                } else {
+                    isDirty = true;
+                    setStatus(`Loaded "${v.name}" — click Update to apply`, 'dirty');
+                }
+                document.getElementById('current-file').textContent = v.name;
             } catch (err) {
-                setStatus('Failed to load version', 'error');
+                setStatus('Failed to load event', 'error');
                 console.error(err);
             }
         });
@@ -1854,7 +2198,7 @@ async function doLoadModal() {
     cancelBtn.className = 'modal-cancel-btn';
     cancelBtn.textContent = 'Cancel';
 
-    const close = openModal('Load Version', body, [cancelBtn]);
+    const close = openModal('Load Event', body, [cancelBtn]);
     cancelBtn.addEventListener('click', close);
 }
 

@@ -206,6 +206,7 @@ function connectToAprsServer() {
 	if ($ipv4==$aprsServer) fatal("Can't resolve hostname\n");
 	echo("Connecting to $ipv4\n");
 	if (!socket_connect($socket,$ipv4,$aprsPort)) fatal("Can't connect to socket\n");
+	socket_set_option($socket, SOL_SOCKET, SO_RCVTIMEO, ['sec' => 60, 'usec' => 0]);
 	$bytesWritten=socket_write($socket,$cmd);
 	if ($bytesWritten===FALSE) fatal("Can't write to socket");
 }
@@ -278,8 +279,7 @@ function writeNewTrackerstatusFile($filename) {
 		$timeSinceLastUpdate=$now-$lastUpdate;
 		$seconds=$timeSinceLastUpdate % 60;
 		$minutes=($timeSinceLastUpdate-$seconds)/60;
-		$time=sprintf("%d:%02d",$minutes,$seconds);
-		if ($minutes>=60) {$time="NG";}
+		if ($minutes>=60) {$time="stale";} else {$time=sprintf("%d:%02d",$minutes,$seconds);}
 		if ($timeSinceLastUpdate<=$minSecondsGreen) {$color="green";}
 		elseif ($timeSinceLastUpdate<=$minSecondsBlue) {$color="blue";}
 		else {$color="red";}
@@ -327,7 +327,7 @@ while (TRUE) {
 		writeNewTrackerstatusFile($trackerStatusFilename);	//push tracker list changes to browser immediately
 	}
 	$line=socket_read($socket,1000,PHP_NORMAL_READ);
-	if (!$line) fatal("Failed to read a line from socket");
+	if ($line === false || $line === '') fatal("Socket read failed (connection lost or timed out)");
 	else {
 		debug("Received: $line");
 		if (strlen($line)>1) {									//more than just the line terminator?
