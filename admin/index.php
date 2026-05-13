@@ -2029,7 +2029,7 @@ async function doSaveAs() {
             nameSpan.textContent = v.name;
 
             const eventSpan = document.createElement('span');
-            eventSpan.style.display = 'block'; eventSpan.style.fontSize = '11px'; eventSpan.style.color = '#666';
+            eventSpan.style.fontSize = '11px'; eventSpan.style.color = '#666'; eventSpan.style.marginLeft = '8px';
             eventSpan.textContent = v.eventName;
 
             const dateSpan = document.createElement('span');
@@ -2156,9 +2156,9 @@ async function doLoadModal() {
 
         // Event Name (from yaml)
         const eventSpan = document.createElement('span');
-        eventSpan.style.display = 'block';
         eventSpan.style.fontSize = '11px';
         eventSpan.style.color = '#888';
+        eventSpan.style.marginLeft = '8px';
         eventSpan.textContent = v.eventName;
 
         const dateSpan = document.createElement('span');
