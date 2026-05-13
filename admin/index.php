@@ -868,7 +868,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 }
 .modal-box {
     background: #fff; border-radius: 8px; box-shadow: 0 4px 24px rgba(0,0,0,.25);
-    width: 420px; max-width: calc(100vw - 32px); display: flex; flex-direction: column;
+    width: 700px; max-width: calc(100vw - 32px); display: flex; flex-direction: column;
     max-height: calc(100vh - 64px);
 }
 .modal-title {
@@ -886,15 +886,25 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 .modal-field input:focus { outline: none; border-color: #2980b9; }
 .modal-warn { font-size: 12px; color: #b26a00; background: #fff8e8; border: 1px solid #f0d080; border-radius: 4px; padding: 5px 9px; margin-bottom: 10px; }
 .modal-list-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
+.modal-list-header {
+    display: flex; align-items: center; padding: 8px 12px;
+    font-size: 11px; font-weight: bold; color: #666; text-transform: uppercase; letter-spacing: .04em;
+    background: #f5f5f5; border-bottom: 1px solid #d0d0d0;
+}
+.modal-list-header-filename { flex: 0 0 140px; }
+.modal-list-header-eventname { flex: 1; min-width: 200px; }
+.modal-list-header-date { flex: 0 0 140px; }
+
 .modal-list { border: 1px solid #e0e0e0; border-radius: 4px; overflow: hidden; max-height: 280px; overflow-y: auto; }
 .modal-list-item {
-    display: flex; align-items: center; padding: 9px 12px;
-    font-size: 13px; border-bottom: 1px solid #f0f0f0; cursor: pointer;
+    display: flex; align-items: flex-start; padding: 9px 12px;
+    font-size: 13px; border-bottom: 1px solid #f0f0f0; cursor: pointer; gap: 12px;
 }
 .modal-list-item:last-child { border-bottom: none; }
 .modal-list-item:hover { background: #eaf4fd; }
-.modal-list-item .item-name { flex: 1; }
-.modal-list-item .item-date { font-size: 11px; color: #999; margin-right: 8px; white-space: nowrap; }
+.modal-list-item .item-filename { flex: 0 0 140px; font-family: monospace; font-weight: bold; word-break: break-word; }
+.modal-list-item .item-eventname { flex: 1; min-width: 200px; word-break: break-word; }
+.modal-list-item .item-date { flex: 0 0 140px; font-size: 11px; color: #999; white-space: nowrap; }
 .modal-list-item .item-del {
     background: none; border: none; color: #ccc; font-size: 13px;
     cursor: pointer; padding: 1px 4px; border-radius: 3px; line-height: 1; flex-shrink: 0;
@@ -2018,17 +2028,35 @@ async function doSaveAs() {
 
         const list = document.createElement('div');
         list.className = 'modal-list';
+
+        // Column headers
+        const header = document.createElement('div');
+        header.className = 'modal-list-header';
+        const hFilename = document.createElement('div');
+        hFilename.className = 'modal-list-header-filename';
+        hFilename.textContent = 'Filename';
+        const hEventName = document.createElement('div');
+        hEventName.className = 'modal-list-header-eventname';
+        hEventName.textContent = 'Event Name';
+        const hDate = document.createElement('div');
+        hDate.className = 'modal-list-header-date';
+        hDate.textContent = 'Last Saved';
+        header.appendChild(hFilename);
+        header.appendChild(hEventName);
+        header.appendChild(hDate);
+        list.appendChild(header);
+
         versions.forEach(v => {
             const row = document.createElement('div');
             row.className = 'modal-list-item';
             row.style.cursor = 'pointer';
 
             const nameSpan = document.createElement('span');
-            nameSpan.style.fontFamily = 'monospace'; nameSpan.style.fontWeight = 'bold';
+            nameSpan.className = 'item-filename';
             nameSpan.textContent = v.name;
 
             const eventSpan = document.createElement('span');
-            eventSpan.style.fontSize = '11px'; eventSpan.style.color = '#666'; eventSpan.style.marginLeft = '8px';
+            eventSpan.className = 'item-eventname';
             eventSpan.textContent = v.eventName;
 
             const dateSpan = document.createElement('span');
@@ -2135,7 +2163,33 @@ async function doLoadModal() {
     });
     list.appendChild(liveRow);
 
-    if (!versions.length) {
+    if (versions.length) {
+        // Column headers
+        const header = document.createElement('div');
+        header.className = 'modal-list-header';
+        header.style.paddingLeft = '0';
+        const hCheck = document.createElement('div');
+        hCheck.style.flex = '0 0 20px';
+        hCheck.textContent = '';
+        const hFilename = document.createElement('div');
+        hFilename.className = 'modal-list-header-filename';
+        hFilename.textContent = 'Filename';
+        const hEventName = document.createElement('div');
+        hEventName.className = 'modal-list-header-eventname';
+        hEventName.textContent = 'Event Name';
+        const hDate = document.createElement('div');
+        hDate.className = 'modal-list-header-date';
+        hDate.textContent = 'Last Saved';
+        const hActions = document.createElement('div');
+        hActions.style.flex = '0 0 100px';
+        hActions.textContent = 'Actions';
+        header.appendChild(hCheck);
+        header.appendChild(hFilename);
+        header.appendChild(hEventName);
+        header.appendChild(hDate);
+        header.appendChild(hActions);
+        list.appendChild(header);
+    } else {
         const empty = document.createElement('div');
         empty.className = 'modal-empty';
         empty.textContent = 'No saved events yet.';
@@ -2148,23 +2202,20 @@ async function doLoadModal() {
         if (v.active) row.style.backgroundColor = '#e8f5e9';
 
         const checkSpan = document.createElement('span');
-        checkSpan.textContent = v.active ? '✓ ' : '';
+        checkSpan.textContent = v.active ? '✓' : '';
         checkSpan.style.color = '#4caf50';
         checkSpan.style.fontWeight = 'bold';
+        checkSpan.style.flex = '0 0 20px';
+        checkSpan.style.textAlign = 'center';
 
         // Filename (directory name)
         const nameSpan = document.createElement('span');
-        nameSpan.className = 'item-name';
-        nameSpan.style.fontFamily = 'monospace';
-        nameSpan.style.fontWeight = 'bold';
+        nameSpan.className = 'item-filename';
         nameSpan.textContent = v.name;
-        if (v.active) nameSpan.style.fontWeight = 'bold';
 
         // Event Name (from yaml)
         const eventSpan = document.createElement('span');
-        eventSpan.style.fontSize = '11px';
-        eventSpan.style.color = '#888';
-        eventSpan.style.marginLeft = '8px';
+        eventSpan.className = 'item-eventname';
         eventSpan.textContent = v.eventName;
 
         const dateSpan = document.createElement('span');
@@ -2172,7 +2223,7 @@ async function doLoadModal() {
         dateSpan.textContent = fmtDate(v.mtime);
 
         const btnContainer = document.createElement('div');
-        btnContainer.style.display = 'flex'; btnContainer.style.gap = '4px';
+        btnContainer.style.display = 'flex'; btnContainer.style.gap = '4px'; btnContainer.style.flex = '0 0 100px';
 
         const activateBtn = document.createElement('button');
         activateBtn.className = 'item-action-btn';
