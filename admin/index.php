@@ -33,6 +33,15 @@ if (is_link($configPath)) {
 	}
 }
 
+// Get current event filename and event name for header
+$currentFilename  = $currentEventDir ? basename($currentEventDir) : '';
+$currentEventName = '';
+if ($currentFilename && file_exists($configPath)) {
+	require_once __DIR__ . '/../config_parse.php';
+	$hdrCfg = parseConfigYaml($configPath);
+	$currentEventName = $hdrCfg['event'] ?? '';
+}
+
 // ── Authentication ────────────────────────────────────────────────────────────
 
 $storedPass = file_exists($passwordFile) ? trim(file_get_contents($passwordFile)) : '';
@@ -80,6 +89,8 @@ if (isset($_GET['load'])) {
     foreach (($cfg['courses'] ?? []) as $i => $c) {
         $cfg['courses'][$i]['_exists'] = isset($c['file']) && file_exists(__DIR__ . '/../' . $c['file']);
     }
+    // Include current event filename
+    $cfg['_filename'] = $currentFilename;
     header('Content-Type: application/json');
     echo json_encode($cfg);
     exit;
@@ -141,11 +152,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['save'])) {
 // ── AJAX: list events ────────────────────────────────────────────────────────
 
 if (isset($_GET['versions'])) {
+    require_once __DIR__ . '/../config_parse.php';
     $list = [];
     if (is_dir($eventsDir)) {
         foreach (glob($eventsDir . '/*/event.yaml') ?: [] as $f) {
-            $eventName = basename(dirname($f));
-            $list[] = ['name' => $eventName, 'mtime' => filemtime($f), 'active' => ($currentEventDir && realpath($currentEventDir) === realpath(dirname($f)))];
+            $filename = basename(dirname($f));
+            $ecfg = parseConfigYaml($f);
+            $eventName = $ecfg['event'] ?? $filename;
+            $list[] = ['name' => $filename, 'eventName' => $eventName, 'mtime' => filemtime($f), 'active' => ($currentEventDir && realpath($currentEventDir) === realpath(dirname($f)))];
         }
     }
     usort($list, fn($a, $b) => $b['mtime'] <=> $a['mtime']);
@@ -211,7 +225,7 @@ if (isset($_GET['loadversion'])) {
     exit;
 }
 
-// ── AJAX: delete a named version ──────────────────────────────────────────────
+// ── AJAX: delete a named event ───────────────────────────────────────────────
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['deleteversion'])) {
     header('Content-Type: application/json');
@@ -221,11 +235,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['deleteversion'])) {
     if (!preg_match('/^[a-zA-Z0-9 _\-\.]{1,80}$/', $name)) {
         http_response_code(400); echo json_encode(['error' => 'Invalid name']); exit;
     }
-    $path = $versionsDir . '/' . $name . '.yaml';
-    if (!file_exists($path)) {
+    $path = $eventsDir . '/' . $name;
+    if (!is_dir($path)) {
         http_response_code(404); echo json_encode(['error' => 'Not found']); exit;
     }
-    if (!unlink($path)) {
+    // Delete event directory recursively
+    $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($path, RecursiveDirectoryIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
+    foreach ($files as $f) {
+        if ($f->isDir()) rmdir($f->getPathname());
+        else unlink($f->getPathname());
+    }
+    if (!rmdir($path)) {
         http_response_code(500); echo json_encode(['error' => 'Cannot delete — check permissions']); exit;
     }
     echo json_encode(['ok' => true]);
@@ -387,7 +407,7 @@ if (isset($_GET['bglib'])) {
     $seen = [];
     $bgs  = [];
     $scan = array_merge(
-        glob($versionsDir . '/*.yaml') ?: [],
+        glob($eventsDir . '/*/event.yaml') ?: [],
         file_exists($configPath) ? [$configPath] : []
     );
     foreach ($scan as $f) {
@@ -663,7 +683,8 @@ body { font-family: arial, helvetica, sans-serif; font-size: 14px; background: #
 }
 #hdr-left { display: flex; flex-direction: column; gap: 2px; }
 #hdr h1 { font-size: 16px; font-weight: bold; letter-spacing: .02em; }
-#current-file { font-size: 12px; color: #8aafc8; font-family: monospace; letter-spacing: .01em; }
+#current-file { font-size: 12px; color: #8aafc8; font-family: monospace; letter-spacing: .01em; display: inline; }
+#current-event-name { font-size: 12px; color: #8aafc8; display: inline; }
 #hdr-right { display: flex; align-items: center; gap: 10px; }
 #status { font-size: 13px; min-width: 110px; text-align: right; margin-right: 4px; }
 .st-dirty  { color: #f0c060; }
@@ -893,7 +914,9 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 <div id="hdr">
     <div id="hdr-left">
         <h1>MARS APRS Map Admin</h1>
-        <span id="current-file">config.yaml</span>
+        <div style="display: flex; gap: 6px; align-items: center;">
+            <span id="current-file"><?= htmlspecialchars($currentFilename ?: 'config.yaml') ?></span><span id="current-event-name"><?= $currentEventName !== '' ? ' — ' . htmlspecialchars($currentEventName) : '' ?></span>
+        </div>
     </div>
     <div id="hdr-right">
         <span id="status"></span>
@@ -1052,6 +1075,12 @@ function setStatus(msg, type, clearMs) {
     el.textContent = msg;
     el.className   = type ? 'st-' + type : '';
     if (clearMs) setTimeout(() => { if (!isDirty) { el.textContent = ''; el.className = ''; } }, clearMs);
+}
+
+function setCurrentEvent(filename, eventName) {
+    document.getElementById('current-file').textContent       = filename || '';
+    document.getElementById('current-event-name').textContent = eventName ? ' — ' + eventName : '';
+}
 }
 
 window.addEventListener('beforeunload', e => {
@@ -1835,9 +1864,9 @@ async function doLoad() {
         if (bgLibResp.ok) mergeBgLibrary(await bgLibResp.json());
         const cfg = await cfgResp.json();
         populateForm(cfg);
+        setCurrentEvent(cfg._filename || '', cfg.event || '');
         isDirty = false;
         setStatus('');
-        document.getElementById('current-file').textContent = 'config.yaml';
     } catch (err) {
         setStatus('Failed to load config', 'error');
         console.error(err);
@@ -1948,17 +1977,31 @@ async function doSaveAs() {
 
     const body = document.createElement('div');
 
-    // Name input
+    // Event Name - read-only display
+    const eventNameDiv = document.createElement('div');
+    eventNameDiv.style.marginBottom = '12px';
+    const eventLbl = document.createElement('div');
+    eventLbl.style.fontSize = '11px'; eventLbl.style.color = '#888'; eventLbl.style.textTransform = 'uppercase';
+    eventLbl.style.letterSpacing = '.04em'; eventLbl.style.marginBottom = '4px';
+    eventLbl.textContent = 'Event Name';
+    const eventVal = document.createElement('div');
+    eventVal.style.padding = '6px 8px'; eventVal.style.background = '#f9f9f9'; eventVal.style.borderRadius = '3px';
+    eventVal.textContent = document.getElementById('f-event').value.trim() || '(no name)';
+    eventNameDiv.appendChild(eventLbl);
+    eventNameDiv.appendChild(eventVal);
+    body.appendChild(eventNameDiv);
+
+    // Filename input
     const field = document.createElement('div');
     field.className = 'modal-field';
     const lbl = document.createElement('label');
-    lbl.textContent = 'Version name';
-    lbl.htmlFor = 'modal-vname';
+    lbl.textContent = 'Filename';
+    lbl.htmlFor = 'modal-fname';
     const inp = document.createElement('input');
-    inp.type = 'text'; inp.id = 'modal-vname';
-    inp.placeholder = 'e.g. Race Day 2026';
+    inp.type = 'text'; inp.id = 'modal-fname';
+    inp.placeholder = 'e.g. dipsea-2026';
     inp.style.width = '100%';
-    inp.value = document.getElementById('f-event').value.trim();
+    inp.value = document.getElementById('current-file').textContent.trim();
     field.appendChild(lbl); field.appendChild(inp);
     body.appendChild(field);
 
@@ -1967,7 +2010,7 @@ async function doSaveAs() {
     warn.style.display = 'none';
     body.appendChild(warn);
 
-    // Existing versions list
+    // Existing events list
     if (versions.length) {
         const listLbl = document.createElement('div');
         listLbl.className = 'modal-list-label';
@@ -1979,7 +2022,24 @@ async function doSaveAs() {
         versions.forEach(v => {
             const row = document.createElement('div');
             row.className = 'modal-list-item';
-            row.innerHTML = `<span class="item-name">${v.name}</span><span class="item-date">${fmtDate(v.mtime)}</span>`;
+            row.style.cursor = 'pointer';
+
+            const nameSpan = document.createElement('span');
+            nameSpan.style.fontFamily = 'monospace'; nameSpan.style.fontWeight = 'bold';
+            nameSpan.textContent = v.name;
+
+            const eventSpan = document.createElement('span');
+            eventSpan.style.display = 'block'; eventSpan.style.fontSize = '11px'; eventSpan.style.color = '#666';
+            eventSpan.textContent = v.eventName;
+
+            const dateSpan = document.createElement('span');
+            dateSpan.className = 'item-date';
+            dateSpan.textContent = fmtDate(v.mtime);
+
+            row.appendChild(nameSpan);
+            row.appendChild(eventSpan);
+            row.appendChild(dateSpan);
+
             row.addEventListener('click', () => { inp.value = v.name; inp.dispatchEvent(new Event('input')); });
             list.appendChild(row);
         });
@@ -1998,9 +2058,9 @@ async function doSaveAs() {
 
     const existingNames = new Set(versions.map(v => v.name));
     inp.addEventListener('input', () => {
-        const name = inp.value.trim();
-        if (existingNames.has(name)) {
-            warn.textContent = `"${name}" already exists — saving will overwrite it.`;
+        const fname = inp.value.trim();
+        if (existingNames.has(fname)) {
+            warn.textContent = `"${fname}" already exists — saving will overwrite it.`;
             warn.style.display = '';
             saveBtn.textContent = 'Overwrite event';
         } else {
@@ -2010,8 +2070,8 @@ async function doSaveAs() {
     });
 
     saveBtn.addEventListener('click', async () => {
-        const name = inp.value.trim();
-        if (!name) { inp.focus(); return; }
+        const fname = inp.value.trim();
+        if (!fname) { inp.focus(); return; }
         saveBtn.disabled = true;
         try {
             const cfg = collectConfig();
@@ -2026,15 +2086,15 @@ async function doSaveAs() {
                 fetch('?saveversion', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name, cfg })
+                    body: JSON.stringify({ name: fname, cfg })
                 })
             ]);
             const result = await rVer.json();
             if (rVer.ok && result.ok && rLive.ok) {
                 isDirty = false;
                 close();
-                setStatus(`Saved "${name}" ✓`, 'ok', 4000);
-                document.getElementById('current-file').textContent = name + '.yaml';
+                setStatus(`Saved "${fname}" ✓`, 'ok', 4000);
+                setCurrentEvent(fname, cfg.event || '');
             } else {
                 const liveResult = rLive.ok ? null : await rLive.json();
                 warn.textContent = result.error || liveResult?.error || 'Save failed';
@@ -2066,7 +2126,6 @@ async function doLoadModal() {
         close();
         await doLoad();
         setStatus('Loaded live config ✓', 'ok', 3000);
-        document.getElementById('current-file').textContent = 'config.yaml';
     });
     list.appendChild(liveRow);
 
@@ -2087,10 +2146,20 @@ async function doLoadModal() {
         checkSpan.style.color = '#4caf50';
         checkSpan.style.fontWeight = 'bold';
 
+        // Filename (directory name)
         const nameSpan = document.createElement('span');
         nameSpan.className = 'item-name';
+        nameSpan.style.fontFamily = 'monospace';
+        nameSpan.style.fontWeight = 'bold';
         nameSpan.textContent = v.name;
         if (v.active) nameSpan.style.fontWeight = 'bold';
+
+        // Event Name (from yaml)
+        const eventSpan = document.createElement('span');
+        eventSpan.style.display = 'block';
+        eventSpan.style.fontSize = '11px';
+        eventSpan.style.color = '#888';
+        eventSpan.textContent = v.eventName;
 
         const dateSpan = document.createElement('span');
         dateSpan.className = 'item-date';
@@ -2154,6 +2223,7 @@ async function doLoadModal() {
 
         row.appendChild(checkSpan);
         row.appendChild(nameSpan);
+        row.appendChild(eventSpan);
         row.appendChild(dateSpan);
         row.appendChild(btnContainer);
 
@@ -2183,7 +2253,7 @@ async function doLoadModal() {
                     isDirty = true;
                     setStatus(`Loaded "${v.name}" — click Update to apply`, 'dirty');
                 }
-                document.getElementById('current-file').textContent = v.name;
+                setCurrentEvent(v.name, cfg.event || '');
             } catch (err) {
                 setStatus('Failed to load event', 'error');
                 console.error(err);
