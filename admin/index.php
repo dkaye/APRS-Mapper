@@ -1066,7 +1066,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
     </div>
 </div>
 
-<div id="page-footer">MARS APRS Map Admin v1.5 beta &copy; 2026 Doug Kaye (K6DRK)</div>
+<div id="page-footer">MARS APRS Map Admin v1.6 beta &copy; 2026 Doug Kaye (K6DRK)</div>
 
 <script>
 'use strict';
@@ -1202,7 +1202,11 @@ function buildTrackerRow(t) {
     row.appendChild(makeDragHandle());
     const fields  = document.createElement('div');
     fields.className = 'row-fields';
-    fields.appendChild(fieldLabel('Callsign', 'f-cs',   t.callsign, '110px'));
+    const csLabel = fieldLabel('Callsign', 'f-cs',   t.callsign, '110px');
+    csLabel.querySelector('.f-cs').addEventListener('input', e => {
+        e.target.value = e.target.value.toUpperCase();
+    });
+    fields.appendChild(csLabel);
     fields.appendChild(fieldLabel('ID',       'f-id',   t.id,        '45px'));
     fields.appendChild(fieldLabel('Name',     'f-name', t.name,     '130px'));
     row.appendChild(fields);

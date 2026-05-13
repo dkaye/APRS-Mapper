@@ -163,7 +163,7 @@ body { display: flex; }
 .leaflet-dragging .leaflet-grab { cursor: default !important; }
 
 #sidebar {
-    width: 150px; min-width: 150px; height: 100vh;
+    width: 160px; min-width: 160px; height: 100vh;
     overflow-y: auto; background: #f4f4f4;
     border-right: 1px solid #ccc; padding: 10px 8px;
 }
