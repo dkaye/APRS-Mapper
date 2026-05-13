@@ -1081,7 +1081,6 @@ function setCurrentEvent(filename, eventName) {
     document.getElementById('current-file').textContent       = filename || '';
     document.getElementById('current-event-name').textContent = eventName ? ' — ' + eventName : '';
 }
-}
 
 window.addEventListener('beforeunload', e => {
     if (isDirty) { e.preventDefault(); e.returnValue = ''; }
