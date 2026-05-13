@@ -2117,6 +2117,13 @@ async function doLoadModal() {
     const list = document.createElement('div');
     list.className = 'modal-list';
 
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'modal-cancel-btn';
+    cancelBtn.textContent = 'Cancel';
+
+    const close = openModal('Load Event', body, [cancelBtn]);
+    cancelBtn.addEventListener('click', close);
+
     // Live config.yaml at top
     const liveRow = document.createElement('div');
     liveRow.className = 'modal-list-live';
@@ -2263,13 +2270,6 @@ async function doLoadModal() {
     });
 
     body.appendChild(list);
-
-    const cancelBtn = document.createElement('button');
-    cancelBtn.className = 'modal-cancel-btn';
-    cancelBtn.textContent = 'Cancel';
-
-    const close = openModal('Load Event', body, [cancelBtn]);
-    cancelBtn.addEventListener('click', close);
 }
 
 function highlightErrorFields(errs) {
