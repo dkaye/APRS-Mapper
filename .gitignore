@@ -5,3 +5,4 @@ configs/*.yaml
 configs/*.yml
 temp/
 publish.sh
+aprs-daemon.log
