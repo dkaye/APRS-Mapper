@@ -1857,7 +1857,9 @@ const LS_SIDEBAR_STATE = 'aprs_sidebar_state';
 // On first load or reload: use symlink default and clear local event.
 // On navigation from admin: use locally stored event.
 let hasStoredEvent = false;
-const fromAdmin = document.referrer.includes('/admin');
+const isReload = performance.getEntriesByType('navigation')[0]?.type === 'reload';
+const fromSameHost = document.referrer && new URL(document.referrer).host === location.host;
+const fromAdmin = !isReload && fromSameHost;
 if (!fromAdmin) {
 	localStorage.removeItem('aprs_current_event');
 } else {
