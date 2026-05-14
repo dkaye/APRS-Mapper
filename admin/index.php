@@ -2321,19 +2321,20 @@ async function doLoadModal() {
             e.stopPropagation();
             activateBtn.disabled = true;
             try {
-                const r = await fetch('?setactiveevent', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: v.name })
-                });
-                const res = await r.json();
-                if (res.ok) {
-                    setStatus(`Activated event "${v.name}" ✓`, 'ok', 3000);
-                    location.reload();
-                } else {
-                    setStatus(res.error || 'Failed to activate event', 'error');
-                    activateBtn.disabled = v.active;
-                }
+                const [filesResp, r] = await Promise.all([
+                    fetch('?locationfiles'),
+                    fetch('?loadversion&name=' + encodeURIComponent(v.name))
+                ]);
+                if (r.status === 401) { location.reload(); return; }
+                if (!r.ok) { setStatus('Failed to load event', 'error'); activateBtn.disabled = v.active; return; }
+                if (filesResp.ok) locationFiles = await filesResp.json();
+                const cfg = await r.json();
+                populateForm(cfg);
+                // Activate: load event locally without changing server default (symlink)
+                isDirty = false;
+                close();
+                setStatus(`Activated "${v.name}" ✓`, 'ok', 4000);
+                setCurrentEvent(v.name, cfg.event || '');
             } catch (err) {
                 setStatus('Failed to activate event', 'error');
                 console.error(err);
