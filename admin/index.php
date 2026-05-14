@@ -2326,11 +2326,14 @@ async function doLoadModal() {
                 if (!r.ok) { setStatus('Load failed', 'error'); activateBtn.disabled = false; return; }
                 if (filesResp.ok) locationFiles = await filesResp.json();
                 const cfg = await r.json();
+                console.log('Fetched config for event:', v.name, cfg);
                 populateForm(cfg);
                 isDirty = false;
                 setCurrentEvent(v.name, cfg.event || '');
                 // Store activated event in localStorage for map to use
-                localStorage.setItem('aprs_active_event', JSON.stringify({ name: v.name, config: cfg }));
+                const eventData = { name: v.name, config: cfg };
+                localStorage.setItem('aprs_active_event', JSON.stringify(eventData));
+                console.log('Stored event in localStorage:', localStorage.getItem('aprs_active_event'));
                 close();
                 setStatus(`Activated "${v.name}" ✓`, 'ok', 2000);
                 setTimeout(() => { location.href = '../'; }, 2000);

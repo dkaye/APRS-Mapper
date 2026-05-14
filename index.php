@@ -1858,14 +1858,19 @@ const LS_SIDEBAR_STATE = 'aprs_sidebar_state';
 let hasStoredEvent = false;
 try {
 	const stored = localStorage.getItem('aprs_active_event');
+	console.log('Stored event in localStorage:', stored);
 	if (stored) {
 		const { name, config } = JSON.parse(stored);
+		console.log('Parsed stored event:', { name, hasConfig: !!config });
 		if (config) {
+			console.log('Applying config for event:', name);
 			applyConfig(config);
 			hasStoredEvent = true;
 			// Clear the stored event so we don't keep using it after page reload
 			localStorage.removeItem('aprs_active_event');
 		}
+	} else {
+		console.log('No stored event found in localStorage');
 	}
 } catch (e) {
 	console.error('Error loading stored event:', e);
