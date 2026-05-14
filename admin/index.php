@@ -1921,13 +1921,35 @@ function useCurrentMap() {
 
 async function doLoad() {
     try {
-        const [filesResp, bgLibResp, cfgResp] = await Promise.all([fetch('?locationfiles'), fetch('?bglib'), fetch('?load')]);
-        if (cfgResp.status === 401) { location.reload(); return; }
+        // First, check for current event in localStorage (from map page)
+        let cfg = null;
+        let filename = '';
+        try {
+            const stored = localStorage.getItem('aprs_current_event');
+            if (stored) {
+                const { name, config } = JSON.parse(stored);
+                cfg = config;
+                filename = name;
+            }
+        } catch (e) {
+            console.error('Error reading current event from localStorage:', e);
+        }
+
+        // If no local event, fetch default from server
+        if (!cfg) {
+            const cfgResp = await fetch('?load');
+            if (cfgResp.status === 401) { location.reload(); return; }
+            cfg = await cfgResp.json();
+            filename = cfg._filename || '';
+        }
+
+        // Always fetch supporting data from server
+        const [filesResp, bgLibResp] = await Promise.all([fetch('?locationfiles'), fetch('?bglib')]);
         if (filesResp.ok) locationFiles = await filesResp.json();
         if (bgLibResp.ok) mergeBgLibrary(await bgLibResp.json());
-        const cfg = await cfgResp.json();
+
         populateForm(cfg);
-        setCurrentEvent(cfg._filename || '', cfg.event || '');
+        setCurrentEvent(filename, cfg.event || '');
         isDirty = false;
         setStatus('');
     } catch (err) {
