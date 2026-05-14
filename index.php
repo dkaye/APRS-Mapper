@@ -105,13 +105,6 @@ if (isset($_GET['config'])) {
 	exit;
 }
 
-if (isset($_GET['killexit'])) {
-	$resp = @file_get_contents('http://127.0.0.1:8080/exit');
-	header('Content-Type: text/plain');
-	echo $resp !== false ? 'ok' : 'err';
-	exit;
-}
-
 if (isset($_GET['clientstatus'])) {
 	header('Content-Type: application/json');
 	$stats = [];
@@ -718,7 +711,7 @@ new (L.Control.extend({
 			if (!isMobile) {
 				const exitBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
 				exitBtn2.textContent = 'Exit';
-				L.DomEvent.on(exitBtn2, 'click', () => fetch('index.php?killexit').catch(() => {}));
+				L.DomEvent.on(exitBtn2, 'click', () => fetch('http://localhost:8080/exit').catch(() => {}));
 				L.DomEvent.disableClickPropagation(exitBtn2);
 				const connBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
 				connBtn2.textContent = 'IP';

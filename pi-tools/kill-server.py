@@ -36,10 +36,20 @@ CONNECTING_HTML = b"""<!DOCTYPE html>
 </html>"""
 
 class Handler(BaseHTTPRequestHandler):
+    def _pna_headers(self):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Private-Network', 'true')
+        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self._pna_headers()
+        self.end_headers()
+
     def do_GET(self):
         if self.path == '/exit':
             self.send_response(200)
-            self.send_header('Access-Control-Allow-Origin', '*')
+            self._pna_headers()
             self.end_headers()
             self.wfile.write(b'ok')
             subprocess.Popen(['pkill', 'chromium'])
