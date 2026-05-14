@@ -250,9 +250,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['save'])) {
     $history  = extractHistory($existing);
     array_unshift($history, gmdate('Y-m-d H:i:s') . ' UTC');
     $yaml = buildConfigYaml($cfg, $history);
+
+    // Resolve symlink target for better error reporting
+    $realPath = is_link($configPath) ? realpath($configPath) : $configPath;
+    $dir = dirname($realPath ?: $configPath);
+
     if (file_put_contents($configPath, $yaml, LOCK_EX) === false) {
         http_response_code(500);
-        echo json_encode(['error' => 'Cannot write config.yaml — check file permissions']);
+        $err = 'Cannot write config.yaml';
+        if (!file_exists($configPath) && !is_link($configPath)) {
+            $err .= ' (file does not exist)';
+        } elseif (!is_writable($dir)) {
+            $err .= ' (directory not writable: ' . $dir . ')';
+        } elseif (!is_writable($configPath)) {
+            $err .= ' (file not writable)';
+        } else {
+            $err .= ' — check permissions';
+        }
+        echo json_encode(['error' => $err]);
         exit;
     }
     $real = realpath($configPath);
