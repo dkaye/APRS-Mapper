@@ -2380,20 +2380,11 @@ async function doLoadModal() {
                 if (filesResp.ok) locationFiles = await filesResp.json();
                 const cfg = await r.json();
                 populateForm(cfg);
-                // Activate this event (update symlink) so the map page picks up the new config
-                const av = await fetch('?setactiveevent', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: v.name })
-                });
-                if (av.ok && (await av.json()).ok) {
-                    isDirty = false;
-                    setStatus(`Loaded "${v.name}" ✓`, 'ok', 4000);
-                    setCurrentEvent(v.name, cfg.event || '');
-                    location.reload();
-                } else {
-                    setStatus('Failed to load event', 'error');
-                }
+                // Load just retrieves the event data — doesn't change the symlink/default event
+                isDirty = false;
+                close();
+                setStatus(`Loaded "${v.name}" ✓`, 'ok', 4000);
+                setCurrentEvent(v.name, cfg.event || '');
             } catch (err) {
                 setStatus('Failed to load event', 'error');
                 console.error(err);
