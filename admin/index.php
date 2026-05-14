@@ -2409,7 +2409,7 @@ async function doLoadModal() {
                 const cfg = await r.json();
                 populateForm(cfg);
                 // Auto-save so the map page picks up the new config immediately
-                const sv = await fetch('?save', {
+                const sv = await fetch('?save&event=' + encodeURIComponent(v.name), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(cfg)
