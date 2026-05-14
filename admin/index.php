@@ -204,7 +204,7 @@ if (isset($_GET['versions'])) {
             $filename = basename(dirname($f));
             $ecfg = parseConfigYaml($f);
             $eventName = $ecfg['event'] ?? $filename;
-            $list[] = ['name' => $filename, 'eventName' => $eventName, 'mtime' => filemtime($f), 'active' => ($currentEventDir && realpath($currentEventDir) === realpath(dirname($f)))];
+            $list[] = ['name' => $filename, 'eventName' => $eventName, 'mtime' => filemtime($f), 'active' => ($filename === $currentFilename)];
         }
     }
     usort($list, fn($a, $b) => $b['mtime'] <=> $a['mtime']);
