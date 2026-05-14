@@ -194,9 +194,6 @@ if (isset($_GET['versions'])) {
     header('Content-Type: application/json');
     require_once __DIR__ . '/../config_parse.php';
     $list = [];
-    $configsDir = __DIR__ . '/../configs';
-
-    // Scan events/<name>/event.yaml (new format)
     if (is_dir($eventsDir)) {
         foreach (glob($eventsDir . '/*/event.yaml') ?: [] as $f) {
             $filename = basename(dirname($f));
@@ -205,21 +202,6 @@ if (isset($_GET['versions'])) {
             $list[] = ['name' => $filename, 'eventName' => $eventName, 'mtime' => filemtime($f), 'active' => ($currentEventDir && realpath($currentEventDir) === realpath(dirname($f)))];
         }
     }
-
-    // Scan configs/*.yaml and configs/*.yml (old format, Pi-local)
-    if (is_dir($configsDir)) {
-        $seen = array_column($list, 'name');
-        foreach (array_merge(glob($configsDir . '/*.yaml') ?: [], glob($configsDir . '/*.yml') ?: []) as $f) {
-            $base = basename($f);
-            $filename = preg_replace('/\.(yaml|yml)$/', '', $base);
-            if (!in_array($filename, $seen, true)) {
-                $ecfg = parseConfigYaml($f);
-                $eventName = $ecfg['event'] ?? $filename;
-                $list[] = ['name' => $filename, 'eventName' => $eventName, 'mtime' => filemtime($f), 'active' => false];
-            }
-        }
-    }
-
     usort($list, fn($a, $b) => $b['mtime'] <=> $a['mtime']);
     echo json_encode($list);
     exit;
