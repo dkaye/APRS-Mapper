@@ -2367,29 +2367,6 @@ async function doLoadModal() {
         row.appendChild(dateSpan);
         row.appendChild(btnContainer);
 
-        row.addEventListener('click', async () => {
-            if (isDirty && !confirm(`Discard unsaved changes and load "${v.name}"?`)) return;
-            close();
-            try {
-                const [filesResp, r] = await Promise.all([
-                    fetch('?locationfiles'),
-                    fetch('?loadversion&name=' + encodeURIComponent(v.name))
-                ]);
-                if (r.status === 401) { location.reload(); return; }
-                if (!r.ok) { setStatus('Load failed', 'error'); return; }
-                if (filesResp.ok) locationFiles = await filesResp.json();
-                const cfg = await r.json();
-                populateForm(cfg);
-                // Load just retrieves the event data — doesn't change the symlink/default event
-                isDirty = false;
-                close();
-                setStatus(`Loaded "${v.name}" ✓`, 'ok', 4000);
-                setCurrentEvent(v.name, cfg.event || '');
-            } catch (err) {
-                setStatus('Failed to load event', 'error');
-                console.error(err);
-            }
-        });
         list.appendChild(row);
     });
 
