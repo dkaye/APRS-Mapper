@@ -32,9 +32,6 @@ legend: "This is just sample Legend text. We can edit it in the Admin interface.
 
 # ── Trackers ──────────────────────────────────────────────────────────────────
 # One entry per tracked callsign.
-#   callsign : APRS callsign (e.g. W6SG-4)
-#   id       : short label displayed on the map marker (e.g. S4)
-#   name     : full name shown in the sidebar legend
 trackers:
   - callsign: KO6JDL-2
     id: B1
@@ -65,30 +62,18 @@ trackers:
     name: KJ6DLF-4
 
 # ── Tracker style ─────────────────────────────────────────────────────────────
-# Controls the appearance of all tracker markers on the map.
-#   icon        : marker shape — circle, square, diamond, triangle, star, cross, person
-#   size        : marker radius in pixels, 4–20 (default: 8)
-#   label_color : hex color for the name/id label on the map (default: #000000)
 tracker_style:
   icon: person
   size: 12
   label_color: "#fa0000"
 
 # ── Map default view ──────────────────────────────────────────────────────────
-# Sets the map center and zoom at page load and after second-clicking a tracker.
-#   lat  : latitude of map center  (decimal degrees; positive = North, negative = South)
-#   lon  : longitude of map center (decimal degrees; positive = East,  negative = West)
-#   zoom : Leaflet zoom level (0=world, 5=country, 10=city, 13=neighbourhood, 15=street, 19=max)
 map:
   lat: 37.893618
   lon: -122.599654
   zoom: 14
 
 # ── Map backgrounds ───────────────────────────────────────────────────────────
-# Tile layers listed in the sidebar. Click one to switch the base map.
-#   name        : label shown in the sidebar
-#   url         : Leaflet tile URL template  ({s} = subdomain, {z}/{x}/{y} = tile coordinates)
-#   attribution : HTML attribution string shown in the map corner (may contain HTML)
 backgrounds:
   - name: OpenStreetMap
     url: https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png
@@ -101,25 +86,15 @@ backgrounds:
     attribution: "Tiles courtesy of the <a href='https://usgs.gov/'>U.S. Geological Survey</a>"
 
 # ── Courses ───────────────────────────────────────────────────────────────────
-# GPX/KML/GeoJSON overlays listed in the sidebar. Click a name to toggle it on/off.
-# Multiple courses may be active simultaneously.
-# Files live in the configs/ subdirectory.
-#   name  : label shown in the sidebar
-#   file  : filename  (supported extensions: .gpx  .kml  .geojson  .json)
-#   color : hex color for the course line/markers (e.g. #2196f3)
 courses:
   - name:  Dipsea Course
-    file:  events/Test/Dipsea.json
+    file:  events/Dipsea 2026/Dipsea.json
     color: "#f41f9b"
   - name:  Dipsea Markers
-    file:  events/Test/DipseaMarkers.json
+    file:  events/Dipsea 2026/DipseaMarkers.json
     color: "#1ff438"
 
 # ── Aid Stations ──────────────────────────────────────────────────────────────
-# Aid station locations shown as black dots on the map and listed in the sidebar.
-#   name : label shown in the sidebar and on hover
-#   lat  : latitude  (decimal degrees; positive = North, negative = South)
-#   lon  : longitude (decimal degrees; positive = East,  negative = West)
 aidstations:
   - name: Tennessee Valley
     lat: 37.861
@@ -129,10 +104,6 @@ aidstations:
     lon: -122.60107
 
 # ── iGates ────────────────────────────────────────────────────────────────────
-# APRS iGate stations shown as black dots on the map and listed in the sidebar.
-#   name : label shown in the sidebar and on hover
-#   lat  : latitude  (decimal degrees; positive = North, negative = South)
-#   lon  : longitude (decimal degrees; positive = East,  negative = West)
 igates:
   - name: Muir Woods Clubhouse
     lat: 37.89799

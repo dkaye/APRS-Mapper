@@ -88,8 +88,7 @@ if (isset($_GET['config'])) {
 		exit;
 	}
 	$cfg     = parseConfigYaml('config.yaml');
-	$courses = array_values(array_filter($cfg['courses'] ?? [],
-	               fn($c) => isset($c['file']) && file_exists(__DIR__ . '/' . $c['file'])));
+	$courses = array_values(array_filter($cfg['courses'] ?? [], fn($c) => isset($c['file'])));
 	header('Content-Type: application/json');
 	echo json_encode([
 		'event'          => $cfg['event'] ?? '',
@@ -711,7 +710,7 @@ new (L.Control.extend({
 			if (!isMobile) {
 				const exitBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
 				exitBtn2.textContent = 'Exit';
-				L.DomEvent.on(exitBtn2, 'click', () => fetch('http://localhost:8080/exit').catch(() => {}));
+				L.DomEvent.on(exitBtn2, 'click', () => { window.location.href = 'http://localhost:8080/exit'; });
 				L.DomEvent.disableClickPropagation(exitBtn2);
 				const connBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
 				connBtn2.textContent = 'IP';
@@ -813,6 +812,7 @@ let originMarker       = null;
 let configEtag         = null;
 let jsonEtag           = null;
 let historyEtag        = null;
+let historyCache       = null;	// last full ?history response; reused on 304
 let coursesInitialized = false;
 
 // ── Mobile bottom sheet ───────────────────────────────────────────────────
@@ -990,9 +990,9 @@ function showTrackerHistory(callsign, color) {
 	const headers = historyEtag ? { 'If-None-Match': historyEtag } : {};
 	fetch('index.php?history', { headers })
 		.then(res => {
-			if (res.status === 304) return null;
+			if (res.status === 304) return historyCache;
 			historyEtag = res.headers.get('ETag');
-			return res.json();
+			return res.json().then(d => { historyCache = d; return d; });
 		})
 		.then(hist => {
 			if (!hist) return;
@@ -1896,11 +1896,12 @@ if (isNonDefaultEvent) {
 	}
 }
 
-if (!hasStoredEvent) {
+// Always poll for live tracker data; skip config polling only when previewing a non-default event
+updateMap();
+setInterval(updateMap, 5000);
+if (!isNonDefaultEvent) {
 	loadConfig();
 	setInterval(loadConfig, 5000);
-	updateMap();
-	setInterval(updateMap, 5000);
 }
 </script>
 <div id="no-loc-toast"></div>

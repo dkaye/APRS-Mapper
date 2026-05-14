@@ -86,7 +86,7 @@ $authed = isset($_SESSION['aprs_admin_authed']) && $_SESSION['aprs_admin_authed'
 if (!$authed) {
     // AJAX endpoints return 401 JSON; all other requests get the login form
     // Exception: ?diag is allowed without auth for diagnostics
-    if ((isset($_GET['load']) || isset($_GET['save']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib'])) && !isset($_GET['diag'])) {
+    if ((isset($_GET['load']) || isset($_GET['save']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['alllocationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib'])) && !isset($_GET['diag'])) {
         header('Content-Type: application/json');
         http_response_code(401);
         echo json_encode(['error' => 'Session expired — reload and log in again']);
@@ -130,13 +130,57 @@ function pruneTrackerHistory($histPath, array $keepCallsigns) {
     file_put_contents($histPath, implode("\n", $out) . "\n", LOCK_EX);
 }
 
+// ── Helper: sync courses between YAML and event directory ────────────────────
+// Filesystem is the source of truth.
+// - YAML entries whose files are absent from the event directory are dropped.
+// - Files in the directory with no YAML entry get an auto-generated entry.
+// - Returns the merged, deduplicated course array (with '_exists' = true on all entries).
+function reconcileEventCourses(string $eventDir, string $eventName, array $yamlCourses): array {
+    $exts = ['gpx', 'kml', 'geojson', 'json'];
+    $dirFiles = [];
+    foreach (glob($eventDir . '/*') ?: [] as $f) {
+        if (is_file($f) && in_array(strtolower(pathinfo($f, PATHINFO_EXTENSION)), $exts, true)) {
+            $dirFiles[basename($f)] = true;
+        }
+    }
+    // Keep YAML entries whose file is present; rewrite path to this event dir
+    $result = [];
+    $seen   = [];
+    foreach ($yamlCourses as $c) {
+        if (!isset($c['file'])) continue;
+        $base = basename($c['file']);
+        if (!empty($dirFiles[$base]) && !isset($seen[$base])) {
+            $c['file']    = 'events/' . $eventName . '/' . $base;
+            $c['_exists'] = true;
+            $result[]     = $c;
+            $seen[$base]  = true;
+        }
+        // entry dropped silently if file not found in directory
+    }
+    // Auto-add directory files not already in YAML (sorted)
+    ksort($dirFiles);
+    foreach (array_keys($dirFiles) as $base) {
+        if (isset($seen[$base])) continue;
+        $result[] = [
+            'name'    => str_replace(['_', '-'], ' ', pathinfo($base, PATHINFO_FILENAME)),
+            'file'    => 'events/' . $eventName . '/' . $base,
+            '_exists' => true,
+        ];
+    }
+    return $result;
+}
+
 // ── AJAX: load ────────────────────────────────────────────────────────────────
 
 if (isset($_GET['load'])) {
     require_once __DIR__ . '/../config_parse.php';
     $cfg = parseConfigYaml($configPath);
-    foreach (($cfg['courses'] ?? []) as $i => $c) {
-        $cfg['courses'][$i]['_exists'] = isset($c['file']) && file_exists(__DIR__ . '/../' . $c['file']);
+    if ($currentEventDir && $currentFilename) {
+        $cfg['courses'] = reconcileEventCourses($currentEventDir, $currentFilename, $cfg['courses'] ?? []);
+    } else {
+        foreach (($cfg['courses'] ?? []) as $i => $c) {
+            $cfg['courses'][$i]['_exists'] = isset($c['file']) && file_exists(__DIR__ . '/../' . $c['file']);
+        }
     }
     $cfg['_filename'] = $currentFilename;
     respondJson($cfg);
@@ -230,13 +274,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveversion'])) {
     $eventPath = $eventsDir . '/' . $eventName;
     if (!is_dir($eventPath)) mkdir($eventPath, 0777, true);
 
-    // Update course paths in the config to point to events/<eventName>/...
+    // Update course paths and copy files into the target event directory
     $cfg = $data['cfg'];
     foreach (($cfg['courses'] ?? []) as $i => $c) {
-        if (isset($c['file']) && preg_match('|^events/[^/]+/(.+)$|', $c['file'], $m)) {
-            $cfg['courses'][$i]['file'] = 'events/' . $eventName . '/' . $m[1];
+        if (!isset($c['file'])) continue;
+        if (!preg_match('|^events/[^/]+/(.+)$|', $c['file'], $m)) continue;
+        $basename    = $m[1];
+        $newRelPath  = 'events/' . $eventName . '/' . $basename;
+        $srcAbs      = __DIR__ . '/../' . $c['file'];
+        $destAbs     = $eventPath . '/' . $basename;
+        if (file_exists($srcAbs)) {
+            $srcReal = realpath($srcAbs);
+            if ($srcReal && $srcReal !== realpath($destAbs)) {
+                copy($srcAbs, $destAbs);
+            }
         }
+        $cfg['courses'][$i]['file'] = $newRelPath;
     }
+
+    // Filesystem is source of truth: drop stale YAML entries, add unconfigured directory files
+    $cfg['courses'] = reconcileEventCourses($eventPath, $eventName, $cfg['courses'] ?? []);
 
     $path     = $eventPath . '/event.yaml';
     $existing = file_exists($path) ? file_get_contents($path) : '';
@@ -275,9 +332,7 @@ if (isset($_GET['loadversion'])) {
     }
     require_once __DIR__ . '/../config_parse.php';
     $cfg = parseConfigYaml($path);
-    foreach (($cfg['courses'] ?? []) as $i => $c) {
-        $cfg['courses'][$i]['_exists'] = isset($c['file']) && file_exists(__DIR__ . '/../' . $c['file']);
-    }
+    $cfg['courses'] = reconcileEventCourses($eventsDir . '/' . $eventName, $eventName, $cfg['courses'] ?? []);
     respondJson($cfg);
 }
 
@@ -322,6 +377,37 @@ if (isset($_GET['locationfiles'])) {
         }
     }
     usort($files, fn($a, $b) => strcmp($a['path'], $b['path']));
+    echo json_encode($files);
+    exit;
+}
+
+// ── AJAX: list ALL location files across every event ─────────────────────────
+
+if (isset($_GET['alllocationfiles'])) {
+    header('Cache-Control: no-store');
+    header('Content-Type: application/json');
+    $exts  = ['gpx', 'kml', 'geojson', 'json'];
+    $files = [];
+    if (is_dir($eventsDir)) {
+        foreach (glob($eventsDir . '/*/') ?: [] as $eventDir) {
+            $eventDir  = rtrim($eventDir, '/');
+            $eventName = basename($eventDir);
+            $isCurrent = $currentEventDir &&
+                         (realpath($eventDir) === realpath($currentEventDir));
+            foreach (glob($eventDir . '/*') ?: [] as $f) {
+                $ext = strtolower(pathinfo($f, PATHINFO_EXTENSION));
+                if (!in_array($ext, $exts, true) || !is_file($f)) continue;
+                $files[] = [
+                    'name'    => basename($f),
+                    'event'   => $eventName,
+                    'path'    => 'events/' . $eventName . '/' . basename($f),
+                    'mtime'   => filemtime($f),
+                    'current' => $isCurrent,
+                ];
+            }
+        }
+    }
+    usort($files, fn($a, $b) => strcasecmp($a['name'], $b['name']));
     echo json_encode($files);
     exit;
 }
@@ -883,6 +969,34 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 .lf-small-btn.ok:hover   { background: #1f6da0; }
 .lf-small-btn.cancel { background: #f0f0f0; color: #555; border-color: #ccc; }
 .lf-small-btn.cancel:hover { background: #e0e0e0; }
+.lf-table-wrap {
+    border: 1px solid #e0e0e0; border-radius: 4px; max-height: 340px; overflow-y: auto;
+}
+.lf-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.lf-th {
+    background: #f5f5f5; padding: 6px 10px; text-align: left; white-space: nowrap;
+    font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: .04em;
+    color: #666; cursor: pointer; user-select: none;
+    border-bottom: 2px solid #e0e0e0; position: sticky; top: 0; z-index: 1;
+}
+.lf-th:hover { background: #ebebeb; color: #333; }
+.lf-th.lf-th-sorted { color: #2980b9; }
+.lf-th-noclick { cursor: default; }
+.lf-tr { border-bottom: 1px solid #f0f0f0; }
+.lf-tr:last-child { border-bottom: none; }
+.lf-tr:hover { background: #fafafa; }
+.lf-td { padding: 6px 10px; vertical-align: middle; }
+.lf-td-name { word-break: break-word; }
+.lf-td-event { color: #555; }
+.lf-td-date { font-size: 11px; color: #999; white-space: nowrap; }
+.lf-td-actions { white-space: nowrap; width: 1px; }
+.lf-td-add { white-space: nowrap; width: 1px; text-align: center; }
+.lf-add-btn {
+    padding: 2px 9px; font-size: 12px; background: #2980b9; color: #fff;
+    border: none; border-radius: 3px; cursor: pointer; white-space: nowrap;
+}
+.lf-add-btn:hover { background: #1f6da0; }
+.lf-in-event { color: #27ae60; font-weight: bold; font-size: 14px; }
 
 /* ── Action footer (Save/Update buttons) ── */
 #footer { display: flex; justify-content: flex-end; padding-top: 4px; }
@@ -1101,8 +1215,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
         <div class="sec-title">Courses</div>
         <div class="sec-body">
             <div id="courses-list"></div>
-            <button class="add-btn" onclick="addCourse()">+ Add Course</button>
-            <button class="add-btn" onclick="saveColors()" style="margin-left:6px">Save Colors</button>
+            <button class="add-btn" onclick="saveColors()">Save Colors</button>
             <button class="add-btn" onclick="doManageLocationFiles()" style="margin-left:6px">Manage Location Files…</button>
         </div>
     </div>
@@ -1540,7 +1653,6 @@ function appendCourse(c, attach) {
     if (attach) attach(row);
 }
 
-function addCourse() { appendCourse({}, dragAdder['courses-list']); markDirty(); }
 
 async function saveColors() {
     document.querySelectorAll('#courses-list > .list-row').forEach(row => {
@@ -1555,56 +1667,249 @@ async function saveColors() {
 async function doManageLocationFiles() {
     await refreshLocationFiles();
 
+    let allFiles = [];
+    try {
+        const r = await fetch('?alllocationfiles');
+        if (r.ok) allFiles = await r.json();
+    } catch {}
+
     const body = document.createElement('div');
 
-    // Upload zone
-    const zone = document.createElement('div');
-    zone.className = 'lf-upload-zone';
-    zone.innerHTML = 'Click to upload &nbsp;·&nbsp; or drag files here<br><span style="font-size:11px;color:#aaa">.gpx &nbsp; .kml &nbsp; .geojson &nbsp; .json</span>';
+    // Upload zone (uploads go into current event only)
     const fileInput = document.createElement('input');
     fileInput.type = 'file'; fileInput.accept = '.gpx,.kml,.geojson,.json'; fileInput.multiple = true;
     fileInput.style.display = 'none';
     body.appendChild(fileInput);
+
+    const zone = document.createElement('div');
+    zone.className = 'lf-upload-zone';
+    zone.innerHTML = 'Click to upload &nbsp;·&nbsp; or drag files here<br><span style="font-size:11px;color:#aaa">.gpx &nbsp; .kml &nbsp; .geojson &nbsp; .json</span>';
     body.appendChild(zone);
 
-    // Feedback line
     const msg = document.createElement('div');
     msg.className = 'lf-msg';
     body.appendChild(msg);
 
-    // File list
-    const listLabel = document.createElement('div');
-    listLabel.className = 'lf-section-label';
-    listLabel.textContent = 'Course files in current event';
-    body.appendChild(listLabel);
+    // Sortable table
+    let sortCol = 'name', sortAsc = true;
+    const tableWrap = document.createElement('div');
+    tableWrap.className = 'lf-table-wrap';
+    body.appendChild(tableWrap);
 
-    const listWrap = document.createElement('div');
-    listWrap.className = 'lf-list';
-    body.appendChild(listWrap);
+    function buildTable() {
+        tableWrap.innerHTML = '';
 
-    function renderList() {
-        listWrap.innerHTML = '';
-        if (!locationFiles.length) {
+        if (!allFiles.length) {
             const empty = document.createElement('div');
-            empty.className = 'modal-empty';
-            empty.textContent = 'No location files yet.';
-            listWrap.appendChild(empty);
+            empty.style.cssText = 'padding:14px 12px;color:#aaa;font-size:13px';
+            empty.textContent = 'No course files found in any event.';
+            tableWrap.appendChild(empty);
             return;
         }
-        locationFiles.forEach(f => buildLfRow(listWrap, f.path, f.mtime, msg, renderList));
+
+        const sorted = [...allFiles].sort((a, b) => {
+            if (sortCol === 'mtime') return sortAsc ? a.mtime - b.mtime : b.mtime - a.mtime;
+            const cmp = String(a[sortCol]).localeCompare(String(b[sortCol]), undefined, { sensitivity: 'base' });
+            return sortAsc ? cmp : -cmp;
+        });
+
+        const table = document.createElement('table');
+        table.className = 'lf-table';
+
+        // Header
+        const thead = document.createElement('thead');
+        const hr    = document.createElement('tr');
+        [['name', 'Name'], ['event', 'Event'], ['mtime', 'Last Modified']].forEach(([col, label]) => {
+            const th = document.createElement('th');
+            th.className = 'lf-th' + (sortCol === col ? ' lf-th-sorted' : '');
+            const arrow = sortCol === col ? (sortAsc ? ' ▲' : ' ▼') : '';
+            th.textContent = label + arrow;
+            th.addEventListener('click', () => {
+                if (sortCol === col) sortAsc = !sortAsc; else { sortCol = col; sortAsc = true; }
+                buildTable();
+            });
+            hr.appendChild(th);
+        });
+        const thAdd = document.createElement('th');
+        thAdd.className = 'lf-th lf-th-noclick'; thAdd.textContent = 'In Event';
+        hr.appendChild(thAdd);
+        const thAct = document.createElement('th');
+        thAct.className = 'lf-th lf-th-noclick';
+        hr.appendChild(thAct);
+        thead.appendChild(hr);
+        table.appendChild(thead);
+
+        // Body
+        const tbody = document.createElement('tbody');
+        sorted.forEach(f => {
+            const tr = document.createElement('tr');
+            tr.className = 'lf-tr';
+
+            // Name cell — holds either the display span or an inline edit input
+            const tdName = document.createElement('td');
+            tdName.className = 'lf-td lf-td-name';
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = f.name;
+            tdName.appendChild(nameSpan);
+            tr.appendChild(tdName);
+
+            // Event cell
+            const tdEvent = document.createElement('td');
+            tdEvent.className = 'lf-td lf-td-event';
+            tdEvent.textContent = f.event;
+            tr.appendChild(tdEvent);
+
+            // Date cell
+            const tdDate = document.createElement('td');
+            tdDate.className = 'lf-td lf-td-date';
+            tdDate.textContent = f.mtime ? fmtLocalTime(f.mtime) : '';
+            tr.appendChild(tdDate);
+
+            // In-event indicator / Add button
+            const inList = Array.from(document.querySelectorAll('#courses-list .f-file'))
+                               .some(s => s.value === f.path);
+            const tdAdd = document.createElement('td');
+            tdAdd.className = 'lf-td lf-td-add';
+            if (inList) {
+                const ind = document.createElement('span');
+                ind.className = 'lf-in-event'; ind.textContent = '✓'; ind.title = 'Already in courses list';
+                tdAdd.appendChild(ind);
+            } else {
+                const addBtn = document.createElement('button');
+                addBtn.type = 'button'; addBtn.className = 'lf-add-btn'; addBtn.textContent = 'Add';
+                addBtn.title = 'Add to courses list';
+                addBtn.addEventListener('click', () => {
+                    const name = f.name.replace(/\.[^.]+$/, '');
+                    appendCourse({ name, file: f.path }, dragAdder['courses-list']);
+                    markDirty();
+                    buildTable();
+                });
+                tdAdd.appendChild(addBtn);
+            }
+            tr.appendChild(tdAdd);
+
+            // Actions cell
+            const tdAct = document.createElement('td');
+            tdAct.className = 'lf-td lf-td-actions';
+
+            const dlBtn = document.createElement('a');
+            dlBtn.className = 'lf-icon-btn'; dlBtn.title = 'Download';
+            dlBtn.href = '../' + f.path; dlBtn.download = f.name; dlBtn.textContent = '⬇';
+            tdAct.appendChild(dlBtn);
+
+            if (f.current) {
+                const renBtn = document.createElement('button');
+                renBtn.type = 'button'; renBtn.className = 'lf-icon-btn save'; renBtn.title = 'Rename'; renBtn.textContent = '✏';
+                tdAct.appendChild(renBtn);
+
+                const delBtn = document.createElement('button');
+                delBtn.type = 'button'; delBtn.className = 'lf-icon-btn del'; delBtn.title = 'Delete'; delBtn.textContent = '✕';
+                tdAct.appendChild(delBtn);
+
+                renBtn.addEventListener('click', () => {
+                    nameSpan.style.display = 'none';
+                    renBtn.style.display = delBtn.style.display = 'none';
+
+                    const inp = document.createElement('input');
+                    inp.type = 'text'; inp.className = 'lf-input'; inp.value = f.name;
+                    tdName.appendChild(inp);
+
+                    const saveBtn2 = document.createElement('button');
+                    saveBtn2.type = 'button'; saveBtn2.className = 'lf-small-btn ok'; saveBtn2.textContent = 'Save';
+                    const cancelBtn2 = document.createElement('button');
+                    cancelBtn2.type = 'button'; cancelBtn2.className = 'lf-small-btn cancel'; cancelBtn2.textContent = 'Cancel';
+                    tdAct.insertBefore(saveBtn2, dlBtn);
+                    tdAct.insertBefore(cancelBtn2, dlBtn);
+                    inp.focus(); inp.select();
+
+                    const cancelRename = () => {
+                        inp.remove(); saveBtn2.remove(); cancelBtn2.remove();
+                        nameSpan.style.display = ''; renBtn.style.display = delBtn.style.display = '';
+                        msg.textContent = '';
+                    };
+
+                    const doRename = async () => {
+                        const newName = inp.value.trim();
+                        if (!newName || newName === f.name) { cancelRename(); return; }
+                        saveBtn2.disabled = true;
+                        try {
+                            const r = await fetch('?renamefile', {
+                                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ oldName: f.name, newName })
+                            });
+                            const res = await r.json();
+                            if (r.ok && res.ok) {
+                                f.name = newName; f.path = res.newFile;
+                                const idx = locationFiles.findIndex(lf => lf.path === f.path);
+                                if (idx >= 0) locationFiles[idx].path = res.newFile;
+                                else await refreshLocationFiles();
+                                refreshAllFileSelects();
+                                buildTable();
+                                setMsg(msg, `Renamed to "${newName}"`, true);
+                            } else {
+                                setMsg(msg, res.error || 'Rename failed', false);
+                                saveBtn2.disabled = false;
+                            }
+                        } catch { setMsg(msg, 'Network error', false); saveBtn2.disabled = false; }
+                    };
+
+                    saveBtn2.addEventListener('click', doRename);
+                    cancelBtn2.addEventListener('click', cancelRename);
+                    inp.addEventListener('keydown', e => {
+                        if (e.key === 'Enter')  doRename();
+                        if (e.key === 'Escape') cancelRename();
+                    });
+                });
+
+                delBtn.addEventListener('click', async () => {
+                    if (!confirm(`Delete "${f.name}"?\nThis cannot be undone.`)) return;
+                    delBtn.disabled = true;
+                    try {
+                        const r = await fetch('?deletefile', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ name: f.name })
+                        });
+                        const res = await r.json();
+                        if (r.ok && res.ok) {
+                            allFiles = allFiles.filter(af => af !== f);
+                            locationFiles = locationFiles.filter(lf => lf.path !== f.path);
+                            refreshAllFileSelects();
+                            buildTable();
+                            setMsg(msg, `Deleted "${f.name}"`, true);
+                        } else {
+                            setMsg(msg, res.error || 'Delete failed', false);
+                            delBtn.disabled = false;
+                        }
+                    } catch { setMsg(msg, 'Network error', false); delBtn.disabled = false; }
+                });
+            }
+
+            tr.appendChild(tdAct);
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        tableWrap.appendChild(table);
     }
-    renderList();
+    buildTable();
 
     // Wire upload zone
+    const doUpload = async files => {
+        await uploadLocationFiles(files, msg, null);
+        try {
+            const r = await fetch('?alllocationfiles');
+            if (r.ok) allFiles = await r.json();
+        } catch {}
+        buildTable();
+    };
     zone.addEventListener('click', () => fileInput.click());
     zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('drag-over'); });
     zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
     zone.addEventListener('drop', e => {
         e.preventDefault(); zone.classList.remove('drag-over');
-        if (e.dataTransfer.files.length) uploadLocationFiles(e.dataTransfer.files, msg, renderList);
+        if (e.dataTransfer.files.length) doUpload(e.dataTransfer.files);
     });
     fileInput.addEventListener('change', () => {
-        if (fileInput.files.length) uploadLocationFiles(fileInput.files, msg, renderList);
+        if (fileInput.files.length) doUpload(fileInput.files);
         fileInput.value = '';
     });
 
@@ -1613,118 +1918,6 @@ async function doManageLocationFiles() {
     closeBtn.textContent = 'Close';
     const close = openModal('Location Files', body, [closeBtn]);
     closeBtn.addEventListener('click', close);
-}
-
-function buildLfRow(listWrap, filePath, mtime, msg, renderList) {
-    const name = filePath.replace(/^configs\//, '');
-    const row  = document.createElement('div');
-    row.className = 'lf-row';
-
-    const nameEl = document.createElement('span');
-    nameEl.className = 'lf-name';
-    nameEl.textContent = name;
-    row.appendChild(nameEl);
-
-    if (mtime) {
-        const tsEl = document.createElement('span');
-        tsEl.className = 'item-date';
-        tsEl.textContent = fmtLocalTime(mtime);
-        tsEl.title = 'Last saved';
-        row.appendChild(tsEl);
-    }
-
-    // Download
-    const dlBtn = document.createElement('a');
-    dlBtn.className = 'lf-icon-btn'; dlBtn.title = 'Download';
-    dlBtn.href = filePath; dlBtn.download = name; dlBtn.textContent = '⬇';
-    row.appendChild(dlBtn);
-
-    // Rename
-    const renBtn = document.createElement('button');
-    renBtn.type = 'button'; renBtn.className = 'lf-icon-btn save'; renBtn.title = 'Rename'; renBtn.textContent = '✏';
-    row.appendChild(renBtn);
-
-    // Delete
-    const delBtn = document.createElement('button');
-    delBtn.type = 'button'; delBtn.className = 'lf-icon-btn del'; delBtn.title = 'Delete'; delBtn.textContent = '✕';
-    row.appendChild(delBtn);
-
-    renBtn.addEventListener('click', () => {
-        // Swap to edit mode in-place
-        nameEl.style.display = dlBtn.style.display = renBtn.style.display = delBtn.style.display = 'none';
-
-        const inp = document.createElement('input');
-        inp.type = 'text'; inp.className = 'lf-input'; inp.value = name;
-        const saveBtn2   = document.createElement('button');
-        saveBtn2.type    = 'button'; saveBtn2.className = 'lf-small-btn ok'; saveBtn2.textContent = 'Save';
-        const cancelBtn2 = document.createElement('button');
-        cancelBtn2.type  = 'button'; cancelBtn2.className = 'lf-small-btn cancel'; cancelBtn2.textContent = 'Cancel';
-
-        row.insertBefore(inp, dlBtn);
-        row.insertBefore(saveBtn2, dlBtn);
-        row.insertBefore(cancelBtn2, dlBtn);
-        inp.focus(); inp.select();
-
-        const cancelRename = () => {
-            inp.remove(); saveBtn2.remove(); cancelBtn2.remove();
-            nameEl.style.display = dlBtn.style.display = renBtn.style.display = delBtn.style.display = '';
-            msg.textContent = '';
-        };
-
-        const doRename = async () => {
-            const newName = inp.value.trim();
-            if (!newName || newName === name) { cancelRename(); return; }
-            saveBtn2.disabled = true;
-            try {
-                const r = await fetch('?renamefile', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ oldName: name, newName })
-                });
-                const res = await r.json();
-                if (r.ok && res.ok) {
-                    const idx = locationFiles.findIndex(f => f.path === filePath);
-                    if (idx >= 0) locationFiles[idx] = { path: res.newFile, mtime: locationFiles[idx].mtime };
-                    else await refreshLocationFiles();
-                    refreshAllFileSelects();
-                    renderList();
-                    setMsg(msg, `Renamed to "${newName}"`, true);
-                } else {
-                    setMsg(msg, res.error || 'Rename failed', false);
-                    saveBtn2.disabled = false;
-                }
-            } catch { setMsg(msg, 'Network error', false); saveBtn2.disabled = false; }
-        };
-
-        saveBtn2.addEventListener('click', doRename);
-        cancelBtn2.addEventListener('click', cancelRename);
-        inp.addEventListener('keydown', e => {
-            if (e.key === 'Enter')  doRename();
-            if (e.key === 'Escape') cancelRename();
-        });
-    });
-
-    delBtn.addEventListener('click', async () => {
-        if (!confirm(`Delete "${name}"?\nThis cannot be undone.`)) return;
-        delBtn.disabled = true;
-        try {
-            const r = await fetch('?deletefile', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name })
-            });
-            const res = await r.json();
-            if (r.ok && res.ok) {
-                locationFiles = locationFiles.filter(f => f.path !== filePath);
-                refreshAllFileSelects();
-                renderList();
-                setMsg(msg, `Deleted "${name}"`, true);
-            } else {
-                setMsg(msg, res.error || 'Delete failed', false);
-                delBtn.disabled = false;
-            }
-        } catch { setMsg(msg, 'Network error', false); delBtn.disabled = false; }
-    });
-
-    listWrap.appendChild(row);
 }
 
 async function uploadLocationFiles(files, msg, afterUpload) {

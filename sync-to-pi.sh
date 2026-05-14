@@ -12,6 +12,7 @@ DST="aprs-pi:/var/www/html/"
 
 rsync -avz --delete --omit-dir-times --no-perms \
   --exclude='.DS_Store' \
+  --exclude='.git/' \
   --exclude='trackers.json' \
   --exclude='config.yaml' \
   --exclude='aprs-daemon.service' \
