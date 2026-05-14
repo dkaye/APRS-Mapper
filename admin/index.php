@@ -180,6 +180,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['save'])) {
     $history  = extractHistory($existing);
     array_unshift($history, gmdate('Y-m-d H:i:s') . ' UTC');
     $yaml = buildConfigYaml($cfg, $history);
+
+    // If config.yaml is a symlink, replace it with a regular file to avoid corrupting the event file
+    if (is_link($configPath)) {
+        unlink($configPath);
+    }
+
     if (file_put_contents($configPath, $yaml, LOCK_EX) === false) {
         respondError('Cannot write config.yaml — check permissions');
     }
