@@ -1967,9 +1967,10 @@ function doUpdate() {
         return;
     }
 
-    // Done: apply changes locally only (no server communication)
+    // Done: apply changes locally and return to map
     isDirty = false;
-    setStatus('Changes saved locally ✓', 'ok', 4000);
+    setStatus('Changes saved locally ✓', 'ok', 2000);
+    setTimeout(() => { location.href = '../'; }, 2000);
 }
 
 // ── Version management ────────────────────────────────────────────────────────
