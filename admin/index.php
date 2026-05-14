@@ -117,6 +117,8 @@ function pruneTrackerHistory($histPath, array $keepCallsigns) {
 // ── AJAX: load ────────────────────────────────────────────────────────────────
 
 if (isset($_GET['load'])) {
+    header('Cache-Control: no-store');
+    header('Content-Type: application/json');
     require_once __DIR__ . '/../config_parse.php';
     $cfg = parseConfigYaml($configPath);
     // Annotate each course with whether its file exists on disk
@@ -125,7 +127,6 @@ if (isset($_GET['load'])) {
     }
     // Include current event filename
     $cfg['_filename'] = $currentFilename;
-    header('Content-Type: application/json');
     echo json_encode($cfg);
     exit;
 }
@@ -133,6 +134,7 @@ if (isset($_GET['load'])) {
 // ── AJAX: save ────────────────────────────────────────────────────────────────
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['save'])) {
+    header('Cache-Control: no-store');
     header('Content-Type: application/json');
     $body = file_get_contents('php://input');
     $cfg  = json_decode($body, true);
@@ -188,6 +190,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['save'])) {
 // ── AJAX: list events ────────────────────────────────────────────────────────
 
 if (isset($_GET['versions'])) {
+    header('Cache-Control: no-store');
+    header('Content-Type: application/json');
     require_once __DIR__ . '/../config_parse.php';
     $list = [];
     if (is_dir($eventsDir)) {
@@ -199,7 +203,6 @@ if (isset($_GET['versions'])) {
         }
     }
     usort($list, fn($a, $b) => $b['mtime'] <=> $a['mtime']);
-    header('Content-Type: application/json');
     echo json_encode($list);
     exit;
 }
@@ -207,6 +210,7 @@ if (isset($_GET['versions'])) {
 // ── AJAX: save a named event ─────────────────────────────────────────────────
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveversion'])) {
+    header('Cache-Control: no-store');
     header('Content-Type: application/json');
     $body = file_get_contents('php://input');
     $data = json_decode($body, true);
@@ -244,6 +248,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveversion'])) {
 // ── AJAX: load a named event ──────────────────────────────────────────────────
 
 if (isset($_GET['loadversion'])) {
+    header('Cache-Control: no-store');
     header('Content-Type: application/json');
     $eventName = trim($_GET['name'] ?? '');
     if (!preg_match('/^[a-zA-Z0-9 _\-\.]{1,80}$/', $eventName)) {
@@ -265,6 +270,7 @@ if (isset($_GET['loadversion'])) {
 // ── AJAX: delete a named event ───────────────────────────────────────────────
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['deleteversion'])) {
+    header('Cache-Control: no-store');
     header('Content-Type: application/json');
     $body = file_get_contents('php://input');
     $data = json_decode($body, true);
@@ -292,6 +298,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['deleteversion'])) {
 // ── AJAX: list location files in current event ────────────────────────────────
 
 if (isset($_GET['locationfiles'])) {
+    header('Cache-Control: no-store');
     header('Content-Type: application/json');
     $exts  = ['gpx', 'kml', 'geojson', 'json'];
     $files = [];
@@ -409,6 +416,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['deletefile'])) {
 // ── AJAX: set active event ────────────────────────────────────────────────────
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['setactiveevent'])) {
+    header('Cache-Control: no-store');
     header('Content-Type: application/json');
     $body = file_get_contents('php://input');
     $data = json_decode($body, true);
@@ -439,6 +447,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['setactiveevent'])) {
 // ── AJAX: background library ──────────────────────────────────────────────────
 
 if (isset($_GET['bglib'])) {
+    header('Cache-Control: no-store');
     header('Content-Type: application/json');
     require_once __DIR__ . '/../config_parse.php';
     $seen = [];
