@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Start APRS
+Comment=Launch APRS Tracker Map
+Exec=chromium --password-store=basic --noerrdialogs --disable-infobars --disable-dev-shm-usage --incognito http://localhost:8080/
+Icon=internet-web-browser
+Terminal=false
+Categories=Utility;
