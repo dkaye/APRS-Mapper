@@ -1100,6 +1100,8 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 // ── Dirty tracking ────────────────────────────────────────────────────────────
 
 let isDirty = false;
+let currentFilename = '';  // Track the current loaded event filename
+let currentEventName = ''; // Track the current loaded event name
 
 function markDirty() {
     isDirty = true;
@@ -1114,8 +1116,10 @@ function setStatus(msg, type, clearMs) {
 }
 
 function setCurrentEvent(filename, eventName) {
-    document.getElementById('current-file').textContent       = filename || '';
-    document.getElementById('current-event-name').textContent = eventName ? ' — ' + eventName : '';
+    currentFilename = filename || '';
+    currentEventName = eventName || '';
+    document.getElementById('current-file').textContent       = currentFilename;
+    document.getElementById('current-event-name').textContent = currentEventName ? ' — ' + currentEventName : '';
 }
 
 window.addEventListener('beforeunload', e => {
@@ -2040,7 +2044,7 @@ async function doSaveAs() {
     inp.type = 'text'; inp.id = 'modal-fname';
     inp.placeholder = 'e.g. dipsea-2026';
     inp.style.width = '100%';
-    inp.value = document.getElementById('current-file').textContent.trim();
+    inp.value = currentFilename;
     field.appendChild(lbl); field.appendChild(inp);
     body.appendChild(field);
 
