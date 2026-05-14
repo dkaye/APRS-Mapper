@@ -1854,18 +1854,22 @@ const LS_SIDEBAR_STATE = 'aprs_sidebar_state';
 })();
 
 // ── Init ───────────────────────────────────────────────────────────────────
-// Check if an event was activated from the admin page
+// Use locally stored current event if available, never fetch from symlink
 let hasStoredEvent = false;
 try {
-	const stored = localStorage.getItem('aprs_active_event');
+	// Check for current event (from activate or save as)
+	let stored = localStorage.getItem('aprs_current_event');
+	// Also check for temp activate event (shouldn't happen but be safe)
+	if (!stored) stored = localStorage.getItem('aprs_active_event');
+
 	if (stored) {
 		const { name, config } = JSON.parse(stored);
 		if (config) {
 			applyConfig(config);
 			hasStoredEvent = true;
-			// Store as current event (persists for admin page)
+			// Ensure it's in aprs_current_event for persistence
 			localStorage.setItem('aprs_current_event', JSON.stringify({ name, config }));
-			// Clear the temp stored event after applying
+			// Clear the temp stored event if it was used
 			localStorage.removeItem('aprs_active_event');
 		}
 	}
