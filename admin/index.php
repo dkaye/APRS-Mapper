@@ -2224,9 +2224,12 @@ async function doSaveAs() {
             if (rVer.ok && result.ok) {
                 isDirty = false;
                 close();
-                setStatus(`Saved "${fname}" ✓`, 'ok', 4000);
+                setStatus(`Saved "${fname}" ✓`, 'ok', 2000);
                 setCurrentEvent(fname, cfg.event || '');
-                location.reload();
+                // Store the saved event as current for map page
+                localStorage.setItem('aprs_current_event', JSON.stringify({ name: fname, config: cfg }));
+                // Return to map immediately
+                setTimeout(() => { location.href = '../'; }, 2000);
             } else {
                 warn.textContent = result.error || 'Save failed';
                 warn.style.display = '';

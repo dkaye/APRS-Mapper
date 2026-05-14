@@ -1865,12 +1865,6 @@ try {
 			hasStoredEvent = true;
 			// Store as current event (persists for admin page)
 			localStorage.setItem('aprs_current_event', JSON.stringify({ name, config }));
-			// Visual indicator that stored event was applied
-			const indicator = document.createElement('div');
-			indicator.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#4caf50;color:white;padding:8px;text-align:center;z-index:10000;font-weight:bold';
-			indicator.textContent = `Using activated event: ${name}`;
-			document.body.insertBefore(indicator, document.body.firstChild);
-			setTimeout(() => indicator.remove(), 5000);
 			// Clear the temp stored event after applying
 			localStorage.removeItem('aprs_active_event');
 		}
