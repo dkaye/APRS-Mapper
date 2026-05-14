@@ -655,16 +655,6 @@ body { display: flex; }
 <script>
 'use strict';
 
-// Debug: Check if page is loading
-const debugStored = localStorage.getItem('aprs_active_event');
-if (debugStored) {
-	const debugDiv = document.createElement('div');
-	debugDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#ff9800;color:white;padding:8px;text-align:center;z-index:10000;font-size:12px';
-	debugDiv.textContent = 'MAP LOADED - Found stored event in localStorage';
-	document.body.insertBefore(debugDiv, document.body.firstChild);
-	setTimeout(() => debugDiv.remove(), 10000);
-}
-
 const isMobile = window.matchMedia('(max-width: 767px)').matches ||
     (window.matchMedia('(orientation: landscape)').matches && window.innerHeight <= 500);
 
