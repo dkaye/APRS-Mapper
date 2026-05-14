@@ -2151,13 +2151,67 @@ async function doSaveAs() {
         const fname = inp.value.trim();
         if (!fname) { inp.focus(); return; }
 
-        // If overwriting, confirm first
+        // If overwriting, confirm first with custom modal
         if (existingNames.has(fname)) {
             const existingEvent = versions.find(v => v.name === fname);
             const eventName = existingEvent?.eventName || fname;
-            if (!confirm(`Warning: You are about to overwrite the event file "${fname}" for "${eventName}".\nThis will permanently change this event for all users!\n\nContinue?`)) {
-                return;
-            }
+
+            const confirmed = await new Promise(resolve => {
+                const backdrop = document.createElement('div');
+                backdrop.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999';
+
+                const modal = document.createElement('div');
+                modal.style.cssText = 'background:#fff;border-radius:8px;padding:24px;max-width:400px;box-shadow:0 4px 16px rgba(0,0,0,0.3)';
+
+                const heading = document.createElement('h3');
+                heading.textContent = 'Overwrite Event?';
+                heading.style.cssText = 'margin:0 0 16px 0;font-size:18px;color:#333';
+
+                const msg = document.createElement('div');
+                msg.innerHTML = `Warning: You are about to overwrite the event file <strong>"${fname}"</strong> for <strong>"${eventName}"</strong>.`;
+                msg.style.cssText = 'margin-bottom:12px;font-size:14px;line-height:1.5;color:#555';
+
+                const blank = document.createElement('div');
+                blank.style.height = '12px';
+
+                const warning = document.createElement('div');
+                warning.textContent = 'This will permanently change this event for all users!';
+                warning.style.cssText = 'margin-bottom:16px;font-size:14px;font-weight:bold;color:#d32f2f;animation:blink 1s infinite';
+                if (!document.querySelector('style[data-blink]')) {
+                    const style = document.createElement('style');
+                    style.setAttribute('data-blink', '1');
+                    style.textContent = '@keyframes blink{0%,50%{opacity:1}51%,100%{opacity:0.3}}';
+                    document.head.appendChild(style);
+                }
+
+                const btnContainer = document.createElement('div');
+                btnContainer.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+
+                const cancelBtn = document.createElement('button');
+                cancelBtn.textContent = 'Cancel';
+                cancelBtn.style.cssText = 'padding:8px 16px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;font-size:14px';
+                cancelBtn.addEventListener('click', () => { backdrop.remove(); resolve(false); });
+
+                const confirmBtn = document.createElement('button');
+                confirmBtn.textContent = 'Overwrite';
+                confirmBtn.style.cssText = 'padding:8px 16px;border:none;border-radius:4px;background:#d32f2f;color:#fff;cursor:pointer;font-size:14px;font-weight:bold';
+                confirmBtn.addEventListener('click', () => { backdrop.remove(); resolve(true); });
+
+                btnContainer.appendChild(cancelBtn);
+                btnContainer.appendChild(confirmBtn);
+
+                modal.appendChild(heading);
+                modal.appendChild(msg);
+                modal.appendChild(blank);
+                modal.appendChild(warning);
+                modal.appendChild(btnContainer);
+                backdrop.appendChild(modal);
+                document.body.appendChild(backdrop);
+
+                confirmBtn.focus();
+            });
+
+            if (!confirmed) return;
         }
 
         saveBtn.disabled = true;
