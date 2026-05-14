@@ -70,7 +70,8 @@ $authed = isset($_SESSION['aprs_admin_authed']) && $_SESSION['aprs_admin_authed'
 
 if (!$authed) {
     // AJAX endpoints return 401 JSON; all other requests get the login form
-    if (isset($_GET['load']) || isset($_GET['save']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib'])) {
+    // Exception: ?diag is allowed without auth for diagnostics
+    if ((isset($_GET['load']) || isset($_GET['save']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib'])) && !isset($_GET['diag'])) {
         header('Content-Type: application/json');
         http_response_code(401);
         echo json_encode(['error' => 'Session expired — reload and log in again']);
@@ -112,6 +113,31 @@ function pruneTrackerHistory($histPath, array $keepCallsigns) {
     $flush();
 
     file_put_contents($histPath, implode("\n", $out) . "\n", LOCK_EX);
+}
+
+// ── AJAX: diagnostics ─────────────────────────────────────────────────────────
+
+if (isset($_GET['diag'])) {
+    header('Cache-Control: no-store');
+    header('Content-Type: application/json');
+    $diag = [
+        'eventsDir' => $eventsDir,
+        'eventsDir_exists' => is_dir($eventsDir),
+        'eventsDir_readable' => is_readable($eventsDir),
+        'eventsDir_writable' => is_writable($eventsDir),
+    ];
+    if (is_dir($eventsDir)) {
+        $stat = stat($eventsDir);
+        $diag['eventsDir_uid'] = $stat['uid'];
+        $diag['eventsDir_gid'] = $stat['gid'];
+        $diag['eventsDir_mode'] = substr(sprintf('%o', $stat['mode']), -4);
+        $diag['eventsDir_perms'] = is_readable($eventsDir) ? 'readable' : 'NOT readable';
+        $diag['eventsDir_perms'] .= is_writable($eventsDir) ? ', writable' : ', NOT writable';
+    }
+    $diag['webserver_user'] = get_current_user();
+    $diag['php_version'] = phpversion();
+    echo json_encode($diag);
+    exit;
 }
 
 // ── AJAX: load ────────────────────────────────────────────────────────────────
