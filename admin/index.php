@@ -2155,7 +2155,7 @@ async function doSaveAs() {
         if (existingNames.has(fname)) {
             const existingEvent = versions.find(v => v.name === fname);
             const eventName = existingEvent?.eventName || fname;
-            if (!confirm(`Warning: You are about to overwrite the event file "${fname}" for "${eventName}". Continue?`)) {
+            if (!confirm(`Warning: You are about to overwrite the event file "${fname}" for "${eventName}".\nThis will permanently change this event for all users!\n\nContinue?`)) {
                 return;
             }
         }
