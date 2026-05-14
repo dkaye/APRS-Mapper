@@ -2309,9 +2309,8 @@ async function doLoadModal() {
 
         const activateBtn = document.createElement('button');
         activateBtn.className = 'item-action-btn';
-        activateBtn.textContent = v.active ? 'Active' : 'Activate';
-        activateBtn.disabled = v.active;
-        activateBtn.title = v.active ? 'This is the active event' : 'Make this the active event';
+        activateBtn.textContent = 'Activate';
+        activateBtn.title = 'Load this event and return to map';
         activateBtn.style.padding = '2px 8px';
         activateBtn.style.fontSize = '12px';
 
@@ -2319,24 +2318,24 @@ async function doLoadModal() {
             e.stopPropagation();
             activateBtn.disabled = true;
             try {
-                // Activate: load event and update symlink to make it the map default
-                const r = await fetch('?setactiveevent', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: v.name })
-                });
-                const res = await r.json();
-                if (res.ok) {
-                    setStatus(`Activated "${v.name}" ✓`, 'ok', 2000);
-                    setTimeout(() => { location.href = '../'; }, 2000);
-                } else {
-                    setStatus(res.error || 'Failed to activate event', 'error');
-                    activateBtn.disabled = v.active;
-                }
+                const [filesResp, r] = await Promise.all([
+                    fetch('?locationfiles'),
+                    fetch('?loadversion&name=' + encodeURIComponent(v.name))
+                ]);
+                if (r.status === 401) { location.reload(); return; }
+                if (!r.ok) { setStatus('Load failed', 'error'); activateBtn.disabled = false; return; }
+                if (filesResp.ok) locationFiles = await filesResp.json();
+                const cfg = await r.json();
+                populateForm(cfg);
+                isDirty = false;
+                setCurrentEvent(v.name, cfg.event || '');
+                close();
+                setStatus(`Activated "${v.name}" ✓`, 'ok', 2000);
+                setTimeout(() => { location.href = '../'; }, 2000);
             } catch (err) {
-                setStatus('Failed to activate event', 'error');
+                setStatus('Failed to activate', 'error');
                 console.error(err);
-                activateBtn.disabled = v.active;
+                activateBtn.disabled = false;
             }
         });
 
