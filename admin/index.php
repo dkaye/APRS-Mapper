@@ -982,7 +982,6 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
         <button class="sec-btn" onclick="location.href='?logout'">Sign out</button>
         <button class="sec-btn" onclick="doLoadModal()">Load…</button>
         <button class="sec-btn" onclick="doSaveAs()">Save As…</button>
-        <button class="save-btn" id="save-btn" onclick="doUpdate()">Done</button>
     </div>
 </div>
 
@@ -1110,7 +1109,6 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 
     <div id="footer">
         <button class="sec-btn" onclick="doSaveAs()">Save As…</button>
-        <button class="save-btn" onclick="doUpdate()">Update</button>
     </div>
 </div>
 
@@ -2321,20 +2319,20 @@ async function doLoadModal() {
             e.stopPropagation();
             activateBtn.disabled = true;
             try {
-                const [filesResp, r] = await Promise.all([
-                    fetch('?locationfiles'),
-                    fetch('?loadversion&name=' + encodeURIComponent(v.name))
-                ]);
-                if (r.status === 401) { location.reload(); return; }
-                if (!r.ok) { setStatus('Failed to load event', 'error'); activateBtn.disabled = v.active; return; }
-                if (filesResp.ok) locationFiles = await filesResp.json();
-                const cfg = await r.json();
-                populateForm(cfg);
-                // Activate: load event locally without changing server default (symlink)
-                isDirty = false;
-                setCurrentEvent(v.name, cfg.event || '');
-                close();
-                setStatus(`Activated "${v.name}" ✓`, 'ok', 4000);
+                // Activate: load event and update symlink to make it the map default
+                const r = await fetch('?setactiveevent', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: v.name })
+                });
+                const res = await r.json();
+                if (res.ok) {
+                    setStatus(`Activated "${v.name}" ✓`, 'ok', 2000);
+                    setTimeout(() => { location.href = '../'; }, 2000);
+                } else {
+                    setStatus(res.error || 'Failed to activate event', 'error');
+                    activateBtn.disabled = v.active;
+                }
             } catch (err) {
                 setStatus('Failed to activate event', 'error');
                 console.error(err);
