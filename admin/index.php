@@ -252,6 +252,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveversion'])) {
         if (!mkdir($eventPath, 0777, true)) {
             http_response_code(500); echo json_encode(['error' => 'Cannot create event directory']); exit;
         }
+        chmod($eventPath, 0775);  // Ensure group can write
     }
 
     // Update course paths in the config to point to events/<eventName>/...
