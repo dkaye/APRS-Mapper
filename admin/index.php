@@ -37,20 +37,17 @@ function respondError($message, $statusCode = 500) {
 $configPath   = __DIR__ . '/../config.yaml';
 $passwordFile = __DIR__ . '/password.txt';
 $eventsDir    = __DIR__ . '/../events';    // event directories live here
+$currentEventFile = __DIR__ . '/../events/.current_event';  // tracks active event name
 
-// Determine current active event directory (from symlink target)
-$currentEventDir = null;
-if (is_link($configPath)) {
-	$target = readlink($configPath);
-	if ($target && preg_match('|^events/([^/]+)/event\.yaml$|', $target, $m)) {
-		$currentEventDir = $eventsDir . '/' . $m[1];
-	}
+// Determine current active event from tracking file
+$currentFilename  = '';
+if (file_exists($currentEventFile)) {
+	$currentFilename = trim(file_get_contents($currentEventFile)) ?: '';
 }
 
-// Get current event filename and event name for header
-$currentFilename  = $currentEventDir ? basename($currentEventDir) : '';
+// Get current event name from config.yaml
 $currentEventName = '';
-if ($currentFilename && file_exists($configPath)) {
+if (file_exists($configPath)) {
 	require_once __DIR__ . '/../config_parse.php';
 	$hdrCfg = parseConfigYaml($configPath);
 	$currentEventName = $hdrCfg['event'] ?? '';
@@ -180,12 +177,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['save'])) {
     $history  = extractHistory($existing);
     array_unshift($history, gmdate('Y-m-d H:i:s') . ' UTC');
     $yaml = buildConfigYaml($cfg, $history);
-
-    // If config.yaml is a symlink, replace it with a regular file to avoid corrupting the event file
-    if (is_link($configPath)) {
-        unlink($configPath);
-    }
-
     if (file_put_contents($configPath, $yaml, LOCK_EX) === false) {
         respondError('Cannot write config.yaml — check permissions');
     }
@@ -241,6 +232,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveversion'])) {
     $yaml = buildConfigYaml($cfg, $history);
     if (file_put_contents($path, $yaml, LOCK_EX) === false) {
         respondError('Cannot write event file — check permissions');
+    }
+    // Track this as the current active event
+    if (file_put_contents($currentEventFile, $eventName, LOCK_EX) === false) {
+        respondError('Cannot update event tracking — check permissions');
     }
     pruneTrackerHistory($eventPath . '/tracker_history.yaml', array_column($cfg['trackers'] ?? [], 'callsign'));
     respondJson(['ok' => true]);
@@ -420,16 +415,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['setactiveevent'])) {
     if (!file_exists($eventPath)) {
         respondError('Event not found', 404);
     }
-    if (file_exists($configPath) || is_link($configPath)) {
-        if (!unlink($configPath)) {
-            respondError('Cannot update symlink — check permissions');
-        }
+    // Copy event file to config.yaml (don't use symlinks — they cause corruption when editing)
+    $eventContent = file_get_contents($eventPath);
+    if ($eventContent === false) {
+        respondError('Cannot read event file', 500);
     }
-    $targetPath = 'events/' . $eventName . '/event.yaml';
-    if (!symlink($targetPath, $configPath)) {
-        respondError('Cannot create symlink — check permissions');
+    if (file_put_contents($configPath, $eventContent, LOCK_EX) === false) {
+        respondError('Cannot write config.yaml', 500);
     }
-    touch(realpath($configPath));
+    // Track this as the current active event
+    if (file_put_contents($currentEventFile, $eventName, LOCK_EX) === false) {
+        respondError('Cannot update event tracking', 500);
+    }
     respondJson(['ok' => true]);
 }
 
