@@ -146,10 +146,19 @@ if (isset($_GET['repair'])) {
         }
     }
 
-    // Fix config.yaml if it's a regular file
-    if (file_exists($configPath) && !is_link($configPath)) {
+    // Fix config.yaml (or its symlink target if it's a link)
+    if (is_link($configPath)) {
+        $target = realpath($configPath);
+        if ($target && !chmod($target, 0664)) {
+            $errors[] = 'Cannot chmod config.yaml target (' . basename($target) . ')';
+        } else if ($target) {
+            $fixed[] = 'config.yaml target (' . basename($target) . ')';
+        }
+    } elseif (file_exists($configPath)) {
         if (!chmod($configPath, 0664)) {
             $errors[] = 'Cannot chmod config.yaml';
+        } else {
+            $fixed[] = 'config.yaml';
         }
     }
 
@@ -182,6 +191,23 @@ if (isset($_GET['diag'])) {
         $diag['eventsDir_perms'] = is_readable($eventsDir) ? 'readable' : 'NOT readable';
         $diag['eventsDir_perms'] .= is_writable($eventsDir) ? ', writable' : ', NOT writable';
     }
+    // Check config.yaml specifically
+    $diag['configPath'] = $configPath;
+    $diag['configPath_exists'] = file_exists($configPath);
+    $diag['configPath_is_link'] = is_link($configPath);
+    if (is_link($configPath)) {
+        $diag['configPath_target'] = readlink($configPath);
+        $diag['configPath_target_real'] = realpath($configPath);
+    }
+    $diag['configPath_readable'] = is_readable($configPath);
+    $diag['configPath_writable'] = is_writable($configPath);
+    if (file_exists($configPath)) {
+        $stat = stat($configPath);
+        $diag['configPath_uid'] = $stat['uid'];
+        $diag['configPath_gid'] = $stat['gid'];
+        $diag['configPath_mode'] = substr(sprintf('%o', $stat['mode']), -4);
+    }
+
     $diag['webserver_user'] = get_current_user();
     $diag['php_version'] = phpversion();
     echo json_encode($diag);
