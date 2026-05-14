@@ -2208,20 +2208,28 @@ async function doSaveAs() {
             const cfg = collectConfig();
             const errors = validateConfig(cfg);
             if (errors.length) { warn.textContent = errors[0]; warn.style.display = ''; saveBtn.disabled = false; return; }
-            // Save As: only save to the new event version, don't modify the currently active event
-            const rVer = await fetch('?saveversion', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: fname, cfg })
-            });
+            // Save As: save to new event version AND update live config
+            const [rLive, rVer] = await Promise.all([
+                fetch('?save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(cfg)
+                }),
+                fetch('?saveversion', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: fname, cfg })
+                })
+            ]);
             const result = await rVer.json();
-            if (rVer.ok && result.ok) {
+            if (rVer.ok && result.ok && rLive.ok) {
                 isDirty = false;
                 close();
-                setStatus(`Saved "${fname}" ✓ (use Load to switch to it)`, 'ok', 4000);
-                // Don't update currentFilename yet — the new event isn't active until user loads it
+                setStatus(`Saved "${fname}" ✓`, 'ok', 4000);
+                setCurrentEvent(fname, cfg.event || '');
             } else {
-                warn.textContent = result.error || 'Save failed';
+                const liveResult = rLive.ok ? null : await rLive.json();
+                warn.textContent = result.error || liveResult?.error || 'Save failed';
                 warn.style.display = '';
             }
         } catch {
