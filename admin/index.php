@@ -115,113 +115,6 @@ function pruneTrackerHistory($histPath, array $keepCallsigns) {
     file_put_contents($histPath, implode("\n", $out) . "\n", LOCK_EX);
 }
 
-// ── AJAX: repair permissions ──────────────────────────────────────────────────
-
-if (isset($_GET['repair'])) {
-    header('Cache-Control: no-store');
-    header('Content-Type: application/json');
-    $fixed = [];
-    $errors = [];
-
-    // Fix event directories and files
-    if (is_dir($eventsDir)) {
-        foreach (glob($eventsDir . '/*', GLOB_ONLYDIR) ?: [] as $eventDir) {
-            @chown($eventDir, 33);  // www-data
-            @chgrp($eventDir, 33);
-            chmod($eventDir, 0775);
-            $fixed[] = basename($eventDir) . ' (dir)';
-
-            // Fix event.yaml
-            $eventYaml = $eventDir . '/event.yaml';
-            if (file_exists($eventYaml)) {
-                @chown($eventYaml, 33);
-                @chgrp($eventYaml, 33);
-                chmod($eventYaml, 0664);
-            }
-
-            // Fix tracker_history.yaml
-            $histYaml = $eventDir . '/tracker_history.yaml';
-            if (file_exists($histYaml)) {
-                @chown($histYaml, 33);
-                @chgrp($histYaml, 33);
-                chmod($histYaml, 0664);
-            }
-        }
-    }
-
-    // Fix config.yaml and its symlink target
-    if (is_link($configPath)) {
-        $target = realpath($configPath);
-        if ($target) {
-            if (is_writable(dirname($target))) {
-                // Try to change ownership and permissions
-                @chown($target, 33);  // www-data uid
-                @chgrp($target, 33);  // www-data gid
-                chmod($target, 0664);
-                $fixed[] = 'config.yaml target (' . basename($target) . ')';
-            } else {
-                $errors[] = 'Cannot write to config.yaml target directory: ' . dirname($target);
-            }
-        }
-    } elseif (file_exists($configPath)) {
-        @chown($configPath, 33);
-        @chgrp($configPath, 33);
-        chmod($configPath, 0664);
-        $fixed[] = 'config.yaml';
-    }
-
-    // Fix trackers.json
-    $trackersFile = __DIR__ . '/../trackers.json';
-    if (file_exists($trackersFile) && !chmod($trackersFile, 0664)) {
-        $errors[] = 'Cannot chmod trackers.json';
-    }
-
-    echo json_encode(['fixed' => $fixed, 'errors' => $errors]);
-    exit;
-}
-
-// ── AJAX: diagnostics ─────────────────────────────────────────────────────────
-
-if (isset($_GET['diag'])) {
-    header('Cache-Control: no-store');
-    header('Content-Type: application/json');
-    $diag = [
-        'eventsDir' => $eventsDir,
-        'eventsDir_exists' => is_dir($eventsDir),
-        'eventsDir_readable' => is_readable($eventsDir),
-        'eventsDir_writable' => is_writable($eventsDir),
-    ];
-    if (is_dir($eventsDir)) {
-        $stat = stat($eventsDir);
-        $diag['eventsDir_uid'] = $stat['uid'];
-        $diag['eventsDir_gid'] = $stat['gid'];
-        $diag['eventsDir_mode'] = substr(sprintf('%o', $stat['mode']), -4);
-        $diag['eventsDir_perms'] = is_readable($eventsDir) ? 'readable' : 'NOT readable';
-        $diag['eventsDir_perms'] .= is_writable($eventsDir) ? ', writable' : ', NOT writable';
-    }
-    // Check config.yaml specifically
-    $diag['configPath'] = $configPath;
-    $diag['configPath_exists'] = file_exists($configPath);
-    $diag['configPath_is_link'] = is_link($configPath);
-    if (is_link($configPath)) {
-        $diag['configPath_target'] = readlink($configPath);
-        $diag['configPath_target_real'] = realpath($configPath);
-    }
-    $diag['configPath_readable'] = is_readable($configPath);
-    $diag['configPath_writable'] = is_writable($configPath);
-    if (file_exists($configPath)) {
-        $stat = stat($configPath);
-        $diag['configPath_uid'] = $stat['uid'];
-        $diag['configPath_gid'] = $stat['gid'];
-        $diag['configPath_mode'] = substr(sprintf('%o', $stat['mode']), -4);
-    }
-
-    $diag['webserver_user'] = get_current_user();
-    $diag['php_version'] = phpversion();
-    echo json_encode($diag);
-    exit;
-}
-
 // ── AJAX: load ────────────────────────────────────────────────────────────────
 
 if (isset($_GET['load'])) {
@@ -284,24 +177,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['save'])) {
     $history  = extractHistory($existing);
     array_unshift($history, gmdate('Y-m-d H:i:s') . ' UTC');
     $yaml = buildConfigYaml($cfg, $history);
-
-    // Resolve symlink target for better error reporting
-    $realPath = is_link($configPath) ? realpath($configPath) : $configPath;
-    $dir = dirname($realPath ?: $configPath);
-
     if (file_put_contents($configPath, $yaml, LOCK_EX) === false) {
         http_response_code(500);
-        $err = 'Cannot write config.yaml';
-        if (!file_exists($configPath) && !is_link($configPath)) {
-            $err .= ' (file does not exist)';
-        } elseif (!is_writable($dir)) {
-            $err .= ' (directory not writable: ' . $dir . ')';
-        } elseif (!is_writable($configPath)) {
-            $err .= ' (file not writable)';
-        } else {
-            $err .= ' — check permissions';
-        }
-        echo json_encode(['error' => $err]);
+        echo json_encode(['error' => 'Cannot write config.yaml — check permissions']);
         exit;
     }
     $real = realpath($configPath);
@@ -345,12 +223,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveversion'])) {
         http_response_code(400); echo json_encode(['error' => 'Name may only contain letters, numbers, spaces, hyphens, underscores, periods (max 80 chars)']); exit;
     }
     $eventPath = $eventsDir . '/' . $eventName;
-    if (!is_dir($eventPath)) {
-        if (!mkdir($eventPath, 0777, true)) {
-            http_response_code(500); echo json_encode(['error' => 'Cannot create event directory']); exit;
-        }
-        chmod($eventPath, 0775);  // Ensure group can write
-    }
+    if (!is_dir($eventPath)) mkdir($eventPath, 0777, true);
 
     // Update course paths in the config to point to events/<eventName>/...
     $cfg = $data['cfg'];
@@ -366,11 +239,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveversion'])) {
     array_unshift($history, gmdate('Y-m-d H:i:s') . ' UTC');
     $yaml = buildConfigYaml($cfg, $history);
     if (file_put_contents($path, $yaml, LOCK_EX) === false) {
-        $err = 'Cannot write event file';
-        if (!is_dir($eventPath)) $err .= ' (directory does not exist)';
-        elseif (!is_writable($eventPath)) $err .= ' (directory not writable)';
-        else $err .= ' — check permissions';
-        http_response_code(500); echo json_encode(['error' => $err]); exit;
+        http_response_code(500); echo json_encode(['error' => 'Cannot write event file — check permissions']); exit;
     }
     pruneTrackerHistory($eventPath . '/tracker_history.yaml', array_column($cfg['trackers'] ?? [], 'callsign'));
     echo json_encode(['ok' => true]);
