@@ -209,19 +209,20 @@ Map layers are rendered in the following order, top to bottom:
 3. **Courses**
 4. **iGates** — always underneath the others
 
-### Kiosk Mode
+### Kiosk View Mode
 
-Click **Kiosk Mode** in the sidebar, or append `?kiosk=1` to the URL. Intended for unattended displays:
+Click **Kiosk Mode** in the sidebar, or append `?kiosk=1` to the URL. This activates a limited-UI map view optimized for unattended displays (distinct from the browser's fullscreen display mode):
 
-- Browser enters full screen automatically.
-- Sidebar shows Trackers, Aid Stations, and iGates only; Courses and Backgrounds are hidden.
+- Sidebar shows Trackers, Aid Stations, and iGates only; Courses and Backgrounds sections are hidden.
 - Courses that were visible in normal mode remain visible; hidden courses stay hidden.
 - The first background tile layer is selected automatically.
 - Tracker labels and dot blinking work exactly as in normal mode.
 - Footer shows three small buttons:
-  - **Sidebar** — shows or hides the sidebar. State is remembered across kiosk sessions.
+  - **Sidebar** — shows or hides the sidebar. State is remembered across kiosk view sessions.
   - **Reset Map** — restores the default view and clears all selections and the Origin marker.
-  - **Exit** — returns to normal mode.
+  - **Exit** — returns to normal sidebar view.
+
+**Note:** The display Pi browser runs in fullscreen kiosk display mode (no address bar, menus, or navigation) at all times. The "Kiosk Mode" button above switches the app's UI layout, not the browser's fullscreen mode.
 
 ---
 
