@@ -1854,33 +1854,25 @@ const LS_SIDEBAR_STATE = 'aprs_sidebar_state';
 })();
 
 // ── Init ───────────────────────────────────────────────────────────────────
-// Use locally stored current event if available, never fetch from symlink
+// On first load or reload: use symlink default and clear local event.
+// On navigation from admin: use locally stored event.
 let hasStoredEvent = false;
-try {
-	// Check for current event (from activate or save as)
-	let stored = localStorage.getItem('aprs_current_event');
-	// Also check for temp activate event (shouldn't happen but be safe)
-	if (!stored) stored = localStorage.getItem('aprs_active_event');
-
-	if (stored) {
-		const { name, config } = JSON.parse(stored);
-		if (config) {
-			applyConfig(config);
-			hasStoredEvent = true;
-			// Ensure it's in aprs_current_event for persistence
-			localStorage.setItem('aprs_current_event', JSON.stringify({ name, config }));
-			// Clear the temp stored event if it was used
-			localStorage.removeItem('aprs_active_event');
+const fromAdmin = document.referrer.includes('/admin');
+if (!fromAdmin) {
+	localStorage.removeItem('aprs_current_event');
+} else {
+	try {
+		const stored = localStorage.getItem('aprs_current_event');
+		if (stored) {
+			const { name, config } = JSON.parse(stored);
+			if (config) {
+				applyConfig(config);
+				hasStoredEvent = true;
+			}
 		}
-	}
-} catch (e) {
-	const indicator = document.createElement('div');
-	indicator.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#f44336;color:white;padding:8px;text-align:center;z-index:10000;font-weight:bold';
-	indicator.textContent = `Error applying stored event: ${e.message}`;
-	document.body.insertBefore(indicator, document.body.firstChild);
+	} catch (e) {}
 }
 
-// Only load from symlink if no activated event was selected
 if (!hasStoredEvent) {
 	loadConfig();
 	setInterval(loadConfig, 5000);
