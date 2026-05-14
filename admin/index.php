@@ -2329,6 +2329,8 @@ async function doLoadModal() {
                 populateForm(cfg);
                 isDirty = false;
                 setCurrentEvent(v.name, cfg.event || '');
+                // Store activated event in localStorage for map to use
+                localStorage.setItem('aprs_active_event', JSON.stringify({ name: v.name, config: cfg }));
                 close();
                 setStatus(`Activated "${v.name}" ✓`, 'ok', 2000);
                 setTimeout(() => { location.href = '../'; }, 2000);

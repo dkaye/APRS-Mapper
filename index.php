@@ -1854,6 +1854,21 @@ const LS_SIDEBAR_STATE = 'aprs_sidebar_state';
 })();
 
 // ── Init ───────────────────────────────────────────────────────────────────
+// Check if an event was activated from the admin page
+try {
+	const stored = localStorage.getItem('aprs_active_event');
+	if (stored) {
+		const { name, config } = JSON.parse(stored);
+		if (config) {
+			applyConfig(config);
+			// Clear the stored event so we don't keep using it after page reload
+			localStorage.removeItem('aprs_active_event');
+		}
+	}
+} catch (e) {
+	console.error('Error loading stored event:', e);
+}
+
 loadConfig();
 setInterval(loadConfig, 5000);
 updateMap();
