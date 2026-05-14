@@ -2226,8 +2226,8 @@ async function doSaveAs() {
                 close();
                 setStatus(`Saved "${fname}" ✓`, 'ok', 2000);
                 setCurrentEvent(fname, cfg.event || '');
-                // Store the saved event as current for map page
-                localStorage.setItem('aprs_current_event', JSON.stringify({ name: fname, config: cfg }));
+                // Store the saved event as current for map page (Save As always makes it the default)
+                localStorage.setItem('aprs_current_event', JSON.stringify({ name: fname, config: cfg, isDefault: true }));
                 // Return to map immediately
                 setTimeout(() => { location.href = '../'; }, 2000);
             } else {
@@ -2342,6 +2342,42 @@ async function doLoadModal() {
         activateBtn.addEventListener('click', async e => {
             e.stopPropagation();
             activateBtn.disabled = true;
+
+            // Warn if activating a non-default event
+            if (!v.active) {
+                const confirmed = await new Promise(resolve => {
+                    const backdrop = document.createElement('div');
+                    backdrop.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999';
+                    const modal = document.createElement('div');
+                    modal.style.cssText = 'background:#fff;border-radius:8px;padding:24px;max-width:400px;box-shadow:0 4px 16px rgba(0,0,0,0.3)';
+                    const heading = document.createElement('h3');
+                    heading.textContent = 'Warning';
+                    heading.style.cssText = 'margin:0 0 16px 0;font-size:18px;color:#333';
+                    const msg = document.createElement('div');
+                    msg.textContent = 'You are loading an event that isn\'t globally active. The trackers will not get updates.';
+                    msg.style.cssText = 'margin-bottom:24px;font-size:14px;line-height:1.5;color:#555';
+                    const btnRow = document.createElement('div');
+                    btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+                    const cancelBtn = document.createElement('button');
+                    cancelBtn.textContent = 'Cancel';
+                    cancelBtn.style.cssText = 'padding:8px 16px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;font-size:14px';
+                    cancelBtn.addEventListener('click', () => { backdrop.remove(); resolve(false); });
+                    const okBtn = document.createElement('button');
+                    okBtn.textContent = 'Continue';
+                    okBtn.style.cssText = 'padding:8px 16px;border:none;border-radius:4px;background:#1976d2;color:#fff;cursor:pointer;font-size:14px;font-weight:bold';
+                    okBtn.addEventListener('click', () => { backdrop.remove(); resolve(true); });
+                    btnRow.appendChild(cancelBtn);
+                    btnRow.appendChild(okBtn);
+                    modal.appendChild(heading);
+                    modal.appendChild(msg);
+                    modal.appendChild(btnRow);
+                    backdrop.appendChild(modal);
+                    document.body.appendChild(backdrop);
+                    okBtn.focus();
+                });
+                if (!confirmed) { activateBtn.disabled = false; return; }
+            }
+
             try {
                 const [filesResp, r] = await Promise.all([
                     fetch('?locationfiles'),
@@ -2351,12 +2387,10 @@ async function doLoadModal() {
                 if (!r.ok) { setStatus('Load failed', 'error'); activateBtn.disabled = false; return; }
                 if (filesResp.ok) locationFiles = await filesResp.json();
                 const cfg = await r.json();
-                console.log('Fetched config for event:', v.name, cfg);
                 populateForm(cfg);
                 isDirty = false;
                 setCurrentEvent(v.name, cfg.event || '');
-                // Store activated event in localStorage for map to use
-                const eventData = { name: v.name, config: cfg };
+                const eventData = { name: v.name, config: cfg, isDefault: v.active };
                 localStorage.setItem('aprs_current_event', JSON.stringify(eventData));
                 close();
                 setStatus(`Activated "${v.name}" ✓`, 'ok', 2000);

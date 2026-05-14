@@ -1857,6 +1857,7 @@ const LS_SIDEBAR_STATE = 'aprs_sidebar_state';
 // On first load or reload: use symlink default and clear local event.
 // On navigation from admin: use locally stored event.
 let hasStoredEvent = false;
+let isNonDefaultEvent = false;
 const isReload = performance.getEntriesByType('navigation')[0]?.type === 'reload';
 const fromSameHost = document.referrer && new URL(document.referrer).host === location.host;
 const fromAdmin = !isReload && fromSameHost;
@@ -1866,13 +1867,29 @@ if (!fromAdmin) {
 	try {
 		const stored = localStorage.getItem('aprs_current_event');
 		if (stored) {
-			const { name, config } = JSON.parse(stored);
+			const { name, config, isDefault } = JSON.parse(stored);
 			if (config) {
 				applyConfig(config);
 				hasStoredEvent = true;
+				isNonDefaultEvent = !isDefault;
 			}
 		}
 	} catch (e) {}
+}
+
+if (isNonDefaultEvent) {
+	const note = document.createElement('div');
+	note.id = 'non-default-note';
+	note.textContent = 'Not the active event. Tracker data are not being updated.';
+	note.style.cssText = isMobile
+		? 'font-size:11px;color:#b71c1c;padding:0 10px;align-self:center;white-space:nowrap'
+		: 'position:fixed;bottom:28px;left:200px;font-size:12px;color:#b71c1c;background:rgba(255,255,255,0.85);padding:3px 10px;border-radius:4px;z-index:1000;pointer-events:none';
+	if (isMobile) {
+		const topBar = document.getElementById('top-bar');
+		if (topBar) topBar.appendChild(note);
+	} else {
+		document.body.appendChild(note);
+	}
 }
 
 if (!hasStoredEvent) {
