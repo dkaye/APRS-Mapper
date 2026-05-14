@@ -2150,6 +2150,16 @@ async function doSaveAs() {
     saveBtn.addEventListener('click', async () => {
         const fname = inp.value.trim();
         if (!fname) { inp.focus(); return; }
+
+        // If overwriting, confirm first
+        if (existingNames.has(fname)) {
+            const existingEvent = versions.find(v => v.name === fname);
+            const eventName = existingEvent?.eventName || fname;
+            if (!confirm(`Warning: You are about to overwrite the event file "${fname}" for "${eventName}". Continue?`)) {
+                return;
+            }
+        }
+
         saveBtn.disabled = true;
         try {
             const cfg = collectConfig();
