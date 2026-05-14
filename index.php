@@ -1878,10 +1878,9 @@ if (!fromAdmin) {
 if (!hasStoredEvent) {
 	loadConfig();
 	setInterval(loadConfig, 5000);
+	updateMap();
+	setInterval(updateMap, 5000);
 }
-
-updateMap();
-setInterval(updateMap, 5000);
 </script>
 <div id="no-loc-toast"></div>
 </body>
