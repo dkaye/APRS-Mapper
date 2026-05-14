@@ -4,5 +4,7 @@ admin/password.txt
 configs/*.yaml
 configs/*.yml
 temp/
+events/*/tracker_history.yaml
 publish.sh
+backup-from-pi.sh
 aprs-daemon.log

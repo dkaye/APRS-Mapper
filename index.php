@@ -17,6 +17,13 @@
 $trackerStatusFilename = 'trackers.json';
 
 if (isset($_GET['json'])) {
+	$etag = '"' . filemtime($trackerStatusFilename) . '"';
+	header('ETag: ' . $etag);
+	header('Cache-Control: no-cache');
+	if (isset($_SERVER['HTTP_IF_NONE_MATCH']) && $_SERVER['HTTP_IF_NONE_MATCH'] === $etag) {
+		http_response_code(304);
+		exit;
+	}
 	$fh = fopen($trackerStatusFilename, 'r');
 	if (!$fh) { http_response_code(500); exit; }
 	flock($fh, LOCK_SH);
@@ -25,6 +32,48 @@ if (isset($_GET['json'])) {
 	fclose($fh);
 	header('Content-Type: application/json');
 	echo $contents;
+	exit;
+}
+
+if (isset($_GET['history'])) {
+	$cfgReal  = realpath('config.yaml');
+	$histPath = $cfgReal ? dirname($cfgReal) . '/tracker_history.yaml' : null;
+	$etag     = '"' . ($histPath && file_exists($histPath) ? filemtime($histPath) : '0') . '"';
+	header('ETag: ' . $etag);
+	header('Cache-Control: no-cache');
+	if (isset($_SERVER['HTTP_IF_NONE_MATCH']) && $_SERVER['HTTP_IF_NONE_MATCH'] === $etag) {
+		http_response_code(304);
+		exit;
+	}
+	header('Content-Type: application/json');
+	$result   = [];
+	if ($histPath && file_exists($histPath)) {
+		$fh = fopen($histPath, 'r');
+		if ($fh && flock($fh, LOCK_SH)) {
+			$lines = [];
+			while (($line = fgets($fh)) !== false) $lines[] = rtrim($line);
+			flock($fh, LOCK_UN);
+			fclose($fh);
+			$cs = null; $entry = null;
+			foreach ($lines as $line) {
+				if (!$line || $line[0] === '#') continue;
+				if (preg_match('/^([A-Z0-9][\w\-]+):$/', $line, $m)) {
+					$cs = $m[1]; $result[$cs] = [];
+				} elseif (preg_match('/^  - lat:\s*([\-\d.]+)/', $line, $m)) {
+					$entry = ['lat' => (float)$m[1], 'lon' => 0.0, 'ts' => 0];
+				} elseif (preg_match('/^    lon:\s*([\-\d.]+)/', $line, $m) && $entry !== null) {
+					$entry['lon'] = (float)$m[1];
+				} elseif (preg_match('/^    ts:\s*(\d+)/', $line, $m) && $entry !== null) {
+					$entry['ts'] = (int)$m[1];
+					if ($cs !== null) $result[$cs][] = $entry;
+					$entry = null;
+				}
+			}
+		}
+		foreach ($result as &$entries) $entries = array_slice($entries, 0, 5);
+		unset($entries);
+	}
+	echo json_encode($result);
 	exit;
 }
 
@@ -120,6 +169,14 @@ html, body { width: 100%; height: 100%; overflow: hidden;
 
 @keyframes blink-anim { 50% { opacity: 0; } }
 .blinking { animation: blink-anim 0.4s steps(2,end) infinite; }
+#no-loc-toast {
+    display: none; position: fixed; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    background: #444; color: #fff; padding: 10px 20px;
+    border-radius: 8px; font-size: 14px; z-index: 9999;
+    box-shadow: 0 2px 8px rgba(0,0,0,.4); pointer-events: none;
+    white-space: nowrap;
+}
 
 .tracker-label {
     background: none; border: none; box-shadow: none;
@@ -183,10 +240,10 @@ body { display: flex; }
 }
 .legend-item.clickable { cursor: pointer; }
 .legend-item.clickable:hover { background: #e0e0e0; }
-.legend-item.selected  { background: #d0e8ff; font-weight: bold; }
+.legend-item.selected  { background: #d0e8ff; }
 .legend-dot  { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #333; flex-shrink: 0; }
 .legend-text { font-size: 13px; line-height: 1.3; flex: 1; }
-.legend-id   { font-weight: bold; }
+.legend-id   { }
 .legend-name { color: #444; }
 .legend-time { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
@@ -327,7 +384,7 @@ body { display: flex; }
     .m-legend-item:active   { background: #f0f6ff; }
     .m-legend-item.selected { background: #e8f2ff; }
     .m-dot  { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid #333; flex-shrink: 0; }
-    .m-id   { font-weight: 700; font-size: 14px; min-width: 28px; }
+    .m-id   { font-size: 14px; min-width: 28px; }
     .m-name { font-size: 14px; flex: 1; color: #222; }
     .m-time { font-size: 12px; color: #888; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
@@ -721,6 +778,7 @@ const courseColors         = {};
 let   courseOrder          = [];
 const lastBeacons          = {};
 const blinkTimers          = {};
+const historyDots          = {};	// callsign → [L.circleMarker, ...]
 const DEFAULT_COURSE_COLOR = '#2196f3';
 const LS_COURSE_COLORS     = 'aprs_course_colors';
 const LS_COURSE_ACTIVE     = 'aprs_course_active';
@@ -753,6 +811,8 @@ let aidClickCount      = 0;
 let origin             = null;
 let originMarker       = null;
 let configEtag         = null;
+let jsonEtag           = null;
+let historyEtag        = null;
 let coursesInitialized = false;
 
 // ── Mobile bottom sheet ───────────────────────────────────────────────────
@@ -899,7 +959,90 @@ function makeTrackerIcon(shape, fillColor, size) {
 }
 
 function popupHtml(t) {
-	return `<b>${t.name}</b> (${t.id})<br>${t.callsign}<br>Last heard: ${t.time}`;
+	return `<b>${t.name}</b> (${t.id})<br>${t.callsign}<br>Last heard ${t.time} ago`;
+}
+
+function relativeTime(ts) {
+	const s = Math.floor(Date.now() / 1000) - ts;
+	if (s < 10)  return 'just now';
+	if (s < 60)  return s + 's ago';
+	const m = Math.floor(s / 60), r = s % 60;
+	if (m < 60)  return m + 'm ' + r + 's ago';
+	const h = Math.floor(m / 60);
+	return h + 'h ' + (m % 60) + 'm ago';
+}
+
+function showNoLocation(name) {
+	const el = document.getElementById('no-loc-toast');
+	el.textContent = name + ': No location received';
+	el.style.display = 'block';
+	clearTimeout(showNoLocation._t);
+	showNoLocation._t = setTimeout(() => el.style.display = 'none', 3000);
+}
+
+function hideAllHistoryDots() {
+	Object.values(historyDots).forEach(dots => dots.forEach(d => d.remove()));
+	Object.keys(historyDots).forEach(k => delete historyDots[k]);
+}
+
+function showTrackerHistory(callsign, color) {
+	const r = Math.max(3, Math.round(trackerStyle.size * 0.42));
+	const headers = historyEtag ? { 'If-None-Match': historyEtag } : {};
+	fetch('index.php?history', { headers })
+		.then(res => {
+			if (res.status === 304) return null;
+			historyEtag = res.headers.get('ETag');
+			return res.json();
+		})
+		.then(hist => {
+			if (!hist) return;
+			const entries = hist[callsign] || [];
+			if (!entries.length) return;
+
+			const layers = [];
+
+			// Dots — newest first in entries array
+			entries.forEach(e => {
+				const dot = L.circleMarker([e.lat, e.lon], {
+					radius: r, color: color, fillColor: color,
+					fillOpacity: 0.5, weight: 1.5, pane: 'trackerPane'
+				});
+				dot.bindTooltip(relativeTime(e.ts), { sticky: false, direction: 'top' });
+				dot.on('mouseover', function() { dot.setTooltipContent(relativeTime(e.ts)); });
+				dot.addTo(map);
+				layers.push(dot);
+			});
+
+			// Build ordered path: oldest history → … → newest history → current position
+			const histPts = [...entries].reverse().map(e => [e.lat, e.lon]);
+			const cur = markers[callsign];
+			const allPts = cur ? [...histPts, [cur.getLatLng().lat, cur.getLatLng().lng]] : histPts;
+
+			if (allPts.length > 1) {
+				// Dotted connecting line
+				const line = L.polyline(allPts, {
+					color, weight: 2, dashArray: '4 7', opacity: 0.65, pane: 'trackerPane'
+				}).addTo(map);
+				layers.push(line);
+
+				// One arrowhead per segment, placed at the midpoint and rotated to bearing
+				for (let i = 0; i < allPts.length - 1; i++) {
+					const [lat1, lon1] = allPts[i], [lat2, lon2] = allPts[i + 1];
+					const brg = bearingTo(lat1, lon1, lat2, lon2);
+					const arw = L.marker([(lat1 + lat2) / 2, (lon1 + lon2) / 2], {
+						icon: L.divIcon({
+							html: `<svg width="20" height="20" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(${brg}deg);display:block"><polygon points="10,2 18,18 10,12 2,18" fill="${color}" opacity="0.85"/></svg>`,
+							className: '', iconSize: [20, 20], iconAnchor: [10, 10]
+						}),
+						pane: 'trackerPane', interactive: false
+					}).addTo(map);
+					layers.push(arw);
+				}
+			}
+
+			historyDots[callsign] = layers;
+			if (blinkTimers[callsign]) blinkHistoryLayers(callsign, true);
+		});
 }
 
 function haversineDistance(lat1, lng1, lat2, lng2) {
@@ -922,6 +1065,13 @@ function compassDir(deg) {
 }
 
 // ── Blink ─────────────────────────────────────────────────────────────────
+function blinkHistoryLayers(callsign, on) {
+	(historyDots[callsign] || []).forEach(layer => {
+		const he = layer.getElement?.();
+		if (he) on ? he.classList.add('blinking') : he.classList.remove('blinking');
+	});
+}
+
 function triggerBlink(callsign) {
 	if (blinkTimers[callsign]) clearTimeout(blinkTimers[callsign]);
 	const id   = (isMobile ? 'm-legend-' : 'legend-') + callsign;
@@ -929,10 +1079,12 @@ function triggerBlink(callsign) {
 	if (item) item.classList.add('blinking');
 	const el = markers[callsign]?.getElement();
 	if (el) el.style.animation = 'blink-anim 0.4s steps(2,end) infinite';
+	blinkHistoryLayers(callsign, true);
 	blinkTimers[callsign] = setTimeout(() => {
 		if (item) item.classList.remove('blinking');
 		const e2 = markers[callsign]?.getElement();
 		if (e2) e2.style.animation = '';
+		blinkHistoryLayers(callsign, false);
 		delete blinkTimers[callsign];
 	}, 5000);
 }
@@ -951,6 +1103,7 @@ function clearAllSelections() {
 	selectedCallsign = null; trackerClickCount = 0;
 	document.querySelectorAll('.legend-item, .m-legend-item').forEach(el => el.classList.remove('selected'));
 	if (originMarker) { originMarker.remove(); originMarker = null; origin = null; }
+	hideAllHistoryDots();
 	map.closePopup();
 }
 
@@ -1026,11 +1179,19 @@ function onLegendClick(callsign) {
 		document.getElementById(legPfx + callsign)?.classList.add('selected');
 		triggerBlink(callsign);
 		setSheetOpen(false);
+		hideAllHistoryDots();
+		const color = document.querySelector('#legend-' + callsign + ' .legend-dot, #m-legend-' + callsign + ' .m-dot')?.style.background || 'red';
+		if (!markers[callsign]) {
+			const name = document.querySelector('#legend-' + callsign + ' .legend-name, #m-legend-' + callsign + ' .m-name')?.textContent || callsign;
+			showNoLocation(name);
+		}
+		showTrackerHistory(callsign, color);
 	} else if (trackerClickCount === 1) {
 		trackerClickCount = 2;
 		const m = markers[callsign];
 		if (m) { map.setView(m.getLatLng(), 15); setSheetOpen(false); }
 	} else {
+		hideAllHistoryDots();
 		map.setView([defaultView.lat, defaultView.lon], defaultView.zoom);
 		selectedCallsign = null; trackerClickCount = 0;
 		document.querySelectorAll(legSel).forEach(el => el.classList.remove('selected'));
@@ -1116,9 +1277,15 @@ function updateMobileLegend(trackers) {
 
 // ── Update map markers ────────────────────────────────────────────────────
 function updateMap() {
-	fetch('index.php?json')
-		.then(r => r.json())
+	const headers = jsonEtag ? { 'If-None-Match': jsonEtag } : {};
+	fetch('index.php?json', { headers })
+		.then(r => {
+			if (r.status === 304) return null;
+			jsonEtag = r.headers.get('ETag');
+			return r.json();
+		})
 		.then(trackers => {
+			if (!trackers) return;
 			updateLegend(trackers);
 
 			trackers.forEach(t => {
@@ -1692,5 +1859,6 @@ setInterval(loadConfig, 5000);
 updateMap();
 setInterval(updateMap, 5000);
 </script>
+<div id="no-loc-toast"></div>
 </body>
 </html>

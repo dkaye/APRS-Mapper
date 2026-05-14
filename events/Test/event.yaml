@@ -8,19 +8,18 @@
 # within ~5 seconds without restarting the daemon or reloading the browser page.
 #
 # ── Save history ─────────────────────────────────────────────────────────────
-# 2026-05-13 23:42:45 UTC
-# 2026-05-13 23:42:26 UTC
-# 2026-05-13 23:42:11 UTC
+# 2026-05-14 00:39:48 UTC
+# 2026-05-14 00:39:48 UTC
+# 2026-05-14 00:36:14 UTC
+# 2026-05-14 00:36:14 UTC
+# 2026-05-13 23:58:07 UTC
+# 2026-05-13 23:58:07 UTC
+# 2026-05-13 23:56:42 UTC
+# 2026-05-13 23:56:42 UTC
+# 2026-05-13 23:43:19 UTC
 # 2026-05-13 23:41:04 UTC
 # 2026-05-13 23:35:50 UTC
 # 2026-05-13 23:34:01 UTC
-# 2026-05-13 23:17:13 UTC
-# 2026-05-13 23:17:13 UTC
-# 2026-05-13 23:13:07 UTC
-# 2026-05-13 23:12:59 UTC
-# 2026-05-13 23:12:59 UTC
-# 2026-05-13 23:11:01 UTC
-# 2026-05-13 23:11:01 UTC
 
 # ── Event ─────────────────────────────────────────────────────────────────────
 # Name displayed in the lower-left corner of the map.
@@ -57,12 +56,12 @@ trackers:
   - callsign: KI6RGP-7
     id: H1
     name: James
-  - callsign: KM6BPU-7
-    id: T1
-    name: KM6BPU-7
-  - callsign: KJ6DLF-4
-    id: T2
-    name: KJ6DLF-4
+  - callsign: KC6UDS-9
+    id: T4
+    name: KC6UDS-9
+  - callsign: K6DRK-2
+    id: H4
+    name: Doug
 
 # ── Tracker style ─────────────────────────────────────────────────────────────
 # Controls the appearance of all tracker markers on the map.
