@@ -115,6 +115,54 @@ function pruneTrackerHistory($histPath, array $keepCallsigns) {
     file_put_contents($histPath, implode("\n", $out) . "\n", LOCK_EX);
 }
 
+// ── AJAX: repair permissions ──────────────────────────────────────────────────
+
+if (isset($_GET['repair'])) {
+    header('Cache-Control: no-store');
+    header('Content-Type: application/json');
+    $fixed = [];
+    $errors = [];
+
+    // Fix event directories
+    if (is_dir($eventsDir)) {
+        foreach (glob($eventsDir . '/*', GLOB_ONLYDIR) ?: [] as $eventDir) {
+            if (!chmod($eventDir, 0775)) {
+                $errors[] = 'Cannot chmod ' . basename($eventDir) . ' directory';
+            } else {
+                $fixed[] = basename($eventDir);
+            }
+
+            // Fix event.yaml
+            $eventYaml = $eventDir . '/event.yaml';
+            if (file_exists($eventYaml) && !chmod($eventYaml, 0664)) {
+                $errors[] = 'Cannot chmod ' . basename($eventDir) . '/event.yaml';
+            }
+
+            // Fix tracker_history.yaml
+            $histYaml = $eventDir . '/tracker_history.yaml';
+            if (file_exists($histYaml) && !chmod($histYaml, 0664)) {
+                $errors[] = 'Cannot chmod ' . basename($eventDir) . '/tracker_history.yaml';
+            }
+        }
+    }
+
+    // Fix config.yaml if it's a regular file
+    if (file_exists($configPath) && !is_link($configPath)) {
+        if (!chmod($configPath, 0664)) {
+            $errors[] = 'Cannot chmod config.yaml';
+        }
+    }
+
+    // Fix trackers.json
+    $trackersFile = __DIR__ . '/../trackers.json';
+    if (file_exists($trackersFile) && !chmod($trackersFile, 0664)) {
+        $errors[] = 'Cannot chmod trackers.json';
+    }
+
+    echo json_encode(['fixed' => $fixed, 'errors' => $errors]);
+    exit;
+}
+
 // ── AJAX: diagnostics ─────────────────────────────────────────────────────────
 
 if (isset($_GET['diag'])) {
