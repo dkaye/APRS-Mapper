@@ -2357,16 +2357,11 @@ async function doLoadModal() {
                     msg.textContent = 'You are loading an event that isn\'t globally active. The trackers will not get updates.';
                     msg.style.cssText = 'margin-bottom:24px;font-size:14px;line-height:1.5;color:#555';
                     const btnRow = document.createElement('div');
-                    btnRow.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
-                    const cancelBtn = document.createElement('button');
-                    cancelBtn.textContent = 'Cancel';
-                    cancelBtn.style.cssText = 'padding:8px 16px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;font-size:14px';
-                    cancelBtn.addEventListener('click', () => { backdrop.remove(); resolve(false); });
+                    btnRow.style.cssText = 'display:flex;justify-content:flex-end';
                     const okBtn = document.createElement('button');
-                    okBtn.textContent = 'Continue';
+                    okBtn.textContent = 'OK';
                     okBtn.style.cssText = 'padding:8px 16px;border:none;border-radius:4px;background:#1976d2;color:#fff;cursor:pointer;font-size:14px;font-weight:bold';
                     okBtn.addEventListener('click', () => { backdrop.remove(); resolve(true); });
-                    btnRow.appendChild(cancelBtn);
                     btnRow.appendChild(okBtn);
                     modal.appendChild(heading);
                     modal.appendChild(msg);

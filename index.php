@@ -1882,8 +1882,8 @@ if (isNonDefaultEvent) {
 	note.id = 'non-default-note';
 	note.textContent = 'Not the active event. Tracker data are not being updated.';
 	note.style.cssText = isMobile
-		? 'font-size:11px;color:#b71c1c;padding:0 10px;align-self:center;white-space:nowrap'
-		: 'position:fixed;bottom:28px;left:200px;font-size:12px;color:#b71c1c;background:rgba(255,255,255,0.85);padding:3px 10px;border-radius:4px;z-index:1000;pointer-events:none';
+		? 'font-size:11px;color:#000;padding:0 10px;align-self:center;white-space:nowrap'
+		: 'position:fixed;bottom:26px;right:130px;font-size:12px;color:#000;z-index:1000;pointer-events:none;white-space:nowrap';
 	if (isMobile) {
 		const topBar = document.getElementById('top-bar');
 		if (topBar) topBar.appendChild(note);
