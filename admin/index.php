@@ -37,12 +37,16 @@ function respondError($message, $statusCode = 500) {
 $configPath   = __DIR__ . '/../config.yaml';
 $passwordFile = __DIR__ . '/password.txt';
 $eventsDir    = __DIR__ . '/../events';    // event directories live here
-$currentEventFile = __DIR__ . '/../events/.current_event';  // tracks active event name
 
-// Determine current active event from tracking file
-$currentFilename  = '';
-if (file_exists($currentEventFile)) {
-	$currentFilename = trim(file_get_contents($currentEventFile)) ?: '';
+// Determine current active event from symlink target
+$currentEventDir = null;
+$currentFilename = '';
+if (is_link($configPath)) {
+	$target = readlink($configPath);
+	if ($target && preg_match('|^events/([^/]+)/event\.yaml$|', $target, $m)) {
+		$currentEventDir = $eventsDir . '/' . $m[1];
+		$currentFilename = $m[1];
+	}
 }
 
 // Get current event name from config.yaml
@@ -208,10 +212,6 @@ if (isset($_GET['versions'])) {
         }
     }
     usort($list, fn($a, $b) => $b['mtime'] <=> $a['mtime']);
-    // Prevent caching — always return fresh data
-    header('Cache-Control: no-cache, no-store, must-revalidate');
-    header('Pragma: no-cache');
-    header('Expires: 0');
     respondJson($list);
 }
 
@@ -246,10 +246,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveversion'])) {
     if (file_put_contents($path, $yaml, LOCK_EX) === false) {
         respondError('Cannot write event file — check permissions');
     }
-    // Track this as the current active event
-    if (file_put_contents($currentEventFile, $eventName, LOCK_EX) === false) {
-        respondError('Cannot update event tracking — check permissions');
+
+    // Update symlink to point to this event (it becomes the new default)
+    if (file_exists($configPath) || is_link($configPath)) {
+        if (!unlink($configPath)) {
+            respondError('Cannot remove old symlink', 500);
+        }
     }
+    $targetPath = 'events/' . $eventName . '/event.yaml';
+    if (!symlink($targetPath, $configPath)) {
+        respondError('Cannot create symlink', 500);
+    }
+
     pruneTrackerHistory($eventPath . '/tracker_history.yaml', array_column($cfg['trackers'] ?? [], 'callsign'));
     respondJson(['ok' => true]);
 }
@@ -428,20 +436,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['setactiveevent'])) {
     if (!file_exists($eventPath)) {
         respondError('Event not found', 404);
     }
-    // Copy event file to config.yaml (don't use symlinks — they cause corruption when editing)
-    $eventContent = file_get_contents($eventPath);
-    if ($eventContent === false) {
-        respondError('Cannot read event file', 500);
+    // Update symlink to point to this event
+    if (file_exists($configPath) || is_link($configPath)) {
+        if (!unlink($configPath)) {
+            respondError('Cannot remove old symlink', 500);
+        }
     }
-    if (file_put_contents($configPath, $eventContent, LOCK_EX) === false) {
-        respondError('Cannot write config.yaml', 500);
+    $targetPath = 'events/' . $eventName . '/event.yaml';
+    if (!symlink($targetPath, $configPath)) {
+        respondError('Cannot create symlink', 500);
     }
-    // Track this as the current active event
-    if (file_put_contents($currentEventFile, $eventName, LOCK_EX) === false) {
-        respondError('Cannot update event tracking', 500);
-    }
-    // Ensure files are synced to disk before page reload
-    @sync();
     respondJson(['ok' => true]);
 }
 
@@ -974,11 +978,11 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
     </div>
     <div id="hdr-right">
         <span id="status"></span>
-        <button class="sec-btn" onclick="location.href='../'">Return to Map</button>
+        <button class="sec-btn" onclick="location.href='../'">Cancel</button>
         <button class="sec-btn" onclick="location.href='?logout'">Sign out</button>
         <button class="sec-btn" onclick="doLoadModal()">Load…</button>
         <button class="sec-btn" onclick="doSaveAs()">Save As…</button>
-        <button class="save-btn" id="save-btn" onclick="doUpdate()">Update</button>
+        <button class="save-btn" id="save-btn" onclick="doUpdate()">Done</button>
     </div>
 </div>
 
@@ -1982,7 +1986,7 @@ async function doUpdate() {
         const result = await r.json();
         if (r.ok && result.ok) {
             isDirty = false;
-            setStatus('Updated ✓', 'ok', 4000);
+            setStatus('Saved ✓', 'ok', 4000);
         } else if (result.errors) {
             showErrors(result.errors);
             setStatus('Validation errors', 'error');
@@ -2220,28 +2224,21 @@ async function doSaveAs() {
             const cfg = collectConfig();
             const errors = validateConfig(cfg);
             if (errors.length) { warn.textContent = errors[0]; warn.style.display = ''; saveBtn.disabled = false; return; }
-            // Save As: save to new event version AND update live config
-            const [rLive, rVer] = await Promise.all([
-                fetch('?save&event=' + encodeURIComponent(fname), {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(cfg)
-                }),
-                fetch('?saveversion', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: fname, cfg })
-                })
-            ]);
+            // Save As: save to event file (creates or updates it) and update symlink
+            const rVer = await fetch('?saveversion', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: fname, cfg })
+            });
             const result = await rVer.json();
-            if (rVer.ok && result.ok && rLive.ok) {
+            if (rVer.ok && result.ok) {
                 isDirty = false;
                 close();
                 setStatus(`Saved "${fname}" ✓`, 'ok', 4000);
                 setCurrentEvent(fname, cfg.event || '');
+                location.reload();
             } else {
-                const liveResult = rLive.ok ? null : await rLive.json();
-                warn.textContent = result.error || liveResult?.error || 'Save failed';
+                warn.textContent = result.error || 'Save failed';
                 warn.style.display = '';
             }
         } catch {
@@ -2414,20 +2411,20 @@ async function doLoadModal() {
                 if (filesResp.ok) locationFiles = await filesResp.json();
                 const cfg = await r.json();
                 populateForm(cfg);
-                // Auto-save so the map page picks up the new config immediately
-                const sv = await fetch('?save&event=' + encodeURIComponent(v.name), {
+                // Activate this event (update symlink) so the map page picks up the new config
+                const av = await fetch('?setactiveevent', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(cfg)
+                    body: JSON.stringify({ name: v.name })
                 });
-                if (sv.ok && (await sv.json()).ok) {
+                if (av.ok && (await av.json()).ok) {
                     isDirty = false;
                     setStatus(`Loaded "${v.name}" ✓`, 'ok', 4000);
+                    setCurrentEvent(v.name, cfg.event || '');
+                    location.reload();
                 } else {
-                    isDirty = true;
-                    setStatus(`Loaded "${v.name}" — click Update to apply`, 'dirty');
+                    setStatus('Failed to load event', 'error');
                 }
-                setCurrentEvent(v.name, cfg.event || '');
             } catch (err) {
                 setStatus('Failed to load event', 'error');
                 console.error(err);
