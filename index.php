@@ -1089,6 +1089,20 @@ function triggerBlink(callsign) {
 	}, 5000);
 }
 
+const courseBlinkTimers = {};
+function triggerCourseBlink(file, nameEl) {
+	if (courseBlinkTimers[file]) clearTimeout(courseBlinkTimers[file]);
+	if (nameEl) nameEl.classList.add('blinking');
+	const layer = courseLayers[file];
+	if (layer) layer.eachLayer(l => { const el = l.getElement?.(); if (el) el.style.animation = 'blink-anim 0.4s steps(2,end) infinite'; });
+	courseBlinkTimers[file] = setTimeout(() => {
+		if (nameEl) nameEl.classList.remove('blinking');
+		const l2 = courseLayers[file];
+		if (l2) l2.eachLayer(l => { const el = l.getElement?.(); if (el) el.style.animation = ''; });
+		delete courseBlinkTimers[file];
+	}, 5000);
+}
+
 function triggerDotBlink(d) {
 	const el = d.m.getElement();
 	if (el) { el.style.animation = 'blink-anim 0.4s steps(2,end) infinite'; setTimeout(() => { el.style.animation = ''; }, 5000); }
@@ -1555,6 +1569,7 @@ function applyCourses(courses) {
 			const row    = document.createElement('div');   row.className = 'm-course-row';
 			const label  = document.createElement('label'); label.className = 'm-course-label'; label.title = 'Tap to change colour';
 			const nameEl = document.createElement('span');  nameEl.className = 'm-course-name'; nameEl.textContent = course.name; nameEl.style.color = color;
+			nameEl.addEventListener('click', e => { e.stopPropagation(); triggerCourseBlink(course.file, nameEl); });
 			const cInput = document.createElement('input'); cInput.type = 'color'; cInput.value = color; cInput.className = 'm-course-color-input';
 			cInput.addEventListener('input', e => {
 				const c = e.target.value;
@@ -1602,6 +1617,8 @@ function applyCourses(courses) {
 			if (!active) return;
 			const item   = document.createElement('div');  item.className = 'sidebar-item course-item';
 			const nameEl = document.createElement('span'); nameEl.className = 'course-name'; nameEl.textContent = course.name; nameEl.style.color = color;
+			nameEl.style.cursor = 'pointer';
+			nameEl.addEventListener('click', () => triggerCourseBlink(course.file, nameEl));
 			item.appendChild(nameEl);
 			container.appendChild(item);
 			return;
@@ -1609,6 +1626,7 @@ function applyCourses(courses) {
 		const item   = document.createElement('div');   item.className = 'sidebar-item course-item';
 		const label  = document.createElement('label'); label.className = 'course-label'; label.title = 'Click to change color';
 		const nameEl = document.createElement('span');  nameEl.className = 'course-name'; nameEl.textContent = course.name; nameEl.style.color = color;
+		nameEl.addEventListener('click', e => { e.stopPropagation(); triggerCourseBlink(course.file, nameEl); });
 		const cInput = document.createElement('input'); cInput.type = 'color'; cInput.value = color; cInput.className = 'course-color-input';
 		cInput.addEventListener('input', e => {
 			const c = e.target.value;
