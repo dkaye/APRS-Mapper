@@ -2,7 +2,7 @@
 # NetControl: monitor APRS server reachability while Chromium is running.
 # When unreachable: immediately reload the connecting page so the user has
 # a graceful retry UI instead of a stuck browser error page.
-# When reachable again after a connecting-page reload: restart into kiosk mode.
+# When reachable again after a connecting-page reload: restart in normal mode.
 
 INTERVAL=30
 was_reachable=true

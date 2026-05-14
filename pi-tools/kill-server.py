@@ -24,7 +24,7 @@ CONNECTING_HTML = b"""<!DOCTYPE html>
   <h1>MARS APRS</h1>
   <p>Connecting<span class="dots"><span>.</span><span>.</span><span>.</span></span></p>
   <script>
-    const TARGET = 'https://mars-aprs.ddns.net/?kiosk=1';
+    const TARGET = 'https://mars-aprs.ddns.net/';
     function tryConnect() {
       fetch('https://mars-aprs.ddns.net/', { method: 'GET', mode: 'no-cors', cache: 'no-store' })
         .then(() => { window.location.href = TARGET; })
