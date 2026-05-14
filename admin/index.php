@@ -2357,8 +2357,7 @@ async function doLoadModal() {
                 setCurrentEvent(v.name, cfg.event || '');
                 // Store activated event in localStorage for map to use
                 const eventData = { name: v.name, config: cfg };
-                localStorage.setItem('aprs_active_event', JSON.stringify(eventData));
-                console.log('Stored event in localStorage:', localStorage.getItem('aprs_active_event'));
+                localStorage.setItem('aprs_current_event', JSON.stringify(eventData));
                 close();
                 setStatus(`Activated "${v.name}" ✓`, 'ok', 2000);
                 setTimeout(() => { location.href = '../'; }, 2000);
