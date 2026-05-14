@@ -1858,22 +1858,26 @@ const LS_SIDEBAR_STATE = 'aprs_sidebar_state';
 let hasStoredEvent = false;
 try {
 	const stored = localStorage.getItem('aprs_active_event');
-	console.log('Stored event in localStorage:', stored);
 	if (stored) {
 		const { name, config } = JSON.parse(stored);
-		console.log('Parsed stored event:', { name, hasConfig: !!config });
 		if (config) {
-			console.log('Applying config for event:', name);
 			applyConfig(config);
 			hasStoredEvent = true;
+			// Visual indicator that stored event was applied
+			const indicator = document.createElement('div');
+			indicator.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#4caf50;color:white;padding:8px;text-align:center;z-index:10000;font-weight:bold';
+			indicator.textContent = `Using activated event: ${name}`;
+			document.body.insertBefore(indicator, document.body.firstChild);
+			setTimeout(() => indicator.remove(), 5000);
 			// Clear the stored event so we don't keep using it after page reload
 			localStorage.removeItem('aprs_active_event');
 		}
-	} else {
-		console.log('No stored event found in localStorage');
 	}
 } catch (e) {
-	console.error('Error loading stored event:', e);
+	const indicator = document.createElement('div');
+	indicator.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#f44336;color:white;padding:8px;text-align:center;z-index:10000;font-weight:bold';
+	indicator.textContent = `Error applying stored event: ${e.message}`;
+	document.body.insertBefore(indicator, document.body.firstChild);
 }
 
 // Only load from symlink if no activated event was selected
