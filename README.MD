@@ -412,7 +412,7 @@ sudo chmod -R u+w,g+w /var/www/html/events/
 
 ### `pi-tools/start-aprs.desktop`
 
-A desktop launcher file for the display Pi. Launches Chromium in normal mode (not full-screen kiosk mode) pointing to `http://localhost:8080/`.
+A desktop launcher file for the display Pi. Kills any running Chromium and restarts it in fullscreen kiosk display mode (`--kiosk` flag), pointing to the main APRS app.
 
 **Installation on the display Pi:**
 ```bash
@@ -420,7 +420,7 @@ cp pi-tools/start-aprs.desktop ~/Desktop/
 chmod +x ~/Desktop/start-aprs.desktop
 ```
 
-Double-click the desktop icon to launch the map in normal mode. This allows window switching and browser controls while still displaying the APRS map.
+Double-click the desktop icon to reload the APRS map in fullscreen kiosk display mode. Useful for restarting Chromium without rebooting the Pi.
 
 ### `backup-from-pi.sh`
 
