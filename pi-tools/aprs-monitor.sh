@@ -15,6 +15,7 @@ start_chromium() {
     sudo -u pi DISPLAY=:0 XAUTHORITY=/home/pi/.Xauthority nohup chromium \
         --password-store=basic --noerrdialogs --disable-infobars \
         --disable-dev-shm-usage --incognito \
+        --disable-features=BlockInsecurePrivateNetworkRequests \
         'http://localhost:8080/' >/tmp/chromium.log 2>&1 &
 }
 
