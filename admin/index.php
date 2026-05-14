@@ -20,6 +20,20 @@ session_start();
  *   ?logout GET  — destroys the session and returns to the login form
  */
 
+// ── Helper functions ──────────────────────────────────────────────────────────
+
+function respondJson($data, $statusCode = 200) {
+	http_response_code($statusCode);
+	header('Cache-Control: no-store');
+	header('Content-Type: application/json');
+	echo json_encode($data);
+	exit;
+}
+
+function respondError($message, $statusCode = 500) {
+	respondJson(['error' => $message], $statusCode);
+}
+
 $configPath   = __DIR__ . '/../config.yaml';
 $passwordFile = __DIR__ . '/password.txt';
 $eventsDir    = __DIR__ . '/../events';    // event directories live here
@@ -118,31 +132,22 @@ function pruneTrackerHistory($histPath, array $keepCallsigns) {
 // ── AJAX: load ────────────────────────────────────────────────────────────────
 
 if (isset($_GET['load'])) {
-    header('Cache-Control: no-store');
-    header('Content-Type: application/json');
     require_once __DIR__ . '/../config_parse.php';
     $cfg = parseConfigYaml($configPath);
-    // Annotate each course with whether its file exists on disk
     foreach (($cfg['courses'] ?? []) as $i => $c) {
         $cfg['courses'][$i]['_exists'] = isset($c['file']) && file_exists(__DIR__ . '/../' . $c['file']);
     }
-    // Include current event filename
     $cfg['_filename'] = $currentFilename;
-    echo json_encode($cfg);
-    exit;
+    respondJson($cfg);
 }
 
 // ── AJAX: save ────────────────────────────────────────────────────────────────
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['save'])) {
-    header('Cache-Control: no-store');
-    header('Content-Type: application/json');
     $body = file_get_contents('php://input');
     $cfg  = json_decode($body, true);
     if (!is_array($cfg)) {
-        http_response_code(400);
-        echo json_encode(['error' => 'Invalid request body']);
-        exit;
+        respondError('Invalid request body', 400);
     }
 
     $errors = [];
@@ -168,9 +173,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['save'])) {
     if (!is_numeric($zoom) || $zoom < 0    || $zoom > 19)  $errors[] = 'Map: zoom must be 0 to 19';
 
     if ($errors) {
-        http_response_code(422);
-        echo json_encode(['errors' => $errors]);
-        exit;
+        respondJson(['errors' => $errors], 422);
     }
 
     $existing = file_exists($configPath) ? file_get_contents($configPath) : '';
@@ -178,21 +181,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['save'])) {
     array_unshift($history, gmdate('Y-m-d H:i:s') . ' UTC');
     $yaml = buildConfigYaml($cfg, $history);
     if (file_put_contents($configPath, $yaml, LOCK_EX) === false) {
-        http_response_code(500);
-        echo json_encode(['error' => 'Cannot write config.yaml — check permissions']);
-        exit;
+        respondError('Cannot write config.yaml — check permissions');
     }
     $real = realpath($configPath);
     if ($real) pruneTrackerHistory(dirname($real) . '/tracker_history.yaml', array_column($cfg['trackers'] ?? [], 'callsign'));
-    echo json_encode(['ok' => true]);
-    exit;
+    respondJson(['ok' => true]);
 }
 
 // ── AJAX: list events ────────────────────────────────────────────────────────
 
 if (isset($_GET['versions'])) {
-    header('Cache-Control: no-store');
-    header('Content-Type: application/json');
     require_once __DIR__ . '/../config_parse.php';
     $list = [];
     if (is_dir($eventsDir)) {
@@ -204,23 +202,20 @@ if (isset($_GET['versions'])) {
         }
     }
     usort($list, fn($a, $b) => $b['mtime'] <=> $a['mtime']);
-    echo json_encode($list);
-    exit;
+    respondJson($list);
 }
 
 // ── AJAX: save a named event ─────────────────────────────────────────────────
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveversion'])) {
-    header('Cache-Control: no-store');
-    header('Content-Type: application/json');
     $body = file_get_contents('php://input');
     $data = json_decode($body, true);
     if (!is_array($data) || !isset($data['name']) || !isset($data['cfg'])) {
-        http_response_code(400); echo json_encode(['error' => 'Invalid request']); exit;
+        respondError('Invalid request', 400);
     }
     $eventName = trim($data['name']);
     if (!preg_match('/^[a-zA-Z0-9 _\-\.]{1,80}$/', $eventName)) {
-        http_response_code(400); echo json_encode(['error' => 'Name may only contain letters, numbers, spaces, hyphens, underscores, periods (max 80 chars)']); exit;
+        respondError('Name may only contain letters, numbers, spaces, hyphens, underscores, periods (max 80 chars)', 400);
     }
     $eventPath = $eventsDir . '/' . $eventName;
     if (!is_dir($eventPath)) mkdir($eventPath, 0777, true);
@@ -239,68 +234,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveversion'])) {
     array_unshift($history, gmdate('Y-m-d H:i:s') . ' UTC');
     $yaml = buildConfigYaml($cfg, $history);
     if (file_put_contents($path, $yaml, LOCK_EX) === false) {
-        http_response_code(500); echo json_encode(['error' => 'Cannot write event file — check permissions']); exit;
+        respondError('Cannot write event file — check permissions');
     }
     pruneTrackerHistory($eventPath . '/tracker_history.yaml', array_column($cfg['trackers'] ?? [], 'callsign'));
-    echo json_encode(['ok' => true]);
-    exit;
+    respondJson(['ok' => true]);
 }
 
 // ── AJAX: load a named event ──────────────────────────────────────────────────
 
 if (isset($_GET['loadversion'])) {
-    header('Cache-Control: no-store');
-    header('Content-Type: application/json');
     $eventName = trim($_GET['name'] ?? '');
     if (!preg_match('/^[a-zA-Z0-9 _\-\.]{1,80}$/', $eventName)) {
-        http_response_code(400); echo json_encode(['error' => 'Invalid name']); exit;
+        respondError('Invalid name', 400);
     }
     $path = $eventsDir . '/' . $eventName . '/event.yaml';
     if (!file_exists($path)) {
-        http_response_code(404); echo json_encode(['error' => 'Event not found']); exit;
+        respondError('Event not found', 404);
     }
     require_once __DIR__ . '/../config_parse.php';
     $cfg = parseConfigYaml($path);
     foreach (($cfg['courses'] ?? []) as $i => $c) {
         $cfg['courses'][$i]['_exists'] = isset($c['file']) && file_exists(__DIR__ . '/../' . $c['file']);
     }
-    echo json_encode($cfg);
-    exit;
+    respondJson($cfg);
 }
 
 // ── AJAX: delete a named event ───────────────────────────────────────────────
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['deleteversion'])) {
-    header('Cache-Control: no-store');
-    header('Content-Type: application/json');
     $body = file_get_contents('php://input');
     $data = json_decode($body, true);
     $name = trim($data['name'] ?? '');
     if (!preg_match('/^[a-zA-Z0-9 _\-\.]{1,80}$/', $name)) {
-        http_response_code(400); echo json_encode(['error' => 'Invalid name']); exit;
+        respondError('Invalid name', 400);
     }
     $path = $eventsDir . '/' . $name;
     if (!is_dir($path)) {
-        http_response_code(404); echo json_encode(['error' => 'Not found']); exit;
+        respondError('Not found', 404);
     }
-    // Delete event directory recursively
     $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($path, RecursiveDirectoryIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
     foreach ($files as $f) {
         if ($f->isDir()) rmdir($f->getPathname());
         else unlink($f->getPathname());
     }
     if (!rmdir($path)) {
-        http_response_code(500); echo json_encode(['error' => 'Cannot delete — check permissions']); exit;
+        respondError('Cannot delete — check permissions');
     }
-    echo json_encode(['ok' => true]);
-    exit;
+    respondJson(['ok' => true]);
 }
 
 // ── AJAX: list location files in current event ────────────────────────────────
 
 if (isset($_GET['locationfiles'])) {
     header('Cache-Control: no-store');
-    header('Content-Type: application/json');
+    header('Content-Type: application/json');  // Note: custom headers before respondJson
     $exts  = ['gpx', 'kml', 'geojson', 'json'];
     $files = [];
     if ($currentEventDir && is_dir($currentEventDir)) {
@@ -417,39 +404,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['deletefile'])) {
 // ── AJAX: set active event ────────────────────────────────────────────────────
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['setactiveevent'])) {
-    header('Cache-Control: no-store');
-    header('Content-Type: application/json');
     $body = file_get_contents('php://input');
     $data = json_decode($body, true);
     $eventName = trim($data['name'] ?? '');
     if (!preg_match('/^[a-zA-Z0-9 _\-\.]{1,80}$/', $eventName)) {
-        http_response_code(400); echo json_encode(['error' => 'Invalid event name']); exit;
+        respondError('Invalid event name', 400);
     }
     $eventPath = $eventsDir . '/' . $eventName . '/event.yaml';
     if (!file_exists($eventPath)) {
-        http_response_code(404); echo json_encode(['error' => 'Event not found']); exit;
+        respondError('Event not found', 404);
     }
-    // Remove old symlink and create new one
     if (file_exists($configPath) || is_link($configPath)) {
         if (!unlink($configPath)) {
-            http_response_code(500); echo json_encode(['error' => 'Cannot update symlink — check permissions']); exit;
+            respondError('Cannot update symlink — check permissions');
         }
     }
     $targetPath = 'events/' . $eventName . '/event.yaml';
     if (!symlink($targetPath, $configPath)) {
-        http_response_code(500); echo json_encode(['error' => 'Cannot create symlink — check permissions']); exit;
+        respondError('Cannot create symlink — check permissions');
     }
-    // Touch the symlink target so the daemon reloads config
     touch(realpath($configPath));
-    echo json_encode(['ok' => true]);
-    exit;
+    respondJson(['ok' => true]);
 }
 
 // ── AJAX: background library ──────────────────────────────────────────────────
 
 if (isset($_GET['bglib'])) {
-    header('Cache-Control: no-store');
-    header('Content-Type: application/json');
     require_once __DIR__ . '/../config_parse.php';
     $seen = [];
     $bgs  = [];
@@ -467,8 +447,7 @@ if (isset($_GET['bglib'])) {
         }
     }
     usort($bgs, fn($a, $b) => strcmp($a['name'], $b['name']));
-    echo json_encode($bgs);
-    exit;
+    respondJson($bgs);
 }
 
 // ── Login form ────────────────────────────────────────────────────────────────
