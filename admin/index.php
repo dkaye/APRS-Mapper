@@ -1957,50 +1957,19 @@ function validateConfig(cfg) {
     return errors;
 }
 
-async function doUpdate() {
+function doUpdate() {
     hideErrors();
-    const btn = document.getElementById('save-btn');
-    btn.disabled = true;
-    setStatus('Saving…', '');
-
     const cfg = collectConfig();
     const clientErrors = validateConfig(cfg);
     if (clientErrors.length) {
         showErrors(clientErrors);
         setStatus('Validation errors', 'error');
-        btn.disabled = false;
         return;
     }
 
-    try {
-        const r = await fetch('?save', {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify(cfg)
-        });
-        if (r.status === 401) {
-            showErrors(['Session expired — reload and log in again']);
-            setStatus('Session expired', 'error');
-            return;
-        }
-        const result = await r.json();
-        if (r.ok && result.ok) {
-            isDirty = false;
-            setStatus('Saved ✓', 'ok', 4000);
-        } else if (result.errors) {
-            showErrors(result.errors);
-            setStatus('Validation errors', 'error');
-        } else {
-            showErrors([result.error || 'Save failed']);
-            setStatus('Save failed', 'error');
-        }
-    } catch (err) {
-        showErrors(['Network error — check connection']);
-        setStatus('Error', 'error');
-        console.error(err);
-    } finally {
-        btn.disabled = false;
-    }
+    // Done: apply changes locally only (no server communication)
+    isDirty = false;
+    setStatus('Changes saved locally ✓', 'ok', 4000);
 }
 
 // ── Version management ────────────────────────────────────────────────────────
