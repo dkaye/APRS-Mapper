@@ -208,6 +208,10 @@ if (isset($_GET['versions'])) {
         }
     }
     usort($list, fn($a, $b) => $b['mtime'] <=> $a['mtime']);
+    // Prevent caching — always return fresh data
+    header('Cache-Control: no-cache, no-store, must-revalidate');
+    header('Pragma: no-cache');
+    header('Expires: 0');
     respondJson($list);
 }
 
@@ -436,6 +440,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['setactiveevent'])) {
     if (file_put_contents($currentEventFile, $eventName, LOCK_EX) === false) {
         respondError('Cannot update event tracking', 500);
     }
+    // Ensure files are synced to disk before page reload
+    @sync();
     respondJson(['ok' => true]);
 }
 
