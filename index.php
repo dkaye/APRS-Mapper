@@ -279,6 +279,12 @@ body { display: flex; }
     font-size: 12px; color: #444; cursor: pointer; text-align: center;
 }
 #reset-btn:hover { background: #d8d8d8; }
+#save-map-btn {
+    display: block; width: 100%; margin-top: 6px; padding: 6px 0;
+    background: #e8e8e8; border: 1px solid #bbb; border-radius: 4px;
+    font-size: 12px; color: #444; cursor: pointer; text-align: center;
+}
+#save-map-btn:hover { background: #d8d8d8; }
 #admin-btn {
     display: block; width: 100%; margin-top: 6px; padding: 6px 0;
     background: #e8e8e8; border: 1px solid #bbb; border-radius: 4px;
@@ -575,8 +581,9 @@ body { display: flex; }
 	<div id="sidebar-footer">
 		<hr class="section-divider">
 		<button id="reset-btn">Reset Map</button>
-		<a href="admin/" id="admin-btn">Admin</a>
+		<button id="save-map-btn">Save Map</button>
 		<a href="?kiosk=1" id="kiosk-btn">Kiosk Mode</a>
+		<a href="admin/" id="admin-btn">Admin</a>
 	</div>
 </div>
 
@@ -659,6 +666,7 @@ const isMobile = window.matchMedia('(max-width: 767px)').matches ||
 
 // ── Map init ──────────────────────────────────────────────────────────────
 let defaultView = { lat: <?= $_lat ?>, lon: <?= $_lon ?>, zoom: <?= $_zoom ?> };
+try { const _sv = localStorage.getItem('aprs_default_view'); if (_sv) defaultView = JSON.parse(_sv); } catch {}
 const clientIp = '<?= htmlspecialchars($_clientIp) ?>';
 const serverIp = '<?= htmlspecialchars($_serverIp) ?>';
 let mapViewInitialized = true;
@@ -705,7 +713,7 @@ new (L.Control.extend({
 			L.DomEvent.on(exitBtn, 'click', () => { location.href = location.pathname; });
 			L.DomEvent.disableClickPropagation(exitBtn);
 			const txt = L.DomUtil.create('span', '', d);
-			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.6 beta &copy; 2026 Doug Kaye (K6DRK)';
+			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.7 beta &copy; 2026 Doug Kaye (K6DRK)';
 		} else {
 			if (!isMobile) {
 				const exitBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
@@ -723,8 +731,8 @@ new (L.Control.extend({
 			}
 			const ftxt = L.DomUtil.create('span', '', d);
 			ftxt.innerHTML = isMobile
-				? 'MARS APRS v1.6 beta &copy; 2026 Doug Kaye (K6DRK)'
-				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.6 beta &copy; 2026 Doug Kaye (K6DRK)';
+				? 'MARS APRS v1.7 beta &copy; 2026 Doug Kaye (K6DRK)'
+				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.7 beta &copy; 2026 Doug Kaye (K6DRK)';
 			if (isMobile) d.style.fontSize = '10px';
 		}
 		return d;
@@ -1406,10 +1414,12 @@ function applyEvent(name) {
 }
 
 function applyMapConfig(m) {
-	const changed = m.lat !== defaultView.lat || m.lon !== defaultView.lon || m.zoom !== defaultView.zoom;
-	defaultView = { lat: m.lat, lon: m.lon, zoom: m.zoom };
-	if (!mapViewInitialized || changed) {
-		map.setView([m.lat, m.lon], m.zoom);
+	const saved = (() => { try { const s = localStorage.getItem('aprs_default_view'); return s ? JSON.parse(s) : null; } catch { return null; } })();
+	const d = saved || m;
+	const changed = d.lat !== defaultView.lat || d.lon !== defaultView.lon || d.zoom !== defaultView.zoom;
+	defaultView = { lat: d.lat, lon: d.lon, zoom: d.zoom };
+	if (!mapViewInitialized || (!saved && changed)) {
+		map.setView([d.lat, d.lon], d.zoom);
 		mapViewInitialized = true;
 	}
 }
@@ -1756,6 +1766,17 @@ map.on('click', function(e) {
 		.setLatLng(e.latlng).setContent(content).openOn(map);
 });
 
+// ── Save Map button ────────────────────────────────────────────────────────
+document.getElementById('save-map-btn').addEventListener('click', function() {
+	const c = map.getCenter();
+	const v = { lat: parseFloat(c.lat.toFixed(6)), lon: parseFloat(c.lng.toFixed(6)), zoom: map.getZoom() };
+	localStorage.setItem('aprs_default_view', JSON.stringify(v));
+	defaultView = v;
+	const btn = this;
+	btn.textContent = 'Map Saved ✓';
+	setTimeout(() => { btn.textContent = 'Save Map'; }, 2000);
+});
+
 // ── Reset buttons ──────────────────────────────────────────────────────────
 document.getElementById('reset-btn').addEventListener('click', function() {
 	clearAllSelections();
@@ -1899,7 +1920,7 @@ if (isNonDefaultEvent) {
 // Always poll for live tracker data; skip config polling only when previewing a non-default event
 updateMap();
 setInterval(updateMap, 5000);
-if (!isNonDefaultEvent) {
+if (!isNonDefaultEvent && !hasStoredEvent) {
 	loadConfig();
 	setInterval(loadConfig, 5000);
 }

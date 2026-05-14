@@ -1,5 +1,7 @@
 # APRS Tracker Map
 
+**Version 1.7 beta**
+
 Real-time APRS position tracking displayed on an interactive Leaflet map. A PHP daemon
 connects to the APRS-IS network, decodes incoming packets, and writes position data to a
 JSON file that the browser polls every five seconds.
@@ -288,6 +290,7 @@ content and save vertical space. Collapse state is saved across page reloads.
 | **iGates** | Same as aid stations. |
 | **Backgrounds** | Click to switch the base tile layer. Active layer shows ✓. |
 | **Reset Map** | Restores default centre and zoom; clears all selections and the Origin marker. |
+| **Save Map** | Saves the current map position and zoom as a personal browser-local default. Persists across sessions; overrides the server's map default. |
 | **Admin** | Opens the admin configuration page. |
 | **Kiosk Mode** | Switches the UI layout to kiosk mode (see below). |
 | **Clients** | Opens a modal showing Apache worker stats and connected client IPs. |
@@ -347,31 +350,58 @@ The admin page edits all sections of the active event's configuration:
 
 - **Trackers** — callsign, ID, name; add, remove, reorder
 - **Tracker Style** — icon shape, size, label colour
-- **Map** — default centre latitude/longitude and zoom level
+- **Map Default View** — default centre latitude/longitude and zoom level
 - **Backgrounds** — tile layer name, URL template, and attribution HTML
 - **Courses** — name, file path, colour; add via Manage Location Files
 - **Aid Stations** — name, latitude, longitude
 - **iGates** — name, latitude, longitude
 - **Legend** — free-text label shown on the map
 
-**Save** writes changes to the active event file immediately. The daemon and browser pick
-up the new configuration within ~5 seconds. **Load** discards unsaved edits and reloads
-from disk.
+### Header and Footer Buttons
+
+- **Update** — Saves local-only sections to localStorage and returns to the map. Server
+  polling is suppressed so the locally applied config persists. Does not write to the
+  server.
+- **Save for All Users…** — Writes the full configuration to the active event's
+  `event.yaml` via `?saveversion`. Daemon and browsers pick up changes within ~5 seconds.
+- **Exit** — Leaves the admin page without saving.
+- **Sign Out** — Destroys the session.
+
+### Local vs. Server Sections
+
+The admin tracks which sections have been modified. Sections are classified:
+
+| Classification | Sections |
+|----------------|---------|
+| **Local** (Update saves) | Event Name, Legend, Tracker Style, Map Default View |
+| **Server-only** (Save for All Users required) | Trackers, Backgrounds, Courses, Aid Stations, iGates |
+
+If Update is clicked when a server-only section has been edited, a modal warns the user.
+Choosing **OK** saves only the local sections and discards the server-only edits in
+localStorage; the form still shows the edits so the user can continue to **Save for All
+Users**. Choosing **Save for All Users…** opens the full save dialog immediately.
+
+Map Default View changes saved via Update also write to `aprs_default_view` in localStorage,
+so the new map default takes effect on the main map page immediately (same effect as the
+**Save Map** button).
+
+**Load** discards unsaved edits and reloads from disk (or from `aprs_current_event` in
+localStorage if a locally-applied event is active).
 
 Latitude and longitude fields suppress the browser's number spinners. Values are validated
 before the save request is sent; out-of-range values are reported per field.
 
 ### Event Management
 
-**Save As...** saves the current (possibly unsaved) configuration as a named event.
+**Save for All Users…** saves the current (possibly unsaved) configuration as a named event.
 A dialog prompts for the event name (1–80 characters; letters, digits, spaces, hyphens,
 underscores, periods). The event directory `events/<EventName>/` is created if needed.
 If the name already exists, a blinking overwrite warning is shown.
 
-After Save As, `config.yaml` is re-pointed (via symlink) to the new event, making it the
-active event.
+After saving, `config.yaml` is re-pointed (via symlink) to the new event, making it the
+active event. All users and the daemon pick up the change within ~5 seconds.
 
-**Load...** shows all saved events sorted newest-first. Clicking an event name loads it
+**Load…** shows all saved events sorted newest-first. Clicking an event name loads it
 into the editor for local review. Clicking **Load & Activate** makes it the active event
 immediately (updates the symlink and touches the file so the daemon reloads within 5 s).
 
@@ -385,8 +415,8 @@ header to sort; click again to reverse.
 
 The **In Event** column shows either a green ✓ (course already in the current event) or an
 **Add** button. Clicking **Add** inserts the course into the current event's local course
-list. The change is local until **Save As...** is clicked; at that point the file is copied
-into the target event's directory if it came from a different event.
+list. The change is local until **Save for All Users…** is clicked; at that point the file
+is copied into the target event's directory if it came from a different event.
 
 Files can be uploaded (drag-and-drop or file picker), renamed, and deleted from this panel.
 Supported extensions: `.gpx` `.kml` `.geojson` `.json`
@@ -627,6 +657,26 @@ not synced by `sync-to-pi.sh`.
 
 Systemd service unit and wrapper script for running the daemon. See
 [Running the Daemon](#running-the-daemon) above.
+
+### `set-hostname.sh`
+
+Changes the system hostname on the **display Pi** everywhere it needs to be set, so the
+change persists across reboots. Run as root:
+
+```bash
+sudo set-hostname.sh <new-hostname>
+```
+
+Updates:
+- `/boot/firmware/user-data` — cloud-init reads this on every boot and would otherwise
+  overwrite `/etc/hostname`; the script patches the `hostname:` line in place.
+- `/etc/hostname`
+- `/etc/hosts` — replaces all occurrences of the old hostname
+- Kernel UTS name (`hostname <new>`) — takes effect immediately in the shell prompt
+- `hostnamectl set-hostname` — updates systemd's view
+
+After running, execute `exec $SHELL` to refresh the current shell prompt without logging
+out.
 
 ### `kill-server.py`
 

@@ -84,9 +84,7 @@ if (!isset($_SESSION['aprs_admin_authed'])
 $authed = isset($_SESSION['aprs_admin_authed']) && $_SESSION['aprs_admin_authed'] === true;
 
 if (!$authed) {
-    // AJAX endpoints return 401 JSON; all other requests get the login form
-    // Exception: ?diag is allowed without auth for diagnostics
-    if ((isset($_GET['load']) || isset($_GET['save']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['alllocationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib'])) && !isset($_GET['diag'])) {
+    if (isset($_GET['load']) || isset($_GET['save']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['alllocationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib'])) {
         header('Content-Type: application/json');
         http_response_code(401);
         echo json_encode(['error' => 'Session expired — reload and log in again']);
@@ -1092,10 +1090,11 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
     </div>
     <div id="hdr-right">
         <span id="status"></span>
-        <button class="sec-btn" onclick="location.href='../'">Cancel</button>
+        <button class="sec-btn" onclick="doUpdate()">Update</button>
         <button class="sec-btn" onclick="location.href='?logout'">Sign out</button>
         <button class="sec-btn" onclick="doLoadModal()">Load…</button>
-        <button class="sec-btn" onclick="doSaveAs()">Save As…</button>
+        <button class="sec-btn" onclick="doSaveAs()">Save for All Users…</button>
+        <button class="sec-btn" onclick="location.href='../'">Exit</button>
     </div>
 </div>
 
@@ -1165,15 +1164,15 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
             <div class="map-fields">
                 <div class="map-field">
                     <label for="map-lat">Latitude</label>
-                    <input type="number" id="map-lat" step="any" min="-90" max="90" style="width:130px" oninput="markDirty()">
+                    <input type="number" id="map-lat" step="any" min="-90" max="90" style="width:130px" oninput="markDirty(false, true)">
                 </div>
                 <div class="map-field">
                     <label for="map-lon">Longitude</label>
-                    <input type="number" id="map-lon" step="any" min="-180" max="180" style="width:140px" oninput="markDirty()">
+                    <input type="number" id="map-lon" step="any" min="-180" max="180" style="width:140px" oninput="markDirty(false, true)">
                 </div>
                 <div class="map-field">
                     <label for="map-zoom">Zoom</label>
-                    <input type="number" id="map-zoom" min="0" max="19" step="1" style="width:70px" oninput="markDirty()">
+                    <input type="number" id="map-zoom" min="0" max="19" step="1" style="width:70px" oninput="markDirty(false, true)">
                 </div>
                 <div class="map-field" style="align-self:flex-end;margin-bottom:2px">
                     <button class="add-btn" onclick="useCurrentMap()" title="Populate fields from the currently displayed map">Use Current Map</button>
@@ -1221,11 +1220,12 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
     </div>
 
     <div id="footer">
-        <button class="sec-btn" onclick="doSaveAs()">Save As…</button>
+        <button class="sec-btn" onclick="doUpdate()">Update</button>
+        <button class="sec-btn" onclick="doSaveAs()">Save for All Users…</button>
     </div>
 </div>
 
-<div id="page-footer">MARS APRS Map Admin v1.6 beta &copy; 2026 Doug Kaye (K6DRK)</div>
+<div id="page-footer">MARS APRS Map Admin v1.7 beta &copy; 2026 Doug Kaye (K6DRK)</div>
 
 <script>
 'use strict';
@@ -1233,11 +1233,17 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 // ── Dirty tracking ────────────────────────────────────────────────────────────
 
 let isDirty = false;
-let currentFilename = '';  // Track the current loaded event filename
-let currentEventName = ''; // Track the current loaded event name
+let hasServerChanges = false;
+let hasMapChanges    = false;
+let originalConfig   = null;
+let currentFilename  = '';
+let currentEventName = '';
+const serverActiveEvent = <?= json_encode($currentFilename) ?>;
 
-function markDirty() {
+function markDirty(server = false, map = false) {
     isDirty = true;
+    if (server) hasServerChanges = true;
+    if (map)    hasMapChanges    = true;
     setStatus('Unsaved changes', 'dirty');
 }
 
@@ -1249,7 +1255,7 @@ function setStatus(msg, type, clearMs) {
 }
 
 function setCurrentEvent(filename, eventName) {
-    currentFilename = filename || '';
+    currentFilename  = filename  || '';
     currentEventName = eventName || '';
     document.getElementById('current-file').textContent       = currentFilename;
     document.getElementById('current-event-name').textContent = currentEventName ? ' — ' + currentEventName : '';
@@ -1289,7 +1295,7 @@ function initDrag(containerId) {
                 const ti   = rows.indexOf(this);
                 if (si >= 0 && ti >= 0) {
                     if (si < ti) this.after(dragSrc); else this.before(dragSrc);
-                    markDirty();
+                    markDirty(true);
                 }
             }
             container.querySelectorAll('.list-row').forEach(r => r.classList.remove('drag-over'));
@@ -1315,7 +1321,7 @@ function makeDeleteBtn() {
     btn.className = 'del-btn';
     btn.title     = 'Remove';
     btn.textContent = '✕';
-    btn.onclick   = function() { this.closest('.list-row').remove(); markDirty(); };
+    btn.onclick   = function() { this.closest('.list-row').remove(); markDirty(true); };
     return btn;
 }
 
@@ -1339,7 +1345,7 @@ function fieldLabel(labelText, cls, value, width, extra) {
     inp.style.width = width;
     if (extra?.placeholder) inp.placeholder = extra.placeholder;
     if (extra?.step)        inp.step        = extra.step;
-    inp.addEventListener('input', markDirty);
+    inp.addEventListener('input', () => markDirty(true));
     wrap.appendChild(span);
     wrap.appendChild(inp);
     return wrap;
@@ -1407,7 +1413,7 @@ function appendTracker(t, attach) {
     if (attach) attach(row);
 }
 
-function addTracker() { appendTracker({}, dragAdder['trackers-list']); markDirty(); }
+function addTracker() { appendTracker({}, dragAdder['trackers-list']); markDirty(true); }
 
 // ── Background library ────────────────────────────────────────────────────────
 
@@ -1481,7 +1487,7 @@ function addBackground() {
         item.className = 'modal-list-item';
         const nameEl = document.createElement('span'); nameEl.className = 'item-name'; nameEl.textContent = bg.name;
         item.appendChild(nameEl);
-        item.addEventListener('click', () => { appendBg(bg, dragAdder['backgrounds-list']); markDirty(); close(); });
+        item.addEventListener('click', () => { appendBg(bg, dragAdder['backgrounds-list']); markDirty(true); close(); });
         list.appendChild(item);
     });
 
@@ -1492,7 +1498,7 @@ function addBackground() {
     customSpan.style.cssText = 'font-style:italic;color:#2980b9';
     customSpan.textContent = 'Custom URL…';
     customItem.appendChild(customSpan);
-    customItem.addEventListener('click', () => { appendBg({}, dragAdder['backgrounds-list']); markDirty(); close(); });
+    customItem.addEventListener('click', () => { appendBg({}, dragAdder['backgrounds-list']); markDirty(true); close(); });
     list.appendChild(customItem);
 
     body.appendChild(list);
@@ -1548,7 +1554,7 @@ function makeFileSelect(currentValue) {
         sel.appendChild(opt);
     });
 
-    sel.addEventListener('change', () => { updateCourseFileStatus(sel); markDirty(); });
+    sel.addEventListener('change', () => { updateCourseFileStatus(sel); markDirty(true); });
     wrap.appendChild(span);
     wrap.appendChild(sel);
     return { wrap, sel };
@@ -1617,10 +1623,11 @@ function buildCourseRow(c) {
     colorInput.style.cssText = 'width:36px;height:24px;padding:1px;border:1px solid #555;border-radius:3px;cursor:pointer;background:none';
     colorInput.addEventListener('input', () => {
         const col = colorInput.value;
+        colorInput.dataset.savedcolor = col;
         const lsc = (() => { try { return JSON.parse(localStorage.getItem('aprs_course_colors') || '{}'); } catch { return {}; } })();
         lsc[c.file] = col;
         localStorage.setItem('aprs_course_colors', JSON.stringify(lsc));
-        markDirty();
+        markDirty(true);
     });
     const clearColorBtn = document.createElement('button');
     clearColorBtn.type = 'button';
@@ -1631,7 +1638,7 @@ function buildCourseRow(c) {
     clearColorBtn.addEventListener('click', () => {
         colorInput.dataset.savedcolor = '';
         clearColorBtn.style.display = 'none';
-        markDirty();
+        markDirty(true);
     });
     colorWrap.appendChild(colorLbl);
     colorWrap.appendChild(colorInput);
@@ -1654,12 +1661,12 @@ function appendCourse(c, attach) {
 }
 
 
-async function saveColors() {
+function saveColors() {
     document.querySelectorAll('#courses-list > .list-row').forEach(row => {
         const colorEl = row.querySelector('.f-ccolor');
         if (colorEl) colorEl.dataset.savedcolor = colorEl.value;
     });
-    await doSave();
+    markDirty(true);
 }
 
 // ── Manage Location Files modal ───────────────────────────────────────────────
@@ -1781,7 +1788,7 @@ async function doManageLocationFiles() {
                 addBtn.addEventListener('click', () => {
                     const name = f.name.replace(/\.[^.]+$/, '');
                     appendCourse({ name, file: f.path }, dragAdder['courses-list']);
-                    markDirty();
+                    markDirty(true);
                     buildTable();
                 });
                 tdAdd.appendChild(addBtn);
@@ -1971,7 +1978,7 @@ function appendIgate(g, attach) {
     if (attach) attach(row);
 }
 
-function addIgate() { appendIgate({}, dragAdder['igates-list']); markDirty(); }
+function addIgate() { appendIgate({}, dragAdder['igates-list']); markDirty(true); }
 
 // ── Aid Station rows ──────────────────────────────────────────────────────────
 
@@ -1996,7 +2003,7 @@ function appendAid(g, attach) {
     if (attach) attach(row);
 }
 
-function addAid() { appendAid({}, dragAdder['aidstations-list']); markDirty(); }
+function addAid() { appendAid({}, dragAdder['aidstations-list']); markDirty(true); }
 
 // ── Collect form → config object ──────────────────────────────────────────────
 
@@ -2107,7 +2114,7 @@ function useCurrentMap() {
     document.getElementById('map-lat').value  = v.lat;
     document.getElementById('map-lon').value  = v.lon;
     document.getElementById('map-zoom').value = v.zoom;
-    markDirty();
+    markDirty(false, true);
 }
 
 // ── Load live config.yaml from server ────────────────────────────────────────
@@ -2120,9 +2127,9 @@ async function doLoad() {
         try {
             const stored = localStorage.getItem('aprs_current_event');
             if (stored) {
-                const { name, config } = JSON.parse(stored);
-                cfg = config;
-                filename = name;
+                const parsed = JSON.parse(stored);
+                cfg = parsed.config;
+                filename = parsed.name;
             }
         } catch (e) {
             console.error('Error reading current event from localStorage:', e);
@@ -2143,7 +2150,10 @@ async function doLoad() {
 
         populateForm(cfg);
         setCurrentEvent(filename, cfg.event || '');
-        isDirty = false;
+        originalConfig   = cfg;
+        isDirty          = false;
+        hasServerChanges = false;
+        hasMapChanges    = false;
         setStatus('');
     } catch (err) {
         setStatus('Failed to load config', 'error');
@@ -2170,6 +2180,64 @@ function validateConfig(cfg) {
     return errors;
 }
 
+function buildLocalConfig(cfg) {
+    if (!hasServerChanges || !originalConfig) return cfg;
+    return {
+        event:         cfg.event,
+        legend:        cfg.legend,
+        tracker_style: cfg.tracker_style,
+        map:           cfg.map,
+        trackers:      originalConfig.trackers    || [],
+        backgrounds:   originalConfig.backgrounds || [],
+        courses:       originalConfig.courses     || [],
+        aidstations:   originalConfig.aidstations || [],
+        igates:        originalConfig.igates      || [],
+    };
+}
+
+function saveLocalAndReturn(cfg) {
+    const localCfg = buildLocalConfig(cfg);
+    localStorage.setItem('aprs_current_event', JSON.stringify({
+        name: currentFilename,
+        config: localCfg,
+        isDefault: currentFilename === serverActiveEvent
+    }));
+    if (hasMapChanges) {
+        localStorage.setItem('aprs_default_view', JSON.stringify({
+            lat: cfg.map.lat, lon: cfg.map.lon, zoom: cfg.map.zoom
+        }));
+    }
+    isDirty          = false;
+    hasServerChanges = false;
+    hasMapChanges    = false;
+    location.href    = '../';
+}
+
+function showUpdateWarning(cfg) {
+    const body = document.createElement('div');
+    const msg = document.createElement('p');
+    msg.style.cssText = 'margin:0 0 4px;font-size:14px;line-height:1.5';
+    msg.textContent = "Some changes can't be applied locally. Use Save for All Users for global changes.";
+    body.appendChild(msg);
+
+    const okBtn = document.createElement('button');
+    okBtn.className = 'save-btn';
+    okBtn.textContent = 'OK';
+
+    const saveAllBtn = document.createElement('button');
+    saveAllBtn.className = 'sec-btn';
+    saveAllBtn.textContent = 'Save for All Users…';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'modal-cancel-btn';
+    cancelBtn.textContent = 'Cancel';
+
+    const close = openModal('Cannot Apply All Changes Locally', body, [cancelBtn, saveAllBtn, okBtn]);
+    cancelBtn.addEventListener('click', close);
+    okBtn.addEventListener('click', () => { close(); saveLocalAndReturn(cfg); });
+    saveAllBtn.addEventListener('click', () => { close(); doSaveAs(); });
+}
+
 function doUpdate() {
     hideErrors();
     const cfg = collectConfig();
@@ -2179,11 +2247,11 @@ function doUpdate() {
         setStatus('Validation errors', 'error');
         return;
     }
-
-    // Done: apply changes locally and return to map
-    isDirty = false;
-    setStatus('Changes saved locally ✓', 'ok', 2000);
-    setTimeout(() => { location.href = '../'; }, 2000);
+    if (hasServerChanges) {
+        showUpdateWarning(cfg);
+    } else {
+        saveLocalAndReturn(cfg);
+    }
 }
 
 // ── Version management ────────────────────────────────────────────────────────
@@ -2415,7 +2483,9 @@ async function doSaveAs() {
             });
             const result = await rVer.json();
             if (rVer.ok && result.ok) {
-                isDirty = false;
+                isDirty          = false;
+                hasServerChanges = false;
+                hasMapChanges    = false;
                 close();
                 setStatus(`Saved "${fname}" ✓`, 'ok', 2000);
                 setCurrentEvent(fname, cfg.event || '');
