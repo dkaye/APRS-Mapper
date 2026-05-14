@@ -264,7 +264,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveversion'])) {
     array_unshift($history, gmdate('Y-m-d H:i:s') . ' UTC');
     $yaml = buildConfigYaml($cfg, $history);
     if (file_put_contents($path, $yaml, LOCK_EX) === false) {
-        http_response_code(500); echo json_encode(['error' => 'Cannot write event file — check permissions']); exit;
+        $err = 'Cannot write event file';
+        if (!is_dir($eventPath)) $err .= ' (directory does not exist)';
+        elseif (!is_writable($eventPath)) $err .= ' (directory not writable)';
+        else $err .= ' — check permissions';
+        http_response_code(500); echo json_encode(['error' => $err]); exit;
     }
     pruneTrackerHistory($eventPath . '/tracker_history.yaml', array_column($cfg['trackers'] ?? [], 'callsign'));
     echo json_encode(['ok' => true]);
