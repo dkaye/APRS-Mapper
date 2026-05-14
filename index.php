@@ -1881,9 +1881,17 @@ if (isNonDefaultEvent) {
 	const note = document.createElement('div');
 	note.id = 'non-default-note';
 	note.textContent = 'Not the active event. Tracker data are not being updated.';
-	note.style.cssText = isMobile
+	const baseStyle = isMobile
 		? 'font-size:11px;color:#000;padding:0 10px;align-self:center;white-space:nowrap'
 		: 'position:fixed;bottom:26px;right:130px;font-size:12px;color:#000;z-index:1000;pointer-events:none;white-space:nowrap';
+	note.style.cssText = baseStyle + ';animation:aprs-blink 0.5s step-start 10';
+	if (!document.getElementById('aprs-blink-style')) {
+		const s = document.createElement('style');
+		s.id = 'aprs-blink-style';
+		s.textContent = '@keyframes aprs-blink{0%,100%{opacity:1}50%{opacity:0}}';
+		document.head.appendChild(s);
+	}
+	setTimeout(() => { note.style.animation = 'none'; }, 5000);
 	if (isMobile) {
 		const topBar = document.getElementById('top-bar');
 		if (topBar) topBar.appendChild(note);
