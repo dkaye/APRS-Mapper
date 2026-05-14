@@ -180,6 +180,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['save'])) {
     if (file_put_contents($configPath, $yaml, LOCK_EX) === false) {
         respondError('Cannot write config.yaml — check permissions');
     }
+
+    // If called with &event parameter (from Save As), update the tracking file
+    $eventParam = trim($_GET['event'] ?? '');
+    if ($eventParam && preg_match('/^[a-zA-Z0-9 _\-\.]{1,80}$/', $eventParam)) {
+        if (file_put_contents($currentEventFile, $eventParam, LOCK_EX) === false) {
+            respondError('Cannot update event tracking — check permissions');
+        }
+    }
+
     $real = realpath($configPath);
     if ($real) pruneTrackerHistory(dirname($real) . '/tracker_history.yaml', array_column($cfg['trackers'] ?? [], 'callsign'));
     respondJson(['ok' => true]);
@@ -2207,7 +2216,7 @@ async function doSaveAs() {
             if (errors.length) { warn.textContent = errors[0]; warn.style.display = ''; saveBtn.disabled = false; return; }
             // Save As: save to new event version AND update live config
             const [rLive, rVer] = await Promise.all([
-                fetch('?save', {
+                fetch('?save&event=' + encodeURIComponent(fname), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(cfg)
