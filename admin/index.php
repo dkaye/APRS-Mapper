@@ -2332,9 +2332,9 @@ async function doLoadModal() {
                 populateForm(cfg);
                 // Activate: load event locally without changing server default (symlink)
                 isDirty = false;
+                setCurrentEvent(v.name, cfg.event || '');
                 close();
                 setStatus(`Activated "${v.name}" ✓`, 'ok', 4000);
-                setCurrentEvent(v.name, cfg.event || '');
             } catch (err) {
                 setStatus('Failed to activate event', 'error');
                 console.error(err);
