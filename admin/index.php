@@ -123,43 +123,51 @@ if (isset($_GET['repair'])) {
     $fixed = [];
     $errors = [];
 
-    // Fix event directories
+    // Fix event directories and files
     if (is_dir($eventsDir)) {
         foreach (glob($eventsDir . '/*', GLOB_ONLYDIR) ?: [] as $eventDir) {
-            if (!chmod($eventDir, 0775)) {
-                $errors[] = 'Cannot chmod ' . basename($eventDir) . ' directory';
-            } else {
-                $fixed[] = basename($eventDir);
-            }
+            @chown($eventDir, 33);  // www-data
+            @chgrp($eventDir, 33);
+            chmod($eventDir, 0775);
+            $fixed[] = basename($eventDir) . ' (dir)';
 
             // Fix event.yaml
             $eventYaml = $eventDir . '/event.yaml';
-            if (file_exists($eventYaml) && !chmod($eventYaml, 0664)) {
-                $errors[] = 'Cannot chmod ' . basename($eventDir) . '/event.yaml';
+            if (file_exists($eventYaml)) {
+                @chown($eventYaml, 33);
+                @chgrp($eventYaml, 33);
+                chmod($eventYaml, 0664);
             }
 
             // Fix tracker_history.yaml
             $histYaml = $eventDir . '/tracker_history.yaml';
-            if (file_exists($histYaml) && !chmod($histYaml, 0664)) {
-                $errors[] = 'Cannot chmod ' . basename($eventDir) . '/tracker_history.yaml';
+            if (file_exists($histYaml)) {
+                @chown($histYaml, 33);
+                @chgrp($histYaml, 33);
+                chmod($histYaml, 0664);
             }
         }
     }
 
-    // Fix config.yaml (or its symlink target if it's a link)
+    // Fix config.yaml and its symlink target
     if (is_link($configPath)) {
         $target = realpath($configPath);
-        if ($target && !chmod($target, 0664)) {
-            $errors[] = 'Cannot chmod config.yaml target (' . basename($target) . ')';
-        } else if ($target) {
-            $fixed[] = 'config.yaml target (' . basename($target) . ')';
+        if ($target) {
+            if (is_writable(dirname($target))) {
+                // Try to change ownership and permissions
+                @chown($target, 33);  // www-data uid
+                @chgrp($target, 33);  // www-data gid
+                chmod($target, 0664);
+                $fixed[] = 'config.yaml target (' . basename($target) . ')';
+            } else {
+                $errors[] = 'Cannot write to config.yaml target directory: ' . dirname($target);
+            }
         }
     } elseif (file_exists($configPath)) {
-        if (!chmod($configPath, 0664)) {
-            $errors[] = 'Cannot chmod config.yaml';
-        } else {
-            $fixed[] = 'config.yaml';
-        }
+        @chown($configPath, 33);
+        @chgrp($configPath, 33);
+        chmod($configPath, 0664);
+        $fixed[] = 'config.yaml';
     }
 
     // Fix trackers.json
