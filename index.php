@@ -105,6 +105,13 @@ if (isset($_GET['config'])) {
 	exit;
 }
 
+if (isset($_GET['killexit'])) {
+	$resp = @file_get_contents('http://127.0.0.1:8080/exit');
+	header('Content-Type: text/plain');
+	echo $resp !== false ? 'ok' : 'err';
+	exit;
+}
+
 if (isset($_GET['clientstatus'])) {
 	header('Content-Type: application/json');
 	$stats = [];
@@ -711,7 +718,7 @@ new (L.Control.extend({
 			if (!isMobile) {
 				const exitBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
 				exitBtn2.textContent = 'Exit';
-				L.DomEvent.on(exitBtn2, 'click', () => fetch('http://localhost:8080/exit').catch(() => {}));
+				L.DomEvent.on(exitBtn2, 'click', () => fetch('index.php?killexit').catch(() => {}));
 				L.DomEvent.disableClickPropagation(exitBtn2);
 				const connBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
 				connBtn2.textContent = 'IP';
@@ -1566,27 +1573,17 @@ function applyCourses(courses) {
 			if (!coursesInitialized) loadCourseLayer(course.file);
 			const color  = courseColors[course.file] || DEFAULT_COURSE_COLOR;
 			const active = !!courseLayers[course.file];
-			const row    = document.createElement('div');   row.className = 'm-course-row';
-			const label  = document.createElement('label'); label.className = 'm-course-label'; label.title = 'Tap to change colour';
+			const row    = document.createElement('div');   row.className = 'm-course-row'; row.style.cursor = 'pointer';
 			const nameEl = document.createElement('span');  nameEl.className = 'm-course-name'; nameEl.textContent = course.name; nameEl.style.color = color;
-			nameEl.addEventListener('click', e => { e.stopPropagation(); triggerCourseBlink(course.file, nameEl); });
-			const cInput = document.createElement('input'); cInput.type = 'color'; cInput.value = color; cInput.className = 'm-course-color-input';
-			cInput.addEventListener('input', e => {
-				const c = e.target.value;
-				nameEl.style.color = c;
-				courseColors[course.file] = c;
-				saveCourseColor(course.file, c);
-				setCourseStyle(course.file, c);
-			});
-			label.appendChild(nameEl); label.appendChild(cInput);
 			const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = active; cb.className = 'm-checkbox';
+			row.addEventListener('click', e => { if (e.target !== cb) triggerCourseBlink(course.file, nameEl); });
 			cb.addEventListener('click', e => e.stopPropagation());
 			cb.addEventListener('change', () => {
 				if (!cb.checked) { if (courseLayers[course.file]) { map.removeLayer(courseLayers[course.file]); delete courseLayers[course.file]; } }
 				else { if (!courseLayers[course.file]) loadCourseLayer(course.file); else reorderCourseLayers(); }
 				saveActiveFiles();
 			});
-			row.appendChild(label); row.appendChild(cb);
+			row.appendChild(nameEl); row.appendChild(cb);
 			container.appendChild(row);
 		});
 		coursesInitialized = true;
@@ -1615,35 +1612,24 @@ function applyCourses(courses) {
 		const active = !!courseLayers[course.file];
 		if (kiosk) {
 			if (!active) return;
-			const item   = document.createElement('div');  item.className = 'sidebar-item course-item';
+			const item   = document.createElement('div');  item.className = 'sidebar-item course-item'; item.style.cursor = 'pointer';
 			const nameEl = document.createElement('span'); nameEl.className = 'course-name'; nameEl.textContent = course.name; nameEl.style.color = color;
-			nameEl.style.cursor = 'pointer';
-			nameEl.addEventListener('click', () => triggerCourseBlink(course.file, nameEl));
+			item.addEventListener('click', () => triggerCourseBlink(course.file, nameEl));
 			item.appendChild(nameEl);
 			container.appendChild(item);
 			return;
 		}
-		const item   = document.createElement('div');   item.className = 'sidebar-item course-item';
-		const label  = document.createElement('label'); label.className = 'course-label'; label.title = 'Click to change color';
+		const item   = document.createElement('div');   item.className = 'sidebar-item course-item'; item.style.cursor = 'pointer';
 		const nameEl = document.createElement('span');  nameEl.className = 'course-name'; nameEl.textContent = course.name; nameEl.style.color = color;
-		nameEl.addEventListener('click', e => { e.stopPropagation(); triggerCourseBlink(course.file, nameEl); });
-		const cInput = document.createElement('input'); cInput.type = 'color'; cInput.value = color; cInput.className = 'course-color-input';
-		cInput.addEventListener('input', e => {
-			const c = e.target.value;
-			nameEl.style.color = c;
-			courseColors[course.file] = c;
-			saveCourseColor(course.file, c);
-			setCourseStyle(course.file, c);
-		});
-		label.appendChild(nameEl); label.appendChild(cInput);
 		const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = active; checkbox.className = 'course-checkbox'; checkbox.title = 'Show / hide course';
+		item.addEventListener('click', e => { if (e.target !== checkbox) triggerCourseBlink(course.file, nameEl); });
 		checkbox.addEventListener('click', e => e.stopPropagation());
 		checkbox.addEventListener('change', () => {
 			if (!checkbox.checked) { if (courseLayers[course.file]) { map.removeLayer(courseLayers[course.file]); delete courseLayers[course.file]; } }
 			else { if (!courseLayers[course.file]) loadCourseLayer(course.file); else reorderCourseLayers(); }
 			saveActiveFiles();
 		});
-		item.appendChild(label); item.appendChild(checkbox);
+		item.appendChild(nameEl); item.appendChild(checkbox);
 		container.appendChild(item);
 	});
 	coursesInitialized = true;
