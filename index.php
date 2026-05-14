@@ -1871,11 +1871,12 @@ try {
 	console.error('Error loading stored event:', e);
 }
 
-// Only load default config if no stored event was applied
+// Only load from symlink if no activated event was selected
 if (!hasStoredEvent) {
 	loadConfig();
+	setInterval(loadConfig, 5000);
 }
-setInterval(loadConfig, 5000);
+
 updateMap();
 setInterval(updateMap, 5000);
 </script>
