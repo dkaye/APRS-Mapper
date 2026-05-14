@@ -248,7 +248,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveversion'])) {
         http_response_code(400); echo json_encode(['error' => 'Name may only contain letters, numbers, spaces, hyphens, underscores, periods (max 80 chars)']); exit;
     }
     $eventPath = $eventsDir . '/' . $eventName;
-    if (!is_dir($eventPath)) mkdir($eventPath, 0755, true);
+    if (!is_dir($eventPath)) {
+        if (!mkdir($eventPath, 0777, true)) {
+            http_response_code(500); echo json_encode(['error' => 'Cannot create event directory']); exit;
+        }
+    }
 
     // Update course paths in the config to point to events/<eventName>/...
     $cfg = $data['cfg'];
