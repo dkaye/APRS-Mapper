@@ -6,39 +6,46 @@
 
 ## Main Map
 
-Open the map at `https://marsaprs.org/` (or your local server address). The sidebar on the
+Open the map at `https://marsaprs.org/`. The sidebar on the
 left lists all sections; each section can be collapsed by unchecking the box on its right
-edge. Collapse state is saved across page reloads.
+edge.
+
+---
+### The Concept of Events
+
+All of the parameters for an event are stored on a server along with the name of the event and a filename.
+When an event is saved using Save for All Users... or Activate in the admin interface, that event becomes the "default event", which is what will then be seen by anyone visiting the website. 
+Users are free to make a variety of changes to how the map and various objects appear and are treated. So long as that user doesn't use Save for All Users... or Activate to update the event on the server, the changes they make are stricly local and won't affect what other users see.
 
 ---
 
 ### Tracker List
 
-Each tracker appears in the sidebar with a coloured dot, a short ID, a full name, and the
+Each tracker appears in the sidebar, sorted alphabetically by ID, with a colored dot, the ID (such as "H1"), a full name, and the
 time since its last beacon was received.
 
-| Dot colour | Meaning |
+| Dot color | Meaning |
 |------------|---------|
 | Green | Heard within the last 2 minutes |
 | Blue | Heard within the last 5 minutes |
 | Red | Not heard for more than 5 minutes |
 
-The map marker and sidebar entry both update every 5 seconds.
+The tracker's marker on the map and sidebar entry both update every 5 seconds.
 
 #### Clicking a tracker (three-click cycle)
 
 1. **First click** — The tracker's map marker and sidebar entry blink for 5 seconds.
-   Up to 5 recent beacon positions appear on the map as small dots connected by a dotted
+   Up to 5 recent beacon positions appear as "breadrumbs" on the map as small dots connected by a dotted
    line with directional arrows. The dots blink in sync with the tracker marker. Hover
    over any dot to see how long ago that position was received (e.g., "3m 45s ago").
 
 2. **Second click** — The map zooms to the tracker's last known position.
 
-3. **Third click** — The map resets to the default view and removes the history dots
+3. **Third click** — The map resets to the default view and hides the history dots
    and line.
 
 Clicking a different tracker while one is selected immediately switches focus to the new
-one and clears the previous tracker's history.
+one and hides the previous tracker's history.
 
 If a tracker has not yet reported a position, a notification appears instead of zooming.
 
@@ -48,10 +55,7 @@ If a tracker has not yet reported a position, a notification appears instead of 
 
 Each course entry in the sidebar is a named route overlay (GPX, KML, or GeoJSON file).
 
-- **Click the course name** to toggle the overlay on or off. The name is underlined when
-  the course is visible.
-- **Click the colour swatch** to open a colour picker and change the course line colour.
-  The new colour is saved automatically.
+- **Click the ✓* next to the course name to toggle the overlay on or off.
 
 Multiple courses can be visible simultaneously.
 
@@ -59,10 +63,11 @@ Multiple courses can be visible simultaneously.
 
 ### Aid Stations and iGates
 
-Aid stations appear as black dots on the map; iGates appear as smaller markers.
+Aid stations appear as black dots on the map; iGates appear as smaller black dots.
 
 - **Click an entry in the sidebar** to zoom the map to that location and show a label.
 - **Click it again** to dismiss the label and reset the map.
+- **Hover over a dot** to see to what it refers.
 
 ---
 
@@ -91,8 +96,8 @@ The Origin is cleared by **Reset Map**.
 
 Click **Reset Map** in the sidebar to:
 
-- Return the map to its default centre and zoom level.
-- Clear any tracker selection and history dots.
+- Return the map to its default position and zoom level.
+- Clear any tracker history dots (breadcrumbs).
 - Clear the Origin marker.
 
 ---
@@ -103,29 +108,27 @@ Click **Save Map** in the sidebar to save the current map position and zoom leve
 personal default view. This default is stored in your browser and persists across sessions.
 
 After saving, **Reset Map** will return to this saved position rather than the event's
-server default. To go back to using the server default, clear your browser's local storage
-for this site.
+default. 
 
 ---
 
 ### Kiosk Mode
 
-Click **Kiosk Mode** in the sidebar (or add `?kiosk=1` to the URL) to switch to a
-simplified display layout:
+Click **Kiosk Mode** in the sidebar to switch to a
+simplified display layout, which is designed for the publicly viewable display:
 
 - The sidebar shows Trackers, Aid Stations, and iGates only.
 - Course visibility from normal mode carries over.
 - Three buttons appear at the bottom of the screen:
   - **Sidebar** — show or hide the sidebar; state is remembered.
   - **Reset Map** — same as the sidebar Reset Map button.
-  - **Exit** — returns to normal mode. On the dedicated display screen, this also
-    causes the browser to restart cleanly.
+  - **Exit** — returns to normal mode.
 
 ---
 
 ### Clients
 
-Click **Clients** in the sidebar to open a panel showing:
+Click **Clients** in the page footer to open a panel showing:
 
 - Current Apache server load (busy and idle workers, requests per second, uptime).
 - The IP addresses of connected clients and how many connections each has open.
@@ -134,19 +137,22 @@ Click **Clients** in the sidebar to open a panel showing:
 
 ## Admin Page
 
-Open `https://marsaprs.org/admin/` and enter the password when prompted. After logging in,
-you can edit the configuration for the currently active event.
+Click on the Admin button and enter the password when prompted. After logging in,
+you can edit the configuration for the currently active event. As mentioned earlier, all changes will be strictly local unless and until you use Save for All Users... or Activate to publish them for others.
 
 The header and footer each contain two action buttons:
 
 - **Update** — Saves your changes locally to this browser and returns to the map
   immediately. The map reflects the new settings within seconds, without saving to the
-  server. See [Local vs. Server Changes](#local-vs-server-changes) below.
-- **Save for All Users…** — Saves the full configuration to the server. All browsers
-  and the APRS daemon pick up the new configuration within about 5 seconds.
+  server. See [The Concept of Events](#the-concept-of-events) above.
+- **Save for All Users…** — Saves the full configuration to the server. All browsers viewing the same event
+  pick up the new configuration within about 5 seconds.
 
-Use **Exit** (far right of the header) to leave the admin page without saving. Use
-**Sign Out** to end your session.
+There are three additional buttons in the header of the Admin page:
+
+- **Exit** (far right of the header) leaves the admin page without saving. 
+- **Sign Out** end your admin session.
+- **Load...** presents a lis of previously saved events from which you can choose. Loading an event has no affect on other users.
 
 ---
 
@@ -168,7 +174,7 @@ users. Other sections require **Save for All Users** to take effect for everyone
 | iGates | Server only (Save for All Users) |
 
 If you click **Update** after editing a server-only section, a warning appears:
-*"Some changes can't be applied locally. Use Save for All Users for global changes."*
+*"Some changes can't be applied locally. Use Save for All Users... for global changes."*
 
 - **OK** — saves only the local-only changes and returns to the map; server-only edits
   are discarded.
@@ -180,8 +186,8 @@ If you click **Update** after editing a server-only section, a warning appears:
 ### Editing the Configuration
 
 The page is organised into sections matching the event's configuration. Edit any field and
-click **Save for All Users** when finished, or **Update** to apply local-only changes.
-Click **Load** to discard unsaved changes and reload from disk.
+click **Save for All Users...** when finished, or **Update** to apply local-only changes.
+Click **Load** to discard unsaved changes and reload from the server.
 
 If any field contains an invalid value, the offending field is highlighted in red and a
 summary of errors is shown. The save is not performed until all errors are corrected.
@@ -207,11 +213,11 @@ Controls the appearance of all tracker markers on the map.
 |-------|---------|
 | Icon | circle, square, diamond, triangle, star, cross, person |
 | Size | Marker radius in pixels (4–20) |
-| Label colour | Hex colour for the ID/name label on the map |
+| Label color | Hex color for the ID/name label on the map |
 
 #### Map Default View
 
-Sets the default centre and zoom level used on page load and after Reset Map.
+Sets the default center and zoom level used on page load and after Reset Map.
 
 | Field | Description |
 |-------|-------------|
@@ -220,7 +226,7 @@ Sets the default centre and zoom level used on page load and after Reset Map.
 | Zoom | Map zoom level (higher = more zoomed in) |
 
 Click **Use Current Map** to fill in the fields from the current map position (requires
-the map to have been opened in the same browser).
+the map to have been opened in the same browser). 
 
 Changes to Map Default View saved with **Update** immediately become your personal default
 view on the map — the same as using the **Save Map** button on the main page.
@@ -228,13 +234,13 @@ view on the map — the same as using the **Save Map** button on the main page.
 #### Backgrounds
 
 Each background entry is a map tile layer. Provide a name, the tile URL template (using
-`{z}`, `{x}`, `{y}` placeholders), and the attribution HTML required by the tile provider.
+`{z}`, `{x}`, `{y}` placeholders), and the attribution HTML required by the tile provider. Additional maps may be found at https://leaflet-extras.github.io/leaflet-providers/preview/index.html.
 
 Click the **library** button to pick from tile layers already used in other events.
 
 #### Courses
 
-Lists the course overlays for this event. Each entry shows the file name and a colour
+Lists the course overlays for this event. Each entry shows the file name and a color
 swatch. To add courses, use **Manage Location Files** (see below).
 
 #### Aid Stations and iGates
@@ -243,7 +249,7 @@ Fixed locations shown on the map. Each entry has a name, latitude, and longitude
 
 #### Legend
 
-Free-text label shown in the lower-left corner of the map, below the event name. Use `\n`
+Free-text shown in the lower-left corner of the map in kiosk mode, below the event name. Use `\n`
 for line breaks.
 
 ---
@@ -263,9 +269,9 @@ If the name already exists, a blinking warning is shown before the overwrite is 
 Opens a list of all saved events, sorted newest-first. From this dialog:
 
 - **Click an event name** to load it into the editor for review without activating it.
-- **Load & Activate** makes the selected event the active event immediately. The map and
-  daemon switch to the new configuration within ~5 seconds.
-- **Delete** permanently removes the event and all its files. This cannot be undone.
+- **Load & Activate** makes the selected event the current event immediately. The map and
+  switch switch to the new configuration within ~5 seconds.
+- **Delete** permanently removes the event and all its files. **This cannot be undone.**
 
 ---
 
