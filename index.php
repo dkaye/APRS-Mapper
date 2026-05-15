@@ -1925,7 +1925,7 @@ const LS_SIDEBAR_STATE = 'aprs_sidebar_state';
 		const ct = document.getElementById(content);
 		if (!cb || !ct) return;
 		const collapsed = state[id] === false ||
-		    (isTablet && tabletDefault === false && !(id in state));
+		    (isTablet && tabletDefault === false);
 		if (collapsed) { cb.checked = false; ct.classList.add('section-collapsed'); }
 		cb.addEventListener('change', () => {
 			ct.classList.toggle('section-collapsed', !cb.checked);
