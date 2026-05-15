@@ -4,18 +4,20 @@
 
 ---
 
-## Main Map
+## The Concept of Events
 
-Open the map at `https://marsaprs.org/`. The sidebar on the
-left lists all sections; each section can be collapsed by unchecking the box on its right
-edge.
+When a user first comes to the website, they will see a map configured for the current *default event*. 
+A user with admin privileges can switch to a different current event, which all new visitors will then see, using an administrative page described later.
+
+You are free to make a variety of changes to how the map and various objects appear and are treated. So long as you don't Save your view (which requires that administration privilege and password) the changes you make are stricly local and won't affect what other users see.
 
 ---
-### The Concept of Events
 
-All of the parameters for an event are stored on a server along with the name of the event and a filename.
-When an event is saved using Save for All Users... or Activate in the admin interface, that event becomes the "default event", which is what will then be seen by anyone visiting the website. 
-Users are free to make a variety of changes to how the map and various objects appear and are treated. So long as that user doesn't use Save for All Users... or Activate to update the event on the server, the changes they make are stricly local and won't affect what other users see.
+## Main Map
+
+Open the map at [marsaprs.org](https://marsaprs.org). The sidebar on the
+left lists all sections; each section can be collapsed by unchecking the box on its right
+edge.
 
 ---
 
@@ -234,7 +236,7 @@ view on the map — the same as using the **Save Map** button on the main page.
 #### Backgrounds
 
 Each background entry is a map tile layer. Provide a name, the tile URL template (using
-`{z}`, `{x}`, `{y}` placeholders), and the attribution HTML required by the tile provider. Additional maps may be found at https://leaflet-extras.github.io/leaflet-providers/preview/index.html.
+`{z}`, `{x}`, `{y}` placeholders), and the attribution HTML required by the tile provider. Additional maps may be found at [Leaflet](https://leaflet-extras.github.io/leaflet-providers/preview/index.html).
 
 Click the **library** button to pick from tile layers already used in other events.
 
