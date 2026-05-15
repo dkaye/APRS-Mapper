@@ -307,6 +307,23 @@ body { display: flex; }
 /* hide mobile elements on desktop */
 #top-bar, #bottom-sheet { display: none; }
 
+/* ── Tablet layout (768px–1024px): sidebar stays, touch-friendly sizing ── */
+@media (min-width: 768px) and (max-width: 1024px) {
+    #sidebar { width: 200px; min-width: 200px; padding: 12px 10px; }
+    .section-heading { font-size: 14px; }
+    .legend-item { min-height: 40px; padding: 2px 4px; }
+    .legend-dot  { width: 14px; height: 14px; }
+    .legend-text { font-size: 14px; }
+    .legend-time { font-size: 12px; }
+    .sidebar-item { min-height: 40px; font-size: 14px; }
+    .course-item  { min-height: 40px; font-size: 14px; }
+    .sidebar-btn  { padding: 10px 0; font-size: 13px; }
+    .sidebar-btn-row { gap: 6px; margin-top: 10px; }
+    .sidebar-btn-row:first-of-type { margin-top: 18px; }
+    #userguide-btn { padding: 10px 0; font-size: 13px; margin-top: 10px; }
+    .course-checkbox, .bg-checkbox, .section-toggle { width: 18px; height: 18px; }
+}
+
 /* ── Mobile layout: portrait phones (≤767px) OR landscape phones (≤500px tall) ── */
 @media (max-width: 767px), (max-height: 500px) and (orientation: landscape) {
     body  { display: block; }
@@ -314,8 +331,8 @@ body { display: flex; }
     #sidebar { display: none; }
 
     .leaflet-top                  { top:    50px; }
-    .leaflet-bottom.leaflet-right { bottom: 68px; }
-    .leaflet-bottom.leaflet-left  { bottom: 68px; }
+    .leaflet-bottom.leaflet-right { bottom: 76px; }
+    .leaflet-bottom.leaflet-left  { bottom: 76px; }
 
     /* top bar */
     #top-bar {
@@ -341,11 +358,11 @@ body { display: flex; }
     #bottom-sheet {
         display: flex; flex-direction: column;
         position: fixed; bottom: 0; left: 0; right: 0; z-index: 200;
-        height: 68vh; background: #fff;
+        height: 72vh; background: #fff;
         border-radius: 16px 16px 0 0;
         box-shadow: 0 -3px 20px rgba(0,0,0,.18);
-        transform: translateY(calc(100% - 60px));
-        transition: transform .32s cubic-bezier(.4,0,.2,1);
+        transform: translateY(calc(100% - 68px));
+        transition: transform .28s cubic-bezier(.4,0,.2,1);
         will-change: transform;
     }
     #bottom-sheet.open { transform: translateY(0); }
@@ -439,6 +456,20 @@ body { display: flex; }
 
     .m-empty { padding: 20px 16px; font-size: 13px; color: #aaa; text-align: center; }
 
+    /* More tab — action grid */
+    .m-action-grid {
+        display: grid; grid-template-columns: 1fr 1fr;
+        gap: 10px; padding: 12px 16px 20px;
+    }
+    .m-action-btn {
+        display: flex; align-items: center; justify-content: center;
+        min-height: 56px; padding: 10px 8px;
+        background: #f5f5f5; border: 1px solid #e0e0e0; border-radius: 12px;
+        font-size: 14px; font-family: inherit; color: #333;
+        text-align: center; cursor: pointer; text-decoration: none;
+    }
+    .m-action-btn:active { background: #e5e5e5; }
+
     /* sheet-content wraps tabs + body; needed for landscape re-layout */
     #sheet-content { display: flex; flex-direction: column; flex: 1; overflow: hidden; min-width: 0; }
 }
@@ -455,18 +486,18 @@ body { display: flex; }
     /* Side panel: slides in from the right */
     #bottom-sheet {
         top: 36px; bottom: 0;
-        right: 0; left: auto; width: 270px;
+        right: 0; left: auto; width: 280px;
         height: auto;
         border-radius: 12px 0 0 12px;
-        /* Collapsed: 34px tab sticks out as a grab strip */
-        transform: translateX(calc(100% - 34px));
+        /* Collapsed: 44px tab sticks out as a grab strip */
+        transform: translateX(calc(100% - 44px));
         flex-direction: row;
     }
     #bottom-sheet.open { transform: translateX(0); }
 
     /* Handle becomes a vertical strip on the left edge of the panel */
     #sheet-handle {
-        width: 34px; height: auto; flex-shrink: 0;
+        width: 44px; height: auto; flex-shrink: 0;
         flex-direction: column;
         border-right: 1px solid #eee;
         border-radius: 12px 0 0 12px;
@@ -605,7 +636,7 @@ body { display: flex; }
 	<div id="sheet-tabs">
 		<button class="m-tab active" data-tab="trackers">Trackers</button>
 		<button class="m-tab" data-tab="courses">Courses</button>
-		<button class="m-tab" data-tab="layers">Layers</button>
+		<button class="m-tab" data-tab="more">More</button>
 	</div>
 	<div id="sheet-body">
 		<div id="tab-trackers" class="tab-pane active">
@@ -616,7 +647,11 @@ body { display: flex; }
 			<div id="m-courses-list"></div>
 			<div id="m-courses-empty" class="m-empty" style="display:none">No courses configured.</div>
 		</div>
-		<div id="tab-layers" class="tab-pane">
+		<div id="tab-more" class="tab-pane">
+			<div id="m-backgrounds-section" style="display:none">
+				<div class="m-section-title">Map Style</div>
+				<div id="m-backgrounds-list"></div>
+			</div>
 			<div id="m-aidstations-section" style="display:none">
 				<div class="m-section-title">Aid Stations</div>
 				<div id="m-aidstations-list"></div>
@@ -625,9 +660,12 @@ body { display: flex; }
 				<div class="m-section-title">iGates</div>
 				<div id="m-igates-list"></div>
 			</div>
-			<div id="m-backgrounds-section" style="display:none">
-				<div class="m-section-title">Map Style</div>
-				<div id="m-backgrounds-list"></div>
+			<div class="m-section-title" style="margin-top:4px">Actions</div>
+			<div class="m-action-grid">
+				<button id="m-reset-btn" class="m-action-btn">Reset Map</button>
+				<button id="m-save-map-btn" class="m-action-btn">Save Map</button>
+				<a href="admin/" class="m-action-btn">Admin</a>
+				<a href="https://marsaprs.org/userguide.html" class="m-action-btn" target="_blank">User Guide</a>
 			</div>
 		</div>
 	</div>
@@ -1787,6 +1825,22 @@ document.getElementById('reset-map-btn').addEventListener('click', function() {
 	map.setView([defaultView.lat, defaultView.lon], defaultView.zoom);
 	setSheetOpen(false);
 });
+
+if (isMobile) {
+	document.getElementById('m-reset-btn').addEventListener('click', () => {
+		clearAllSelections();
+		map.setView([defaultView.lat, defaultView.lon], defaultView.zoom);
+		setSheetOpen(false);
+	});
+	document.getElementById('m-save-map-btn').addEventListener('click', function() {
+		const c = map.getCenter();
+		const v = { lat: parseFloat(c.lat.toFixed(6)), lon: parseFloat(c.lng.toFixed(6)), zoom: map.getZoom() };
+		localStorage.setItem('aprs_default_view', JSON.stringify(v));
+		defaultView = v;
+		this.textContent = 'Saved ✓';
+		setTimeout(() => { this.textContent = 'Save Map'; }, 2000);
+	});
+}
 
 // ── bfcache reload ─────────────────────────────────────────────────────────
 window.addEventListener('pageshow', e => { if (e.persisted) location.reload(); });
