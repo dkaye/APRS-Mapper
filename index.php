@@ -311,17 +311,28 @@ body { display: flex; }
 @media (min-width: 768px) and (max-width: 1024px) {
     #sidebar { width: 200px; min-width: 200px; padding: 12px 10px; }
     .section-heading { font-size: 14px; }
-    .legend-item { min-height: 40px; padding: 2px 4px; }
     .legend-dot  { width: 14px; height: 14px; }
     .legend-text { font-size: 14px; }
     .legend-time { font-size: 12px; }
-    .sidebar-item { min-height: 40px; font-size: 14px; }
-    .course-item  { min-height: 40px; font-size: 14px; }
+    .sidebar-item { font-size: 14px; }
+    .course-item  { font-size: 14px; }
     .sidebar-btn  { padding: 10px 0; font-size: 13px; }
     .sidebar-btn-row { gap: 6px; margin-top: 10px; }
     .sidebar-btn-row:first-of-type { margin-top: 18px; }
     #userguide-btn { padding: 10px 0; font-size: 13px; margin-top: 10px; }
     .course-checkbox, .bg-checkbox, .section-toggle { width: 18px; height: 18px; }
+}
+/* Portrait: compact rows (close to desktop density) */
+@media (min-width: 768px) and (max-width: 1024px) and (orientation: portrait) {
+    .legend-item  { padding: 3px 4px; }
+    .sidebar-item { padding: 5px 0 5px 4px; }
+    .course-item  { padding: 3px 0 3px 4px; }
+}
+/* Landscape: larger touch targets */
+@media (min-width: 768px) and (max-width: 1024px) and (orientation: landscape) {
+    .legend-item  { min-height: 40px; }
+    .sidebar-item { min-height: 40px; }
+    .course-item  { min-height: 40px; }
 }
 
 /* ── Mobile layout: portrait phones (≤767px) OR landscape phones (≤500px tall) ── */
@@ -700,6 +711,7 @@ body { display: flex; }
 
 const isMobile = window.matchMedia('(max-width: 767px)').matches ||
     (window.matchMedia('(orientation: landscape)').matches && window.innerHeight <= 500);
+const isTablet = !isMobile && window.matchMedia('(min-width: 768px) and (max-width: 1024px)').matches;
 
 // ── Map init ──────────────────────────────────────────────────────────────
 let defaultView = { lat: <?= $_lat ?>, lon: <?= $_lon ?>, zoom: <?= $_zoom ?> };
@@ -1902,17 +1914,19 @@ const LS_SIDEBAR_STATE = 'aprs_sidebar_state';
 	const sections = [
 		{ id: 'toggle-trackers',    content: 'legend' },
 		{ id: 'toggle-courses',     content: 'courses' },
-		{ id: 'toggle-aidstations', content: 'aidstations' },
-		{ id: 'toggle-igates',      content: 'igates' },
+		{ id: 'toggle-aidstations', content: 'aidstations',  tabletDefault: false },
+		{ id: 'toggle-igates',      content: 'igates',       tabletDefault: false },
 		{ id: 'toggle-backgrounds', content: 'backgrounds' },
 	];
 	let state = {};
 	try { state = JSON.parse(localStorage.getItem(LS_SIDEBAR_STATE) || '{}'); } catch {}
-	sections.forEach(({ id, content }) => {
+	sections.forEach(({ id, content, tabletDefault }) => {
 		const cb = document.getElementById(id);
 		const ct = document.getElementById(content);
 		if (!cb || !ct) return;
-		if (state[id] === false) { cb.checked = false; ct.classList.add('section-collapsed'); }
+		const collapsed = state[id] === false ||
+		    (isTablet && tabletDefault === false && !(id in state));
+		if (collapsed) { cb.checked = false; ct.classList.add('section-collapsed'); }
 		cb.addEventListener('change', () => {
 			ct.classList.toggle('section-collapsed', !cb.checked);
 			try {
