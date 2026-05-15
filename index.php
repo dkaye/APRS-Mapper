@@ -273,30 +273,24 @@ body { display: flex; }
     background-repeat: no-repeat; background-position: center; background-size: 10px;
 }
 
-#reset-btn {
-    display: block; width: 100%; margin-top: 14px; padding: 6px 0;
-    background: #e8e8e8; border: 1px solid #bbb; border-radius: 4px;
-    font-size: 12px; color: #444; cursor: pointer; text-align: center;
+.sidebar-btn-row {
+    display: flex; gap: 5px; margin-top: 8px;
 }
-#reset-btn:hover { background: #d8d8d8; }
-#save-map-btn {
-    display: block; width: 100%; margin-top: 6px; padding: 6px 0;
+.sidebar-btn-row:first-of-type { margin-top: 14px; }
+.sidebar-btn {
+    flex: 1; padding: 6px 0;
     background: #e8e8e8; border: 1px solid #bbb; border-radius: 4px;
-    font-size: 12px; color: #444; cursor: pointer; text-align: center;
+    font-size: 12px; color: #555; cursor: pointer; text-align: center;
+    text-decoration: none; display: block;
 }
-#save-map-btn:hover { background: #d8d8d8; }
-#admin-btn {
-    display: block; width: 100%; margin-top: 6px; padding: 6px 0;
+.sidebar-btn:hover { background: #d8d8d8; }
+#userguide-btn {
+    display: block; width: 100%; margin-top: 8px; padding: 6px 0;
     background: #e8e8e8; border: 1px solid #bbb; border-radius: 4px;
-    font-size: 12px; color: #555; cursor: pointer; text-align: center; text-decoration: none;
+    font-size: 12px; color: #555; cursor: pointer; text-align: center;
+    text-decoration: none; box-sizing: border-box;
 }
-#admin-btn:hover { background: #d8d8d8; }
-#kiosk-btn {
-    display: block; width: 100%; margin-top: 6px; padding: 6px 0;
-    background: #e8e8e8; border: 1px solid #bbb; border-radius: 4px;
-    font-size: 12px; color: #555; cursor: pointer; text-align: center; text-decoration: none;
-}
-#kiosk-btn:hover { background: #d8d8d8; }
+#userguide-btn:hover { background: #d8d8d8; }
 
 .kiosk-footer-btn {
     padding: 2px 8px; background: rgba(255,255,255,0.85); border: 1px solid #bbb;
@@ -580,10 +574,15 @@ body { display: flex; }
 
 	<div id="sidebar-footer">
 		<hr class="section-divider">
-		<button id="reset-btn">Reset Map</button>
-		<button id="save-map-btn">Save Map</button>
-		<a href="?kiosk=1" id="kiosk-btn">Kiosk Mode</a>
-		<a href="admin/" id="admin-btn">Admin</a>
+		<div class="sidebar-btn-row">
+			<button id="reset-btn" class="sidebar-btn">Reset Map</button>
+			<button id="save-map-btn" class="sidebar-btn">Save Map</button>
+		</div>
+		<div class="sidebar-btn-row">
+			<a href="?kiosk=1" id="kiosk-btn" class="sidebar-btn">Kiosk Mode</a>
+			<a href="admin/" id="admin-btn" class="sidebar-btn">Admin</a>
+		</div>
+		<a href="https://marsaprs.org/userguide.html" id="userguide-btn" target="_blank">User Guide</a>
 	</div>
 </div>
 
