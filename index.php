@@ -1658,14 +1658,13 @@ function applyTrackerConfig(trackers) {
 }
 
 function applyBackgrounds(backgrounds, backgroundUrl = '') {
-	// On first call: apply active background — per-client saved preference takes priority
-	// over the event's configured default; event default beats the hardcoded OSM fallback.
+	// On first call: apply the event's configured background.
+	// aprs_bg_url is written when a user clicks a background (so Save can capture it)
+	// but is not read here — the event config is always the source of truth on fresh load.
 	if (!backgroundsInitialized && backgrounds.length) {
 		backgroundsInitialized = true;
-		const savedUrl = localStorage.getItem(LS_BG);
-		const targetUrl = savedUrl && backgrounds.find(b => b.url === savedUrl) ? savedUrl : backgroundUrl;
-		if (targetUrl && targetUrl !== currentBgUrl) {
-			const bg = backgrounds.find(b => b.url === targetUrl);
+		if (backgroundUrl && backgroundUrl !== currentBgUrl) {
+			const bg = backgrounds.find(b => b.url === backgroundUrl);
 			if (bg) {
 				map.removeLayer(currentTileLayer);
 				currentBgUrl = bg.url; currentBgAttribution = bg.attribution;
