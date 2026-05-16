@@ -152,10 +152,11 @@ $_serverIp = $_serverIp ? explode(' ', $_serverIp)[0] : $_SERVER['SERVER_ADDR'];
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/manifest.json">
 <title>MARS APRS Map</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -219,9 +220,16 @@ body { display: flex; }
 .leaflet-dragging .leaflet-grab { cursor: default !important; }
 
 #sidebar {
+    display: flex; flex-direction: column;
     width: 160px; min-width: 160px; height: 100vh;
-    overflow-y: auto; background: #f4f4f4;
-    border-right: 1px solid #ccc; padding: 10px 8px;
+    overflow: hidden; background: #f4f4f4;
+    border-right: 1px solid #ccc;
+}
+#sidebar-scroll {
+    flex: 1; overflow-y: auto; padding: 10px 8px;
+}
+#sidebar-footer {
+    flex-shrink: 0; padding: 0 8px 10px;
 }
 .section-heading {
     font-size: 13px; color: #555; text-transform: uppercase;
@@ -284,13 +292,7 @@ body { display: flex; }
     text-decoration: none; display: block;
 }
 .sidebar-btn:hover { background: #d8d8d8; }
-#userguide-btn {
-    display: block; width: 100%; margin-top: 8px; padding: 6px 0;
-    background: #e8e8e8; border: 1px solid #bbb; border-radius: 4px;
-    font-size: 12px; color: #555; cursor: pointer; text-align: center;
-    text-decoration: none; box-sizing: border-box;
-}
-#userguide-btn:hover { background: #d8d8d8; }
+#userguide-btn { text-decoration: none; }
 
 .kiosk-footer-btn {
     padding: 2px 8px; background: rgba(255,255,255,0.85); border: 1px solid #bbb;
@@ -305,161 +307,203 @@ body { display: flex; }
 }
 
 /* hide mobile elements on desktop */
-#top-bar, #bottom-sheet { display: none; }
+#mobile-gear-btn, #mobile-backdrop, #mobile-drawer { display: none; }
 
 /* ── Tablet layout (768px–1024px): sidebar stays, touch-friendly sizing ── */
 @media (min-width: 768px) and (max-width: 1024px) {
-    #sidebar { width: 200px; min-width: 200px; padding: 12px 10px; }
-    .section-heading { font-size: 14px; }
-    .legend-dot  { width: 14px; height: 14px; }
-    .legend-text { font-size: 14px; }
-    .legend-time { font-size: 12px; }
-    .sidebar-item { font-size: 14px; }
-    .course-item  { font-size: 14px; }
-    .sidebar-btn  { padding: 10px 0; font-size: 13px; }
+    #sidebar { width: 200px; min-width: 200px; }
+    #sidebar-scroll { padding: 12px 10px; }
+    #sidebar-footer { padding: 0 10px 10px; }
+    .section-heading { font-size: 12px; }
+    .legend-dot  { width: 12px; height: 12px; }
+    .legend-text { font-size: 12px; }
+    .legend-time { font-size: 11px; }
+    .sidebar-item { font-size: 12px; }
+    .course-item  { font-size: 12px; }
+    .sidebar-btn  { padding: 10px 0; font-size: 12px; }
     .sidebar-btn-row { gap: 6px; margin-top: 10px; }
     .sidebar-btn-row:first-of-type { margin-top: 18px; }
-    #userguide-btn { padding: 10px 0; font-size: 13px; margin-top: 10px; }
+    .sidebar-btn-row:last-of-type { margin-top: 10px; }
     .course-checkbox, .bg-checkbox, .section-toggle { width: 18px; height: 18px; }
 }
-/* Portrait: compact rows (close to desktop density) */
-@media (min-width: 768px) and (max-width: 1024px) and (orientation: portrait) {
+/* Portrait, larger tablets (820px+): slightly generous rows */
+@media (min-width: 820px) and (max-width: 1024px) and (orientation: portrait) {
     .legend-item  { padding: 3px 4px; }
     .sidebar-item { padding: 5px 0 5px 4px; }
     .course-item  { padding: 3px 0 3px 4px; }
 }
-/* Landscape: larger touch targets */
+/* Portrait, small tablets (<820px): desktop-density rows */
+@media (min-width: 768px) and (max-width: 819px) and (orientation: portrait) {
+    .legend-item  { padding: 2px 4px; }
+    .sidebar-item { padding: 3px 0 3px 4px; }
+    .course-item  { padding: 2px 0 2px 4px; }
+}
+/* Landscape, small tablets (≤1024px wide = small tablets only): same compact rows as portrait */
 @media (min-width: 768px) and (max-width: 1024px) and (orientation: landscape) {
-    .legend-item  { min-height: 40px; }
-    .sidebar-item { min-height: 40px; }
-    .course-item  { min-height: 40px; }
+    .legend-item  { padding: 2px 4px; }
+    .sidebar-item { padding: 3px 0 3px 4px; }
+    .course-item  { padding: 2px 0 2px 4px; }
 }
 
-/* ── Mobile layout: portrait phones (≤767px) OR landscape phones (≤500px tall) ── */
-@media (max-width: 767px), (max-height: 500px) and (orientation: landscape) {
+/* ── Tablet sidebar gear toggle ────────────────────────────────────────── */
+#sidebar-toggle-btn { display: none; }
+@media (pointer: coarse) and (min-width: 768px) {
+    #sidebar-toggle-btn {
+        display: flex; align-items: center; justify-content: center;
+        position: fixed; top: 80px; left: 0; z-index: 500;
+        width: 30px; height: 36px;
+        background: rgba(255,255,255,0.95); color: #555;
+        border: 1px solid #ccc; border-left: none;
+        border-radius: 0 8px 8px 0;
+        cursor: pointer;
+        box-shadow: 2px 1px 8px rgba(0,0,0,.15);
+        transition: left 0.28s cubic-bezier(.4,0,.2,1);
+    }
+    #sidebar-toggle-btn:active { background: #f0f0f0; }
+    #sidebar-toggle-btn.sidebar-shown { left: 200px; }
+}
+/* Large tablet landscape (>1024px wide): sidebar falls back to desktop 160px width */
+@media (pointer: coarse) and (min-width: 1025px) {
+    #sidebar-toggle-btn.sidebar-shown { left: 160px; }
+}
+
+/* ── Mobile layout: phones + all touch devices (tablets any orientation) ── */
+@media (max-width: 767px),
+       (max-height: 500px) and (orientation: landscape),
+       (pointer: coarse) {
     body  { display: block; }
     #map  { position: fixed; inset: 0; z-index: 0; }
     #sidebar { display: none; }
+    #sidebar-toggle-btn { display: none !important; }
 
-    .leaflet-top                  { top:    50px; }
-    .leaflet-bottom.leaflet-right { bottom: 76px; }
-    .leaflet-bottom.leaflet-left  { bottom: 76px; }
+    .leaflet-top                  { top:    10px; }
+    .leaflet-bottom.leaflet-right { bottom: 10px; }
+    .leaflet-bottom.leaflet-left  { bottom: 10px; }
 
-    /* top bar */
-    #top-bar {
-        display: flex; position: fixed; top: 0; left: 0; right: 0; z-index: 300;
-        height: 44px; background: rgba(28,40,51,0.92);
-        backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-        align-items: center; justify-content: space-between;
-        padding: 0 14px; color: #fff;
-    }
-    #top-bar-title { font-size: 15px; font-weight: 600; letter-spacing: .02em; }
-    #top-event {
-        font-size: 12px; color: #8aafc8; max-width: 55vw;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    #reset-map-btn {
-        background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.22);
-        color: #fff; border-radius: 6px; padding: 5px 11px;
-        font-size: 12px; font-family: inherit; cursor: pointer;
-    }
-    #reset-map-btn:active { background: rgba(255,255,255,0.22); }
-
-    /* bottom sheet */
-    #bottom-sheet {
-        display: flex; flex-direction: column;
-        position: fixed; bottom: 0; left: 0; right: 0; z-index: 200;
-        height: 72vh; background: #fff;
-        border-radius: 16px 16px 0 0;
-        box-shadow: 0 -3px 20px rgba(0,0,0,.18);
-        transform: translateY(calc(100% - 68px));
-        transition: transform .28s cubic-bezier(.4,0,.2,1);
-        will-change: transform;
-    }
-    #bottom-sheet.open { transform: translateY(0); }
-
-    #sheet-handle {
-        flex-shrink: 0; height: 20px;
+    /* Gear button: fixed top-right, respects safe area for notch/dynamic island */
+    #mobile-gear-btn {
         display: flex; align-items: center; justify-content: center;
-        cursor: pointer; touch-action: none;
+        position: fixed;
+        top: max(10px, env(safe-area-inset-top));
+        right: max(10px, env(safe-area-inset-right));
+        z-index: 1400;
+        width: 36px; height: 36px;
+        background: rgba(255,255,255,0.95); color: #555;
+        border: 1px solid #ccc; border-radius: 6px;
+        cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.18);
     }
-    #handle-pill { width: 36px; height: 4px; background: #ccc; border-radius: 2px; }
+    #mobile-gear-btn:active { background: #f0f0f0; }
 
-    #sheet-tabs {
-        flex-shrink: 0; display: flex;
-        border-bottom: 1px solid #eee; height: 40px;
+    /* Backdrop */
+    #mobile-backdrop {
+        display: none; position: fixed; inset: 0; z-index: 1200;
+        background: rgba(0,0,0,0.35);
     }
-    .m-tab {
-        flex: 1; background: none; border: none;
-        font-size: 13px; font-family: inherit; color: #888;
-        cursor: pointer; border-bottom: 2px solid transparent;
-        transition: color .15s, border-color .15s;
-    }
-    .m-tab.active { color: #2980b9; border-bottom-color: #2980b9; font-weight: 600; }
+    #mobile-backdrop.open { display: block; }
 
-    #sheet-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
-    .tab-pane { display: none; }
-    .tab-pane.active { display: block; }
+    /* Drawer: slides in from left */
+    #mobile-drawer {
+        display: flex; flex-direction: column;
+        position: fixed; top: 0; bottom: 0; left: 0;
+        width: min(72vw, 260px); z-index: 1300;
+        background: #fff; box-shadow: 3px 0 16px rgba(0,0,0,.22);
+        transform: translateX(-100%);
+        transition: transform 0.28s cubic-bezier(.4,0,.2,1);
+        pointer-events: none;
+    }
+    #mobile-drawer.open { transform: translateX(0); pointer-events: auto; }
+
+    /* Drawer scrollable body — top padding clears status bar / notch */
+    #drawer-body { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-top: env(safe-area-inset-top); }
+
+    /* Accordion sections */
+    .drawer-sec { }
+    .drawer-sec-hdr {
+        display: flex; align-items: center; justify-content: space-between;
+        width: 100%; padding: 0 10px; min-height: 22px;
+        background: #f0f0f0; border: none;
+        font-size: 10px; font-weight: 700; text-transform: uppercase;
+        letter-spacing: .06em; font-family: inherit; color: #777;
+        cursor: pointer; text-align: left;
+    }
+    .drawer-sec-hdr:active { background: #e6e6e6; }
+    .drawer-chevron {
+        font-size: 9px; color: #bbb; display: inline-block;
+        transition: transform 0.18s; transform: rotate(0deg);
+    }
+    .drawer-sec-hdr.open .drawer-chevron { transform: rotate(90deg); }
+
+    /* About section inline content */
+    #m-about-body { padding: 8px 10px; font-size: 11px; color: #555; }
+    .m-about-row { display: flex; gap: 6px; margin-bottom: 4px; align-items: baseline; }
+    .m-about-label { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; color: #999; white-space: nowrap; min-width: 52px; }
+    .m-about-val { color: #333; line-height: 1.3; }
+    .m-about-val a { color: #2980b9; }
 
     /* tracker rows */
     .m-legend-item {
-        display: flex; align-items: center; gap: 12px;
-        padding: 0 16px; min-height: 48px;
-        border-bottom: 1px solid #f2f2f2;
-        cursor: pointer; user-select: none;
+        display: flex; align-items: center; gap: 8px;
+        padding: 0 10px; min-height: 26px;
+        cursor: pointer; user-select: none; -webkit-user-select: none;
     }
     .m-legend-item:active   { background: #f0f6ff; }
     .m-legend-item.selected { background: #e8f2ff; }
-    .m-dot  { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid #333; flex-shrink: 0; }
-    .m-id   { font-size: 14px; min-width: 28px; }
-    .m-name { font-size: 14px; flex: 1; color: #222; }
-    .m-time { font-size: 12px; color: #888; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .m-dot  { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid #333; flex-shrink: 0; }
+    .m-id   { font-size: 12px; min-width: 22px; }
+    .m-name { font-size: 12px; flex: 1; color: #222; }
+    .m-time { font-size: 10px; color: #888; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
     /* course rows */
     .m-course-row {
-        display: flex; align-items: center; gap: 10px;
-        padding: 0 16px; min-height: 48px; border-bottom: 1px solid #f2f2f2;
+        display: flex; align-items: center; gap: 8px;
+        padding: 0 10px; min-height: 26px;
     }
-    .m-course-label { flex: 1; display: flex; align-items: center; cursor: pointer; font-size: 14px; }
+    .m-course-label { flex: 1; display: flex; align-items: center; cursor: pointer; font-size: 12px; }
     .m-course-name  { flex: 1; }
     .m-course-name:hover { text-decoration: underline; }
     .m-course-color-input { position: absolute; width: 0; height: 0; border: none; padding: 0; overflow: hidden; }
     .m-checkbox {
         appearance: none; -webkit-appearance: none;
-        width: 20px; height: 20px; flex-shrink: 0;
-        border: 1.5px solid #aaa; border-radius: 4px; background: #fff; cursor: pointer;
+        width: 16px; height: 16px; flex-shrink: 0;
+        border: 1.5px solid #aaa; border-radius: 3px; background: #fff; cursor: pointer;
     }
     .m-checkbox:checked {
         border-color: #222;
         background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpolyline points='1.5,6 4.5,9.5 10.5,2.5' stroke='%23000' stroke-width='2.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-        background-repeat: no-repeat; background-position: center; background-size: 14px;
+        background-repeat: no-repeat; background-position: center; background-size: 11px;
     }
 
-    /* layers tab */
-    .m-section-title {
-        font-size: 11px; font-weight: 700; text-transform: uppercase;
-        letter-spacing: .06em; color: #999; padding: 12px 16px 4px;
-    }
     .m-layer-row {
-        display: flex; align-items: center; gap: 12px;
-        padding: 0 16px; min-height: 48px;
-        border-bottom: 1px solid #f2f2f2; cursor: pointer;
+        display: flex; align-items: center; gap: 8px;
+        padding: 0 10px; min-height: 26px; cursor: pointer;
     }
     .m-layer-row:active   { background: #f0f6ff; }
     .m-layer-row.selected { background: #e8f2ff; }
-    .m-layer-name  { flex: 1; font-size: 14px; color: #222; }
+    .m-layer-name  { flex: 1; font-size: 12px; color: #222; }
     .m-layer-check {
         appearance: none; -webkit-appearance: none;
-        width: 20px; height: 20px; flex-shrink: 0;
+        width: 16px; height: 16px; flex-shrink: 0;
         border: 1.5px solid #aaa; border-radius: 50%; background: #fff; pointer-events: none;
     }
     .m-layer-check.checked {
         border-color: #2980b9; background: #2980b9;
         background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpolyline points='1.5,6 4.5,9.5 10.5,2.5' stroke='%23fff' stroke-width='2.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-        background-repeat: no-repeat; background-position: center; background-size: 14px;
+        background-repeat: no-repeat; background-position: center; background-size: 11px;
     }
 
-    /* distance popup — stacked layout on mobile */
+    /* Actions grid */
+    .m-actions-grid {
+        display: grid; grid-template-columns: 1fr 1fr; gap: 5px; padding: 6px 10px;
+    }
+    .m-action-btn {
+        display: flex; align-items: center; justify-content: center;
+        min-height: 32px; background: #f5f5f5; border: 1px solid #e0e0e0;
+        border-radius: 5px; font-size: 11px; font-family: inherit; color: #333;
+        text-decoration: none; cursor: pointer; text-align: center;
+    }
+    .m-action-btn:active { background: #e5e5e5; }
+
+    /* distance popup */
     .coord-popup .leaflet-popup-content-wrapper { border-radius: 8px; }
     .dist-popup-inner { padding: 8px 14px; font-size: 14px; font-family: inherit; text-align: center; }
     .dist-popup-inner .dp-dist    { font-size: 18px; font-weight: 700; color: #222; }
@@ -467,57 +511,13 @@ body { display: flex; }
 
     .m-empty { padding: 20px 16px; font-size: 13px; color: #aaa; text-align: center; }
 
-    /* More tab — action grid */
-    .m-action-grid {
-        display: grid; grid-template-columns: 1fr 1fr;
-        gap: 10px; padding: 12px 16px 20px;
+    /* Always-visible action buttons pinned to drawer bottom, above home indicator */
+    #drawer-footer {
+        flex-shrink: 0;
+        border-top: 1px solid #e8e8e8;
+        padding: 6px 10px max(6px, env(safe-area-inset-bottom));
+        background: #fff;
     }
-    .m-action-btn {
-        display: flex; align-items: center; justify-content: center;
-        min-height: 56px; padding: 10px 8px;
-        background: #f5f5f5; border: 1px solid #e0e0e0; border-radius: 12px;
-        font-size: 14px; font-family: inherit; color: #333;
-        text-align: center; cursor: pointer; text-decoration: none;
-    }
-    .m-action-btn:active { background: #e5e5e5; }
-
-    /* sheet-content wraps tabs + body; needed for landscape re-layout */
-    #sheet-content { display: flex; flex-direction: column; flex: 1; overflow: hidden; min-width: 0; }
-}
-
-/* ── Mobile landscape: right-side panel instead of bottom sheet ────────── */
-@media (max-height: 500px) and (orientation: landscape) {
-    /* Shrink top bar to reclaim vertical space */
-    #top-bar { height: 36px; padding: 0 10px; }
-    #top-bar-title { font-size: 13px; }
-    .leaflet-top { top: 40px; }
-    .leaflet-bottom.leaflet-right { bottom: 4px; }
-    .leaflet-bottom.leaflet-left  { bottom: 4px; }
-
-    /* Side panel: slides in from the right */
-    #bottom-sheet {
-        top: 36px; bottom: 0;
-        right: 0; left: auto; width: 280px;
-        height: auto;
-        border-radius: 12px 0 0 12px;
-        /* Collapsed: 44px tab sticks out as a grab strip */
-        transform: translateX(calc(100% - 44px));
-        flex-direction: row;
-    }
-    #bottom-sheet.open { transform: translateX(0); }
-
-    /* Handle becomes a vertical strip on the left edge of the panel */
-    #sheet-handle {
-        width: 44px; height: auto; flex-shrink: 0;
-        flex-direction: column;
-        border-right: 1px solid #eee;
-        border-radius: 12px 0 0 12px;
-    }
-    #handle-pill { width: 4px; height: 36px; }
-
-    /* Tabs sit at top of the content area, body scrolls below */
-    #sheet-tabs { height: 40px; flex-shrink: 0; }
-    #sheet-body { flex: 1; overflow-y: auto; }
 }
 
 /* ── Clients modal ─────────────────────────────────────────────────────── */
@@ -581,37 +581,68 @@ body { display: flex; }
 .conn-row:last-child { border-bottom: none; }
 .conn-label { color: #666; white-space: nowrap; }
 .conn-value { font-family: monospace; font-size: 13px; font-weight: 600; }
+
+/* ── About modal ───────────────────────────────────────────────────────── */
+#about-modal {
+    position: fixed; inset: 0; z-index: 10000;
+    display: flex; align-items: center; justify-content: center;
+}
+#about-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+#about-box {
+    position: relative; background: #fff; border-radius: 8px;
+    min-width: 260px; max-width: 340px; width: 88%;
+    box-shadow: 0 4px 24px rgba(0,0,0,.35); z-index: 1; overflow: hidden;
+    font-family: arial, helvetica, sans-serif;
+}
+#about-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 16px; background: rgba(28,40,51,0.95); color: #fff;
+    font-size: 14px; font-weight: bold;
+}
+#about-close {
+    background: none; border: none; font-size: 20px; line-height: 1;
+    cursor: pointer; color: #aaa; padding: 0 2px;
+}
+#about-close:hover { color: #fff; }
+#about-body { padding: 14px 16px; }
+.about-row { margin-bottom: 10px; }
+.about-row:last-child { margin-bottom: 0; }
+.about-label { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #999; margin-bottom: 2px; }
+.about-val { font-size: 13px; color: #222; line-height: 1.4; }
+.about-val a { color: #2980b9; }
 </style>
 </head>
 <body>
 
 <!-- ── Desktop sidebar ─────────────────────────────────────────────────── -->
 <div id="sidebar">
-	<div class="section-heading top"><span>Trackers</span><input type="checkbox" class="section-toggle" id="toggle-trackers" checked></div>
-	<div id="legend"></div>
+	<div id="sidebar-scroll">
+		<div class="section-heading top"><span>Trackers</span><input type="checkbox" class="section-toggle" id="toggle-trackers" checked></div>
+		<div id="legend"></div>
 
-	<div id="courses-section" style="display:none">
-		<hr class="section-divider">
-		<div class="section-heading"><span>Courses</span><input type="checkbox" class="section-toggle" id="toggle-courses" checked></div>
-		<div id="courses"></div>
-	</div>
+		<div id="courses-section" style="display:none">
+			<hr class="section-divider">
+			<div class="section-heading"><span>Courses</span><input type="checkbox" class="section-toggle" id="toggle-courses" checked></div>
+			<div id="courses"></div>
+		</div>
 
-	<div id="aidstations-section" style="display:none">
-		<hr class="section-divider">
-		<div class="section-heading"><span>Aid Stations</span><input type="checkbox" class="section-toggle" id="toggle-aidstations" checked></div>
-		<div id="aidstations"></div>
-	</div>
+		<div id="aidstations-section" style="display:none">
+			<hr class="section-divider">
+			<div class="section-heading"><span>Aid Stations</span><input type="checkbox" class="section-toggle" id="toggle-aidstations" checked></div>
+			<div id="aidstations"></div>
+		</div>
 
-	<div id="igates-section" style="display:none">
-		<hr class="section-divider">
-		<div class="section-heading"><span>iGates</span><input type="checkbox" class="section-toggle" id="toggle-igates" checked></div>
-		<div id="igates"></div>
-	</div>
+		<div id="igates-section" style="display:none">
+			<hr class="section-divider">
+			<div class="section-heading"><span>iGates</span><input type="checkbox" class="section-toggle" id="toggle-igates" checked></div>
+			<div id="igates"></div>
+		</div>
 
-	<div id="backgrounds-section" style="display:none">
-		<hr class="section-divider">
-		<div class="section-heading"><span>Backgrounds</span><input type="checkbox" class="section-toggle" id="toggle-backgrounds" checked></div>
-		<div id="backgrounds"></div>
+		<div id="backgrounds-section" style="display:none">
+			<hr class="section-divider">
+			<div class="section-heading"><span>Backgrounds</span><input type="checkbox" class="section-toggle" id="toggle-backgrounds" checked></div>
+			<div id="backgrounds"></div>
+		</div>
 	</div>
 
 	<div id="sidebar-footer">
@@ -624,64 +655,101 @@ body { display: flex; }
 			<a href="?kiosk=1" id="kiosk-btn" class="sidebar-btn">Kiosk Mode</a>
 			<a href="admin/" id="admin-btn" class="sidebar-btn">Admin</a>
 		</div>
-		<a href="https://marsaprs.org/userguide.html" id="userguide-btn" target="_blank">User Guide</a>
+		<div class="sidebar-btn-row">
+			<a href="https://marsaprs.org/userguide.html" id="userguide-btn" class="sidebar-btn" target="_blank">User Guide</a>
+			<button id="about-btn" class="sidebar-btn">About</button>
+		</div>
 	</div>
 </div>
+
+<!-- ── Tablet sidebar gear toggle ─────────────────────────────────────── -->
+<button id="sidebar-toggle-btn" title="Toggle sidebar">
+	<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+</button>
 
 <!-- ── Shared map ──────────────────────────────────────────────────────── -->
 <div id="map"></div>
 
-<!-- ── Mobile top bar ─────────────────────────────────────────────────── -->
-<div id="top-bar">
-	<div>
-		<div id="top-bar-title">MARS APRS Map</div>
-		<div id="top-event" style="display:none"></div>
-	</div>
-	<button id="reset-map-btn">Reset</button>
-</div>
+<!-- ── Mobile gear button ──────────────────────────────────────────────── -->
+<button id="mobile-gear-btn" title="Menu">
+	<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+</button>
 
-<!-- ── Mobile bottom sheet ────────────────────────────────────────────── -->
-<div id="bottom-sheet">
-	<div id="sheet-handle"><div id="handle-pill"></div></div>
-	<div id="sheet-content">
-	<div id="sheet-tabs">
-		<button class="m-tab active" data-tab="trackers">Trackers</button>
-		<button class="m-tab" data-tab="courses">Courses</button>
-		<button class="m-tab" data-tab="more">More</button>
-	</div>
-	<div id="sheet-body">
-		<div id="tab-trackers" class="tab-pane active">
-			<div id="m-legend"></div>
-			<div id="m-legend-empty" class="m-empty" style="display:none">Waiting for tracker data…</div>
+<!-- ── Mobile backdrop ─────────────────────────────────────────────────── -->
+<div id="mobile-backdrop"></div>
+
+<!-- ── Mobile drawer ──────────────────────────────────────────────────── -->
+<div id="mobile-drawer">
+	<div id="drawer-body">
+		<div class="drawer-sec">
+			<button class="drawer-sec-hdr open" data-body="m-trackers-body">
+				<span>Trackers</span><span class="drawer-chevron">&#9658;</span>
+			</button>
+			<div id="m-trackers-body">
+				<div id="m-legend"></div>
+				<div id="m-legend-empty" class="m-empty" style="display:none">Waiting for tracker data…</div>
+			</div>
 		</div>
-		<div id="tab-courses" class="tab-pane">
-			<div id="m-courses-list"></div>
-			<div id="m-courses-empty" class="m-empty" style="display:none">No courses configured.</div>
+		<div class="drawer-sec">
+			<button class="drawer-sec-hdr" data-body="m-courses-body">
+				<span>Courses</span><span class="drawer-chevron">&#9658;</span>
+			</button>
+			<div id="m-courses-body" style="display:none">
+				<div id="m-courses-list"></div>
+				<div id="m-courses-empty" class="m-empty" style="display:none">No courses configured.</div>
+			</div>
 		</div>
-		<div id="tab-more" class="tab-pane">
-			<div id="m-backgrounds-section" style="display:none">
-				<div class="m-section-title">Map Style</div>
+		<div class="drawer-sec" id="m-backgrounds-section" style="display:none">
+			<button class="drawer-sec-hdr" data-body="m-backgrounds-body">
+				<span>Backgrounds</span><span class="drawer-chevron">&#9658;</span>
+			</button>
+			<div id="m-backgrounds-body" style="display:none">
 				<div id="m-backgrounds-list"></div>
 			</div>
-			<div id="m-aidstations-section" style="display:none">
-				<div class="m-section-title">Aid Stations</div>
+		</div>
+		<div class="drawer-sec" id="m-aidstations-section" style="display:none">
+			<button class="drawer-sec-hdr" data-body="m-aidstations-body">
+				<span>Aid Stations</span><span class="drawer-chevron">&#9658;</span>
+			</button>
+			<div id="m-aidstations-body" style="display:none">
 				<div id="m-aidstations-list"></div>
 			</div>
-			<div id="m-igates-section" style="display:none">
-				<div class="m-section-title">iGates</div>
+		</div>
+		<div class="drawer-sec" id="m-igates-section" style="display:none">
+			<button class="drawer-sec-hdr" data-body="m-igates-body">
+				<span>iGates</span><span class="drawer-chevron">&#9658;</span>
+			</button>
+			<div id="m-igates-body" style="display:none">
 				<div id="m-igates-list"></div>
 			</div>
-			<div class="m-section-title" style="margin-top:4px">Actions</div>
-			<div class="m-action-grid">
-				<button id="m-reset-btn" class="m-action-btn">Reset Map</button>
-				<button id="m-save-map-btn" class="m-action-btn">Save Map</button>
-				<a href="admin/" class="m-action-btn">Admin</a>
-				<a href="https://marsaprs.org/userguide.html" class="m-action-btn" target="_blank">User Guide</a>
-			</div>
+		</div>
+		<div class="drawer-sec">
+			<button class="drawer-sec-hdr" data-body="m-about-body">
+				<span>About</span><span class="drawer-chevron">&#9658;</span>
+			</button>
+			<div id="m-about-body" style="display:none"></div>
 		</div>
 	</div>
-	</div><!-- #sheet-content -->
-</div><!-- #bottom-sheet -->
+	<div id="drawer-footer">
+		<div class="m-actions-grid">
+			<button id="m-reset-btn" class="m-action-btn">Reset Map</button>
+			<button id="m-save-map-btn" class="m-action-btn">Save Map</button>
+			<a href="admin/" class="m-action-btn">Admin</a>
+			<a href="https://marsaprs.org/userguide.html" class="m-action-btn" target="_blank">User Guide</a>
+		</div>
+	</div>
+</div><!-- #mobile-drawer -->
+
+<div id="about-modal" style="display:none">
+	<div id="about-backdrop"></div>
+	<div id="about-box">
+		<div id="about-header">
+			<span>About</span>
+			<button id="about-close">&times;</button>
+		</div>
+		<div id="about-body"></div>
+	</div>
+</div>
 
 <div id="clients-modal" style="display:none">
 	<div id="clients-backdrop"></div>
@@ -709,9 +777,15 @@ body { display: flex; }
 <script>
 'use strict';
 
-const isMobile = window.matchMedia('(max-width: 767px)').matches ||
-    (window.matchMedia('(orientation: landscape)').matches && window.innerHeight <= 500);
-const isTablet = !isMobile && window.matchMedia('(min-width: 768px) and (max-width: 1024px)').matches;
+// All touch (coarse-pointer) devices use the slide-in drawer; fine-pointer
+// (mouse) desktops use the sidebar. visualViewport.width is used for the phone
+// breakpoint to avoid iOS Safari's 980px layout-viewport timing issue on reload.
+const _vvw    = (window.visualViewport && window.visualViewport.width) || window.innerWidth;
+const _coarse = window.matchMedia('(pointer: coarse)').matches;
+const isMobile = _vvw <= 767
+    || window.matchMedia('(max-height: 500px) and (orientation: landscape)').matches
+    || _coarse;
+const isTablet = false;
 
 // ── Map init ──────────────────────────────────────────────────────────────
 let defaultView = { lat: <?= $_lat ?>, lon: <?= $_lon ?>, zoom: <?= $_zoom ?> };
@@ -720,10 +794,10 @@ const clientIp = '<?= htmlspecialchars($_clientIp) ?>';
 const serverIp = '<?= htmlspecialchars($_serverIp) ?>';
 let mapViewInitialized = true;
 
-const map = L.map('map', { zoomControl: !isMobile })
+const map = L.map('map', { zoomControl: false })
 	.setView([defaultView.lat, defaultView.lon], defaultView.zoom);
 
-if (isMobile) L.control.zoom({ position: 'topright' }).addTo(map);
+L.control.zoom({ position: 'topleft' }).addTo(map);
 if (!isMobile) L.control.scale({ position: 'bottomright', imperial: true, metric: false }).addTo(map);
 
 map.createPane('trackerPane');
@@ -762,7 +836,7 @@ new (L.Control.extend({
 			L.DomEvent.on(exitBtn, 'click', () => { location.href = location.pathname; });
 			L.DomEvent.disableClickPropagation(exitBtn);
 			const txt = L.DomUtil.create('span', '', d);
-			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.7 beta &copy; 2026 Doug Kaye (K6DRK)';
+			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.8 beta &copy; 2026 Doug Kaye (K6DRK)';
 		} else {
 			if (!isMobile) {
 				const exitBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
@@ -780,8 +854,8 @@ new (L.Control.extend({
 			}
 			const ftxt = L.DomUtil.create('span', '', d);
 			ftxt.innerHTML = isMobile
-				? 'MARS APRS v1.7 beta &copy; 2026 Doug Kaye (K6DRK)'
-				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.7 beta &copy; 2026 Doug Kaye (K6DRK)';
+				? 'MARS APRS v1.8 beta &copy; 2026 Doug Kaye (K6DRK)'
+				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.8 beta &copy; 2026 Doug Kaye (K6DRK)';
 			if (isMobile) d.style.fontSize = '10px';
 		}
 		return d;
@@ -810,9 +884,10 @@ if (!isMobile) {
 	}))({ position: 'bottomleft' }).addTo(map);
 }
 
-let currentBgUrl     = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+let currentBgUrl          = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+let currentBgAttribution  = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 let currentTileLayer = L.tileLayer(currentBgUrl, {
-	attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+	attribution: currentBgAttribution,
 	maxZoom: 19
 }).addTo(map);
 
@@ -837,6 +912,7 @@ const blinkTimers          = {};
 const historyDots          = {};	// callsign → [L.circleMarker, ...]
 const DEFAULT_COURSE_COLOR = '#2196f3';
 const LS_COURSE_COLORS     = 'aprs_course_colors';
+let   currentEventName     = '';
 const LS_COURSE_ACTIVE     = 'aprs_course_active';
 const LS_BG                = 'aprs_bg_url';
 
@@ -872,48 +948,74 @@ let historyEtag        = null;
 let historyCache       = null;	// last full ?history response; reused on 304
 let coursesInitialized = false;
 
-// ── Mobile bottom sheet ───────────────────────────────────────────────────
-const sheet  = document.getElementById('bottom-sheet');
-const handle = document.getElementById('sheet-handle');
-let sheetOpen = false;
+// ── Mobile drawer ─────────────────────────────────────────────────────────
+// Always resolve elements by ID — isMobile JS flag can be wrong on iOS Safari
+// due to viewport timing on reload; CSS media query works independently.
+const mobileDrawer   = document.getElementById('mobile-drawer');
+const mobileBackdrop = document.getElementById('mobile-backdrop');
+const mobileGearBtn  = document.getElementById('mobile-gear-btn');
+let drawerOpen = false;
 
-function setSheetOpen(open) {
-	if (!isMobile) return;
-	sheetOpen = open;
-	sheet.classList.toggle('open', open);
-}
+function openMobileDrawer()  { if (!mobileDrawer) return; drawerOpen = true;  mobileDrawer.classList.add('open'); if (mobileBackdrop) mobileBackdrop.classList.add('open'); }
+function closeMobileDrawer() { if (!mobileDrawer) return; drawerOpen = false; mobileDrawer.classList.remove('open'); if (mobileBackdrop) mobileBackdrop.classList.remove('open'); }
+function setSheetOpen(open)  { if (open) openMobileDrawer(); else closeMobileDrawer(); }
 
-if (isMobile) {
-	handle.addEventListener('click', () => setSheetOpen(!sheetOpen));
-	map.on('dragstart zoomstart', () => setSheetOpen(false));
-
-	let touchStartX = null, touchStartY = null;
-	handle.addEventListener('touchstart', e => {
-		touchStartX = e.touches[0].clientX;
-		touchStartY = e.touches[0].clientY;
-	}, { passive: true });
-	handle.addEventListener('touchend', e => {
-		if (touchStartY === null) return;
-		const landscape = window.innerWidth > window.innerHeight;
-		if (landscape) {
-			const dx = e.changedTouches[0].clientX - touchStartX;
-			if (Math.abs(dx) > 20) setSheetOpen(dx < 0); // swipe left = open
-		} else {
-			const dy = touchStartY - e.changedTouches[0].clientY;
-			if (Math.abs(dy) > 20) setSheetOpen(dy > 0); // swipe up = open
-		}
-		touchStartX = null; touchStartY = null;
+if (mobileGearBtn) {
+	refreshMobileAbout();
+	let gearTouched = false;
+	mobileGearBtn.addEventListener('touchstart', e => {
+		e.preventDefault(); gearTouched = true;
+		if (drawerOpen) closeMobileDrawer(); else openMobileDrawer();
+	}, { passive: false });
+	mobileGearBtn.addEventListener('click', () => {
+		if (gearTouched) { gearTouched = false; return; }
+		if (drawerOpen) closeMobileDrawer(); else openMobileDrawer();
 	});
+	if (mobileBackdrop) {
+		mobileBackdrop.addEventListener('click', closeMobileDrawer);
+		mobileBackdrop.addEventListener('touchend', e => { e.preventDefault(); closeMobileDrawer(); }, { passive: false });
+	}
+	map.on('dragstart zoomstart', closeMobileDrawer);
 
-	document.querySelectorAll('.m-tab').forEach(btn => {
-		btn.addEventListener('click', () => {
-			document.querySelectorAll('.m-tab').forEach(b => b.classList.remove('active'));
-			document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-			btn.classList.add('active');
-			document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-			setSheetOpen(true);
+	// Accordion: touchstart + click (touchstart fires immediately; click suppressed after touch)
+	document.querySelectorAll('.drawer-sec-hdr').forEach(hdr => {
+		let hdrTouched = false;
+		function toggleSection() {
+			const body = document.getElementById(hdr.dataset.body);
+			if (!body) return;
+			const isOpen = hdr.classList.contains('open');
+			if (!isOpen) {
+				document.querySelectorAll('.drawer-sec-hdr.open').forEach(oh => {
+					oh.classList.remove('open');
+					const ob = document.getElementById(oh.dataset.body);
+					if (ob) ob.style.display = 'none';
+				});
+			}
+			hdr.classList.toggle('open', !isOpen);
+			body.style.display = isOpen ? 'none' : '';
+		}
+		hdr.addEventListener('touchstart', e => {
+			e.preventDefault(); hdrTouched = true; toggleSection();
+		}, { passive: false });
+		hdr.addEventListener('click', () => {
+			if (hdrTouched) { hdrTouched = false; return; }
+			toggleSection();
 		});
 	});
+}
+
+// ── iOS Safari URL-bar retraction ─────────────────────────────────────────
+// The map is position:fixed so the page has no scrollable height and Safari
+// never auto-hides its URL bar. Give the body a 1px overshoot so the page is
+// technically scrollable, then park at scrollY=1 so the bar retracts.
+if (isMobile) {
+	const retract = () => {
+		document.body.style.height = (window.innerHeight + 1) + 'px';
+		window.scrollTo(0, 1);
+	};
+	window.addEventListener('load', retract, { once: true });
+	// Prevent accidental scroll-to-0 from re-showing the bar
+	window.addEventListener('scroll', () => { if (window.scrollY === 0) window.scrollTo(0, 1); }, { passive: true });
 }
 
 // ── Origin overlay ────────────────────────────────────────────────────────
@@ -1269,6 +1371,30 @@ function onLegendClick(callsign) {
 	}
 }
 
+// ── Mobile tracker tap / long-press ───────────────────────────────────────
+function onMobileTrackerTap(callsign) {
+	if (selectedIgateIdx >= 0) { setIgateTooltip(selectedIgateIdx, false); igateMarkers[selectedIgateIdx].el.classList.remove('selected'); selectedIgateIdx = -1; igateClickCount = 0; }
+	if (selectedAidIdx  >= 0) { setAidTooltip(selectedAidIdx, false);     aidMarkers[selectedAidIdx].el.classList.remove('selected');   selectedAidIdx  = -1; aidClickCount  = 0; }
+	selectedCallsign = callsign; trackerClickCount = 1;
+	document.querySelectorAll('.m-legend-item').forEach(el => el.classList.remove('selected'));
+	document.getElementById('m-legend-' + callsign)?.classList.add('selected');
+	hideAllHistoryDots();
+	triggerBlink(callsign);
+	const color = document.querySelector('#m-legend-' + callsign + ' .m-dot')?.style.background || 'red';
+	if (!markers[callsign]) {
+		const name = document.querySelector('#m-legend-' + callsign + ' .m-name')?.textContent || callsign;
+		showNoLocation(name);
+	}
+	showTrackerHistory(callsign, color);
+}
+
+function onMobileTrackerLongPress(callsign) {
+	onMobileTrackerTap(callsign);
+	closeMobileDrawer();
+	const m = markers[callsign];
+	if (m) map.setView(m.getLatLng(), 15);
+}
+
 // ── Update legend ──────────────────────────────────────────────────────────
 function updateLegend(trackers) {
 	if (isMobile) updateMobileLegend(trackers);
@@ -1331,7 +1457,17 @@ function updateMobileLegend(trackers) {
 			item.className = 'm-legend-item';
 			item.innerHTML = `<span class="m-dot"></span><span class="m-id">${t.id}</span>`
 			               + `<span class="m-name">${t.name}</span><span class="m-time">${t.time}</span>`;
-			item.addEventListener('click', () => onLegendClick(t.callsign));
+			let pressTimer = null, didLongPress = false;
+			item.addEventListener('touchstart', () => {
+				didLongPress = false;
+				pressTimer = setTimeout(() => { pressTimer = null; didLongPress = true; onMobileTrackerLongPress(t.callsign); }, 500);
+			}, { passive: true });
+			item.addEventListener('touchend', () => {
+				if (pressTimer !== null) { clearTimeout(pressTimer); pressTimer = null; }
+				if (!didLongPress) onMobileTrackerTap(t.callsign);
+			});
+			item.addEventListener('touchcancel', () => { if (pressTimer !== null) { clearTimeout(pressTimer); pressTimer = null; } });
+			item.addEventListener('touchmove',   () => { if (pressTimer !== null) { clearTimeout(pressTimer); pressTimer = null; didLongPress = true; } }, { passive: true });
 			legend.appendChild(item);
 		}
 		const color = t.color || 'red';
@@ -1450,16 +1586,28 @@ function applyLegend(text) {
 	legendDiv.style.display = (kiosk && text) ? '' : 'none';
 }
 
+function refreshMobileAbout() {
+	const el = document.getElementById('m-about-body');
+	if (!el) return;
+	const rows = [
+		currentEventName ? { label: 'Event',   val: currentEventName } : null,
+		{ label: 'Org',     val: 'Marin Amateur Radio Society' },
+		{ label: 'Version', val: 'APRS Tracker Map · v1.8 beta' },
+		{ label: 'Map',     val: currentBgAttribution || '' },
+		{ label: 'Credit',  val: '&copy; 2026 Doug Kaye (K6DRK)' },
+	].filter(Boolean);
+	el.innerHTML = `<div id="m-about-body-inner">${rows.map(r =>
+		`<div class="m-about-row"><span class="m-about-label">${r.label}</span><span class="m-about-val">${r.val}</span></div>`
+	).join('')}</div>`;
+}
+
 function applyEvent(name) {
-	if (isMobile) {
-		const el = document.getElementById('top-event');
-		el.textContent   = name || '';
-		el.style.display = name ? '' : 'none';
-		document.getElementById('top-bar-title').style.display = name ? 'none' : '';
-	} else if (eventNameDiv) {
+	currentEventName = name || '';
+	if (eventNameDiv) {
 		eventNameDiv.textContent   = name || '';
 		eventNameDiv.style.display = name ? '' : 'none';
 	}
+	if (isMobile) refreshMobileAbout();
 }
 
 function applyMapConfig(m) {
@@ -1494,7 +1642,7 @@ function applyBackgrounds(backgrounds) {
 			const bg = backgrounds.find(b => b.url === savedUrl);
 			if (bg && bg.url !== currentBgUrl) {
 				map.removeLayer(currentTileLayer);
-				currentBgUrl = bg.url;
+				currentBgUrl = bg.url; currentBgAttribution = bg.attribution;
 				currentTileLayer = L.tileLayer(bg.url, { attribution: bg.attribution, maxZoom: 19 }).addTo(map);
 				Object.values(courseLayers).forEach(l => l.bringToFront());
 			}
@@ -1513,10 +1661,11 @@ function applyBackgrounds(backgrounds) {
 			const dot  = document.createElement('span');  dot.className = 'm-layer-check' + (bg.url === currentBgUrl ? ' checked' : '');
 			row.appendChild(name); row.appendChild(dot);
 			row.addEventListener('click', () => {
-				currentBgUrl = bg.url;
+				currentBgUrl = bg.url; currentBgAttribution = bg.attribution;
 				localStorage.setItem(LS_BG, bg.url);
 				map.removeLayer(currentTileLayer);
 				currentTileLayer = L.tileLayer(bg.url, { attribution: bg.attribution, maxZoom: 19 }).addTo(map);
+				refreshMobileAbout();
 				Object.values(courseLayers).forEach(l => l.bringToFront());
 				container.querySelectorAll('.m-layer-check').forEach(d => d.classList.remove('checked'));
 				dot.classList.add('checked');
@@ -1540,7 +1689,7 @@ function applyBackgrounds(backgrounds) {
 		const checkEl = document.createElement('input'); checkEl.type = 'checkbox'; checkEl.checked = active; checkEl.className = 'bg-checkbox';
 		item.appendChild(nameEl); item.appendChild(checkEl);
 		item.addEventListener('click', () => {
-			currentBgUrl = bg.url;
+			currentBgUrl = bg.url; currentBgAttribution = bg.attribution;
 			localStorage.setItem(LS_BG, bg.url);
 			map.removeLayer(currentTileLayer);
 			currentTileLayer = L.tileLayer(bg.url, { attribution: bg.attribution, maxZoom: 19 }).addTo(map);
@@ -1649,7 +1798,7 @@ function applyCourses(courses) {
 	section.style.display = '';
 	container.innerHTML = '';
 	const savedColors    = loadSavedColors();
-	const activeFiles    = loadActiveFiles();
+	const activeFiles    = isTablet ? null : loadActiveFiles();
 	const wasInitialized = coursesInitialized;
 	courses.forEach(course => {
 		if (savedColors[course.file]) courseColors[course.file] = savedColors[course.file];
@@ -1832,17 +1981,11 @@ document.getElementById('reset-btn').addEventListener('click', function() {
 	map.setView([defaultView.lat, defaultView.lon], defaultView.zoom);
 });
 
-document.getElementById('reset-map-btn').addEventListener('click', function() {
-	clearAllSelections();
-	map.setView([defaultView.lat, defaultView.lon], defaultView.zoom);
-	setSheetOpen(false);
-});
-
 if (isMobile) {
 	document.getElementById('m-reset-btn').addEventListener('click', () => {
 		clearAllSelections();
 		map.setView([defaultView.lat, defaultView.lon], defaultView.zoom);
-		setSheetOpen(false);
+		closeMobileDrawer();
 	});
 	document.getElementById('m-save-map-btn').addEventListener('click', function() {
 		const c = map.getCenter();
@@ -1853,6 +1996,25 @@ if (isMobile) {
 		setTimeout(() => { this.textContent = 'Save Map'; }, 2000);
 	});
 }
+
+// ── About modal ───────────────────────────────────────────────────────────
+function openAboutModal() {
+	const body = document.getElementById('about-body');
+	const attrText = currentBgAttribution || '';
+	const rows = [
+		{ label: 'Organization', val: 'Marin Amateur Radio Society' },
+		{ label: 'Application',  val: 'APRS Tracker Map · Version 1.8 beta' },
+		currentEventName ? { label: 'Event', val: currentEventName } : null,
+		{ label: 'Map Data',     val: attrText },
+		{ label: 'Copyright',    val: '&copy; 2026 Doug Kaye (K6DRK). All Rights Reserved.' },
+	].filter(Boolean);
+	body.innerHTML = rows.map(r => `<div class="about-row"><div class="about-label">${r.label}</div><div class="about-val">${r.val}</div></div>`).join('');
+	document.getElementById('about-modal').style.display = 'flex';
+}
+function closeAboutModal() { document.getElementById('about-modal').style.display = 'none'; }
+document.getElementById('about-close').addEventListener('click', closeAboutModal);
+document.getElementById('about-backdrop').addEventListener('click', closeAboutModal);
+if (document.getElementById('about-btn'))  document.getElementById('about-btn').addEventListener('click', openAboutModal);
 
 // ── bfcache reload ─────────────────────────────────────────────────────────
 window.addEventListener('pageshow', e => { if (e.persisted) location.reload(); });
@@ -1908,15 +2070,33 @@ async function fetchClients() {
 	}
 }
 
+// ── Tablet sidebar toggle ─────────────────────────────────────────────────
+// Use getComputedStyle to detect tablet mode from CSS — avoids matchMedia timing
+// issues on iOS Safari reload (same pattern as mobile gear button detection).
+{
+	const sidebarEl = document.getElementById('sidebar');
+	const toggleBtn = document.getElementById('sidebar-toggle-btn');
+	if (toggleBtn && getComputedStyle(toggleBtn).display !== 'none') {
+		sidebarEl.style.display = 'none';
+		setTimeout(() => map.invalidateSize(), 0);
+		toggleBtn.addEventListener('click', () => {
+			const hidden = sidebarEl.style.display === 'none';
+			sidebarEl.style.display = hidden ? '' : 'none';
+			toggleBtn.classList.toggle('sidebar-shown', hidden);
+			setTimeout(() => map.invalidateSize(), 50);
+		});
+	}
+}
+
 // ── Sidebar section toggles ───────────────────────────────────────────────
 const LS_SIDEBAR_STATE = 'aprs_sidebar_state';
 (function initSectionToggles() {
 	const sections = [
 		{ id: 'toggle-trackers',    content: 'legend' },
-		{ id: 'toggle-courses',     content: 'courses' },
+		{ id: 'toggle-courses',     content: 'courses',      tabletDefault: false },
 		{ id: 'toggle-aidstations', content: 'aidstations',  tabletDefault: false },
 		{ id: 'toggle-igates',      content: 'igates',       tabletDefault: false },
-		{ id: 'toggle-backgrounds', content: 'backgrounds' },
+		{ id: 'toggle-backgrounds', content: 'backgrounds',  tabletDefault: false },
 	];
 	let state = {};
 	try { state = JSON.parse(localStorage.getItem(LS_SIDEBAR_STATE) || '{}'); } catch {}
@@ -1974,14 +2154,9 @@ if (isNonDefaultEvent) {
 	note.textContent = 'Not the active event. Tracker data are not being updated. ';
 	note.style.cssText = 'font-size:11px;color:#000;white-space:nowrap;animation:aprs-blink 0.5s step-start 10';
 	setTimeout(() => { note.style.animation = 'none'; note.style.color = '#000'; }, 5000);
-	if (isMobile) {
-		const topBar = document.getElementById('top-bar');
-		if (topBar) topBar.appendChild(note);
-	} else {
-		// Insert into Leaflet attribution bar, to the left of existing text
-		const attrEl = document.querySelector('.leaflet-control-attribution');
-		if (attrEl) attrEl.insertBefore(note, attrEl.firstChild);
-	}
+	// Insert into Leaflet attribution bar, to the left of existing text
+	const attrEl = document.querySelector('.leaflet-control-attribution');
+	if (attrEl) attrEl.insertBefore(note, attrEl.firstChild);
 }
 
 // Always poll for live tracker data; skip config polling only when previewing a non-default event

@@ -1,6 +1,6 @@
 # APRS Tracker Map
 
-**Version 1.7 beta**
+**Version 1.8 beta**
 
 Real-time APRS position tracking displayed on an interactive Leaflet map. A PHP daemon
 connects to the APRS-IS network, decodes incoming packets, and writes position data to a
@@ -275,12 +275,19 @@ the new event's `tracker_history.yaml`. History files are excluded from git.
 
 ## Web Interface
 
-Open `http://<host>/` in a browser. The layout adapts to screen width (≤767 px = mobile).
+Open `http://<host>/` in a browser. The layout adapts automatically to the device:
 
-### Sidebar
+- **Desktop (mouse/trackpad)** — fixed sidebar on the left; map fills the remainder.
+- **Touch devices (phones and tablets, any orientation)** — map fills the full screen; a slide-in drawer is opened with the gear icon (⚙) in the upper-right corner.
+
+### Sidebar (desktop)
 
 Each section has a collapse checkbox on its right edge. Uncheck to hide that section's
 content and save vertical space. Collapse state is saved across page reloads.
+
+### Mobile Drawer (touch devices)
+
+Tap the gear icon to open the drawer. Sections are collapsible accordions; tap a section header to expand it. Four footer buttons (Reset Map, Save Map, Admin, User Guide) are always visible at the bottom of the drawer.
 
 | Section | Behaviour |
 |---------|-----------|

@@ -1,6 +1,6 @@
 # APRS Tracker Map — User Guide
 
-**Version 1.7 beta · May 14, 2026**
+**Version 1.8 beta · May 15, 2026**
 
 ---
 
@@ -9,7 +9,7 @@
 When a user first comes to the website, they will see a map configured for the current *default event*. 
 A user with admin privileges can switch to a different current event, which all new visitors will then see, using an administrative page described later.
 
-You are free to make a variety of changes to how the map and various objects appear and are treated. So long as you don't Save your view (which requires that administration privilege and password) the changes you make are stricly local and won't affect what other users see.
+You are free to make a variety of changes to how the map and various objects appear and are treated. So long as you don't Save your view (which requires that administration privilege and password) the changes you make are strictly local and won't affect what other users see.
 
 ---
 
@@ -37,7 +37,7 @@ The tracker's marker on the map and sidebar entry both update every 5 seconds.
 #### Clicking a tracker (three-click cycle)
 
 1. **First click** — The tracker's map marker and sidebar entry blink for 5 seconds.
-   Up to 5 recent beacon positions appear as "breadrumbs" on the map as small dots connected by a dotted
+   Up to 5 recent beacon positions appear as "breadcrumbs" on the map as small dots connected by a dotted
    line with directional arrows. The dots blink in sync with the tracker marker. Hover
    over any dot to see how long ago that position was received (e.g., "3m 45s ago").
 
@@ -128,6 +128,48 @@ simplified display layout, which is designed for the publicly viewable display:
 
 ---
 
+---
+
+## Mobile Interface
+
+On phones and tablets (any device with a touch screen), the map takes up the full screen and the sidebar is replaced by a slide-in drawer.
+
+### Opening the Drawer
+
+Tap the **gear icon** (⚙) in the upper-right corner of the screen to open the drawer. Tap anywhere outside the drawer, or tap the gear icon again, to close it.
+
+### Drawer Sections
+
+The drawer is organized into collapsible sections. Tap a section header to expand it; the previously open section closes automatically.
+
+| Section | Contents |
+|---------|----------|
+| **Trackers** | Same tracker list as the desktop sidebar — colored dot, ID, name, elapsed time. Tap a tracker for the three-click cycle (blink → zoom → reset). |
+| **Courses** | Toggle course overlays on/off; tap the color swatch to change a course color. |
+| **Backgrounds** | Switch the base tile layer. Hidden if no backgrounds are configured. |
+| **Aid Stations** | Tap to zoom to an aid station and show its label. Hidden if none are configured. |
+| **iGates** | Same as Aid Stations. Hidden if none are configured. |
+| **About** | Version, organization, and map attribution. |
+
+The **Trackers** section is open by default when the drawer is first displayed.
+
+### Footer Buttons
+
+Four buttons are always visible at the bottom of the drawer, regardless of which section is open:
+
+| Button | Action |
+|--------|--------|
+| **Reset Map** | Returns the map to its default position and zoom; clears history dots and the Origin marker. |
+| **Save Map** | Saves the current map position and zoom as your personal browser default. |
+| **Admin** | Opens the admin configuration page. |
+| **User Guide** | Opens this guide. |
+
+### Phone and Tablet Behavior
+
+The mobile drawer is used on all touch-screen devices — phones and tablets in any orientation. On tablets in landscape mode, the map fills the screen and the drawer slides in from the left when the gear icon is tapped.
+
+---
+
 ### Clients
 
 Click **Clients** in the page footer to open a panel showing:
@@ -154,7 +196,7 @@ There are three additional buttons in the header of the Admin page:
 
 - **Exit** (far right of the header) leaves the admin page without saving. 
 - **Sign Out** end your admin session.
-- **Load...** presents a lis of previously saved events from which you can choose. Loading an event has no affect on other users.
+- **Load...** presents a list of previously saved events from which you can choose. Loading an event has no effect on other users.
 
 ---
 
