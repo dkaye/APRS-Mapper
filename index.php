@@ -17,21 +17,27 @@
 $trackerStatusFilename = 'trackers.json';
 
 if (isset($_GET['json'])) {
-	$etag = '"' . filemtime($trackerStatusFilename) . '"';
+	$trackerMtime = file_exists($trackerStatusFilename) ? filemtime($trackerStatusFilename) : 0;
+	$configMtime  = file_exists('config.yaml') ? filemtime('config.yaml') : 0;
+	$etag = '"' . $trackerMtime . '-' . $configMtime . '"';
 	header('ETag: ' . $etag);
 	header('Cache-Control: no-cache');
 	if (isset($_SERVER['HTTP_IF_NONE_MATCH']) && $_SERVER['HTTP_IF_NONE_MATCH'] === $etag) {
 		http_response_code(304);
 		exit;
 	}
+	require_once 'config_parse.php';
+	$cfg          = parseConfigYaml('config.yaml');
+	$defaultEvent = $cfg['event'] ?? '';
 	$fh = fopen($trackerStatusFilename, 'r');
 	if (!$fh) { http_response_code(500); exit; }
 	flock($fh, LOCK_SH);
 	$contents = stream_get_contents($fh);
 	flock($fh, LOCK_UN);
 	fclose($fh);
+	$trackers = json_decode($contents, true) ?: [];
 	header('Content-Type: application/json');
-	echo $contents;
+	echo json_encode(['default_event' => $defaultEvent, 'trackers' => $trackers]);
 	exit;
 }
 
@@ -1491,8 +1497,12 @@ function updateMap() {
 			jsonEtag = r.headers.get('ETag');
 			return r.json();
 		})
-		.then(trackers => {
-			if (!trackers) return;
+		.then(data => {
+			if (!data) return;
+			const { default_event: defaultEvent, trackers } = data;
+			// Skip tracker update if this client is no longer viewing the default event.
+			// Allow through if currentEventName is not yet set (config still loading).
+			if (currentEventName !== '' && defaultEvent !== currentEventName) return;
 			updateLegend(trackers);
 
 			trackers.forEach(t => {
