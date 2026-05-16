@@ -2181,7 +2181,7 @@ function saveLocalAndReturn(cfg) {
     }));
     if (hasMapChanges) {
         localStorage.setItem('aprs_default_view', JSON.stringify({
-            lat: cfg.map.lat, lon: cfg.map.lon, zoom: cfg.map.zoom
+            lat: cfg.map.lat, lon: cfg.map.lon, zoom: cfg.map.zoom, event: cfg.event || ''
         }));
     }
     isDirty          = false;

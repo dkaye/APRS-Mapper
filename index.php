@@ -143,7 +143,9 @@ if (isset($_GET['clientstatus'])) {
 }
 
 require_once 'config_parse.php';
-$_m    = parseConfigYaml('config.yaml')['map'] ?? [];
+$_cfg  = parseConfigYaml('config.yaml');
+$_m    = $_cfg['map'] ?? [];
+$_eventName = $_cfg['event'] ?? '';
 $_lat  = isset($_m['lat'])  ? (float)$_m['lat']  : 37.5;
 $_lon  = isset($_m['lon'])  ? (float)$_m['lon']  : -122.0;
 $_zoom = isset($_m['zoom']) ? (int)$_m['zoom']   : 10;
@@ -795,7 +797,18 @@ const isTablet = false;
 
 // ── Map init ──────────────────────────────────────────────────────────────
 let defaultView = { lat: <?= $_lat ?>, lon: <?= $_lon ?>, zoom: <?= $_zoom ?> };
-try { const _sv = localStorage.getItem('aprs_default_view'); if (_sv) defaultView = JSON.parse(_sv); } catch {}
+const serverDefaultEvent = <?= json_encode($_eventName) ?>;
+try {
+	const _sv = localStorage.getItem('aprs_default_view');
+	if (_sv) {
+		const _parsed = JSON.parse(_sv);
+		if (_parsed.event === serverDefaultEvent) {
+			defaultView = _parsed;
+		} else {
+			localStorage.removeItem('aprs_default_view');
+		}
+	}
+} catch {}
 const clientIp = '<?= htmlspecialchars($_clientIp) ?>';
 const serverIp = '<?= htmlspecialchars($_serverIp) ?>';
 let mapViewInitialized = true;
@@ -1977,7 +1990,7 @@ map.on('click', function(e) {
 // ── Save Map button ────────────────────────────────────────────────────────
 document.getElementById('save-map-btn').addEventListener('click', function() {
 	const c = map.getCenter();
-	const v = { lat: parseFloat(c.lat.toFixed(6)), lon: parseFloat(c.lng.toFixed(6)), zoom: map.getZoom() };
+	const v = { lat: parseFloat(c.lat.toFixed(6)), lon: parseFloat(c.lng.toFixed(6)), zoom: map.getZoom(), event: currentEventName };
 	localStorage.setItem('aprs_default_view', JSON.stringify(v));
 	defaultView = v;
 	const btn = this;
@@ -1999,7 +2012,7 @@ if (isMobile) {
 	});
 	document.getElementById('m-save-map-btn').addEventListener('click', function() {
 		const c = map.getCenter();
-		const v = { lat: parseFloat(c.lat.toFixed(6)), lon: parseFloat(c.lng.toFixed(6)), zoom: map.getZoom() };
+		const v = { lat: parseFloat(c.lat.toFixed(6)), lon: parseFloat(c.lng.toFixed(6)), zoom: map.getZoom(), event: currentEventName };
 		localStorage.setItem('aprs_default_view', JSON.stringify(v));
 		defaultView = v;
 		this.textContent = 'Saved ✓';
