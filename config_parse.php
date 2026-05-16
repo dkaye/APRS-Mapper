@@ -24,7 +24,7 @@
  * Missing sections default to null (map) or [] (lists).
  */
 function parseConfigYaml($filename) {
-	$result = ['event' => '', 'legend' => '', 'tracker_style' => [], 'map' => null, 'trackers' => [], 'backgrounds' => [], 'courses' => [], 'aidstations' => [], 'igates' => []];
+	$result = ['event' => '', 'legend' => '', 'tracker_style' => [], 'map' => null, 'trackers' => [], 'backgrounds' => [], 'background_url' => '', 'courses' => [], 'aidstations' => [], 'igates' => []];
 	if (!file_exists($filename)) return $result;
 
 	$lines   = file($filename, FILE_IGNORE_NEW_LINES);

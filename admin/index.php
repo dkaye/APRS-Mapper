@@ -704,6 +704,8 @@ function buildConfigYaml($cfg, $history = []) {
         $L[] = '    url: '         . ys($b['url']         ?? '');
         $L[] = '    attribution: ' . yq($b['attribution'] ?? '');
     }
+    $bgUrl = trim($cfg['background_url'] ?? '');
+    if ($bgUrl !== '') $L[] = 'background_url: ' . ys($bgUrl);
     $L[] = '';
     $L[] = '# ── Courses ───────────────────────────────────────────────────────────────────';
     $L[] = '# GPX/KML/GeoJSON overlays listed in the sidebar. Click a name to toggle it on/off.';
@@ -1414,7 +1416,9 @@ function mergeBgLibrary(serverBgs) {
 
 // ── Background rows ───────────────────────────────────────────────────────────
 
-function buildBgRow(b) {
+let currentDefaultBgUrl = '';
+
+function buildBgRow(b, isDefault = false) {
     const row     = document.createElement('div');
     row.className = 'list-row bg-row';
     row.draggable = true;
@@ -1424,6 +1428,12 @@ function buildBgRow(b) {
 
     const l1 = document.createElement('div'); l1.className = 'bg-line';
     l1.appendChild(fieldLabel('Name', 'f-bg-name', b.name, '180px', { placeholder: 'OpenStreetMap' }));
+    const radioLabel = document.createElement('label');
+    radioLabel.style.cssText = 'display:flex;align-items:center;gap:4px;font-size:12px;color:#555;white-space:nowrap;cursor:pointer;margin-left:10px';
+    const radio = document.createElement('input');
+    radio.type = 'radio'; radio.name = 'bg-default'; radio.checked = isDefault;
+    radioLabel.appendChild(radio); radioLabel.append('Default');
+    l1.appendChild(radioLabel);
 
     const l2 = document.createElement('div'); l2.className = 'bg-line';
     l2.appendChild(fieldLabel('URL', 'f-url', b.url, '500px',
@@ -1442,7 +1452,8 @@ function buildBgRow(b) {
 }
 
 function appendBg(b, attach) {
-    const row = buildBgRow(b);
+    const isDefault = !!(b.url && b.url === currentDefaultBgUrl);
+    const row = buildBgRow(b, isDefault);
     document.getElementById('backgrounds-list').appendChild(row);
     if (attach) attach(row);
 }
@@ -2007,12 +2018,15 @@ function collectConfig() {
     };
 
     const backgrounds = [];
+    let background_url = '';
     document.querySelectorAll('#backgrounds-list > .list-row').forEach(row => {
+        const url = row.querySelector('.f-url').value.trim();
         backgrounds.push({
             name:        row.querySelector('.f-bg-name').value.trim(),
-            url:         row.querySelector('.f-url').value.trim(),
+            url,
             attribution: row.querySelector('.f-attr').value.trim()
         });
+        if (row.querySelector('input[name="bg-default"]')?.checked) background_url = url;
     });
 
     const courses = [];
@@ -2044,7 +2058,7 @@ function collectConfig() {
         });
     });
 
-    return { event: document.getElementById('f-event').value.trim(), legend: document.getElementById('f-legend').value, tracker_style, trackers, map, backgrounds, courses, aidstations, igates };
+    return { event: document.getElementById('f-event').value.trim(), legend: document.getElementById('f-legend').value, tracker_style, trackers, map, backgrounds, background_url, courses, aidstations, igates };
 }
 
 // ── Populate form from a config object ───────────────────────────────────────
@@ -2062,8 +2076,13 @@ function populateForm(cfg) {
     document.getElementById('map-lon').value  = cfg.map?.lon  ?? '';
     document.getElementById('map-zoom').value = cfg.map?.zoom ?? '';
 
+    currentDefaultBgUrl = cfg.background_url || '';
     document.getElementById('backgrounds-list').innerHTML = '';
     (cfg.backgrounds || []).forEach(b => appendBg(b));
+    if (!document.querySelector('#backgrounds-list input[name="bg-default"]:checked')) {
+        const first = document.querySelector('#backgrounds-list input[name="bg-default"]');
+        if (first) first.checked = true;
+    }
     dragAdder['backgrounds-list'] = initDrag('backgrounds-list');
 
     document.getElementById('aidstations-list').innerHTML = '';

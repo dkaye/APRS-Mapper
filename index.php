@@ -103,6 +103,7 @@ if (isset($_GET['config'])) {
 		'map'            => $cfg['map'],
 		'trackers'       => $cfg['trackers'],
 		'backgrounds'    => $cfg['backgrounds'],
+		'background_url' => $cfg['background_url'] ?? '',
 		'courses'        => $courses,
 		'aidstations'    => $cfg['aidstations'] ?? [],
 		'igates'         => $cfg['igates'] ?? [],
@@ -1590,7 +1591,7 @@ function applyConfig(cfg) {
 	if (cfg.tracker_style  !== undefined) applyTrackerStyle(cfg.tracker_style);
 	if (cfg.map)         applyMapConfig(cfg.map);
 	if (cfg.trackers)    applyTrackerConfig(cfg.trackers);
-	if (cfg.backgrounds) applyBackgrounds(cfg.backgrounds);
+	if (cfg.backgrounds) applyBackgrounds(cfg.backgrounds, cfg.background_url || '');
 	if (cfg.courses)     applyCourses(cfg.courses);
 	if (cfg.aidstations) applyAidStations(cfg.aidstations);
 	if (cfg.igates)      applyIgates(cfg.igates);
@@ -1656,14 +1657,16 @@ function applyTrackerConfig(trackers) {
 	});
 }
 
-function applyBackgrounds(backgrounds) {
-	// On first call (any mode), restore the previously selected background from localStorage.
+function applyBackgrounds(backgrounds, backgroundUrl = '') {
+	// On first call: apply active background — per-client saved preference takes priority
+	// over the event's configured default; event default beats the hardcoded OSM fallback.
 	if (!backgroundsInitialized && backgrounds.length) {
 		backgroundsInitialized = true;
 		const savedUrl = localStorage.getItem(LS_BG);
-		if (savedUrl) {
-			const bg = backgrounds.find(b => b.url === savedUrl);
-			if (bg && bg.url !== currentBgUrl) {
+		const targetUrl = savedUrl && backgrounds.find(b => b.url === savedUrl) ? savedUrl : backgroundUrl;
+		if (targetUrl && targetUrl !== currentBgUrl) {
+			const bg = backgrounds.find(b => b.url === targetUrl);
+			if (bg) {
 				map.removeLayer(currentTileLayer);
 				currentBgUrl = bg.url; currentBgAttribution = bg.attribution;
 				currentTileLayer = L.tileLayer(bg.url, { attribution: bg.attribution, maxZoom: 19 }).addTo(map);
