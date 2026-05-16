@@ -1423,7 +1423,6 @@ function updateDesktopLegend(trackers) {
 			               + `<span class="legend-text"><span class="legend-id">${t.id}</span> <span class="legend-name">${t.name}</span></span>`
 			               + `<span class="legend-time">${t.time}</span>`;
 			if (hasBeacon) item.addEventListener('click', () => onLegendClick(t.callsign));
-			legend.appendChild(item);
 		}
 		const color = t.color || 'red';
 		item.querySelector('.legend-dot').style.background  = color;
@@ -1435,6 +1434,7 @@ function updateDesktopLegend(trackers) {
 			item.classList.add('clickable');
 			item.addEventListener('click', () => onLegendClick(t.callsign));
 		}
+		legend.appendChild(item);  // re-insert in sorted position (moves existing elements)
 	});
 }
 
@@ -1468,7 +1468,6 @@ function updateMobileLegend(trackers) {
 			});
 			item.addEventListener('touchcancel', () => { if (pressTimer !== null) { clearTimeout(pressTimer); pressTimer = null; } });
 			item.addEventListener('touchmove',   () => { if (pressTimer !== null) { clearTimeout(pressTimer); pressTimer = null; didLongPress = true; } }, { passive: true });
-			legend.appendChild(item);
 		}
 		const color = t.color || 'red';
 		item.querySelector('.m-dot').style.background  = color;
@@ -1477,6 +1476,7 @@ function updateMobileLegend(trackers) {
 		item.querySelector('.m-id').textContent        = t.id;
 		item.querySelector('.m-name').textContent      = t.name;
 		item.querySelector('.m-time').textContent      = t.time;
+		legend.appendChild(item);  // re-insert in sorted position (moves existing elements)
 	});
 
 	emptyEl.style.display = legend.querySelectorAll('.m-legend-item').length ? 'none' : '';
@@ -2162,7 +2162,7 @@ if (isNonDefaultEvent) {
 // Always poll for live tracker data; skip config polling only when previewing a non-default event
 updateMap();
 setInterval(updateMap, 5000);
-if (!isNonDefaultEvent && !hasStoredEvent) {
+if (!isNonDefaultEvent) {
 	loadConfig();
 	setInterval(loadConfig, 5000);
 }
