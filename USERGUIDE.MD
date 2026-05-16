@@ -1,6 +1,48 @@
 # APRS Tracker Map — User Guide
 
-**Version 1.8 beta · May 15, 2026**
+**Version 1.9 beta · May 16, 2026**
+
+---
+
+## Contents
+
+- [The Concept of Events](#the-concept-of-events)
+- [Main Map](#main-map)
+  - [Tracker List](#tracker-list)
+    - [Clicking a tracker (desktop — three-click cycle)](#clicking-a-tracker-desktop--three-click-cycle)
+    - [Tapping a tracker (mobile — tap vs. long press)](#tapping-a-tracker-mobile--tap-vs-long-press)
+  - [Courses](#courses)
+  - [Aid Stations and iGates](#aid-stations-and-igates)
+  - [Backgrounds](#backgrounds)
+  - [Origin Marker — Distance and Bearing](#origin-marker--distance-and-bearing)
+  - [Reset Map](#reset-map)
+  - [Save Map](#save-map)
+  - [Kiosk Mode](#kiosk-mode)
+- [Mobile Interface](#mobile-interface)
+  - [Opening the Drawer](#opening-the-drawer)
+  - [Drawer Sections](#drawer-sections)
+  - [Footer Buttons](#footer-buttons)
+  - [Phone and Tablet Behavior](#phone-and-tablet-behavior)
+  - [Clients](#clients)
+- [Admin Page](#admin-page)
+  - [Local vs. Server Changes](#local-vs-server-changes)
+  - [Editing the Configuration](#editing-the-configuration)
+    - [Trackers](#trackers)
+    - [Tracker Style](#tracker-style)
+    - [Map Default View](#map-default-view)
+    - [Import and Export](#import-and-export)
+    - [Backgrounds](#backgrounds-1)
+    - [Courses](#courses-1)
+    - [Aid Stations and iGates](#aid-stations-and-igates-1)
+    - [Legend](#legend)
+  - [Event Management](#event-management)
+    - [Save](#save)
+    - [Save as Default Event](#save-as-default-event)
+    - [Load](#load)
+  - [Manage Location Files](#manage-location-files)
+    - [Adding a course to the current event](#adding-a-course-to-the-current-event)
+    - [Uploading a new file](#uploading-a-new-file)
+    - [Renaming and deleting files](#renaming-and-deleting-files)
 
 ---
 
@@ -34,7 +76,7 @@ time since its last beacon was received.
 
 The tracker's marker on the map and sidebar entry both update every 5 seconds.
 
-#### Clicking a tracker (three-click cycle)
+#### Clicking a tracker (desktop — three-click cycle)
 
 1. **First click** — The tracker's map marker and sidebar entry blink for 5 seconds.
    Up to 5 recent beacon positions appear as "breadcrumbs" on the map as small dots connected by a dotted
@@ -50,6 +92,18 @@ Clicking a different tracker while one is selected immediately switches focus to
 one and hides the previous tracker's history.
 
 If a tracker has not yet reported a position, a notification appears instead of zooming.
+
+#### Tapping a tracker (mobile — tap vs. long press)
+
+On phones and tablets the tracker list uses touch gestures instead of a click cycle:
+
+- **Short tap** — The tracker blinks and its breadcrumb history appears on the map. The
+  drawer stays open. Tapping the same tracker again repeats the blink; there is no
+  second- or third-tap action.
+- **Long press (hold ~½ second)** — Same as a short tap, and additionally closes the
+  drawer and zooms the map to the tracker's last known position.
+
+Tapping a different tracker switches focus to that tracker.
 
 ---
 
@@ -77,6 +131,9 @@ Aid stations appear as black dots on the map; iGates appear as smaller black dot
 
 The Backgrounds section lists the available tile layers (e.g., OpenStreetMap, satellite,
 topo). Click any entry to switch to that base map. The active layer shows a ✓.
+
+Some tile providers only support a limited zoom level. If you switch to one and were zoomed
+in beyond its maximum, the map automatically zooms out to the highest level that provider supports.
 
 ---
 
@@ -144,7 +201,7 @@ The drawer is organized into collapsible sections. Tap a section header to expan
 
 | Section | Contents |
 |---------|----------|
-| **Trackers** | Same tracker list as the desktop sidebar — colored dot, ID, name, elapsed time. Tap a tracker for the three-click cycle (blink → zoom → reset). |
+| **Trackers** | Colored dot, ID, name, elapsed time. **Short tap** blinks and shows breadcrumb history. **Long press** blinks, shows history, closes the drawer, and zooms to the tracker. |
 | **Courses** | Toggle course overlays on/off; tap the color swatch to change a course color. |
 | **Backgrounds** | Switch the base tile layer. Hidden if no backgrounds are configured. |
 | **Aid Stations** | Tap to zoom to an aid station and show its label. Hidden if none are configured. |
@@ -184,18 +241,21 @@ Click **Clients** in the page footer to open a panel showing:
 Click on the Admin button and enter the password when prompted. After logging in,
 you can edit the configuration for the currently active event. As mentioned earlier, all changes will be strictly local unless and until you use Save for All Users... or Activate to publish them for others.
 
-The header and footer each contain two action buttons:
+The header and footer each contain action buttons:
 
 - **Update** — Saves your changes locally to this browser and returns to the map
   immediately. The map reflects the new settings within seconds, without saving to the
   server. See [The Concept of Events](#the-concept-of-events) above.
-- **Save for All Users…** — Saves the full configuration to the server. All browsers viewing the same event
-  pick up the new configuration within about 5 seconds.
+- **Save** — Writes the full configuration to the current event's file on the server,
+  without changing which event is the default. Use this to save your work on an event
+  that is not (or not yet) the active event.
+- **Save as Default Event** — Saves the full configuration to the server and makes it the
+  active event for all users. All browsers pick up the new configuration within about 5 seconds.
 
 There are three additional buttons in the header of the Admin page:
 
-- **Exit** (far right of the header) leaves the admin page without saving. 
-- **Sign Out** end your admin session.
+- **Exit** (far right of the header) leaves the admin page without saving.
+- **Sign Out** ends your admin session.
 - **Load...** presents a list of previously saved events from which you can choose. Loading an event has no effect on other users.
 
 ---
@@ -218,11 +278,12 @@ users. Other sections require **Save for All Users** to take effect for everyone
 | iGates | Server only (Save for All Users) |
 
 If you click **Update** after editing a server-only section, a warning appears:
-*"Some changes can't be applied locally. Use Save for All Users... for global changes."*
+*"Some changes can't be applied locally. Use Save or Save as Default Event for global changes."*
 
 - **OK** — saves only the local-only changes and returns to the map; server-only edits
   are discarded.
-- **Save for All Users…** — opens the full save dialog so you can commit everything.
+- **Save as Default Event** — opens the save dialog so you can commit everything and make
+  it the active event.
 - **Cancel** — returns to the editor without saving anything.
 
 ---
@@ -275,12 +336,52 @@ the map to have been opened in the same browser).
 Changes to Map Default View saved with **Update** immediately become your personal default
 view on the map — the same as using the **Save Map** button on the main page.
 
+#### Import and Export
+
+The **Event**, **Trackers**, **Aid Stations**, **iGates**, and **Courses** section headers
+each have a **↓** (export) and **↑** (import) button.
+
+**Exporting:**
+
+- All sections can export as a `.yaml` file. The filename includes the event name and
+  today's date (e.g., `Dipsea_2026_trackers_20260614.yaml`). An **Event** export includes
+  the entire configuration.
+- **Aid Stations** and **iGates**: clicking **↓** shows a dropdown — choose **Export as
+  YAML** or **Export as GPX**. The GPX file contains a waypoint for each entry and can be
+  opened in GPS apps and mapping tools.
+
+**Importing:**
+
+- All sections accept `.yaml` files previously exported from this app.
+- **Aid Stations**, **iGates**, and **Courses** also accept `.gpx`, `.kml`, `.geojson`, and
+  `.json` files. You can select multiple files at once.
+  - Aid Stations / iGates: waypoints from the file are added as new entries.
+  - Courses: the file is uploaded to the server and a new course entry is created for it,
+    with the filename (minus extension) as the default name.
+
+Importing always *adds* entries and never removes or overwrites existing ones. Duplicate
+entries (same name, callsign, or file path) are skipped automatically.
+
+For `.yaml` files: if the file has no type marker, a confirmation dialog appears. If you try
+to import a file meant for a different section, the import is blocked.
+
+Importing does not save to the server. Use **Save for All Users…** afterward.
+
 #### Backgrounds
 
 Each background entry is a map tile layer. Provide a name, the tile URL template (using
-`{z}`, `{x}`, `{y}` placeholders), and the attribution HTML required by the tile provider. Additional maps may be found at [Leaflet](https://leaflet-extras.github.io/leaflet-providers/preview/index.html).
+`{z}`, `{x}`, `{y}` placeholders), and the attribution HTML required by the tile provider.
 
-Click the **library** button to pick from tile layers already used in other events.
+**⊞ Browse Providers** — Click the grid icon (⊞) in the section header to open a tile
+provider browser showing thumbnail previews of all free Leaflet providers. Providers
+already added to this event are marked **Added**. Click any provider to insert it into the
+list with all fields pre-filled (name, URL, attribution, and maximum zoom).
+
+**Add Background** — Click to pick from tile layers already used in other events (your
+background library). Fields are pre-filled from the saved layer.
+
+An optional **Max Zoom** field caps how far in the user can zoom when this tile layer is
+active. This is pre-filled automatically when using the provider browser.
 
 #### Courses
 
@@ -291,6 +392,11 @@ swatch. To add courses, use **Manage Location Files** (see below).
 
 Fixed locations shown on the map. Each entry has a name, latitude, and longitude.
 
+**Smart coordinate paste** — you can paste a combined latitude/longitude string (such as
+`37.7749, -122.4194` copied from Google Maps) into either the lat or lon field and both
+fields will be filled in automatically. Comma, semicolon, slash, and space separators are
+recognised, as are N/S/E/W direction letters.
+
 #### Legend
 
 Free-text shown in the lower-left corner of the map in kiosk mode, below the event name. Use `\n`
@@ -300,11 +406,20 @@ for line breaks.
 
 ### Event Management
 
-#### Save for All Users…
+#### Save
+
+Writes the current configuration directly to the event's file on the server without
+changing the active (default) event. Use this to update an event you are working on
+without disrupting what other users are currently seeing.
+
+If no event has been saved yet (new unsaved event), **Save** opens the **Save as Default
+Event** dialog to name it first.
+
+#### Save as Default Event
 
 Saves the current (possibly unsaved) configuration as a named event and makes it the active
-event immediately. A dialog prompts for the event name. After saving, the new configuration
-is live for all users within about 5 seconds.
+event immediately. A dialog prompts for the event name (or to overwrite an existing one).
+After saving, the new configuration is live for all users within about 5 seconds.
 
 If the name already exists, a blinking warning is shown before the overwrite is confirmed.
 

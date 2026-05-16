@@ -294,6 +294,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveversion'])) {
     respondJson(['ok' => true]);
 }
 
+// ── AJAX: save event without changing the default symlink ────────────────────
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveonly'])) {
+    $body = file_get_contents('php://input');
+    $data = json_decode($body, true);
+    if (!is_array($data) || !isset($data['name']) || !isset($data['cfg'])) {
+        respondError('Invalid request', 400);
+    }
+    $eventName = trim($data['name']);
+    if (!preg_match('/^[a-zA-Z0-9 _\-\.]{1,80}$/', $eventName)) {
+        respondError('Name may only contain letters, numbers, spaces, hyphens, underscores, periods (max 80 chars)', 400);
+    }
+    $eventPath = $eventsDir . '/' . $eventName;
+    if (!is_dir($eventPath)) mkdir($eventPath, 0777, true);
+
+    $cfg = $data['cfg'];
+    foreach (($cfg['courses'] ?? []) as $i => $c) {
+        if (!isset($c['file'])) continue;
+        if (!preg_match('|^events/[^/]+/(.+)$|', $c['file'], $m)) continue;
+        $basename   = $m[1];
+        $newRelPath = 'events/' . $eventName . '/' . $basename;
+        $srcAbs     = __DIR__ . '/../' . $c['file'];
+        $destAbs    = $eventPath . '/' . $basename;
+        if (file_exists($srcAbs)) {
+            $srcReal = realpath($srcAbs);
+            if ($srcReal && $srcReal !== realpath($destAbs)) copy($srcAbs, $destAbs);
+        }
+        $cfg['courses'][$i]['file'] = $newRelPath;
+    }
+
+    $cfg['courses'] = reconcileEventCourses($eventPath, $eventName, $cfg['courses'] ?? []);
+
+    $path     = $eventPath . '/event.yaml';
+    $existing = file_exists($path) ? file_get_contents($path) : '';
+    $history  = extractHistory($existing);
+    array_unshift($history, gmdate('Y-m-d H:i:s') . ' UTC');
+    $yaml = buildConfigYaml($cfg, $history);
+    if (file_put_contents($path, $yaml, LOCK_EX) === false) {
+        respondError('Cannot write event file — check permissions');
+    }
+
+    // Intentionally does NOT update the config.yaml symlink
+    pruneTrackerHistory($eventPath . '/tracker_history.yaml', array_column($cfg['trackers'] ?? [], 'callsign'));
+    respondJson(['ok' => true]);
+}
+
 // ── AJAX: load a named event ──────────────────────────────────────────────────
 
 if (isset($_GET['loadversion'])) {
@@ -698,11 +744,14 @@ function buildConfigYaml($cfg, $history = []) {
     $L[] = '#   name        : label shown in the sidebar';
     $L[] = '#   url         : Leaflet tile URL template  ({s} = subdomain, {z}/{x}/{y} = tile coordinates)';
     $L[] = '#   attribution : HTML attribution string shown in the map corner (may contain HTML)';
+    $L[] = '#   max_zoom    : maximum zoom level supported by this tile provider (optional)';
     $L[] = 'backgrounds:';
     foreach ($cfg['backgrounds'] ?? [] as $b) {
         $L[] = '  - name: '        . ys($b['name']        ?? '');
         $L[] = '    url: '         . ys($b['url']         ?? '');
         $L[] = '    attribution: ' . yq($b['attribution'] ?? '');
+        if (isset($b['maxZoom']) && is_numeric($b['maxZoom']))
+            $L[] = '    max_zoom: ' . (int)$b['maxZoom'];
     }
     $bgUrl = trim($cfg['background_url'] ?? '');
     if ($bgUrl !== '') $L[] = 'background_url: ' . ys($bgUrl);
@@ -816,9 +865,16 @@ body { font-family: arial, helvetica, sans-serif; font-size: 14px; background: #
 .sec-title {
     font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: .08em;
     color: #555; background: #f5f6f8; border-bottom: 1px solid #e0e0e0;
-    padding: 8px 14px;
+    padding: 6px 14px;
+    display: flex; align-items: center; justify-content: space-between;
 }
 .sec-body { padding: 10px 14px 14px; }
+.sec-io-btns { display: flex; gap: 2px; flex-shrink: 0; }
+.io-btn {
+    background: none; border: none; color: #bbb; font-size: 15px; line-height: 1;
+    cursor: pointer; padding: 2px 5px; border-radius: 3px;
+}
+.io-btn:hover { color: #2980b9; background: #ddeeff; }
 
 /* ── List rows ── */
 .list-row {
@@ -1052,6 +1108,42 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 .modal-list-live { padding: 9px 12px; font-size: 13px; color: #27ae60; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
 .modal-list-live:hover { background: #eafaf1; }
 .modal-empty { padding: 12px; font-size: 13px; color: #999; text-align: center; }
+.bg-picker-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+    max-height: 430px; overflow-y: auto; padding: 4px 2px;
+}
+.bg-picker-card {
+    border: 2px solid #e0e0e0; border-radius: 5px; overflow: hidden;
+    cursor: pointer; transition: border-color .15s, box-shadow .15s;
+}
+.bg-picker-card:hover { border-color: #2980b9; box-shadow: 0 2px 8px rgba(41,128,185,.25); }
+.bg-picker-thumb { width: 100%; height: 90px; overflow: hidden; background: #e8e8e8; }
+.bg-picker-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.bg-picker-thumb-err {
+    display: flex; align-items: center; justify-content: center;
+    width: 100%; height: 100%; font-size: 11px; color: #aaa; font-style: italic;
+}
+.bg-picker-name {
+    padding: 5px 7px; font-size: 12px; font-weight: bold; color: #333;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    border-top: 1px solid #e0e0e0; background: #fafafa;
+}
+.bg-picker-custom {
+    border: 2px dashed #c0c0c0; border-radius: 5px; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 116px; transition: border-color .15s;
+}
+.bg-picker-custom:hover { border-color: #2980b9; }
+.bg-picker-custom-icon { font-size: 28px; color: #aaa; line-height: 1; }
+.bg-picker-custom-label { font-size: 12px; color: #2980b9; font-style: italic; margin-top: 4px; }
+.bg-picker-loaded { border-color: #27ae60; }
+.bg-picker-loaded .bg-picker-name { background: #eafaf1; color: #1e8449; }
+.bg-picker-loaded-badge {
+    position: absolute; bottom: 4px; right: 4px;
+    background: rgba(39,174,96,.85); color: #fff;
+    font-size: 10px; font-weight: bold; padding: 2px 5px; border-radius: 3px;
+}
+.bg-picker-thumb { position: relative; }
 .modal-cancel-btn {
     padding: 7px 14px; background: #f4f4f4; color: #555;
     border: 1px solid #ccc; border-radius: 4px; font-size: 13px; cursor: pointer;
@@ -1072,7 +1164,8 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
         <button class="sec-btn" onclick="doUpdate()">Update</button>
         <button class="sec-btn" onclick="location.href='?logout'">Sign out</button>
         <button class="sec-btn" onclick="doLoadModal()">Load…</button>
-        <button class="sec-btn" onclick="doSaveAs()">Save for All Users…</button>
+        <button class="sec-btn" onclick="doSave()">Save</button>
+        <button class="sec-btn" onclick="doSaveAs()">Save as Default Event</button>
         <button class="sec-btn" onclick="location.href='../'">Exit</button>
     </div>
 </div>
@@ -1082,7 +1175,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 
     <!-- ── Event ── -->
     <div class="section">
-        <div class="sec-title">Event</div>
+        <div class="sec-title"><span>Event</span><div class="sec-io-btns"><button type="button" class="io-btn" title="Export entire event as YAML" onclick="exportSection('event')">↓</button><button type="button" class="io-btn" title="Import entire event from YAML" onclick="importSection('event')">↑</button></div></div>
         <div class="sec-body">
             <div class="map-field" style="width:100%;max-width:500px">
                 <label for="f-event">Event Name</label>
@@ -1104,7 +1197,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 
     <!-- ── Trackers ── -->
     <div class="section">
-        <div class="sec-title">Trackers</div>
+        <div class="sec-title"><span>Trackers</span><div class="sec-io-btns"><button type="button" class="io-btn" title="Export trackers as YAML" onclick="exportSection('trackers')">↓</button><button type="button" class="io-btn" title="Import trackers from YAML" onclick="importSection('trackers')">↑</button></div></div>
         <div class="sec-body">
             <div id="trackers-list"></div>
             <button class="add-btn" onclick="addTracker()">+ Add Tracker</button>
@@ -1163,7 +1256,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 
     <!-- ── Backgrounds ── -->
     <div class="section">
-        <div class="sec-title">Map Backgrounds</div>
+        <div class="sec-title"><span>Map Backgrounds</span><div class="sec-io-btns"><button type="button" class="io-btn" title="Browse tile providers" onclick="browseProviders()">⊞</button></div></div>
         <div class="sec-body">
             <div id="backgrounds-list"></div>
             <button class="add-btn" onclick="addBackground()">+ Add Background</button>
@@ -1172,7 +1265,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 
     <!-- ── Aid Stations ── -->
     <div class="section">
-        <div class="sec-title">Aid Stations</div>
+        <div class="sec-title"><span>Aid Stations</span><div class="sec-io-btns"><button type="button" class="io-btn" title="Export aid stations" onclick="showExportMenu(this,'aidstations')">↓</button><button type="button" class="io-btn" title="Import aid stations from YAML, GPX, KML, or GeoJSON" onclick="importGeoSection('aidstations')">↑</button></div></div>
         <div class="sec-body">
             <div id="aidstations-list"></div>
             <button class="add-btn" onclick="addAid()">+ Add Aid Station</button>
@@ -1181,7 +1274,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 
     <!-- ── iGates ── -->
     <div class="section">
-        <div class="sec-title">iGates</div>
+        <div class="sec-title"><span>iGates</span><div class="sec-io-btns"><button type="button" class="io-btn" title="Export iGates" onclick="showExportMenu(this,'igates')">↓</button><button type="button" class="io-btn" title="Import iGates from YAML, GPX, KML, or GeoJSON" onclick="importGeoSection('igates')">↑</button></div></div>
         <div class="sec-body">
             <div id="igates-list"></div>
             <button class="add-btn" onclick="addIgate()">+ Add iGate</button>
@@ -1190,7 +1283,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 
     <!-- ── Courses ── -->
     <div class="section">
-        <div class="sec-title">Courses</div>
+        <div class="sec-title"><span>Courses</span><div class="sec-io-btns"><button type="button" class="io-btn" title="Export courses as YAML" onclick="exportSection('courses')">↓</button><button type="button" class="io-btn" title="Import courses from YAML or upload a location file" onclick="importCoursesSection()">↑</button></div></div>
         <div class="sec-body">
             <div id="courses-list"></div>
             <button class="add-btn" onclick="saveColors()">Save Colors</button>
@@ -1200,11 +1293,12 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 
     <div id="footer">
         <button class="sec-btn" onclick="doUpdate()">Update</button>
-        <button class="sec-btn" onclick="doSaveAs()">Save for All Users…</button>
+        <button class="sec-btn" onclick="doSave()">Save</button>
+        <button class="sec-btn" onclick="doSaveAs()">Save as Default Event</button>
     </div>
 </div>
 
-<div id="page-footer">MARS APRS Map Admin v1.8 beta &copy; 2026 Doug Kaye (K6DRK)</div>
+<div id="page-footer">MARS APRS Map Admin v1.9 beta &copy; 2026 Doug Kaye (K6DRK)</div>
 
 <script>
 'use strict';
@@ -1330,6 +1424,57 @@ function fieldLabel(labelText, cls, value, width, extra) {
     return wrap;
 }
 
+// ── Lat/lon paste helper ──────────────────────────────────────────────────────
+
+// Try to parse a string that may contain both lat and lon (e.g. "37.7749, -122.4194").
+// Returns { lat, lon } on success, null if the string looks like a single coordinate.
+function parseCombinedLatLon(raw) {
+    const text = raw.trim().replace(/[°′″'"]/g, ' ');
+    let segs;
+    const m = text.match(/^(.+?)[,;\/\t](.+)$/);
+    if (m) {
+        segs = [m[1].trim(), m[2].trim()];
+    } else {
+        // Space-separated: split at boundary before an optional sign then a digit
+        segs = text.split(/\s+(?=[+\-]?\d)/).filter(Boolean);
+    }
+    if (!segs || segs.length !== 2) return null;
+    const lat = parseCoordValue(segs[0]);
+    const lon = parseCoordValue(segs[1]);
+    if (lat === null || lon === null) return null;
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+    return { lat, lon };
+}
+
+function parseCoordValue(s) {
+    s = s.trim();
+    let negate = false;
+    if (/^[Ss]/i.test(s) || /^[Ww]/i.test(s)) { negate = true; s = s.slice(1).trim(); }
+    else if (/^[NnEe]/.test(s))                { s = s.slice(1).trim(); }
+    if (/[Ss]$/i.test(s) || /[Ww]$/i.test(s)) { negate = true; s = s.slice(0, -1).trim(); }
+    else if (/[NnEe]$/i.test(s))               { s = s.slice(0, -1).trim(); }
+    const val = parseFloat(s);
+    if (isNaN(val)) return null;
+    return negate ? -Math.abs(val) : val;
+}
+
+// Attach smart paste to a matched lat/lon input pair.
+// Pasting a combined string into either field populates both.
+function attachLatLonPaste(latEl, lonEl) {
+    function onPaste(e) {
+        const raw = (e.clipboardData || window.clipboardData).getData('text');
+        const parsed = parseCombinedLatLon(raw);
+        if (!parsed) return;
+        e.preventDefault();
+        latEl.value = parsed.lat;
+        lonEl.value = parsed.lon;
+        latEl.dispatchEvent(new Event('input'));
+        lonEl.dispatchEvent(new Event('input'));
+    }
+    latEl.addEventListener('paste', onPaste);
+    lonEl.addEventListener('paste', onPaste);
+}
+
 // ── Tracker rows ──────────────────────────────────────────────────────────────
 
 const TRACKER_ICONS = [
@@ -1397,21 +1542,94 @@ function addTracker() { appendTracker({}, dragAdder['trackers-list']); markDirty
 // ── Background library ────────────────────────────────────────────────────────
 
 const BG_DEFAULTS = [
-    { name: 'CartoDB Dark',        url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>' },
-    { name: 'CartoDB Light',       url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>' },
-    { name: 'Esri World Imagery',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',  attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics' },
-    { name: 'Esri World Topo',     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles &copy; Esri &mdash; Source: Esri, USGS, NOAA' },
-    { name: 'OpenStreetMap',       url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',              attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' },
-    { name: 'OpenTopoMap',         url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',                attribution: '&copy; <a href="https://opentopomap.org">OpenTopoMap</a> contributors' },
-    { name: 'USGS US Topo',        url: 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles courtesy of the <a href="https://usgs.gov/">U.S. Geological Survey</a>' },
+    // OpenStreetMap
+    { name: 'OpenStreetMap',                    maxZoom: 19, url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',                                                                                                                               attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' },
+    { name: 'OpenStreetMap DE',                 maxZoom: 18, url: 'https://tile.openstreetmap.de/{z}/{x}/{y}.png',                                                                                                                                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' },
+    { name: 'OpenStreetMap France',             maxZoom: 20, url: 'https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png',                                                                                                                      attribution: '&copy; OpenStreetMap France | &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' },
+    { name: 'OpenStreetMap HOT',                maxZoom: 19, url: 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',                                                                                                                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, Tiles style by <a href="https://www.hotosm.org/" target="_blank">Humanitarian OpenStreetMap Team</a>' },
+    // CartoDB
+    { name: 'CartoDB Positron',                 maxZoom: 20, url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',                                                                                                               attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>' },
+    { name: 'CartoDB Positron (No Labels)',     maxZoom: 20, url: 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',                                                                                                          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>' },
+    { name: 'CartoDB Dark Matter',              maxZoom: 20, url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',                                                                                                                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>' },
+    { name: 'CartoDB Dark Matter (No Labels)',  maxZoom: 20, url: 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',                                                                                                           attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>' },
+    { name: 'CartoDB Voyager',                  maxZoom: 20, url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',                                                                                                      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>' },
+    { name: 'CartoDB Voyager (No Labels)',      maxZoom: 20, url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png',                                                                                             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>' },
+    // Esri
+    { name: 'Esri World Street Map',            maxZoom: 19, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',                                                                              attribution: 'Tiles &copy; Esri &mdash; Source: Esri, DeLorme, NAVTEQ, USGS, Intermap, iPC, NRCAN, Esri Japan, METI, Esri China (Hong Kong), Esri (Thailand), TomTom, 2012' },
+    { name: 'Esri World Topo Map',              maxZoom: 19, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',                                                                                attribution: 'Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ, TomTom, Intermap, iPC, USGS, FAO, NPS, NRCAN, GeoBase, Kadaster NL, Ordnance Survey, Esri Japan, METI, Esri China (Hong Kong), and the GIS User Community' },
+    { name: 'Esri World Imagery',               maxZoom: 19, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',                                                                                attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community' },
+    { name: 'Esri World Terrain',               maxZoom: 13, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}',                                                                           attribution: 'Tiles &copy; Esri &mdash; Source: USGS, Esri, TANA, DeLorme, and NPS' },
+    { name: 'Esri World Shaded Relief',         maxZoom: 13, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Shaded_Relief/MapServer/tile/{z}/{y}/{x}',                                                                          attribution: 'Tiles &copy; Esri &mdash; Source: Esri' },
+    { name: 'Esri World Physical',              maxZoom:  8, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Physical_Map/MapServer/tile/{z}/{y}/{x}',                                                                           attribution: 'Tiles &copy; Esri &mdash; Source: US National Park Service' },
+    { name: 'Esri Ocean Basemap',               maxZoom: 13, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}',                                                                       attribution: 'Tiles &copy; Esri &mdash; Sources: GEBCO, NOAA, CHS, OSU, UNH, CSUMB, National Geographic, DeLorme, NAVTEQ, and Esri' },
+    { name: 'Esri Nat Geo World Map',           maxZoom: 16, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/NatGeo_World_Map/MapServer/tile/{z}/{y}/{x}',                                                                             attribution: 'Tiles &copy; Esri &mdash; National Geographic, Esri, DeLorme, NAVTEQ, UNEP-WCMC, USGS, NASA, ESA, METI, NRCAN, GEBCO, NOAA, iPC' },
+    { name: 'Esri World Gray Canvas',           maxZoom: 16, url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',                                                                 attribution: 'Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ' },
+    // USGS
+    { name: 'USGS US Topo',                     maxZoom: 16, url: 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}',                                                                                      attribution: 'Tiles courtesy of the <a href="https://usgs.gov/">U.S. Geological Survey</a>' },
+    { name: 'USGS US Imagery',                  maxZoom: 20, url: 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}',                                                                              attribution: 'Tiles courtesy of the <a href="https://usgs.gov/">U.S. Geological Survey</a>' },
+    { name: 'USGS US Imagery Topo',             maxZoom: 20, url: 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryTopo/MapServer/tile/{z}/{y}/{x}',                                                                              attribution: 'Tiles courtesy of the <a href="https://usgs.gov/">U.S. Geological Survey</a>' },
+    // Stadia / Stamen
+    { name: 'Stadia Alidade Smooth',            maxZoom: 20, url: 'https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}{r}.png',                                                                                                         attribution: '&copy; <a href="https://www.stadiamaps.com/" target="_blank">Stadia Maps</a> &copy; <a href="https://openmaptiles.org/" target="_blank">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' },
+    { name: 'Stadia Alidade Smooth Dark',       maxZoom: 20, url: 'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png',                                                                                                    attribution: '&copy; <a href="https://www.stadiamaps.com/" target="_blank">Stadia Maps</a> &copy; <a href="https://openmaptiles.org/" target="_blank">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' },
+    { name: 'Stadia Alidade Satellite',         maxZoom: 20, url: 'https://tiles.stadiamaps.com/tiles/alidade_satellite/{z}/{x}/{y}{r}.jpg',                                                                                                      attribution: '&copy; CNES, Distribution Airbus DS, &copy; Airbus DS, &copy; PlanetObserver | &copy; <a href="https://www.stadiamaps.com/" target="_blank">Stadia Maps</a>' },
+    { name: 'Stadia OSM Bright',                maxZoom: 20, url: 'https://tiles.stadiamaps.com/tiles/osm_bright/{z}/{x}/{y}{r}.png',                                                                                                             attribution: '&copy; <a href="https://www.stadiamaps.com/" target="_blank">Stadia Maps</a> &copy; <a href="https://openmaptiles.org/" target="_blank">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' },
+    { name: 'Stadia Outdoors',                  maxZoom: 20, url: 'https://tiles.stadiamaps.com/tiles/outdoors/{z}/{x}/{y}{r}.png',                                                                                                               attribution: '&copy; <a href="https://www.stadiamaps.com/" target="_blank">Stadia Maps</a> &copy; <a href="https://openmaptiles.org/" target="_blank">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' },
+    { name: 'Stadia Stamen Toner',              maxZoom: 20, url: 'https://tiles.stadiamaps.com/tiles/stamen_toner/{z}/{x}/{y}{r}.png',                                                                                                           attribution: '&copy; <a href="https://www.stadiamaps.com/" target="_blank">Stadia Maps</a> &copy; <a href="https://www.stamen.com/" target="_blank">Stamen Design</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' },
+    { name: 'Stadia Stamen Toner Lite',         maxZoom: 20, url: 'https://tiles.stadiamaps.com/tiles/stamen_toner_lite/{z}/{x}/{y}{r}.png',                                                                                                      attribution: '&copy; <a href="https://www.stadiamaps.com/" target="_blank">Stadia Maps</a> &copy; <a href="https://www.stamen.com/" target="_blank">Stamen Design</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' },
+    { name: 'Stadia Stamen Watercolor',         maxZoom: 16, url: 'https://tiles.stadiamaps.com/tiles/stamen_watercolor/{z}/{x}/{y}.jpg',                                                                                                         attribution: '&copy; <a href="https://www.stadiamaps.com/" target="_blank">Stadia Maps</a> &copy; <a href="https://www.stamen.com/" target="_blank">Stamen Design</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' },
+    { name: 'Stadia Stamen Terrain',            maxZoom: 18, url: 'https://tiles.stadiamaps.com/tiles/stamen_terrain/{z}/{x}/{y}{r}.png',                                                                                                         attribution: '&copy; <a href="https://www.stadiamaps.com/" target="_blank">Stadia Maps</a> &copy; <a href="https://www.stamen.com/" target="_blank">Stamen Design</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' },
+    // OpenTopoMap / specialty
+    { name: 'OpenTopoMap',                      maxZoom: 17, url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',                                                                                                                             attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="http://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)' },
+    { name: 'CyclOSM',                          maxZoom: 20, url: 'https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png',                                                                                                            attribution: '<a href="https://github.com/cyclosm/cyclosm-cartocss-style/releases">CyclOSM</a> | Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' },
+    { name: 'OpenSeaMap',                       maxZoom: 18, url: 'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',                                                                                                                         attribution: 'Map data: &copy; <a href="http://www.openseamap.org">OpenSeaMap</a> contributors' },
+    { name: 'OpenRailwayMap',                   maxZoom: 19, url: 'https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png',                                                                                                                attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | Map style: &copy; <a href="https://www.OpenRailwayMap.org">OpenRailwayMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)' },
+    { name: 'OpenAIP',                          maxZoom: 14, url: 'https://{s}.tile.maps.openaip.net/geowebcache/service/tms/1.0.0/openaip_basemap@EPSG%3A900913@png/{z}/{x}/{y}.png',                                                           attribution: '<a href="https://www.openaip.net/">openAIP Data</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-NC-SA</a>)' },
+    { name: 'OpenSnowMap',                      maxZoom: 18, url: 'https://tiles.opensnowmap.org/pistes/{z}/{x}/{y}.png',                                                                                                                         attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &amp; ODbL, &copy; <a href="https://www.opensnowmap.org/iframes/data.html">www.opensnowmap.org</a>' },
+    { name: 'OPNVKarte',                        maxZoom: 18, url: 'https://tileserver.memomaps.de/tilegen/{z}/{x}/{y}.png',                                                                                                                       attribution: 'Map <a href="https://memomaps.de/">memomaps.de</a> <a href="http://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>, map data &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' },
+    { name: 'MtbMap',                           maxZoom: 18, url: 'http://tile.mtbmap.cz/mtbmap_tiles/{z}/{x}/{y}.png',                                                                                                                           attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &amp; USGS' },
+    { name: 'HikeBike',                         maxZoom: 19, url: 'https://tiles.wmflabs.org/hikebike/{z}/{x}/{y}.png',                                                                                                                           attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' },
+    { name: 'SafeCast',                         maxZoom: 16, url: 'https://s3.amazonaws.com/te512.safecast.org/{z}/{x}/{y}.png',                                                                                                                  attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | Map style: &copy; <a href="https://blog.safecast.org/about/">SafeCast</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)' },
+    // WaymarkedTrails (overlays)
+    { name: 'WaymarkedTrails Hiking',           maxZoom: 18, url: 'https://tile.waymarkedtrails.org/hiking/{z}/{x}/{y}.png',                                                                                                                      attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | Map style: &copy; <a href="https://waymarkedtrails.org">waymarkedtrails.org</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)' },
+    { name: 'WaymarkedTrails Cycling',          maxZoom: 18, url: 'https://tile.waymarkedtrails.org/cycling/{z}/{x}/{y}.png',                                                                                                                     attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | Map style: &copy; <a href="https://waymarkedtrails.org">waymarkedtrails.org</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)' },
+    { name: 'WaymarkedTrails MTB',              maxZoom: 18, url: 'https://tile.waymarkedtrails.org/mtb/{z}/{x}/{y}.png',                                                                                                                         attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | Map style: &copy; <a href="https://waymarkedtrails.org">waymarkedtrails.org</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)' },
+    { name: 'WaymarkedTrails Slopes',           maxZoom: 18, url: 'https://tile.waymarkedtrails.org/slopes/{z}/{x}/{y}.png',                                                                                                                      attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | Map style: &copy; <a href="https://waymarkedtrails.org">waymarkedtrails.org</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)' },
+    // NASA
+    { name: 'NASA MODIS True Color',            maxZoom:  9, url: 'https://map1.vis.earthdata.nasa.gov/wmts-webmerc/MODIS_Terra_CorrectedReflectance_TrueColor/default//GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg',                             attribution: 'Imagery provided by services from the Global Imagery Browse Services (GIBS), operated by the NASA/GSFC/Earth Science Data and Information System (<a href="https://earthdata.nasa.gov">ESDIS</a>)' },
+    { name: 'NASA VIIRS Earth at Night',        maxZoom:  8, url: 'https://map1.vis.earthdata.nasa.gov/wmts-webmerc/VIIRS_CityLights_2012/default//GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg',                                                  attribution: 'Imagery provided by services from the Global Imagery Browse Services (GIBS), operated by the NASA/GSFC/Earth Science Data and Information System (<a href="https://earthdata.nasa.gov">ESDIS</a>)' },
+    // GeoportailFrance
+    { name: 'Geoportail France Plan',           maxZoom: 18, url: 'https://data.geopf.fr/wmts?REQUEST=GetTile&SERVICE=WMTS&VERSION=1.0.0&STYLE=normal&TILEMATRIXSET=PM&FORMAT=image/png&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}', attribution: '<a target="_blank" href="https://www.geoportail.gouv.fr/">Geoportail France</a>' },
+    { name: 'Geoportail France Orthos',         maxZoom: 19, url: 'https://data.geopf.fr/wmts?REQUEST=GetTile&SERVICE=WMTS&VERSION=1.0.0&STYLE=normal&TILEMATRIXSET=PM&FORMAT=image/jpeg&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}',         attribution: '<a target="_blank" href="https://www.geoportail.gouv.fr/">Geoportail France</a>' },
+    // JusticeMap (US demographic overlays)
+    { name: 'JusticeMap Income',                maxZoom: 19, url: 'https://www.justicemap.org/tile/county/income/{z}/{x}/{y}.png',                                                                                                                attribution: '<a href="http://www.justicemap.org/terms.php">Justice Map</a>' },
+    { name: 'JusticeMap Race (Plurality)',       maxZoom: 19, url: 'https://www.justicemap.org/tile/county/plural/{z}/{x}/{y}.png',                                                                                                               attribution: '<a href="http://www.justicemap.org/terms.php">Justice Map</a>' },
+    // BaseMapDE
+    { name: 'BaseMapDE Color',                  maxZoom: 18, url: 'https://sgx.geodatenzentrum.de/wmts_basemapde/tile/1.0.0/de_basemapde_web_raster_farbe/default/GLOBAL_WEBMERCATOR/{z}/{y}/{x}.png',                                            attribution: 'Map data: &copy; <a href="http://www.govdata.de/dl-de/by-2-0">dl-de/by-2-0</a>' },
+    { name: 'BaseMapDE Grey',                   maxZoom: 18, url: 'https://sgx.geodatenzentrum.de/wmts_basemapde/tile/1.0.0/de_basemapde_web_raster_grau/default/GLOBAL_WEBMERCATOR/{z}/{y}/{x}.png',                                             attribution: 'Map data: &copy; <a href="http://www.govdata.de/dl-de/by-2-0">dl-de/by-2-0</a>' },
+    // Switzerland
+    { name: 'SwissTopo National Map',           maxZoom: 18, url: 'https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.pixelkarte-farbe/default/current/3857/{z}/{x}/{y}.jpeg',                                                                         attribution: '&copy; <a href="https://www.swisstopo.admin.ch/">swisstopo</a>' },
+    { name: 'SwissTopo SWISSIMAGE',             maxZoom: 19, url: 'https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.swissimage/default/current/3857/{z}/{x}/{y}.jpeg',                                                                               attribution: '&copy; <a href="https://www.swisstopo.admin.ch/">swisstopo</a>' },
+    // Austria
+    { name: 'BasemapAT',                        maxZoom: 20, url: 'https://mapsneu.wien.gv.at/basemap/geolandbasemap/normal/google3857/{z}/{y}/{x}.png',                                                                                          attribution: 'Datenquelle: <a href="https://www.basemap.at">basemap.at</a>' },
+    { name: 'BasemapAT Ortho',                  maxZoom: 20, url: 'https://mapsneu.wien.gv.at/basemap/bmaporthofoto30cm/normal/google3857/{z}/{y}/{x}.jpeg',                                                                                      attribution: 'Datenquelle: <a href="https://www.basemap.at">basemap.at</a>' },
+    // FreeMapSK / MtbMap regional
+    { name: 'FreeMapSK',                        maxZoom: 16, url: 'https://{s}.freemap.sk/T/{z}/{x}/{y}.jpeg',                                                                                                                                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, visualization CC-By-SA 2.0 <a href="http://freemap.sk">Freemap.sk</a>' },
 ];
 
 let bgLibrary = [...BG_DEFAULTS];
+let serverBgLibrary = [];
 
 function mergeBgLibrary(serverBgs) {
+    serverBgLibrary = [...serverBgs];
     const seen = new Set(serverBgs.map(b => b.url));
     bgLibrary = [...serverBgs];
     BG_DEFAULTS.forEach(b => { if (!seen.has(b.url)) bgLibrary.push(b); });
+}
+
+// Substitute a fixed preview tile (SF Bay Area, z=5 x=5 y=12) into a URL template
+function getTilePreviewUrl(url) {
+    return url.replace('{z}', 5).replace('{x}', 5).replace('{y}', 12)
+              .replace('{s}', 'a').replace('{r}', '');
 }
 
 // ── Background rows ───────────────────────────────────────────────────────────
@@ -1426,6 +1644,7 @@ function buildBgRow(b) {
 
     const l1 = document.createElement('div'); l1.className = 'bg-line';
     l1.appendChild(fieldLabel('Name', 'f-bg-name', b.name, '180px', { placeholder: 'OpenStreetMap' }));
+    l1.appendChild(fieldLabel('Max Zoom', 'f-maxzoom', b.maxZoom ?? '', '60px', { type: 'number', step: '1', placeholder: '19' }));
 
     const l2 = document.createElement('div'); l2.className = 'bg-line';
     l2.appendChild(fieldLabel('URL', 'f-url', b.url, '500px',
@@ -1452,23 +1671,30 @@ function appendBg(b, attach) {
 function addBackground() {
     const body = document.createElement('div');
 
-    const listLbl = document.createElement('div');
-    listLbl.className = 'modal-list-label';
-    listLbl.textContent = 'Select a tile provider:';
-    body.appendChild(listLbl);
+    const lbl = document.createElement('div');
+    lbl.className = 'modal-list-label';
+    lbl.textContent = 'Select from saved backgrounds:';
+    body.appendChild(lbl);
 
     const list = document.createElement('div');
     list.className = 'modal-list';
     let close;
 
-    bgLibrary.forEach(bg => {
-        const item = document.createElement('div');
-        item.className = 'modal-list-item';
-        const nameEl = document.createElement('span'); nameEl.className = 'item-name'; nameEl.textContent = bg.name;
-        item.appendChild(nameEl);
-        item.addEventListener('click', () => { appendBg(bg, dragAdder['backgrounds-list']); markDirty(true); close(); });
-        list.appendChild(item);
-    });
+    if (serverBgLibrary.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'modal-empty';
+        empty.textContent = 'No saved backgrounds found in other events.';
+        list.appendChild(empty);
+    } else {
+        serverBgLibrary.forEach(bg => {
+            const item = document.createElement('div');
+            item.className = 'modal-list-item';
+            const nameEl = document.createElement('span'); nameEl.className = 'item-name'; nameEl.textContent = bg.name || bg.url;
+            item.appendChild(nameEl);
+            item.addEventListener('click', () => { appendBg(bg, dragAdder['backgrounds-list']); markDirty(true); close(); });
+            list.appendChild(item);
+        });
+    }
 
     const customItem = document.createElement('div');
     customItem.className = 'modal-list-item';
@@ -1486,6 +1712,66 @@ function addBackground() {
     cancelBtn.className = 'modal-cancel-btn';
     cancelBtn.textContent = 'Cancel';
     close = openModal('Add Background', body, [cancelBtn]);
+    cancelBtn.addEventListener('click', close);
+}
+
+function browseProviders() {
+    const body = document.createElement('div');
+
+    const lbl = document.createElement('div');
+    lbl.className = 'modal-list-label';
+    lbl.textContent = 'Select a tile provider:';
+    body.appendChild(lbl);
+
+    const grid = document.createElement('div');
+    grid.className = 'bg-picker-grid';
+    let close;
+
+    const loadedUrls = new Set(
+        [...document.querySelectorAll('#backgrounds-list .f-url')].map(i => i.value.trim()).filter(Boolean)
+    );
+
+    BG_DEFAULTS.forEach(bg => {
+        const already = loadedUrls.has(bg.url);
+        const card = document.createElement('div');
+        card.className = 'bg-picker-card' + (already ? ' bg-picker-loaded' : '');
+
+        const thumb = document.createElement('div');
+        thumb.className = 'bg-picker-thumb';
+        const img = document.createElement('img');
+        img.src = getTilePreviewUrl(bg.url);
+        img.alt = bg.name;
+        img.onerror = () => { thumb.innerHTML = '<div class="bg-picker-thumb-err">preview unavailable</div>'; };
+        thumb.appendChild(img);
+        if (already) {
+            const badge = document.createElement('div');
+            badge.className = 'bg-picker-loaded-badge';
+            badge.textContent = '✓ Added';
+            thumb.appendChild(badge);
+        }
+
+        const nameEl = document.createElement('div');
+        nameEl.className = 'bg-picker-name';
+        nameEl.textContent = bg.name;
+
+        card.appendChild(thumb);
+        card.appendChild(nameEl);
+        card.addEventListener('click', () => { appendBg(bg, dragAdder['backgrounds-list']); markDirty(true); close(); });
+        grid.appendChild(card);
+    });
+
+    const customCard = document.createElement('div');
+    customCard.className = 'bg-picker-custom';
+    customCard.innerHTML = '<div class="bg-picker-custom-icon">+</div><div class="bg-picker-custom-label">Custom URL…</div>';
+    customCard.addEventListener('click', () => { appendBg({}, dragAdder['backgrounds-list']); markDirty(true); close(); });
+    grid.appendChild(customCard);
+
+    body.appendChild(grid);
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'modal-cancel-btn';
+    cancelBtn.textContent = 'Cancel';
+    close = openModal('Browse Tile Providers', body, [cancelBtn]);
     cancelBtn.addEventListener('click', close);
 }
 
@@ -1946,6 +2232,7 @@ function buildIgateRow(g) {
     fields.appendChild(fieldLabel('Name', 'f-iname', g.name, '160px'));
     fields.appendChild(fieldLabel('Lat',  'f-ilat',  g.lat,  '120px', { type: 'number', step: 'any' }));
     fields.appendChild(fieldLabel('Lon',  'f-ilon',  g.lon,  '130px', { type: 'number', step: 'any' }));
+    attachLatLonPaste(fields.querySelector('.f-ilat'), fields.querySelector('.f-ilon'));
     row.appendChild(fields);
     row.appendChild(makeDeleteBtn());
     return row;
@@ -1971,6 +2258,7 @@ function buildAidRow(g) {
     fields.appendChild(fieldLabel('Name', 'f-aname', g.name, '160px'));
     fields.appendChild(fieldLabel('Lat',  'f-alat',  g.lat,  '120px', { type: 'number', step: 'any' }));
     fields.appendChild(fieldLabel('Lon',  'f-alon',  g.lon,  '130px', { type: 'number', step: 'any' }));
+    attachLatLonPaste(fields.querySelector('.f-alat'), fields.querySelector('.f-alon'));
     row.appendChild(fields);
     row.appendChild(makeDeleteBtn());
     return row;
@@ -2010,11 +2298,14 @@ function collectConfig() {
 
     const backgrounds = [];
     document.querySelectorAll('#backgrounds-list > .list-row').forEach(row => {
-        backgrounds.push({
+        const mz = parseInt(row.querySelector('.f-maxzoom').value.trim(), 10);
+        const bg = {
             name:        row.querySelector('.f-bg-name').value.trim(),
             url:         row.querySelector('.f-url').value.trim(),
             attribution: row.querySelector('.f-attr').value.trim()
-        });
+        };
+        if (!isNaN(mz)) bg.maxZoom = mz;
+        backgrounds.push(bg);
     });
     const savedBgUrl = localStorage.getItem('aprs_bg_url') || '';
     const background_url = backgrounds.find(b => b.url === savedBgUrl) ? savedBgUrl : (backgrounds[0]?.url || '');
@@ -2162,22 +2453,13 @@ function validateConfig(cfg) {
 }
 
 function buildLocalConfig(cfg) {
-    if (!hasServerChanges || !originalConfig) return cfg;
-    return {
-        event:         cfg.event,
-        legend:        cfg.legend,
-        tracker_style: cfg.tracker_style,
-        map:           cfg.map,
-        trackers:      originalConfig.trackers    || [],
-        backgrounds:   originalConfig.backgrounds || [],
-        courses:       originalConfig.courses     || [],
-        aidstations:   originalConfig.aidstations || [],
-        igates:        originalConfig.igates      || [],
-    };
+    return cfg;
 }
 
 function saveLocalAndReturn(cfg) {
     const localCfg = buildLocalConfig(cfg);
+    if (JSON.stringify(cfg.trackers || []) !== JSON.stringify(originalConfig?.trackers || []))
+        localCfg._localTrackerEdited = true;
     localStorage.setItem('aprs_current_event', JSON.stringify({
         name: currentFilename,
         config: localCfg,
@@ -2198,7 +2480,7 @@ function showUpdateWarning(cfg) {
     const body = document.createElement('div');
     const msg = document.createElement('p');
     msg.style.cssText = 'margin:0 0 4px;font-size:14px;line-height:1.5';
-    msg.textContent = "Some changes can't be applied locally. Use Save for All Users for global changes.";
+    msg.textContent = "Some changes can't be applied locally. Use Save or Save as Default Event for global changes.";
     body.appendChild(msg);
 
     const okBtn = document.createElement('button');
@@ -2207,7 +2489,7 @@ function showUpdateWarning(cfg) {
 
     const saveAllBtn = document.createElement('button');
     saveAllBtn.className = 'sec-btn';
-    saveAllBtn.textContent = 'Save for All Users…';
+    saveAllBtn.textContent = 'Save as Default Event';
 
     const cancelBtn = document.createElement('button');
     cancelBtn.className = 'modal-cancel-btn';
@@ -2266,6 +2548,201 @@ function openModal(title, bodyEl, footerEls) {
     document.body.appendChild(backdrop);
     const close = () => backdrop.remove();
     return close;
+}
+
+async function doSave() {
+    let versions = [];
+    try { versions = await fetchVersions(); } catch {}
+
+    const body = document.createElement('div');
+
+    // Event Name - read-only display
+    const eventNameDiv = document.createElement('div');
+    eventNameDiv.style.marginBottom = '12px';
+    const eventLbl = document.createElement('div');
+    eventLbl.style.fontSize = '11px'; eventLbl.style.color = '#888'; eventLbl.style.textTransform = 'uppercase';
+    eventLbl.style.letterSpacing = '.04em'; eventLbl.style.marginBottom = '4px';
+    eventLbl.textContent = 'Event Name';
+    const eventVal = document.createElement('div');
+    eventVal.style.padding = '6px 8px'; eventVal.style.background = '#f9f9f9'; eventVal.style.borderRadius = '3px';
+    eventVal.textContent = document.getElementById('f-event').value.trim() || '(no name)';
+    eventNameDiv.appendChild(eventLbl);
+    eventNameDiv.appendChild(eventVal);
+    body.appendChild(eventNameDiv);
+
+    // Filename input
+    const field = document.createElement('div');
+    field.className = 'modal-field';
+    const lbl = document.createElement('label');
+    lbl.textContent = 'Filename';
+    lbl.htmlFor = 'modal-fname';
+    const inp = document.createElement('input');
+    inp.type = 'text'; inp.id = 'modal-fname';
+    inp.placeholder = 'e.g. dipsea-2026';
+    inp.style.width = '100%';
+    inp.value = currentFilename;
+    field.appendChild(lbl); field.appendChild(inp);
+    body.appendChild(field);
+
+    const warn = document.createElement('div');
+    warn.className = 'modal-warn';
+    warn.style.display = 'none';
+    body.appendChild(warn);
+
+    // Existing events list
+    if (versions.length) {
+        const listLbl = document.createElement('div');
+        listLbl.className = 'modal-list-label';
+        listLbl.textContent = 'Existing events:';
+        body.appendChild(listLbl);
+
+        const list = document.createElement('div');
+        list.className = 'modal-list';
+
+        const header = document.createElement('div');
+        header.className = 'modal-list-header';
+        const hFilename = document.createElement('div');
+        hFilename.className = 'modal-list-header-filename';
+        hFilename.textContent = 'Filename';
+        const hEventName = document.createElement('div');
+        hEventName.className = 'modal-list-header-eventname';
+        hEventName.textContent = 'Event Name';
+        const hDate = document.createElement('div');
+        hDate.className = 'modal-list-header-date';
+        hDate.textContent = 'Last Saved';
+        header.appendChild(hFilename);
+        header.appendChild(hEventName);
+        header.appendChild(hDate);
+        list.appendChild(header);
+
+        versions.forEach(v => {
+            const row = document.createElement('div');
+            row.className = 'modal-list-item';
+            row.style.cursor = 'pointer';
+
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'item-filename';
+            nameSpan.textContent = v.name;
+
+            const eventSpan = document.createElement('span');
+            eventSpan.className = 'item-eventname';
+            eventSpan.textContent = v.eventName;
+
+            const dateSpan = document.createElement('span');
+            dateSpan.className = 'item-date';
+            dateSpan.textContent = fmtDate(v.mtime);
+
+            row.appendChild(nameSpan);
+            row.appendChild(eventSpan);
+            row.appendChild(dateSpan);
+
+            row.addEventListener('click', () => { inp.value = v.name; inp.dispatchEvent(new Event('input')); });
+            list.appendChild(row);
+        });
+        body.appendChild(list);
+    }
+
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'save-btn';
+    saveBtn.textContent = 'Save';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'modal-cancel-btn';
+    cancelBtn.textContent = 'Cancel';
+
+    const close = openModal('Save', body, [cancelBtn, saveBtn]);
+    cancelBtn.addEventListener('click', close);
+
+    const existingNames = new Set(versions.map(v => v.name));
+    inp.addEventListener('input', () => {
+        const fname = inp.value.trim();
+        if (existingNames.has(fname)) {
+            warn.textContent = `"${fname}" already exists — saving will overwrite it.`;
+            warn.style.display = '';
+            saveBtn.textContent = 'Overwrite';
+        } else {
+            warn.style.display = 'none';
+            saveBtn.textContent = 'Save';
+        }
+    });
+
+    saveBtn.addEventListener('click', async () => {
+        const fname = inp.value.trim();
+        if (!fname) { inp.focus(); return; }
+
+        if (existingNames.has(fname)) {
+            const existingEvent = versions.find(v => v.name === fname);
+            const eventName = existingEvent?.eventName || fname;
+
+            const confirmed = await new Promise(resolve => {
+                const backdrop = document.createElement('div');
+                backdrop.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999';
+
+                const modal = document.createElement('div');
+                modal.style.cssText = 'background:#fff;border-radius:8px;padding:24px;max-width:400px;box-shadow:0 4px 16px rgba(0,0,0,0.3)';
+
+                const heading = document.createElement('h3');
+                heading.textContent = 'Overwrite Event?';
+                heading.style.cssText = 'margin:0 0 16px 0;font-size:18px;color:#333';
+
+                const msg = document.createElement('div');
+                msg.innerHTML = `Warning: You are about to overwrite the event file <strong>"${fname}"</strong> for <strong>"${eventName}"</strong>.`;
+                msg.style.cssText = 'margin-bottom:24px;font-size:14px;line-height:1.5;color:#555';
+
+                const btnContainer = document.createElement('div');
+                btnContainer.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+
+                const cancelBtn2 = document.createElement('button');
+                cancelBtn2.textContent = 'Cancel';
+                cancelBtn2.style.cssText = 'padding:8px 16px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;font-size:14px';
+                cancelBtn2.addEventListener('click', () => { backdrop.remove(); resolve(false); });
+
+                const confirmBtn = document.createElement('button');
+                confirmBtn.textContent = 'Overwrite';
+                confirmBtn.style.cssText = 'padding:8px 16px;border:none;border-radius:4px;background:#d32f2f;color:#fff;cursor:pointer;font-size:14px;font-weight:bold';
+                confirmBtn.addEventListener('click', () => { backdrop.remove(); resolve(true); });
+
+                btnContainer.appendChild(cancelBtn2);
+                btnContainer.appendChild(confirmBtn);
+                modal.appendChild(heading);
+                modal.appendChild(msg);
+                modal.appendChild(btnContainer);
+                backdrop.appendChild(modal);
+                document.body.appendChild(backdrop);
+                confirmBtn.focus();
+            });
+
+            if (!confirmed) return;
+        }
+
+        saveBtn.disabled = true;
+        try {
+            const cfg = collectConfig();
+            const errors = validateConfig(cfg);
+            if (errors.length) { warn.textContent = errors[0]; warn.style.display = ''; saveBtn.disabled = false; return; }
+            const r = await fetch('?saveonly', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: fname, cfg })
+            });
+            const result = await r.json();
+            if (r.ok && result.ok) {
+                isDirty          = false;
+                hasServerChanges = false;
+                hasMapChanges    = false;
+                close();
+                setStatus(`Saved "${fname}" ✓`, 'ok', 2000);
+                setCurrentEvent(fname, cfg.event || '');
+            } else {
+                warn.textContent = result.error || 'Save failed';
+                warn.style.display = '';
+            }
+        } catch {
+            warn.textContent = 'Network error';
+            warn.style.display = '';
+        } finally { saveBtn.disabled = false; }
+    });
+
+    requestAnimationFrame(() => { inp.focus(); inp.select(); inp.dispatchEvent(new Event('input')); });
 }
 
 async function doSaveAs() {
@@ -2368,7 +2845,7 @@ async function doSaveAs() {
     cancelBtn.className = 'modal-cancel-btn';
     cancelBtn.textContent = 'Cancel';
 
-    const close = openModal('Save As New Event', body, [cancelBtn, saveBtn]);
+    const close = openModal('Save as Default Event', body, [cancelBtn, saveBtn]);
     cancelBtn.addEventListener('click', close);
 
     const existingNames = new Set(versions.map(v => v.name));
@@ -2716,8 +3193,602 @@ function hideErrors() {
     document.querySelectorAll('input.field-error').forEach(el => el.classList.remove('field-error'));
 }
 
+// ── GPX / KML / GeoJSON parsers ───────────────────────────────────────────────
+
+function parseGpxPoints(text) {
+    const doc = new DOMParser().parseFromString(text, 'text/xml');
+    return Array.from(doc.querySelectorAll('wpt')).map(wpt => ({
+        name: wpt.querySelector('name')?.textContent?.trim() || '',
+        lat:  parseFloat(wpt.getAttribute('lat')),
+        lon:  parseFloat(wpt.getAttribute('lon'))
+    })).filter(p => !isNaN(p.lat) && !isNaN(p.lon));
+}
+
+function parseKmlPoints(text) {
+    const doc = new DOMParser().parseFromString(text, 'text/xml');
+    const result = [];
+    doc.querySelectorAll('Placemark').forEach(pm => {
+        const pointEl = pm.querySelector('Point');
+        if (!pointEl) return;
+        const parts = (pointEl.querySelector('coordinates')?.textContent?.trim() || '').split(',');
+        if (parts.length < 2) return;
+        const lon = parseFloat(parts[0]), lat = parseFloat(parts[1]);
+        if (isNaN(lat) || isNaN(lon)) return;
+        result.push({ name: pm.querySelector('name')?.textContent?.trim() || '', lat, lon });
+    });
+    return result;
+}
+
+function parseGeoJsonPoints(text) {
+    let data;
+    try { data = JSON.parse(text); } catch { return []; }
+    const result = [];
+    const addFeature = f => {
+        if (f.geometry?.type !== 'Point' || !Array.isArray(f.geometry.coordinates)) return;
+        const [lon, lat] = f.geometry.coordinates;
+        if (isNaN(lat) || isNaN(lon)) return;
+        const p = f.properties || {};
+        result.push({ name: String(p.name ?? p.Name ?? p.title ?? p.label ?? ''), lat, lon });
+    };
+    if (data.type === 'FeatureCollection') (data.features || []).forEach(addFeature);
+    else if (data.type === 'Feature')      addFeature(data);
+    else if (Array.isArray(data)) {
+        data.forEach(item => {
+            const lat = parseFloat(item.lat ?? item.latitude ?? item.Lat ?? NaN);
+            const lon = parseFloat(item.lon ?? item.lng ?? item.longitude ?? item.Lon ?? NaN);
+            if (!isNaN(lat) && !isNaN(lon))
+                result.push({ name: String(item.name ?? item.Name ?? item.title ?? ''), lat, lon });
+        });
+    }
+    return result;
+}
+
+// ── Import / Export ───────────────────────────────────────────────────────────
+
+function yamlStr(s) {
+    s = String(s ?? '');
+    if (s === '') return "''";
+    if (/^[\[\]{}'\"!&*#%@|>,`]/.test(s) || s.includes(': ')) {
+        return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+    }
+    return s;
+}
+
+function downloadText(text, filename) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'text/yaml' }));
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+
+function exportFilename(type) {
+    const ev = (document.getElementById('f-event').value.trim() || 'export').replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '');
+    const d   = new Date();
+    const ds  = d.getFullYear() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
+    return ev + '_' + type + '_' + ds + '.yaml';
+}
+
+function buildExportHeader(type) {
+    const ev  = document.getElementById('f-event').value.trim();
+    const ts  = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
+    const lines = [
+        '# APRS Tracker Map — ' + type + ' export',
+        '# type: ' + type,
+        ev ? '# event: ' + ev : null,
+        '# exported: ' + ts,
+        '# source: MARS APRS Map Admin',
+        '',
+    ];
+    return lines.filter(l => l !== null).join('\n');
+}
+
+function buildSectionYaml(type, cfg) {
+    const ys = yamlStr;
+    const L = [];
+    if (type === 'trackers') {
+        L.push('trackers:');
+        (cfg.trackers || []).forEach(t => {
+            L.push('  - callsign: ' + ys(t.callsign || ''));
+            L.push('    id: '       + ys(t.id       || ''));
+            L.push('    name: '     + ys(t.name     || ''));
+        });
+    } else if (type === 'aidstations') {
+        L.push('aidstations:');
+        (cfg.aidstations || []).forEach(g => {
+            L.push('  - name: ' + ys(g.name || ''));
+            L.push('    lat: '  + (isNaN(g.lat) ? 0 : g.lat));
+            L.push('    lon: '  + (isNaN(g.lon) ? 0 : g.lon));
+        });
+    } else if (type === 'igates') {
+        L.push('igates:');
+        (cfg.igates || []).forEach(g => {
+            L.push('  - name: ' + ys(g.name || ''));
+            L.push('    lat: '  + (isNaN(g.lat) ? 0 : g.lat));
+            L.push('    lon: '  + (isNaN(g.lon) ? 0 : g.lon));
+        });
+    } else if (type === 'courses') {
+        L.push('courses:');
+        (cfg.courses || []).forEach(c => {
+            L.push('  - name: ' + ys(c.name || ''));
+            L.push('    file: ' + ys(c.file || ''));
+            if (c.color) L.push('    color: ' + ys(c.color));
+        });
+    } else if (type === 'event') {
+        const ev = (cfg.event || '').trim();
+        if (ev) { L.push('event: ' + ys(ev)); L.push(''); }
+        const legend = (cfg.legend || '').trim();
+        if (legend) {
+            const esc = legend.replace(/\\/g,'\\\\').replace(/"/g,'\\"').replace(/\n/g,'\\n');
+            L.push('legend: "' + esc + '"'); L.push('');
+        }
+        L.push('trackers:');
+        (cfg.trackers || []).forEach(t => {
+            L.push('  - callsign: ' + ys(t.callsign || ''));
+            L.push('    id: '       + ys(t.id       || ''));
+            L.push('    name: '     + ys(t.name     || ''));
+        });
+        L.push('');
+        const style = cfg.tracker_style || {};
+        L.push('tracker_style:');
+        L.push('  icon: '        + ys(style.icon        || 'circle'));
+        L.push('  size: '        + (parseInt(style.size) || 8));
+        L.push('  label_color: ' + ys(style.label_color || '#000000'));
+        L.push('');
+        const map = cfg.map || {};
+        L.push('map:');
+        L.push('  lat: '  + (parseFloat(map.lat)  || 0));
+        L.push('  lon: '  + (parseFloat(map.lon)  || 0));
+        L.push('  zoom: ' + (parseInt(map.zoom)   || 10));
+        L.push('');
+        L.push('backgrounds:');
+        (cfg.backgrounds || []).forEach(b => {
+            L.push('  - name: '        + ys(b.name  || ''));
+            L.push('    url: '         + ys(b.url   || ''));
+            L.push('    attribution: ' + '"' + (b.attribution || '').replace(/"/g,"'") + '"');
+        });
+        if ((cfg.background_url || '').trim()) L.push('background_url: ' + ys(cfg.background_url));
+        L.push('');
+        L.push('courses:');
+        (cfg.courses || []).forEach(c => {
+            L.push('  - name: ' + ys(c.name || ''));
+            L.push('    file: ' + ys(c.file || ''));
+            if (c.color) L.push('    color: ' + ys(c.color));
+        });
+        L.push('');
+        L.push('aidstations:');
+        (cfg.aidstations || []).forEach(g => {
+            L.push('  - name: ' + ys(g.name || ''));
+            L.push('    lat: '  + (isNaN(g.lat) ? 0 : g.lat));
+            L.push('    lon: '  + (isNaN(g.lon) ? 0 : g.lon));
+        });
+        L.push('');
+        L.push('igates:');
+        (cfg.igates || []).forEach(g => {
+            L.push('  - name: ' + ys(g.name || ''));
+            L.push('    lat: '  + (isNaN(g.lat) ? 0 : g.lat));
+            L.push('    lon: '  + (isNaN(g.lon) ? 0 : g.lon));
+        });
+        L.push('');
+    }
+    return L.join('\n');
+}
+
+function exportSection(type) {
+    const cfg  = collectConfig();
+    const text = buildExportHeader(type) + buildSectionYaml(type, cfg);
+    downloadText(text, exportFilename(type));
+}
+
+// Client-side YAML scalar parser — mirrors PHP yamlScalar()
+function jsYamlScalar(s) {
+    s = String(s ?? '').trim();
+    if (!s || s === "''" || s === '""') return '';
+    if (s.length >= 2) {
+        if (s[0] === '"' && s[s.length-1] === '"') {
+            return s.slice(1,-1).replace(/\\n/g,'\n').replace(/\\"/g,'"').replace(/\\\\/g,'\\');
+        }
+        if (s[0] === "'" && s[s.length-1] === "'") return s.slice(1,-1);
+    }
+    if (s !== '' && !isNaN(s)) return Number(s);
+    return s;
+}
+
+// Parse a section export YAML: returns array of items for given type key
+function parseExportedSectionYaml(text, key) {
+    const lines  = text.split('\n');
+    const items  = [];
+    let item     = null;
+    let inSec    = false;
+
+    for (const line of lines) {
+        const tr = line.trim();
+        if (!tr || tr[0] === '#') continue;
+
+        if (!inSec) {
+            if (tr === key + ':') { inSec = true; }
+            continue;
+        }
+        // New top-level section ends this one
+        if (!/^\s/.test(line) && /^\w+\s*:/.test(line)) break;
+
+        const lm = line.match(/^\s+-\s+(\w+)\s*:\s*(.*)$/);
+        if (lm) {
+            if (item) items.push(item);
+            item = { [lm[1]]: jsYamlScalar(lm[2]) };
+            continue;
+        }
+        const kv = line.match(/^\s+(\w+)\s*:\s*(.*)$/);
+        if (kv && item) item[kv[1]] = jsYamlScalar(kv[2]);
+    }
+    if (item) items.push(item);
+    return items;
+}
+
+// Parse a full event YAML (mirrors PHP parseConfigYaml)
+function parseExportedEventYaml(text) {
+    const result = {
+        event: '', legend: '', tracker_style: {}, map: {},
+        trackers: [], backgrounds: [], background_url: '',
+        courses: [], aidstations: [], igates: []
+    };
+    const lines = text.split('\n');
+    let section = null, item = null;
+    const listSections = new Set(['trackers','backgrounds','courses','aidstations','igates']);
+
+    for (const line of lines) {
+        const tr = line.trim();
+        if (!tr || tr[0] === '#') continue;
+
+        if (!/^\s/.test(line)) {
+            const m = line.match(/^(\w+)\s*:\s*(.*)$/);
+            if (!m) continue;
+            const val = m[2].trim();
+            if (val === '') {
+                if (item !== null && section && listSections.has(section)) {
+                    result[section].push(item); item = null;
+                }
+                section = m[1];
+                if (section === 'map' || section === 'tracker_style') result[section] = {};
+                else if (listSections.has(section)) result[section] = result[section] || [];
+            } else {
+                result[m[1]] = jsYamlScalar(val);
+            }
+            continue;
+        }
+        if (!section) continue;
+
+        const lm = line.match(/^\s+-\s+(\w+)\s*:\s*(.*)$/);
+        if (lm) {
+            if (item !== null) result[section].push(item);
+            item = { [lm[1]]: jsYamlScalar(lm[2]) };
+            continue;
+        }
+        const kv = line.match(/^\s+(\w+)\s*:\s*(.*)$/);
+        if (kv) {
+            if (section === 'map' || section === 'tracker_style') {
+                result[section][kv[1]] = jsYamlScalar(kv[2]);
+            } else if (item !== null) {
+                item[kv[1]] = jsYamlScalar(kv[2]);
+            }
+        }
+    }
+    if (item !== null && section && listSections.has(section)) result[section].push(item);
+    return result;
+}
+
+function importSectionData(type, cfg) {
+    if (type === 'event') {
+        populateForm(cfg);
+        originalConfig = cfg;
+    } else if (type === 'trackers') {
+        const existing = new Set([...document.querySelectorAll('#trackers-list .f-cs')].map(el => el.value.trim()));
+        const toAdd = (cfg.trackers || []).filter(t => !existing.has((t.callsign || '').trim()));
+        toAdd.forEach(t => appendTracker(t, dragAdder['trackers-list']));
+        if (originalConfig) originalConfig = { ...originalConfig, trackers: [...(originalConfig.trackers || []), ...toAdd] };
+    } else if (type === 'aidstations') {
+        const existing = new Set([...document.querySelectorAll('#aidstations-list .f-aname')].map(el => el.value.trim()));
+        const toAdd = (cfg.aidstations || []).filter(g => !existing.has((g.name || '').trim()));
+        toAdd.forEach(g => appendAid(g, dragAdder['aidstations-list']));
+        if (originalConfig) originalConfig = { ...originalConfig, aidstations: [...(originalConfig.aidstations || []), ...toAdd] };
+    } else if (type === 'igates') {
+        const existing = new Set([...document.querySelectorAll('#igates-list .f-iname')].map(el => el.value.trim()));
+        const toAdd = (cfg.igates || []).filter(g => !existing.has((g.name || '').trim()));
+        toAdd.forEach(g => appendIgate(g, dragAdder['igates-list']));
+        if (originalConfig) originalConfig = { ...originalConfig, igates: [...(originalConfig.igates || []), ...toAdd] };
+    } else if (type === 'courses') {
+        const existing = new Set([...document.querySelectorAll('#courses-list .f-file')].map(el => el.value.trim()));
+        const toAdd = (cfg.courses || []).filter(c => !existing.has((c.file || '').trim()));
+        toAdd.forEach(c => appendCourse(c, dragAdder['courses-list']));
+        if (originalConfig) originalConfig = { ...originalConfig, courses: [...(originalConfig.courses || []), ...toAdd] };
+    }
+    // Force isDefault=false on exit so the main page doesn't overwrite imported data
+    // by calling loadConfig() (which would fetch the unchanged server config).
+    currentFilename = '';
+    markDirty(true);
+}
+
+function importSection(type) {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = '.yaml,.yml';
+    inp.onchange = async () => {
+        const file = inp.files[0];
+        if (!file) return;
+        const text = await file.text();
+
+        // Find # type: line in first 15 lines
+        const headLines = text.split('\n').slice(0, 15);
+        const typeMatch = headLines.map(l => l.match(/^#\s*type:\s*(\S+)/)).find(Boolean);
+        const fileType  = typeMatch ? typeMatch[1] : null;
+
+        const typeLabels = { event: 'entire event', trackers: 'trackers', aidstations: 'aid stations', igates: 'iGates', courses: 'courses' };
+        const targetLabel = typeLabels[type] || type;
+
+        const proceed = () => {
+            if (type === 'event') {
+                const cfg = parseExportedEventYaml(text);
+                importSectionData('event', cfg);
+            } else {
+                const items = parseExportedSectionYaml(text, type);
+                const cfg   = { [type]: items };
+                importSectionData(type, cfg);
+            }
+            markDirty(true);
+            const body = document.createElement('div');
+            body.innerHTML = '<p style="margin:0;font-size:14px;line-height:1.5">Upload complete. The data have not been saved on the server.</p>';
+            const okBtn = document.createElement('button'); okBtn.className = 'save-btn'; okBtn.textContent = 'OK';
+            const close = openModal('Upload Complete', body, [okBtn]);
+            okBtn.addEventListener('click', close);
+        };
+
+        if (!fileType) {
+            const body = document.createElement('div');
+            body.innerHTML = `<p style="margin:0;font-size:14px;line-height:1.5">This file has no <code># type:</code> line — it may not be a valid export file. Import as <strong>${targetLabel}</strong> anyway?</p>`;
+            const okBtn = document.createElement('button'); okBtn.className = 'save-btn'; okBtn.textContent = 'Import Anyway';
+            const cancelBtn = document.createElement('button'); cancelBtn.className = 'modal-cancel-btn'; cancelBtn.textContent = 'Cancel';
+            const close = openModal('No Type Indicator', body, [cancelBtn, okBtn]);
+            cancelBtn.addEventListener('click', close);
+            okBtn.addEventListener('click', () => { close(); proceed(); });
+        } else if (fileType !== type) {
+            const fileLabel = typeLabels[fileType] || fileType;
+            const body = document.createElement('div');
+            body.innerHTML = `<p style="margin:0;font-size:14px;line-height:1.5">This file is a <strong>${fileLabel}</strong> export and cannot be imported into <strong>${targetLabel}</strong>.</p>`;
+            const cancelBtn = document.createElement('button'); cancelBtn.className = 'modal-cancel-btn'; cancelBtn.textContent = 'Cancel Upload';
+            const close = openModal('Type Mismatch', body, [cancelBtn]);
+            cancelBtn.addEventListener('click', close);
+        } else {
+            proceed();
+        }
+    };
+    inp.click();
+}
+
+// Import courses: accepts YAML (course list) or a location file (.gpx/.kml/.geojson/.json).
+// A location file is uploaded to the server and automatically added as a new course entry.
+async function importCoursesSection() {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = '.yaml,.yml,.gpx,.kml,.geojson,.json'; inp.multiple = true;
+    inp.onchange = async () => {
+        const files = Array.from(inp.files);
+        if (!files.length) return;
+
+        const locationExts = new Set(['gpx', 'kml', 'geojson', 'json']);
+        const locationFiles = files.filter(f => locationExts.has(f.name.split('.').pop().toLowerCase()));
+        const yamlFiles    = files.filter(f => !locationExts.has(f.name.split('.').pop().toLowerCase()));
+
+        let addedCount = 0;
+
+        // Upload any location files and create course entries for them
+        if (locationFiles.length) {
+            const errors = [];
+            for (const file of locationFiles) {
+                const fd = new FormData();
+                fd.append('file', file);
+                try {
+                    const r   = await fetch('?upload', { method: 'POST', body: fd });
+                    const res = await r.json();
+                    if (r.ok && res.ok) {
+                        const name = file.name.replace(/\.[^.]+$/, '');
+                        appendCourse({ name, file: res.file }, dragAdder['courses-list']);
+                        addedCount++;
+                    } else {
+                        errors.push(res.error || `Failed: ${file.name}`);
+                    }
+                } catch { errors.push(`Network error: ${file.name}`); }
+            }
+            await refreshLocationFiles();
+            refreshAllFileSelects();
+            if (errors.length) {
+                const body = document.createElement('div');
+                body.innerHTML = `<p style="margin:0;font-size:14px;line-height:1.5">Some files could not be uploaded:<br>${errors.map(e => `<b>${e}</b>`).join('<br>')}</p>`;
+                const okBtn = document.createElement('button'); okBtn.className = 'save-btn'; okBtn.textContent = 'OK';
+                const close = openModal('Upload Error', body, [okBtn]);
+                okBtn.addEventListener('click', close);
+                if (!addedCount) return;
+            }
+        }
+
+        // Process any YAML files
+        for (const file of yamlFiles) {
+            const text = await file.text();
+            const headLines = text.split('\n').slice(0, 15);
+            const typeMatch = headLines.map(l => l.match(/^#\s*type:\s*(\S+)/)).find(Boolean);
+            const fileType  = typeMatch ? typeMatch[1] : null;
+
+            const doYaml = () => {
+                const items = parseExportedSectionYaml(text, 'courses');
+                importSectionData('courses', { courses: items });
+                addedCount += items.length;
+            };
+
+            if (!fileType) {
+                await new Promise(resolve => {
+                    const body = document.createElement('div');
+                    body.innerHTML = `<p style="margin:0;font-size:14px;line-height:1.5">The file <b>${file.name}</b> has no <code># type:</code> line. Import as courses anyway?</p>`;
+                    const okBtn = document.createElement('button'); okBtn.className = 'save-btn'; okBtn.textContent = 'Import Anyway';
+                    const cancelBtn = document.createElement('button'); cancelBtn.className = 'modal-cancel-btn'; cancelBtn.textContent = 'Skip';
+                    const close = openModal('No Type Indicator', body, [cancelBtn, okBtn]);
+                    cancelBtn.addEventListener('click', () => { close(); resolve(); });
+                    okBtn.addEventListener('click', () => { close(); doYaml(); resolve(); });
+                });
+            } else if (fileType !== 'courses') {
+                const body = document.createElement('div');
+                body.innerHTML = `<p style="margin:0;font-size:14px;line-height:1.5"><b>${file.name}</b> is a <b>${fileType}</b> export, not a courses export — skipped.</p>`;
+                const okBtn = document.createElement('button'); okBtn.className = 'modal-cancel-btn'; okBtn.textContent = 'OK';
+                await new Promise(resolve => {
+                    const close = openModal('Type Mismatch', body, [okBtn]);
+                    okBtn.addEventListener('click', () => { close(); resolve(); });
+                });
+            } else {
+                doYaml();
+            }
+        }
+
+        if (addedCount) {
+            markDirty(true);
+            const body = document.createElement('div');
+            body.innerHTML = `<p style="margin:0;font-size:14px;line-height:1.5">Added ${addedCount} course${addedCount !== 1 ? 's' : ''}. Changes have not been saved to the server yet.</p>`;
+            const okBtn = document.createElement('button'); okBtn.className = 'save-btn'; okBtn.textContent = 'OK';
+            const close = openModal('Import Complete', body, [okBtn]);
+            okBtn.addEventListener('click', close);
+        }
+    };
+    inp.click();
+}
+
+// ── GPX export / geo import for iGates & Aid Stations ────────────────────────
+
+function exportGpx(type) {
+    const cfg  = collectConfig();
+    const items = cfg[type] || [];
+    const ev   = (document.getElementById('f-event').value.trim() || 'export').replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '');
+    const d    = new Date();
+    const ds   = d.getFullYear() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
+    const esc  = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<gpx version="1.1" creator="MARS APRS Map Admin" xmlns="http://www.topografix.com/GPX/1/1">',
+    ];
+    items.forEach(item => {
+        if (isNaN(item.lat) || isNaN(item.lon)) return;
+        lines.push(`  <wpt lat="${item.lat}" lon="${item.lon}">`);
+        lines.push(`    <name>${esc(item.name || '')}</name>`);
+        lines.push('  </wpt>');
+    });
+    lines.push('</gpx>');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'application/gpx+xml' }));
+    a.download = ev + '_' + type + '_' + ds + '.gpx';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+
+// Show a small dropdown under btn with YAML and GPX export options.
+function showExportMenu(btn, type) {
+    const existing = document.getElementById('export-menu');
+    if (existing) { existing.remove(); return; }
+    const menu = document.createElement('div');
+    menu.id = 'export-menu';
+    menu.style.cssText = 'position:absolute;background:#fff;border:1px solid #ccc;border-radius:4px;' +
+        'box-shadow:0 2px 8px rgba(0,0,0,.18);z-index:9000;min-width:130px;overflow:hidden;';
+    [
+        { label: 'Export as YAML', action: () => exportSection(type) },
+        { label: 'Export as GPX',  action: () => exportGpx(type) },
+    ].forEach(opt => {
+        const item = document.createElement('button');
+        item.type = 'button'; item.textContent = opt.label;
+        item.style.cssText = 'display:block;width:100%;padding:7px 14px;background:none;border:none;' +
+            'border-bottom:1px solid #eee;text-align:left;cursor:pointer;font-size:13px;white-space:nowrap;';
+        item.addEventListener('mouseenter', () => item.style.background = '#f0f7ff');
+        item.addEventListener('mouseleave', () => item.style.background = 'none');
+        item.addEventListener('click', () => { menu.remove(); opt.action(); });
+        menu.appendChild(item);
+    });
+    menu.lastChild.style.borderBottom = 'none';
+    document.body.appendChild(menu);
+    const rect = btn.getBoundingClientRect();
+    menu.style.top  = (rect.bottom + window.scrollY + 2) + 'px';
+    menu.style.left = rect.left + 'px';
+    const dismiss = e => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('click', dismiss, true); } };
+    setTimeout(() => document.addEventListener('click', dismiss, true), 0);
+}
+
+// Import iGates or Aid Stations from YAML, GPX, KML, JSON, or GeoJSON.
+async function importGeoSection(type) {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = '.yaml,.yml,.gpx,.kml,.json,.geojson'; inp.multiple = true;
+    inp.onchange = async () => {
+        const files = Array.from(inp.files);
+        if (!files.length) return;
+        const locationExts = new Set(['gpx', 'kml', 'geojson', 'json']);
+        const typeLabels   = { aidstations: 'aid stations', igates: 'iGates' };
+        const targetLabel  = typeLabels[type] || type;
+        let processed = false;
+        const warnings = [];
+
+        for (const file of files) {
+            const text = await file.text();
+            const ext  = file.name.split('.').pop().toLowerCase();
+
+            if (locationExts.has(ext)) {
+                let points = [];
+                if (ext === 'gpx')      points = parseGpxPoints(text);
+                else if (ext === 'kml') points = parseKmlPoints(text);
+                else                    points = parseGeoJsonPoints(text);
+
+                if (!points.length) {
+                    warnings.push(`${file.name}: no recognizable waypoints found`);
+                } else {
+                    importSectionData(type, { [type]: points });
+                    processed = true;
+                }
+            } else {
+                // YAML — same type-checking logic as importSection
+                const headLines = text.split('\n').slice(0, 15);
+                const typeMatch = headLines.map(l => l.match(/^#\s*type:\s*(\S+)/)).find(Boolean);
+                const fileType  = typeMatch ? typeMatch[1] : null;
+                const doYaml   = () => {
+                    const items = parseExportedSectionYaml(text, type);
+                    if (items.length) { importSectionData(type, { [type]: items }); processed = true; }
+                };
+                if (!fileType) {
+                    await new Promise(resolve => {
+                        const body = document.createElement('div');
+                        body.innerHTML = `<p style="margin:0;font-size:14px;line-height:1.5">No <code># type:</code> line in <b>${file.name}</b>. Import as <strong>${targetLabel}</strong> anyway?</p>`;
+                        const ok = document.createElement('button'); ok.className = 'save-btn'; ok.textContent = 'Import Anyway';
+                        const cancel = document.createElement('button'); cancel.className = 'modal-cancel-btn'; cancel.textContent = 'Skip';
+                        const close = openModal('No Type Indicator', body, [cancel, ok]);
+                        cancel.addEventListener('click', () => { close(); resolve(); });
+                        ok.addEventListener('click', () => { close(); doYaml(); resolve(); });
+                    });
+                } else if (fileType !== type) {
+                    warnings.push(`${file.name}: is a "${fileType}" export, not ${targetLabel} — skipped`);
+                } else {
+                    doYaml();
+                }
+            }
+        }
+
+        if (warnings.length) {
+            const body = document.createElement('div');
+            body.innerHTML = `<ul style="margin:0;font-size:13px;padding-left:18px;line-height:1.8">${warnings.map(w => `<li>${w}</li>`).join('')}</ul>`;
+            const ok = document.createElement('button'); ok.className = 'modal-cancel-btn'; ok.textContent = 'OK';
+            const close = openModal('Import Warnings', body, [ok]);
+            ok.addEventListener('click', close);
+        } else if (processed) {
+            const body = document.createElement('div');
+            body.innerHTML = '<p style="margin:0;font-size:14px;line-height:1.5">Import complete. Changes have not been saved to the server yet.</p>';
+            const ok = document.createElement('button'); ok.className = 'save-btn'; ok.textContent = 'OK';
+            const close = openModal('Import Complete', body, [ok]);
+            ok.addEventListener('click', close);
+        }
+    };
+    inp.click();
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
+attachLatLonPaste(document.getElementById('map-lat'), document.getElementById('map-lon'));
 doLoad();
 </script>
 </body>

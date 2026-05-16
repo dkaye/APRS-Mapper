@@ -1,6 +1,6 @@
 # APRS Tracker Map
 
-**Version 1.8 beta**
+**Version 1.9 beta**
 
 Real-time APRS position tracking displayed on an interactive Leaflet map. A PHP daemon
 connects to the APRS-IS network, decodes incoming packets, and writes position data to a
@@ -112,7 +112,11 @@ backgrounds:
   - name: OpenStreetMap
     url: https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png
     attribution: "&copy; <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a> contributors"
+    max_zoom: 19
 ```
+
+The optional `max_zoom` field caps the Leaflet zoom level when this tile layer is active,
+preventing the map from zooming past the level the provider supports. If omitted, defaults to 19.
 
 ### `courses`
 
@@ -295,14 +299,14 @@ Tap the gear icon to open the drawer. Sections are collapsible accordions; tap a
 | **Courses** | Click a name to toggle the overlay on/off. Click the colour swatch to change the course colour. |
 | **Aid Stations** | Click to zoom to that location and show a name label; click again to reset. |
 | **iGates** | Same as aid stations. |
-| **Backgrounds** | Click to switch the base tile layer. Active layer shows ✓. |
+| **Backgrounds** | Click to switch the base tile layer. Active layer shows ✓. Switching to a layer with a lower `max_zoom` automatically zooms out if needed. |
 | **Reset Map** | Restores default centre and zoom; clears all selections and the Origin marker. |
 | **Save Map** | Saves the current map position and zoom as a personal browser-local default. Persists across sessions; overrides the server's map default. |
 | **Admin** | Opens the admin configuration page. |
 | **Kiosk Mode** | Switches the UI layout to kiosk mode (see below). |
 | **Clients** | Opens a modal showing Apache worker stats and connected client IPs. |
 
-### Tracker Clicks (three-click cycle)
+### Tracker Clicks (desktop — three-click cycle)
 
 1. **First click** — Blinks the tracker dot on the map and in the sidebar for 5 seconds.
    Displays the tracker's beacon history: up to 5 recent positions as small dots connected
@@ -314,6 +318,16 @@ Tap the gear icon to open the drawer. Sections are collapsible accordions; tap a
 Clicking a different tracker restarts the cycle for that tracker and clears the previous
 tracker's history. If a tracker has never reported a position, a toast notification is
 shown instead of zooming.
+
+### Tracker Touches (mobile — tap vs. long press)
+
+On touch devices the tracker list in the drawer uses two gestures:
+
+- **Short tap** — Blinks the tracker and shows breadcrumb history on the map. The drawer
+  stays open. Tapping the same tracker again repeats the blink; there is no second- or
+  third-tap progression.
+- **Long press (≥ 500 ms)** — Same as a short tap, and additionally closes the drawer
+  and zooms the map to the tracker's last known position (zoom 15).
 
 ### Origin, Distance, and Bearing
 
@@ -358,7 +372,7 @@ The admin page edits all sections of the active event's configuration:
 - **Trackers** — callsign, ID, name; add, remove, reorder
 - **Tracker Style** — icon shape, size, label colour
 - **Map Default View** — default centre latitude/longitude and zoom level
-- **Backgrounds** — tile layer name, URL template, and attribution HTML
+- **Backgrounds** — tile layer name, URL template, attribution HTML, and optional max zoom level
 - **Courses** — name, file path, colour; add via Manage Location Files
 - **Aid Stations** — name, latitude, longitude
 - **iGates** — name, latitude, longitude
@@ -369,8 +383,13 @@ The admin page edits all sections of the active event's configuration:
 - **Update** — Saves local-only sections to localStorage and returns to the map. Server
   polling is suppressed so the locally applied config persists. Does not write to the
   server.
-- **Save for All Users…** — Writes the full configuration to the active event's
-  `event.yaml` via `?saveversion`. Daemon and browsers pick up changes within ~5 seconds.
+- **Save** — Writes the full configuration to the current event's `event.yaml` via
+  `?saveonly`. Does **not** change which event is the default (the `config.yaml` symlink
+  is left unchanged). Daemon and browsers polling the default event are unaffected unless
+  the current event happens to already be the default.
+- **Save as Default Event** — Writes the full configuration to a named event's `event.yaml`
+  via `?saveversion` and re-points `config.yaml` to that event, making it the new default.
+  Daemon and all browsers pick up changes within ~5 seconds.
 - **Exit** — Leaves the admin page without saving.
 - **Sign Out** — Destroys the session.
 
@@ -385,8 +404,9 @@ The admin tracks which sections have been modified. Sections are classified:
 
 If Update is clicked when a server-only section has been edited, a modal warns the user.
 Choosing **OK** saves only the local sections and discards the server-only edits in
-localStorage; the form still shows the edits so the user can continue to **Save for All
-Users**. Choosing **Save for All Users…** opens the full save dialog immediately.
+localStorage; the form still shows the edits so the user can continue to **Save** or
+**Save as Default Event**. Choosing **Save as Default Event** opens the full save dialog
+immediately.
 
 Map Default View changes saved via Update also write to `aprs_default_view` in localStorage,
 so the new map default takes effect on the main map page immediately (same effect as the
@@ -397,6 +417,11 @@ localStorage if a locally-applied event is active).
 
 Latitude and longitude fields suppress the browser's number spinners. Values are validated
 before the save request is sent; out-of-range values are reported per field.
+
+**Smart lat/lon paste** — pasting a combined coordinate string (e.g., `37.7749, -122.4194`
+copied from Google Maps) into either the latitude or longitude field automatically splits it
+and populates both fields. Supported separators: comma, semicolon, slash, and space.
+N/S/E/W direction letters are recognised.
 
 ### Event Management
 
@@ -413,6 +438,63 @@ into the editor for local review. Clicking **Load & Activate** makes it the acti
 immediately (updates the symlink and touches the file so the daemon reloads within 5 s).
 
 **Delete** (in the Load dialog) permanently removes the event directory.
+
+### Import / Export
+
+Section headers have small **↓** (export) and **↑** (import) buttons. Supported formats
+by section:
+
+| Section | Export | Import |
+|---------|--------|--------|
+| **Event** | YAML | YAML |
+| **Trackers** | YAML | YAML |
+| **Aid Stations** | YAML, GPX | YAML, GPX, KML, GeoJSON, JSON |
+| **iGates** | YAML, GPX | YAML, GPX, KML, GeoJSON, JSON |
+| **Courses** | YAML | YAML, GPX, KML, GeoJSON, JSON |
+
+**YAML export** — downloads the section as a `.yaml` file. The filename includes the event
+name and today's date (e.g., `Dipsea_2026_trackers_20260614.yaml`). The file starts with a
+header block identifying the type, event, and export timestamp. An **Event** export writes
+the complete configuration (all sections).
+
+**GPX export** (Aid Stations and iGates) — clicking **↓** shows a dropdown with **Export as
+YAML** and **Export as GPX**. The GPX file contains one `<wpt>` element per entry with the
+name, latitude, and longitude.
+
+**YAML import** — opens a file picker, reads the selected file, and merges it into the form.
+The import checks the `# type:` comment in the file header:
+- If the type matches the target section, the import proceeds silently.
+- If no `# type:` line is found, a confirmation dialog allows the import to proceed anyway.
+- If the type does not match, the import is blocked with an error dialog.
+
+**Location file import** (Aid Stations, iGates, Courses) — also accepts `.gpx`, `.kml`,
+`.geojson`, and `.json` files. Multiple files may be selected at once.
+- GPX: `<wpt>` waypoints are imported as named entries (name, lat, lon).
+- KML: `<Placemark>` elements containing a `<Point>` are imported.
+- GeoJSON/JSON: `Point` features are imported; plain arrays of objects with `lat`/`lon`
+  properties are also supported.
+
+For **Courses**: a location file import uploads the file to the current event directory and
+adds a course entry with the filename (minus extension) as the default name.
+
+**Section import deduplication** — entries already present are skipped. Deduplication key:
+callsign for trackers, name for aid stations and iGates, file path for courses. Existing
+entries are never removed or modified.
+
+Importing does not save to the server. Use **Save for All Users…** after importing to persist
+the changes.
+
+### Tile Provider Browser
+
+The **⊞** button in the Map Backgrounds section header opens a modal grid of all free
+Leaflet tile providers (from leaflet-extras.github.io/leaflet-providers). Each tile
+provider is shown with a thumbnail preview image. Providers already present in the current
+event's background list are marked with an "Added" badge. Clicking any provider inserts it
+into the Backgrounds section with its name, URL template, attribution, and `max_zoom`
+pre-filled.
+
+The separate **Add Background** button populates from the server's background library
+(tile layers already used in other events). See `?bglib` in the API section.
 
 ### Manage Location Files
 
@@ -433,6 +515,26 @@ Supported extensions: `.gpx` `.kml` `.geojson` `.json`
 ## API Endpoints — `index.php`
 
 All endpoints return `Cache-Control: no-store` unless noted.
+
+### Live Polling Architecture
+
+The browser polls the server every 5 seconds via `?json`, but only under these conditions:
+
+1. The client is viewing the **default event** (not a locally loaded alternate event).
+2. The client has **not edited the tracker list** locally (the `_localTrackerEdited` flag is
+   unset in the stored config).
+
+When these conditions are met, only the tracker positions and timestamps are updated from
+the poll response. No other sections (backgrounds, courses, aid stations, iGates, legend,
+map defaults) are overwritten by polls. Local edits to these sections persist in
+`localStorage` until the page is refreshed or the user manually loads from the server.
+
+If a locally applied config (from the admin **Update** button) is present in `localStorage`
+when the page loads, it is applied immediately on first render. The `?json` poll still runs
+every 5 seconds to update tracker state, but the stored config is never replaced by a
+server-config poll.
+
+---
 
 ### `GET ?json`
 
@@ -521,12 +623,17 @@ Returns a list of all saved events sorted newest-first.
 ]
 ```
 
-### `POST ?saveversion`
+### `POST ?saveonly`
 
 Accepts `{ "name": "<EventName>", "cfg": { ... } }`. Creates `events/<EventName>/` if it
 doesn't exist, copies any cross-event course files into the target directory, reconciles
-the courses section against the directory, writes `event.yaml`, and re-points `config.yaml`
-to the new event. Returns `{"ok": true}`.
+the courses section against the directory, and writes `event.yaml`. Does **not** update the
+`config.yaml` symlink. Returns `{"ok": true}`.
+
+### `POST ?saveversion`
+
+Accepts `{ "name": "<EventName>", "cfg": { ... } }`. Same as `?saveonly`, and additionally
+re-points `config.yaml` to the new event, making it the default. Returns `{"ok": true}`.
 
 ### `GET ?loadversion&name=<EventName>`
 

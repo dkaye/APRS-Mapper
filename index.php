@@ -240,14 +240,21 @@ body { display: flex; }
 #sidebar-footer {
     flex-shrink: 0; padding: 0 8px 10px;
 }
-.section-heading {
-    font-size: 13px; color: #555; text-transform: uppercase;
-    letter-spacing: 0.05em; margin-bottom: 3px;
-    display: flex; justify-content: space-between; align-items: center;
+.sec-hdr {
+    display: flex; align-items: center; justify-content: space-between;
+    width: 100%; padding: 0 6px; min-height: 26px;
+    background: #eaeaea; border: none; border-top: 1px solid #ccc;
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .06em; font-family: inherit; color: #666;
+    cursor: pointer; text-align: left;
 }
-.section-heading.top   { margin-top: 0; }
-.section-collapsed { display: none !important; }
-.section-heading.below { margin-top: 8px; }
+.sec-hdr:first-child { border-top: none; }
+.sec-hdr:hover, .sec-hdr:active { background: #e0e0e0; }
+.sec-chevron {
+    font-size: 9px; color: #bbb; display: inline-block;
+    transition: transform 0.18s;
+}
+.sec-hdr.open .sec-chevron { transform: rotate(90deg); }
 .section-divider { border: none; border-top: 1px solid #ccc; margin: 6px 0 4px; }
 
 .legend-item {
@@ -274,17 +281,15 @@ body { display: flex; }
 .course-name  { flex: 1; }
 .course-name:hover { text-decoration: underline; }
 .course-color-input { position: absolute; width: 0; height: 0; border: none; padding: 0; overflow: hidden; }
-.course-checkbox, .bg-checkbox, .section-toggle {
+.course-checkbox, .bg-checkbox {
     appearance: none; -webkit-appearance: none;
     width: 14px; height: 14px; flex-shrink: 0; margin: 0;
     border: 1.5px solid #aaa; border-radius: 2px; background: #fff;
 }
 .course-checkbox { cursor: pointer; }
 .bg-checkbox     { pointer-events: none; }
-.section-toggle  { cursor: pointer; }
 .course-checkbox:checked,
-.bg-checkbox:checked,
-.section-toggle:checked {
+.bg-checkbox:checked {
     border-color: #aaa;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpolyline points='1.5,6 4.5,9.5 10.5,2.5' stroke='%23aaa' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     background-repeat: no-repeat; background-position: center; background-size: 10px;
@@ -333,7 +338,7 @@ body { display: flex; }
     .sidebar-btn-row { gap: 6px; margin-top: 10px; }
     .sidebar-btn-row:first-of-type { margin-top: 18px; }
     .sidebar-btn-row:last-of-type { margin-top: 10px; }
-    .course-checkbox, .bg-checkbox, .section-toggle { width: 18px; height: 18px; }
+    .course-checkbox, .bg-checkbox { width: 18px; height: 18px; }
 }
 /* Portrait, larger tablets (820px+): slightly generous rows */
 @media (min-width: 820px) and (max-width: 1024px) and (orientation: portrait) {
@@ -388,6 +393,17 @@ body { display: flex; }
     .leaflet-top                  { top:    10px; }
     .leaflet-bottom.leaflet-right { bottom: 10px; }
     .leaflet-bottom.leaflet-left  { bottom: 10px; }
+
+    /* Event name label: fixed bottom-left */
+    #mobile-event-name {
+        display: none; position: fixed;
+        bottom: max(10px, env(safe-area-inset-bottom));
+        left:   max(10px, env(safe-area-inset-left));
+        z-index: 1100;
+        font-size: 12px; font-family: arial, helvetica, sans-serif;
+        color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.8), 0 0 6px rgba(0,0,0,0.5);
+        pointer-events: none;
+    }
 
     /* Gear button: fixed top-right, respects safe area for notch/dynamic island */
     #mobile-gear-btn {
@@ -626,30 +642,26 @@ body { display: flex; }
 <!-- ── Desktop sidebar ─────────────────────────────────────────────────── -->
 <div id="sidebar">
 	<div id="sidebar-scroll">
-		<div class="section-heading top"><span>Trackers</span><input type="checkbox" class="section-toggle" id="toggle-trackers" checked></div>
+		<button class="sec-hdr open" data-body="legend"><span>Trackers</span><span class="sec-chevron">&#9658;</span></button>
 		<div id="legend"></div>
 
 		<div id="courses-section" style="display:none">
-			<hr class="section-divider">
-			<div class="section-heading"><span>Courses</span><input type="checkbox" class="section-toggle" id="toggle-courses" checked></div>
+			<button class="sec-hdr open" data-body="courses"><span>Courses</span><span class="sec-chevron">&#9658;</span></button>
 			<div id="courses"></div>
 		</div>
 
 		<div id="aidstations-section" style="display:none">
-			<hr class="section-divider">
-			<div class="section-heading"><span>Aid Stations</span><input type="checkbox" class="section-toggle" id="toggle-aidstations" checked></div>
+			<button class="sec-hdr open" data-body="aidstations"><span>Aid Stations</span><span class="sec-chevron">&#9658;</span></button>
 			<div id="aidstations"></div>
 		</div>
 
 		<div id="igates-section" style="display:none">
-			<hr class="section-divider">
-			<div class="section-heading"><span>iGates</span><input type="checkbox" class="section-toggle" id="toggle-igates" checked></div>
+			<button class="sec-hdr open" data-body="igates"><span>iGates</span><span class="sec-chevron">&#9658;</span></button>
 			<div id="igates"></div>
 		</div>
 
 		<div id="backgrounds-section" style="display:none">
-			<hr class="section-divider">
-			<div class="section-heading"><span>Backgrounds</span><input type="checkbox" class="section-toggle" id="toggle-backgrounds" checked></div>
+			<button class="sec-hdr open" data-body="backgrounds"><span>Backgrounds</span><span class="sec-chevron">&#9658;</span></button>
 			<div id="backgrounds"></div>
 		</div>
 	</div>
@@ -678,6 +690,9 @@ body { display: flex; }
 
 <!-- ── Shared map ──────────────────────────────────────────────────────── -->
 <div id="map"></div>
+
+<!-- ── Mobile event name label ─────────────────────────────────────────── -->
+<div id="mobile-event-name"></div>
 
 <!-- ── Mobile gear button ──────────────────────────────────────────────── -->
 <button id="mobile-gear-btn" title="Menu">
@@ -856,7 +871,7 @@ new (L.Control.extend({
 			L.DomEvent.on(exitBtn, 'click', () => { location.href = location.pathname; });
 			L.DomEvent.disableClickPropagation(exitBtn);
 			const txt = L.DomUtil.create('span', '', d);
-			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.8 beta &copy; 2026 Doug Kaye (K6DRK)';
+			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.9 beta &copy; 2026 Doug Kaye (K6DRK)';
 		} else {
 			if (!isMobile) {
 				const exitBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
@@ -874,8 +889,8 @@ new (L.Control.extend({
 			}
 			const ftxt = L.DomUtil.create('span', '', d);
 			ftxt.innerHTML = isMobile
-				? 'MARS APRS v1.8 beta &copy; 2026 Doug Kaye (K6DRK)'
-				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.8 beta &copy; 2026 Doug Kaye (K6DRK)';
+				? 'MARS APRS v1.9 beta &copy; 2026 Doug Kaye (K6DRK)'
+				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.9 beta &copy; 2026 Doug Kaye (K6DRK)';
 			if (isMobile) d.style.fontSize = '10px';
 		}
 		return d;
@@ -883,11 +898,13 @@ new (L.Control.extend({
 }))({ position: isMobile ? 'bottomright' : 'bottomleft' }).addTo(map);
 
 let eventNameDiv;
-if (!isMobile) {
+if (isMobile) {
+	eventNameDiv = document.getElementById('mobile-event-name');
+} else {
 	new (L.Control.extend({
 		onAdd() {
 			eventNameDiv = L.DomUtil.create('div', '');
-			eventNameDiv.style.cssText = 'font-size:13px;font-family:arial,helvetica,sans-serif;color:#000;padding:0 5px 2px;display:none';
+			eventNameDiv.style.cssText = 'font-size:13px;font-family:arial,helvetica,sans-serif;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.8),0 0 6px rgba(0,0,0,0.5);padding:0 5px 2px;display:none';
 			return eventNameDiv;
 		}
 	}))({ position: 'bottomleft' }).addTo(map);
@@ -911,10 +928,20 @@ let currentTileLayer = L.tileLayer(currentBgUrl, {
 	maxZoom: 19
 }).addTo(map);
 
+function switchBackground(bg) {
+	const mz = bg.maxZoom ?? bg.max_zoom ?? 19;
+	map.removeLayer(currentTileLayer);
+	currentBgUrl = bg.url; currentBgAttribution = bg.attribution;
+	currentTileLayer = L.tileLayer(bg.url, { attribution: bg.attribution, maxZoom: mz }).addTo(map);
+	map.setMaxZoom(mz);
+	if (map.getZoom() > mz) map.setZoom(mz);
+	Object.values(courseLayers).forEach(l => l.bringToFront());
+}
+
 if (kiosk) {
 	document.getElementById('backgrounds-section').style.display = 'none';
 	document.getElementById('sidebar-footer').style.display = 'none';
-	document.querySelectorAll('.section-toggle').forEach(el => el.style.display = 'none');
+	document.querySelectorAll('#sidebar .sec-hdr').forEach(el => { el.style.pointerEvents = 'none'; el.style.cursor = 'default'; });
 	if (localStorage.getItem('aprs_kiosk_sidebar') === '0')
 		document.getElementById('sidebar').style.display = 'none';
 	document.documentElement.requestFullscreen().catch(() => {});
@@ -1581,7 +1608,17 @@ function loadConfig() {
 			configEtag = r.headers.get('ETag');
 			return r.json();
 		})
-		.then(cfg => { if (cfg) applyConfig(cfg); })
+		.then(cfg => {
+			if (!cfg) return;
+			if (!configInitialized) {
+				// First load: apply everything (only happens on a fresh page load, not from admin)
+				configInitialized = true;
+				applyConfig(cfg);
+			} else if (!storedLocalConfig?._localTrackerEdited) {
+				// Subsequent polls: only update the trackers list, nothing else
+				if (cfg.trackers) applyTrackerConfig(cfg.trackers);
+			}
+		})
 		.catch(err => console.error('Config fetch error:', err));
 }
 
@@ -1616,7 +1653,7 @@ function refreshMobileAbout() {
 	const rows = [
 		currentEventName ? { label: 'Event',   val: currentEventName } : null,
 		{ label: 'Org',     val: 'Marin Amateur Radio Society' },
-		{ label: 'Version', val: 'APRS Tracker Map · v1.8 beta' },
+		{ label: 'Version', val: 'APRS Tracker Map · v1.9 beta' },
 		{ label: 'Map',     val: currentBgAttribution || '' },
 		{ label: 'Credit',  val: '&copy; 2026 Doug Kaye (K6DRK)' },
 	].filter(Boolean);
@@ -1629,7 +1666,7 @@ function applyEvent(name) {
 	currentEventName = name || '';
 	if (eventNameDiv) {
 		eventNameDiv.textContent   = name || '';
-		eventNameDiv.style.display = name ? '' : 'none';
+		eventNameDiv.style.display = name ? 'block' : 'none';
 	}
 	if (isMobile) refreshMobileAbout();
 }
@@ -1666,10 +1703,7 @@ function applyBackgrounds(backgrounds, backgroundUrl = '') {
 		if (backgroundUrl && backgroundUrl !== currentBgUrl) {
 			const bg = backgrounds.find(b => b.url === backgroundUrl);
 			if (bg) {
-				map.removeLayer(currentTileLayer);
-				currentBgUrl = bg.url; currentBgAttribution = bg.attribution;
-				currentTileLayer = L.tileLayer(bg.url, { attribution: bg.attribution, maxZoom: 19 }).addTo(map);
-				Object.values(courseLayers).forEach(l => l.bringToFront());
+				switchBackground(bg);
 			}
 		}
 	}
@@ -1686,12 +1720,9 @@ function applyBackgrounds(backgrounds, backgroundUrl = '') {
 			const dot  = document.createElement('span');  dot.className = 'm-layer-check' + (bg.url === currentBgUrl ? ' checked' : '');
 			row.appendChild(name); row.appendChild(dot);
 			row.addEventListener('click', () => {
-				currentBgUrl = bg.url; currentBgAttribution = bg.attribution;
 				localStorage.setItem(LS_BG, bg.url);
-				map.removeLayer(currentTileLayer);
-				currentTileLayer = L.tileLayer(bg.url, { attribution: bg.attribution, maxZoom: 19 }).addTo(map);
+				switchBackground(bg);
 				refreshMobileAbout();
-				Object.values(courseLayers).forEach(l => l.bringToFront());
 				container.querySelectorAll('.m-layer-check').forEach(d => d.classList.remove('checked'));
 				dot.classList.add('checked');
 			});
@@ -1714,11 +1745,8 @@ function applyBackgrounds(backgrounds, backgroundUrl = '') {
 		const checkEl = document.createElement('input'); checkEl.type = 'checkbox'; checkEl.checked = active; checkEl.className = 'bg-checkbox';
 		item.appendChild(nameEl); item.appendChild(checkEl);
 		item.addEventListener('click', () => {
-			currentBgUrl = bg.url; currentBgAttribution = bg.attribution;
 			localStorage.setItem(LS_BG, bg.url);
-			map.removeLayer(currentTileLayer);
-			currentTileLayer = L.tileLayer(bg.url, { attribution: bg.attribution, maxZoom: 19 }).addTo(map);
-			Object.values(courseLayers).forEach(l => l.bringToFront());
+			switchBackground(bg);
 			document.querySelectorAll('#backgrounds .bg-checkbox').forEach(e => { e.checked = false; });
 			checkEl.checked = true;
 		});
@@ -2115,39 +2143,37 @@ async function fetchClients() {
 
 // ── Sidebar section toggles ───────────────────────────────────────────────
 const LS_SIDEBAR_STATE = 'aprs_sidebar_state';
-(function initSectionToggles() {
-	const sections = [
-		{ id: 'toggle-trackers',    content: 'legend' },
-		{ id: 'toggle-courses',     content: 'courses',      tabletDefault: false },
-		{ id: 'toggle-aidstations', content: 'aidstations',  tabletDefault: false },
-		{ id: 'toggle-igates',      content: 'igates',       tabletDefault: false },
-		{ id: 'toggle-backgrounds', content: 'backgrounds',  tabletDefault: false },
-	];
+if (!isMobile) {
 	let state = {};
 	try { state = JSON.parse(localStorage.getItem(LS_SIDEBAR_STATE) || '{}'); } catch {}
-	sections.forEach(({ id, content, tabletDefault }) => {
-		const cb = document.getElementById(id);
-		const ct = document.getElementById(content);
-		if (!cb || !ct) return;
-		const collapsed = state[id] === false ||
-		    (isTablet && tabletDefault === false);
-		if (collapsed) { cb.checked = false; ct.classList.add('section-collapsed'); }
-		cb.addEventListener('change', () => {
-			ct.classList.toggle('section-collapsed', !cb.checked);
+	document.querySelectorAll('#sidebar .sec-hdr').forEach(hdr => {
+		const bodyId = hdr.dataset.body;
+		const body   = document.getElementById(bodyId);
+		if (!body) return;
+		if (state[bodyId] === false) {
+			hdr.classList.remove('open');
+			body.style.display = 'none';
+		}
+		hdr.addEventListener('click', () => {
+			const isOpen = hdr.classList.contains('open');
+			hdr.classList.toggle('open', !isOpen);
+			body.style.display = isOpen ? 'none' : '';
 			try {
 				const s = JSON.parse(localStorage.getItem(LS_SIDEBAR_STATE) || '{}');
-				s[id] = cb.checked;
+				s[bodyId] = !isOpen;
 				localStorage.setItem(LS_SIDEBAR_STATE, JSON.stringify(s));
 			} catch {}
 		});
 	});
-})();
+}
 
 // ── Init ───────────────────────────────────────────────────────────────────
 // On first load or reload: use symlink default and clear local event.
 // On navigation from admin: use locally stored event.
-let hasStoredEvent = false;
+let hasStoredEvent    = false;
 let isNonDefaultEvent = false;
+let configInitialized = false;
+let storedLocalConfig = null; // config saved from admin; used to suppress tracker poll overwrites
 const isReload = performance.getEntriesByType('navigation')[0]?.type === 'reload';
 const fromSameHost = document.referrer && new URL(document.referrer).host === location.host;
 const fromAdmin = !isReload && fromSameHost;
@@ -2159,8 +2185,10 @@ if (!fromAdmin) {
 		if (stored) {
 			const { name, config, isDefault } = JSON.parse(stored);
 			if (config) {
+				storedLocalConfig = config;
 				applyConfig(config);
-				hasStoredEvent = true;
+				configInitialized = true;
+				hasStoredEvent    = true;
 				isNonDefaultEvent = !isDefault;
 			}
 		}

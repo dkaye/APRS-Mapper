@@ -106,24 +106,18 @@ echo "trackerstatus=$trackerStatusFilename\n";
 echo "----------\n\n";
 
 // Parse latitude and longitude from an APRS packet line.
-// Handles compressed (Base91), uncompressed, and Mic-E position formats.
+// Handles uncompressed, compressed (Base91), and Mic-E position formats.
+// Supports timestamped packets (/ and @ DTI with DDHHMMz/h prefix) and overlay symbols.
 // Returns [lat, lon] in decimal degrees, or [null, null] if not found.
 function parseAprsPosition($line) {
 	$colonPos = strpos($line, ':');
 	if ($colonPos === false) return array(null, null);
 	$payload = substr($line, $colonPos + 1);
 
-	// Compressed Base91: DTI + sym_table_id + 4 Base91 lat bytes + 4 Base91 lon bytes + sym_code
-	if (preg_match('/[!=\/@][\/\\\\]([\x21-\x7b]{4})([\x21-\x7b]{4})[\x21-\x7b]/', $payload, $m)) {
-		$latVal = (ord($m[1][0])-33)*91**3 + (ord($m[1][1])-33)*91**2 + (ord($m[1][2])-33)*91 + (ord($m[1][3])-33);
-		$lat = 90.0 - $latVal / 380926.0;
-		$lonVal = (ord($m[2][0])-33)*91**3 + (ord($m[2][1])-33)*91**2 + (ord($m[2][2])-33)*91 + (ord($m[2][3])-33);
-		$lon = -180.0 + $lonVal / 190463.0;
-		return array(round($lat, 6), round($lon, 6));
-	}
-
-	// Uncompressed: DDmm.mmN/DDDmm.mmW
-	if (preg_match('/[!=\/@](\d{4}\.\d{2})([NS])[\/\\\\](\d{5}\.\d{2})([EW])/', $payload, $m)) {
+	// Uncompressed: DDmm.mmN{sym}DDDmm.mmW — search anywhere in the payload.
+	// No DTI anchor: handles both plain (!=/@) and timestamped (/@+7-byte prefix) packets.
+	// Sym table char accepts /, \, A-Z, 0-9 (overlay symbols).
+	if (preg_match('/(\d{4}\.\d{2})([NS])[\/\\\\A-Z0-9](\d{5}\.\d{2})([EW])/', $payload, $m)) {
 		$lat = (float)substr($m[1], 0, 2) + (float)substr($m[1], 2) / 60.0;
 		if ($m[2] === 'S') $lat = -$lat;
 		$lon = (float)substr($m[3], 0, 3) + (float)substr($m[3], 3) / 60.0;
@@ -131,8 +125,20 @@ function parseAprsPosition($line) {
 		return array(round($lat, 6), round($lon, 6));
 	}
 
-	// Mic-E: DTI '`' (current) or '\'' (old) — latitude in destination address, longitude in payload bytes 1-3
-	if (strlen($payload) >= 8 && ($payload[0] === '`' || $payload[0] === "'")) {
+	// Compressed Base91: DTI [DDHHMMz/h] sym_table 4-lat 4-lon sym_code
+	// Optional 7-byte timestamp prefix handles / and @ (timestamped) DTI packets.
+	// Sym table is / or \ only (overlays not used in compressed format per spec).
+	if (preg_match('/[!=\/@](?:\d{6}[z\/h])?[\/\\\\]([\x21-\x7b]{4})([\x21-\x7b]{4})[\x21-\x7b]/', $payload, $m)) {
+		$latVal = (ord($m[1][0])-33)*91**3 + (ord($m[1][1])-33)*91**2 + (ord($m[1][2])-33)*91 + (ord($m[1][3])-33);
+		$lat = 90.0 - $latVal / 380926.0;
+		$lonVal = (ord($m[2][0])-33)*91**3 + (ord($m[2][1])-33)*91**2 + (ord($m[2][2])-33)*91 + (ord($m[2][3])-33);
+		$lon = -180.0 + $lonVal / 190463.0;
+		return array(round($lat, 6), round($lon, 6));
+	}
+
+	// Mic-E: DTI '`' (current), '\'' (old), 0x1c (rev0 current), 0x1d (rev0 old)
+	// latitude in destination address, longitude in payload bytes 1-3
+	if (strlen($payload) >= 8 && ($payload[0] === '`' || $payload[0] === "'" || $payload[0] === "\x1c" || $payload[0] === "\x1d")) {
 		// Extract destination field (between '>' and first ',' before ':')
 		$arrowPos = strpos($line, '>');
 		if ($arrowPos === false) return array(null, null);
@@ -225,7 +231,7 @@ function readTrackerHistoryFile() {
 			$entry = null;
 		}
 	}
-	foreach ($trackerHistory as &$entries) $entries = array_slice($entries, 0, 5);
+	foreach ($trackerHistory as &$entries) $entries = array_slice($entries, 0, 10);
 	unset($entries);
 }
 
@@ -398,6 +404,8 @@ while (TRUE) {
 				$element = explode('>', $line);
 				$callsign=$element[0];							//extract callsign
 				list($lat,$lon) = parseAprsPosition($line);		//extract position if present
+
+
 				foreach ($trackers as $key=>$tracker) {			//find it in our array
 					if ($tracker["callsign"]==$callsign) {
 						$trackers[$key]["lastUpdate"]=time();	//update time last seen for that callsign
@@ -406,7 +414,7 @@ while (TRUE) {
 							$trackers[$key]["lon"]=$lon;
 							if (!isset($trackerHistory[$callsign])) $trackerHistory[$callsign] = [];
 							array_unshift($trackerHistory[$callsign], ['lat'=>$lat,'lon'=>$lon,'ts'=>time()]);
-							if (count($trackerHistory[$callsign]) > 5) array_pop($trackerHistory[$callsign]);
+							if (count($trackerHistory[$callsign]) > 10) array_pop($trackerHistory[$callsign]);
 							writeTrackerHistoryFile();
 						}
 					}
