@@ -2578,7 +2578,7 @@ async function doLoadModal() {
 
         const activateBtn = document.createElement('button');
         activateBtn.className = 'item-action-btn';
-        activateBtn.textContent = 'Activate';
+        activateBtn.textContent = 'Save';
         activateBtn.title = 'Load this event and return to map';
         activateBtn.style.padding = '2px 8px';
         activateBtn.style.fontSize = '12px';
