@@ -88,9 +88,11 @@ Controls the appearance of all tracker markers on the map.
 ```yaml
 tracker_style:
   icon: circle          # circle, square, diamond, triangle, star, cross, person
-  size: 8               # marker radius in pixels, 4–20
   label_color: "#000000"  # hex color for the id/name label on the map
 ```
+
+Marker size scales automatically with zoom level: full size at zoom ≥ 14, shrinking
+proportionally down to 30 % at zoom 7 and below.
 
 ### `map`
 
@@ -132,9 +134,7 @@ courses:
 
 Supported extensions: `.gpx` `.kml` `.geojson` `.json`
 
-Course entries are automatically reconciled with the event directory on every admin load
-or save: entries whose files are missing from the directory are dropped; files present in
-the directory but absent from the YAML are auto-added.
+Course entries are reconciled with the event directory on every admin load or save: entries whose files are missing from the directory are dropped. The YAML is the source of truth — files present in the directory but not listed in the YAML are ignored.
 
 ### `aidstations`
 
@@ -156,6 +156,22 @@ igates:
   - name: Pt. Reyes Station
     lat: 38.068051
     lon: -122.808013
+```
+
+### `section_visibility`
+
+Default visibility of each sidebar section on page load. Each key is `true` (visible) or
+`false` (hidden). Saved with the event config by the admin **Save as Default Event** action.
+Users can override these settings locally during their session by using the visibility
+checkboxes in the sidebar.
+
+```yaml
+section_visibility:
+  trackers: true
+  courses: true
+  aidstations: true
+  igates: true
+  backgrounds: true
 ```
 
 ---
@@ -286,12 +302,25 @@ Open `http://<host>/` in a browser. The layout adapts automatically to the devic
 
 ### Sidebar (desktop)
 
-Each section has a collapse checkbox on its right edge. Uncheck to hide that section's
-content and save vertical space. Collapse state is saved across page reloads.
+Each section header has two interactive elements:
+
+- **Visibility checkbox** (right side) — controls whether that section's objects appear on
+  the map. Unchecked = hidden on map; the section's row items dim to reinforce this. The
+  state persists for the session (not saved to the server) unless set as a default by the
+  admin.
+- **Click the header text** — collapses or expands the section list to save vertical space.
+  Collapse state is saved in the browser across page reloads.
+
+The sidebar width is adjustable: drag the thin divider bar between the sidebar and the map.
+The width is remembered per-browser in `localStorage` and never sent to the server.
 
 ### Mobile Drawer (touch devices)
 
-Tap the gear icon to open the drawer. Sections are collapsible accordions; tap a section header to expand it. Four footer buttons (Reset Map, Save Map, Admin, User Guide) are always visible at the bottom of the drawer.
+Tap the gear icon to open the drawer. Sections are collapsible accordions; tap a section
+header to expand it (the previous section closes automatically). Each section header also
+has a **visibility checkbox** that shows or hides that section's objects on the map, the
+same as the desktop. Four footer buttons (Reset Map, Save Map, Admin, User Guide) are
+always visible at the bottom of the drawer.
 
 | Section | Behaviour |
 |---------|-----------|
@@ -300,7 +329,7 @@ Tap the gear icon to open the drawer. Sections are collapsible accordions; tap a
 | **Aid Stations** | Click to zoom to that location and show a name label; click again to reset. |
 | **iGates** | Same as aid stations. |
 | **Backgrounds** | Click to switch the base tile layer. Active layer shows ✓. Switching to a layer with a lower `max_zoom` automatically zooms out if needed. |
-| **Reset Map** | Restores default centre and zoom; clears all selections and the Origin marker. |
+| **Reset Map** | Restores default centre and zoom; clears all selections and the Origin marker. Also triggered by pressing **Escape**. |
 | **Save Map** | Saves the current map position and zoom as a personal browser-local default. Persists across sessions; overrides the server's map default. |
 | **Admin** | Opens the admin configuration page. |
 | **Kiosk Mode** | Switches the UI layout to kiosk mode (see below). |
@@ -366,12 +395,15 @@ mode distinct from the browser's fullscreen (`--kiosk`) mode:
 
 Open `http://<host>/admin/` in a browser. Password is stored in plain text in
 `admin/password.txt`; edit that file directly on the server to change it.
+The session remains active for 12 hours; closing and reopening the browser tab within
+that window does not require re-entering the password.
 
 The admin page edits all sections of the active event's configuration:
 
-- **Trackers** — callsign, ID, name; add, remove, reorder
-- **Tracker Style** — icon shape, size, label colour
+- **Trackers** — callsign, ID, name; add, remove, reorder. Each row shows a read-only **Δ** field: the minimum interval between any two consecutive beacons in the last 10 received, formatted as M:SS. Populated from `tracker_history.yaml` on every admin load.
+- **Tracker Style** — icon shape, label colour (marker size scales automatically with zoom)
 - **Map Default View** — default centre latitude/longitude and zoom level
+- **Default Section Visibility** — initial visibility of each map section (Trackers, Courses, Aid Stations, iGates, Backgrounds); saved as part of the event config
 - **Backgrounds** — tile layer name, URL template, attribution HTML, and optional max zoom level
 - **Courses** — name, file path, colour; add via Manage Location Files
 - **Aid Stations** — name, latitude, longitude
@@ -441,48 +473,54 @@ immediately (updates the symlink and touches the file so the daemon reloads with
 
 ### Import / Export
 
-Section headers have small **↓** (export) and **↑** (import) buttons. Supported formats
-by section:
+Section headers have small **↓** (export) and **↑** (import) buttons. Clicking **↓** always
+shows a format menu.
 
 | Section | Export | Import |
 |---------|--------|--------|
 | **Event** | YAML | YAML |
-| **Trackers** | YAML | YAML |
-| **Aid Stations** | YAML, GPX | YAML, GPX, KML, GeoJSON, JSON |
-| **iGates** | YAML, GPX | YAML, GPX, KML, GeoJSON, JSON |
-| **Courses** | YAML | YAML, GPX, KML, GeoJSON, JSON |
+| **Trackers** | YAML, CSV | YAML, CSV |
+| **Aid Stations** | YAML, CSV, GPX | YAML, CSV, GPX, KML, GeoJSON, JSON |
+| **iGates** | YAML, CSV, GPX | YAML, CSV, GPX, KML, GeoJSON, JSON |
+| **Courses** | YAML, CSV | YAML, CSV, GPX, KML, GeoJSON, JSON |
 
-**YAML export** — downloads the section as a `.yaml` file. The filename includes the event
-name and today's date (e.g., `Dipsea_2026_trackers_20260614.yaml`). The file starts with a
-header block identifying the type, event, and export timestamp. An **Event** export writes
-the complete configuration (all sections).
+**YAML export** — downloads the section as a `.yaml` file named
+`{EventName}_{type}_{YYYYMMDD}.yaml`. The file starts with a `# type:` header used for
+import validation. An **Event** export writes the complete configuration (all sections).
 
-**GPX export** (Aid Stations and iGates) — clicking **↓** shows a dropdown with **Export as
-YAML** and **Export as GPX**. The GPX file contains one `<wpt>` element per entry with the
-name, latitude, and longitude.
+**CSV export** — downloads a `.csv` file with a header row. Column layout by section:
 
-**YAML import** — opens a file picker, reads the selected file, and merges it into the form.
-The import checks the `# type:` comment in the file header:
-- If the type matches the target section, the import proceeds silently.
-- If no `# type:` line is found, a confirmation dialog allows the import to proceed anyway.
-- If the type does not match, the import is blocked with an error dialog.
+| Section | CSV columns |
+|---------|-------------|
+| Trackers | `callsign, id, name` |
+| Aid Stations / iGates | `name, lat, lon` |
+| Courses | `name, file, color` |
+
+CSV is not available for the Event section (the full configuration is too complex for a
+single flat file; use YAML instead).
+
+**GPX export** (Aid Stations, iGates) — one `<wpt>` element per entry with name, lat, lon.
+
+**YAML import** — merges into the form. Checks the `# type:` header:
+- Type matches → imports silently.
+- No `# type:` line → confirmation dialog.
+- Type mismatch → blocked with an error.
+
+**CSV import** — first row must be column headers (case-insensitive; spaces and underscores
+ignored). Common aliases are accepted (`latitude`/`lat`, `longitude`/`lon`/`lng`, etc.).
 
 **Location file import** (Aid Stations, iGates, Courses) — also accepts `.gpx`, `.kml`,
-`.geojson`, and `.json` files. Multiple files may be selected at once.
-- GPX: `<wpt>` waypoints are imported as named entries (name, lat, lon).
-- KML: `<Placemark>` elements containing a `<Point>` are imported.
-- GeoJSON/JSON: `Point` features are imported; plain arrays of objects with `lat`/`lon`
-  properties are also supported.
+`.geojson`, and `.json`. Multiple files may be selected at once.
+- GPX: `<wpt>` elements → name, lat, lon.
+- KML: `<Placemark>/<Point>` elements.
+- GeoJSON/JSON: `Point` features or plain arrays with `lat`/`lon` properties.
+- For **Courses**: the file is uploaded to the current event directory and a course entry is
+  created. CSV course imports (`name, file, color`) add entries without uploading.
 
-For **Courses**: a location file import uploads the file to the current event directory and
-adds a course entry with the filename (minus extension) as the default name.
+**Deduplication** — entries already present are skipped. Key: callsign (trackers), name (aid
+stations / iGates), file path (courses). Existing entries are never removed or modified.
 
-**Section import deduplication** — entries already present are skipped. Deduplication key:
-callsign for trackers, name for aid stations and iGates, file path for courses. Existing
-entries are never removed or modified.
-
-Importing does not save to the server. Use **Save for All Users…** after importing to persist
-the changes.
+Importing does not save to the server. Use **Save** or **Save as Default Event** afterward.
 
 ### Tile Provider Browser
 
@@ -551,8 +589,8 @@ the client's last request (`If-None-Match` header).
 
 ### `GET ?config`
 
-Returns the parsed active configuration: event name, legend, tracker_style, map, trackers,
-backgrounds, courses, aidstations, igates.
+Returns the parsed active configuration: event name, legend, tracker_style,
+section_visibility, map, trackers, backgrounds, courses, aidstations, igates.
 
 **ETag / 304 caching:** uses `config.yaml` mtime.
 

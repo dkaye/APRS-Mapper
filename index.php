@@ -95,18 +95,25 @@ if (isset($_GET['config'])) {
 	}
 	$cfg     = parseConfigYaml('config.yaml');
 	$courses = array_values(array_filter($cfg['courses'] ?? [], fn($c) => isset($c['file'])));
+	$rawSv = $cfg['section_visibility'] ?? [];
+	$sv = [];
+	foreach (['trackers','courses','aidstations','igates','backgrounds'] as $k) {
+		$v = $rawSv[$k] ?? true;
+		$sv[$k] = ($v !== false && $v !== 'false' && $v !== 0 && $v !== '0');
+	}
 	header('Content-Type: application/json');
 	echo json_encode([
-		'event'          => $cfg['event'] ?? '',
-		'legend'         => $cfg['legend'] ?? '',
-		'tracker_style'  => $cfg['tracker_style'] ?? [],
-		'map'            => $cfg['map'],
-		'trackers'       => $cfg['trackers'],
-		'backgrounds'    => $cfg['backgrounds'],
-		'background_url' => $cfg['background_url'] ?? '',
-		'courses'        => $courses,
-		'aidstations'    => $cfg['aidstations'] ?? [],
-		'igates'         => $cfg['igates'] ?? [],
+		'event'              => $cfg['event'] ?? '',
+		'legend'             => $cfg['legend'] ?? '',
+		'tracker_style'      => $cfg['tracker_style'] ?? [],
+		'map'                => $cfg['map'],
+		'trackers'           => $cfg['trackers'],
+		'backgrounds'        => $cfg['backgrounds'],
+		'background_url'     => $cfg['background_url'] ?? '',
+		'courses'            => $courses,
+		'aidstations'        => $cfg['aidstations'] ?? [],
+		'igates'             => $cfg['igates'] ?? [],
+		'section_visibility' => $sv,
 	]);
 	exit;
 }
@@ -232,8 +239,16 @@ body { display: flex; }
     display: flex; flex-direction: column;
     width: 160px; min-width: 160px; height: 100vh;
     overflow: hidden; background: #f4f4f4;
-    border-right: 1px solid #ccc;
+    border-right: none;
 }
+#sidebar-resizer {
+    width: 5px; flex-shrink: 0; cursor: ew-resize;
+    background: #ccc;
+    transition: background 0.15s;
+    z-index: 10;
+}
+#sidebar-resizer:hover, body.sidebar-resizing #sidebar-resizer { background: #999; }
+body.sidebar-resizing { cursor: ew-resize !important; user-select: none !important; }
 #sidebar-scroll {
     flex: 1; overflow-y: auto; padding: 10px 8px;
 }
@@ -243,18 +258,15 @@ body { display: flex; }
 .sec-hdr {
     display: flex; align-items: center; justify-content: space-between;
     width: 100%; padding: 0 6px; min-height: 26px;
-    background: #eaeaea; border: none; border-top: 1px solid #ccc;
+    background: #eaeaea; border-top: 1px solid #ccc;
     font-size: 11px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: .06em; font-family: inherit; color: #666;
-    cursor: pointer; text-align: left;
+    letter-spacing: .06em; color: #666; cursor: pointer;
 }
 .sec-hdr:first-child { border-top: none; }
 .sec-hdr:hover, .sec-hdr:active { background: #e0e0e0; }
-.sec-chevron {
-    font-size: 9px; color: #bbb; display: inline-block;
-    transition: transform 0.18s;
-}
-.sec-hdr.open .sec-chevron { transform: rotate(90deg); }
+.sec-hdr-right { display: flex; align-items: center; }
+.aprs-hide-trackers .tracker-label { display: none !important; }
+.section-dimmed { opacity: 0.35; }
 .section-divider { border: none; border-top: 1px solid #ccc; margin: 6px 0 4px; }
 
 .legend-item {
@@ -277,19 +289,22 @@ body { display: flex; }
 }
 .sidebar-item:hover { background: #e0e0e0; }
 .course-item  { cursor: default; padding: 2px 0 2px 4px; margin-bottom: 1px; }
+.course-item, #backgrounds .sidebar-item { padding-right: 6px; }
 .course-label { flex: 1; display: flex; align-items: center; cursor: pointer; min-width: 0; }
 .course-name  { flex: 1; }
 .course-name:hover { text-decoration: underline; }
 .course-color-input { position: absolute; width: 0; height: 0; border: none; padding: 0; overflow: hidden; }
-.course-checkbox, .bg-checkbox {
+.course-checkbox, .bg-checkbox, .sec-vis-cb {
     appearance: none; -webkit-appearance: none;
     width: 14px; height: 14px; flex-shrink: 0; margin: 0;
     border: 1.5px solid #aaa; border-radius: 2px; background: #fff;
 }
 .course-checkbox { cursor: pointer; }
 .bg-checkbox     { pointer-events: none; }
+.sec-vis-cb      { cursor: pointer; }
 .course-checkbox:checked,
-.bg-checkbox:checked {
+.bg-checkbox:checked,
+.sec-vis-cb:checked {
     border-color: #aaa;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpolyline points='1.5,6 4.5,9.5 10.5,2.5' stroke='%23aaa' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     background-repeat: no-repeat; background-position: center; background-size: 10px;
@@ -388,6 +403,7 @@ body { display: flex; }
     body  { display: block; }
     #map  { position: fixed; inset: 0; z-index: 0; }
     #sidebar { display: none; }
+    #sidebar-resizer { display: none; }
     #sidebar-toggle-btn { display: none !important; }
 
     .leaflet-top                  { top:    10px; }
@@ -452,11 +468,6 @@ body { display: flex; }
         cursor: pointer; text-align: left;
     }
     .drawer-sec-hdr:active { background: #e6e6e6; }
-    .drawer-chevron {
-        font-size: 9px; color: #bbb; display: inline-block;
-        transition: transform 0.18s; transform: rotate(0deg);
-    }
-    .drawer-sec-hdr.open .drawer-chevron { transform: rotate(90deg); }
 
     /* About section inline content */
     #m-about-body { padding: 8px 10px; font-size: 11px; color: #555; }
@@ -642,26 +653,26 @@ body { display: flex; }
 <!-- ── Desktop sidebar ─────────────────────────────────────────────────── -->
 <div id="sidebar">
 	<div id="sidebar-scroll">
-		<button class="sec-hdr open" data-body="legend"><span>Trackers</span><span class="sec-chevron">&#9658;</span></button>
+		<div class="sec-hdr open" data-body="legend"><span>Trackers</span><span class="sec-hdr-right"><input type="checkbox" class="sec-vis-cb" checked data-section="trackers"></span></div>
 		<div id="legend"></div>
 
 		<div id="courses-section" style="display:none">
-			<button class="sec-hdr open" data-body="courses"><span>Courses</span><span class="sec-chevron">&#9658;</span></button>
+			<div class="sec-hdr open" data-body="courses"><span>Courses</span><span class="sec-hdr-right"><input type="checkbox" class="sec-vis-cb" checked data-section="courses"></span></div>
 			<div id="courses"></div>
 		</div>
 
 		<div id="aidstations-section" style="display:none">
-			<button class="sec-hdr open" data-body="aidstations"><span>Aid Stations</span><span class="sec-chevron">&#9658;</span></button>
+			<div class="sec-hdr open" data-body="aidstations"><span>Aid Stations</span><span class="sec-hdr-right"><input type="checkbox" class="sec-vis-cb" checked data-section="aidstations"></span></div>
 			<div id="aidstations"></div>
 		</div>
 
 		<div id="igates-section" style="display:none">
-			<button class="sec-hdr open" data-body="igates"><span>iGates</span><span class="sec-chevron">&#9658;</span></button>
+			<div class="sec-hdr open" data-body="igates"><span>iGates</span><span class="sec-hdr-right"><input type="checkbox" class="sec-vis-cb" checked data-section="igates"></span></div>
 			<div id="igates"></div>
 		</div>
 
 		<div id="backgrounds-section" style="display:none">
-			<button class="sec-hdr open" data-body="backgrounds"><span>Backgrounds</span><span class="sec-chevron">&#9658;</span></button>
+			<div class="sec-hdr open" data-body="backgrounds"><span>Backgrounds</span><span class="sec-hdr-right"><input type="checkbox" class="sec-vis-cb" checked data-section="backgrounds"></span></div>
 			<div id="backgrounds"></div>
 		</div>
 	</div>
@@ -688,6 +699,9 @@ body { display: flex; }
 	<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
 </button>
 
+<!-- ── Sidebar resize handle ───────────────────────────────────────────── -->
+<div id="sidebar-resizer"></div>
+
 <!-- ── Shared map ──────────────────────────────────────────────────────── -->
 <div id="map"></div>
 
@@ -706,51 +720,50 @@ body { display: flex; }
 <div id="mobile-drawer">
 	<div id="drawer-body">
 		<div class="drawer-sec">
-			<button class="drawer-sec-hdr open" data-body="m-trackers-body">
-				<span>Trackers</span><span class="drawer-chevron">&#9658;</span>
-			</button>
+			<div class="drawer-sec-hdr open" data-body="m-trackers-body">
+				<span>Trackers</span><span class="sec-hdr-right"><input type="checkbox" class="sec-vis-cb" checked data-section="trackers"></span>
+			</div>
 			<div id="m-trackers-body">
 				<div id="m-legend"></div>
 				<div id="m-legend-empty" class="m-empty" style="display:none">Waiting for tracker data…</div>
 			</div>
 		</div>
 		<div class="drawer-sec">
-			<button class="drawer-sec-hdr" data-body="m-courses-body">
-				<span>Courses</span><span class="drawer-chevron">&#9658;</span>
-			</button>
+			<div class="drawer-sec-hdr" data-body="m-courses-body">
+				<span>Courses</span><span class="sec-hdr-right"><input type="checkbox" class="sec-vis-cb" checked data-section="courses"></span>
+			</div>
 			<div id="m-courses-body" style="display:none">
 				<div id="m-courses-list"></div>
 				<div id="m-courses-empty" class="m-empty" style="display:none">No courses configured.</div>
 			</div>
 		</div>
 		<div class="drawer-sec" id="m-backgrounds-section" style="display:none">
-			<button class="drawer-sec-hdr" data-body="m-backgrounds-body">
-				<span>Backgrounds</span><span class="drawer-chevron">&#9658;</span>
-			</button>
+			<div class="drawer-sec-hdr" data-body="m-backgrounds-body">
+				<span>Backgrounds</span><span class="sec-hdr-right"><input type="checkbox" class="sec-vis-cb" checked data-section="backgrounds"></span>
+			</div>
 			<div id="m-backgrounds-body" style="display:none">
 				<div id="m-backgrounds-list"></div>
 			</div>
 		</div>
 		<div class="drawer-sec" id="m-aidstations-section" style="display:none">
-			<button class="drawer-sec-hdr" data-body="m-aidstations-body">
-				<span>Aid Stations</span><span class="drawer-chevron">&#9658;</span>
-			</button>
+			<div class="drawer-sec-hdr" data-body="m-aidstations-body">
+				<span>Aid Stations</span><span class="sec-hdr-right"><input type="checkbox" class="sec-vis-cb" checked data-section="aidstations"></span>
+			</div>
 			<div id="m-aidstations-body" style="display:none">
 				<div id="m-aidstations-list"></div>
 			</div>
 		</div>
 		<div class="drawer-sec" id="m-igates-section" style="display:none">
-			<button class="drawer-sec-hdr" data-body="m-igates-body">
-				<span>iGates</span><span class="drawer-chevron">&#9658;</span>
-			</button>
+			<div class="drawer-sec-hdr" data-body="m-igates-body">
+				<span>iGates</span><span class="sec-hdr-right"><input type="checkbox" class="sec-vis-cb" checked data-section="igates"></span>
+			</div>
 			<div id="m-igates-body" style="display:none">
 				<div id="m-igates-list"></div>
 			</div>
 		</div>
 		<div class="drawer-sec">
-			<button class="drawer-sec-hdr" data-body="m-about-body">
-				<span>About</span><span class="drawer-chevron">&#9658;</span>
-			</button>
+			<div class="drawer-sec-hdr" data-body="m-about-body">
+				<span>About</span>			</div>
 			<div id="m-about-body" style="display:none"></div>
 		</div>
 	</div>
@@ -933,6 +946,7 @@ function switchBackground(bg) {
 	map.removeLayer(currentTileLayer);
 	currentBgUrl = bg.url; currentBgAttribution = bg.attribution;
 	currentTileLayer = L.tileLayer(bg.url, { attribution: bg.attribution, maxZoom: mz }).addTo(map);
+	if (!sectionVisible.backgrounds) currentTileLayer.setOpacity(0);
 	map.setMaxZoom(mz);
 	if (map.getZoom() > mz) map.setZoom(mz);
 	Object.values(courseLayers).forEach(l => l.bringToFront());
@@ -1042,9 +1056,11 @@ if (mobileGearBtn) {
 			body.style.display = isOpen ? 'none' : '';
 		}
 		hdr.addEventListener('touchstart', e => {
+			if (e.target.classList.contains('sec-vis-cb')) return;
 			e.preventDefault(); hdrTouched = true; toggleSection();
 		}, { passive: false });
-		hdr.addEventListener('click', () => {
+		hdr.addEventListener('click', e => {
+			if (e.target.classList.contains('sec-vis-cb')) return;
 			if (hdrTouched) { hdrTouched = false; return; }
 			toggleSection();
 		});
@@ -1110,6 +1126,14 @@ if (!isMobile) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
+function markerScale() {
+	const z = map.getZoom();
+	return z >= 14 ? 1 : Math.max(0.3, (z - 7) / 7);
+}
+function scaledRadius(base) {
+	return Math.max(2, Math.round(base * markerScale()));
+}
+
 function makeTrackerIcon(shape, fillColor, size) {
 	const sz = Math.max(4, Math.min(20, size || 8));
 	const d = sz * 2, c = sz, r = sz - 1.5;
@@ -1210,9 +1234,10 @@ function showTrackerHistory(callsign, color) {
 			// Dots — newest first in entries array
 			entries.forEach(e => {
 				const dot = L.circleMarker([e.lat, e.lon], {
-					radius: r, color: color, fillColor: color,
+					radius: scaledRadius(r), color: color, fillColor: color,
 					fillOpacity: 0.5, weight: 1.5, pane: 'trackerPane'
 				});
+				dot._baseRadius = r;
 				dot.bindTooltip(relativeTime(e.ts), { sticky: false, direction: 'top' });
 				dot.on('mouseover', function() { dot.setTooltipContent(relativeTime(e.ts)); });
 				dot.addTo(map);
@@ -1448,10 +1473,28 @@ function updateLegend(trackers) {
 	else          updateDesktopLegend(trackers);
 }
 
+function naturalCompare(a, b) {
+	const re = /(\d+)|(\D+)/g;
+	const pa = String(a).match(re) || [];
+	const pb = String(b).match(re) || [];
+	for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+		if (i >= pa.length) return -1;
+		if (i >= pb.length) return  1;
+		if (/^\d+$/.test(pa[i]) && /^\d+$/.test(pb[i])) {
+			const d = parseInt(pa[i], 10) - parseInt(pb[i], 10);
+			if (d) return d;
+		} else {
+			const d = pa[i].localeCompare(pb[i]);
+			if (d) return d;
+		}
+	}
+	return 0;
+}
+
 function updateDesktopLegend(trackers) {
 	const legend  = document.getElementById('legend');
 	const current = new Set(trackers.map(t => t.callsign));
-	const sorted  = [...trackers].sort((a, b) => a.id.localeCompare(b.id));
+	const sorted  = [...trackers].sort((a, b) => naturalCompare(a.id, b.id));
 
 	legend.querySelectorAll('.legend-item').forEach(el => {
 		if (!current.has(el.dataset.callsign)) el.remove();
@@ -1489,7 +1532,7 @@ function updateMobileLegend(trackers) {
 	const legend  = document.getElementById('m-legend');
 	const emptyEl = document.getElementById('m-legend-empty');
 	const current = new Set(trackers.map(t => t.callsign));
-	const sorted  = [...trackers].sort((a, b) => a.id.localeCompare(b.id));
+	const sorted  = [...trackers].sort((a, b) => naturalCompare(a.id, b.id));
 
 	legend.querySelectorAll('.m-legend-item').forEach(el => {
 		if (!current.has(el.dataset.callsign)) el.remove();
@@ -1567,15 +1610,17 @@ function updateMap() {
 			located.forEach(t => {
 				const latlng = [t.lat, t.lon];
 				const color  = t.color || 'red';
-				const sz     = trackerStyle.size;
+				const sz     = Math.max(4, Math.round(trackerStyle.size * markerScale()));
 				const icon   = makeTrackerIcon(trackerStyle.icon, color, sz);
 				if (markers[t.callsign]) {
+					markers[t.callsign]._trackerColor = color;
 					markers[t.callsign].setLatLng(latlng);
 					markers[t.callsign].setIcon(icon);
 					if (trackerPopups[t.callsign]) trackerPopups[t.callsign].setContent(popupHtml(t));
 					markers[t.callsign].setTooltipContent(kiosk ? (t.name || t.id) : t.id);
 				} else {
 					const m = L.marker(latlng, { icon, pane: 'trackerPane' }).addTo(map);
+					m._trackerColor = color;
 					const popup = L.popup({ closeButton: isMobile, autoPan: false })
 						.setContent(popupHtml(t));
 					trackerPopups[t.callsign] = popup;
@@ -1632,6 +1677,7 @@ function applyConfig(cfg) {
 	if (cfg.courses)     applyCourses(cfg.courses);
 	if (cfg.aidstations) applyAidStations(cfg.aidstations);
 	if (cfg.igates)      applyIgates(cfg.igates);
+	if (cfg.section_visibility) applySectionVisibility(cfg.section_visibility);
 }
 
 function applyTrackerStyle(style) {
@@ -1686,6 +1732,20 @@ function applyTrackerConfig(trackers) {
 	const pfx     = isMobile ? 'm-legend-' : 'legend-';
 	const idSel   = isMobile ? '.m-id'     : '.legend-id';
 	const nameSel = isMobile ? '.m-name'   : '.legend-name';
+
+	// If any config tracker is absent from the DOM (e.g. non-default event with
+	// different callsigns), rebuild the entire list with placeholder live-data fields.
+	// updateDesktopLegend / updateMobileLegend handle create, update, and remove.
+	if (trackers.some(t => !document.getElementById(pfx + t.callsign))) {
+		const synth = trackers.map(t => ({
+			callsign: t.callsign, id: t.id, name: t.name,
+			color: 'red', time: '—', lastUpdate: 0, lat: null, lon: null
+		}));
+		if (isMobile) updateMobileLegend(synth);
+		else updateDesktopLegend(synth);
+		return;
+	}
+
 	trackers.forEach(t => {
 		const item = document.getElementById(pfx + t.callsign);
 		if (!item) return;
@@ -1768,8 +1828,9 @@ function loadCourseLayer(file) {
 				const color  = courseColors[file] || (p['marker-color'] ? '#' + p['marker-color'] : DEFAULT_COURSE_COLOR);
 				const radius = Math.round((parseFloat(p['marker-size']) || 1) * 8);
 				const m = L.circleMarker(latlng, {
-					radius, color, fillColor: color, fillOpacity: 0.85, weight: 1.5
+					radius: scaledRadius(radius), color, fillColor: color, fillOpacity: 0.85, weight: 1.5
 				});
+				m._baseRadius = radius;
 				const label = p.title || p.name || p.description;
 				if (label) m.bindTooltip(label, { direction: 'right', sticky: false });
 				return m;
@@ -1782,6 +1843,7 @@ function loadCourseLayer(file) {
 	layer.on('ready', () => {
 		const c = courseColors[file];
 		if (c) layer.setStyle({ color: c, fillColor: c, weight: 3, opacity: 0.9 });
+		if (!sectionVisible.courses) layer.setStyle({ opacity: 0, fillOpacity: 0, weight: 0 });
 		reorderCourseLayers();
 	});
 	layer.addTo(map);
@@ -1907,9 +1969,11 @@ function applyIgates(igates) {
 		const lat = parseFloat(g.lat), lon = parseFloat(g.lon);
 		if (isNaN(lat) || isNaN(lon)) return;
 		const latlng = [lat, lon];
+		const igateBase = isMobile ? 7 : 6;
 		const m = L.circleMarker(latlng, {
-			pane: 'igatePane', radius: isMobile ? 7 : 6, color: '#222', weight: 1.5, fillColor: '#111', fillOpacity: 0.9
+			pane: 'igatePane', radius: scaledRadius(igateBase), color: '#222', weight: 1.5, fillColor: '#111', fillOpacity: 0.9
 		}).addTo(map);
+		m._baseRadius = igateBase;
 		m.bindTooltip(g.name, { permanent: false, direction: 'right', className: 'place-label', offset: [8, 0] });
 
 		let item;
@@ -1949,9 +2013,11 @@ function applyAidStations(stations) {
 		const lat = parseFloat(g.lat), lon = parseFloat(g.lon);
 		if (isNaN(lat) || isNaN(lon)) return;
 		const latlng = [lat, lon];
+		const aidBase = isMobile ? 7 : 6;
 		const m = L.circleMarker(latlng, {
-			pane: 'aidPane', radius: isMobile ? 7 : 6, color: '#222', weight: 1.5, fillColor: '#111', fillOpacity: 0.9
+			pane: 'aidPane', radius: scaledRadius(aidBase), color: '#222', weight: 1.5, fillColor: '#111', fillOpacity: 0.9
 		}).addTo(map);
+		m._baseRadius = aidBase;
 		m.bindTooltip(g.name, { permanent: kiosk, direction: 'right', className: 'place-label', offset: [8, 0] });
 
 		let item;
@@ -1982,6 +2048,63 @@ map.on('moveend', function() {
 		zoom: map.getZoom()
 	}));
 });
+
+map.on('zoomend', function() {
+	// Rescale tracker markers
+	Object.values(markers).forEach(m => {
+		if (m._trackerColor !== undefined) {
+			const sz = Math.max(4, Math.round(trackerStyle.size * markerScale()));
+			m.setIcon(makeTrackerIcon(trackerStyle.icon, m._trackerColor, sz));
+		}
+	});
+	// Rescale igate, aid station, course, and history dots
+	[...igateMarkers, ...aidMarkers].forEach(d => {
+		if (d.m._baseRadius !== undefined) d.m.setRadius(scaledRadius(d.m._baseRadius));
+	});
+	Object.values(courseLayers).forEach(layer => {
+		layer.eachLayer(sub => {
+			if (sub._baseRadius !== undefined) sub.setRadius(scaledRadius(sub._baseRadius));
+		});
+	});
+	Object.values(historyDots).forEach(dots => {
+		dots.forEach(d => {
+			if (d._baseRadius !== undefined) d.setRadius(scaledRadius(d._baseRadius));
+		});
+	});
+});
+
+// ── Sidebar resizer ────────────────────────────────────────────────────────
+const LS_SIDEBAR_WIDTH = 'aprs_sidebar_width';
+if (!isMobile) {
+	const _sidebar  = document.getElementById('sidebar');
+	const _resizer  = document.getElementById('sidebar-resizer');
+	const _savedW   = parseInt(localStorage.getItem(LS_SIDEBAR_WIDTH));
+	if (_savedW >= 100 && _savedW <= 600) {
+		_sidebar.style.width    = _savedW + 'px';
+		_sidebar.style.minWidth = _savedW + 'px';
+	}
+	let _dragging = false, _startX = 0, _startW = 0;
+	_resizer.addEventListener('mousedown', e => {
+		_dragging = true;
+		_startX   = e.clientX;
+		_startW   = _sidebar.offsetWidth;
+		document.body.classList.add('sidebar-resizing');
+		e.preventDefault();
+	});
+	document.addEventListener('mousemove', e => {
+		if (!_dragging) return;
+		const w = Math.max(100, Math.min(600, _startW + e.clientX - _startX));
+		_sidebar.style.width    = w + 'px';
+		_sidebar.style.minWidth = w + 'px';
+		map.invalidateSize({ animate: false, pan: false });
+	});
+	document.addEventListener('mouseup', () => {
+		if (!_dragging) return;
+		_dragging = false;
+		document.body.classList.remove('sidebar-resizing');
+		localStorage.setItem(LS_SIDEBAR_WIDTH, _sidebar.offsetWidth);
+	});
+}
 
 // ── Map interactions ───────────────────────────────────────────────────────
 map.on('contextmenu', function(e) {
@@ -2030,6 +2153,13 @@ document.getElementById('save-map-btn').addEventListener('click', function() {
 
 // ── Reset buttons ──────────────────────────────────────────────────────────
 document.getElementById('reset-btn').addEventListener('click', function() {
+	clearAllSelections();
+	map.setView([defaultView.lat, defaultView.lon], defaultView.zoom);
+});
+
+document.addEventListener('keydown', function(e) {
+	if (e.key !== 'Escape') return;
+	if (e.target.matches('input, textarea, select')) return;
 	clearAllSelections();
 	map.setView([defaultView.lat, defaultView.lon], defaultView.zoom);
 });
@@ -2141,20 +2271,80 @@ async function fetchClients() {
 	}
 }
 
-// ── Sidebar section toggles ───────────────────────────────────────────────
+// ── Sidebar section visibility ────────────────────────────────────────────
+const sectionVisible = { trackers: true, courses: true, aidstations: true, igates: true, backgrounds: true };
+
+function setSectionVisible(section, visible) {
+	sectionVisible[section] = visible;
+	switch (section) {
+		case 'trackers':
+			map.getPane('trackerPane').style.display = visible ? '' : 'none';
+			map._container.classList.toggle('aprs-hide-trackers', !visible);
+			break;
+		case 'aidstations':
+			map.getPane('aidPane').style.display = visible ? '' : 'none';
+			break;
+		case 'igates':
+			map.getPane('igatePane').style.display = visible ? '' : 'none';
+			break;
+		case 'courses':
+			Object.entries(courseLayers).forEach(([file, layer]) => {
+				if (visible) {
+					const c = courseColors[file] || DEFAULT_COURSE_COLOR;
+					layer.setStyle({ color: c, fillColor: c, weight: 3, opacity: 0.9, fillOpacity: 0.85 });
+				} else {
+					layer.setStyle({ opacity: 0, fillOpacity: 0, weight: 0 });
+				}
+			});
+			break;
+		case 'backgrounds':
+			currentTileLayer.setOpacity(visible ? 1 : 0);
+			break;
+	}
+	const SECTION_BODIES = {
+		trackers:    ['legend',      'm-trackers-body'],
+		courses:     ['courses',     'm-courses-body'],
+		aidstations: ['aidstations', 'm-aidstations-body'],
+		igates:      ['igates',      'm-igates-body'],
+		backgrounds: ['backgrounds', 'm-backgrounds-body'],
+	};
+	(SECTION_BODIES[section] || []).forEach(id => {
+		const el = document.getElementById(id);
+		if (el) el.classList.toggle('section-dimmed', !visible);
+	});
+}
+
+function applySectionVisibility(sv) {
+	if (kiosk) return;
+	['trackers','courses','aidstations','igates','backgrounds'].forEach(section => {
+		if (sv[section] === false) {
+			document.querySelectorAll(`.sec-vis-cb[data-section="${section}"]`).forEach(cb => { cb.checked = false; });
+			setSectionVisible(section, false);
+		}
+	});
+}
+
+// Visibility checkboxes — desktop and mobile; stopPropagation keeps header-click from toggling collapse
+document.querySelectorAll('.sec-vis-cb').forEach(cb => {
+	cb.addEventListener('click', e => e.stopPropagation());
+	if (!kiosk) cb.addEventListener('change', () => setSectionVisible(cb.dataset.section, cb.checked));
+});
+
+// Desktop section collapse (localStorage-persisted)
 const LS_SIDEBAR_STATE = 'aprs_sidebar_state';
 if (!isMobile) {
-	let state = {};
-	try { state = JSON.parse(localStorage.getItem(LS_SIDEBAR_STATE) || '{}'); } catch {}
-	document.querySelectorAll('#sidebar .sec-hdr').forEach(hdr => {
+	let colState = {};
+	try { colState = JSON.parse(localStorage.getItem(LS_SIDEBAR_STATE) || '{}'); } catch {}
+	document.querySelectorAll('#sidebar .sec-hdr[data-body]').forEach(hdr => {
 		const bodyId = hdr.dataset.body;
 		const body   = document.getElementById(bodyId);
 		if (!body) return;
-		if (state[bodyId] === false) {
+		if (colState[bodyId] === false) {
 			hdr.classList.remove('open');
 			body.style.display = 'none';
 		}
-		hdr.addEventListener('click', () => {
+		hdr.addEventListener('click', e => {
+			if (e.target.classList.contains('sec-vis-cb')) return;
 			const isOpen = hdr.classList.contains('open');
 			hdr.classList.toggle('open', !isOpen);
 			body.style.display = isOpen ? 'none' : '';

@@ -1,0 +1,16 @@
+{
+  "name": "MARS APRS Tracker Map",
+  "short_name": "APRS Map",
+  "description": "Marin Amateur Radio Society APRS live tracker map",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1c2833",
+  "theme_color": "#1c2833",
+  "icons": [
+    {
+      "src": "https://marsaprs.org/favicon.ico",
+      "sizes": "any",
+      "type": "image/x-icon"
+    }
+  ]
+}

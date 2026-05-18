@@ -1,6 +1,6 @@
 # APRS Tracker Map — User Guide
 
-**Version 1.9 beta · May 16, 2026**
+**Version 1.9 beta · May 17, 2026**
 
 ---
 
@@ -29,6 +29,7 @@
   - [Editing the Configuration](#editing-the-configuration)
     - [Trackers](#trackers)
     - [Tracker Style](#tracker-style)
+    - [Default Section Visibility](#default-section-visibility)
     - [Map Default View](#map-default-view)
     - [Import and Export](#import-and-export)
     - [Backgrounds](#backgrounds-1)
@@ -57,9 +58,16 @@ You are free to make a variety of changes to how the map and various objects app
 
 ## Main Map
 
-Open the map at [marsaprs.org](https://marsaprs.org). The sidebar on the
-left lists all sections; each section can be collapsed by unchecking the box on its right
-edge.
+Open the map at [marsaprs.org](https://marsaprs.org). The sidebar on the left lists all
+sections. Each section header has two controls:
+
+- **Visibility checkbox** (right side) — when checked, that section's objects are shown on
+  the map; when unchecked, they are hidden and the section's rows dim to indicate this.
+- **Click the header text** — collapses or expands the section's list to save vertical
+  space. Collapse state is remembered across page reloads.
+
+The sidebar width is adjustable: drag the divider bar between the sidebar and the map. The
+width is saved in your browser and never affects other users.
 
 ---
 
@@ -153,7 +161,7 @@ The Origin is cleared by **Reset Map**.
 
 ### Reset Map
 
-Click **Reset Map** in the sidebar to:
+Click **Reset Map** in the sidebar (or press the **Escape** key) to:
 
 - Return the map to its default position and zoom level.
 - Clear any tracker history dots (breadcrumbs).
@@ -185,8 +193,6 @@ simplified display layout, which is designed for the publicly viewable display:
 
 ---
 
----
-
 ## Mobile Interface
 
 On phones and tablets (any device with a touch screen), the map takes up the full screen and the sidebar is replaced by a slide-in drawer.
@@ -197,7 +203,11 @@ Tap the **gear icon** (⚙) in the upper-right corner of the screen to open the 
 
 ### Drawer Sections
 
-The drawer is organized into collapsible sections. Tap a section header to expand it; the previously open section closes automatically.
+The drawer is organized into collapsible sections. Tap a section header to expand it; the
+previously open section closes automatically. Each section header also has a **visibility
+checkbox**: when checked, that section's objects appear on the map; when unchecked, they
+are hidden and the rows dim. Tapping the checkbox toggles visibility without collapsing or
+expanding the section.
 
 | Section | Contents |
 |---------|----------|
@@ -239,7 +249,9 @@ Click **Clients** in the page footer to open a panel showing:
 ## Admin Page
 
 Click on the Admin button and enter the password when prompted. After logging in,
-you can edit the configuration for the currently active event. As mentioned earlier, all changes will be strictly local unless and until you use Save for All Users... or Activate to publish them for others.
+you can edit the configuration for the currently active event. Your session remains active
+for 12 hours; you will not be asked for the password again if you return to the admin page
+within that window. As mentioned earlier, all changes will be strictly local unless and until you use Save for All Users... or Activate to publish them for others.
 
 The header and footer each contain action buttons:
 
@@ -306,6 +318,7 @@ Add, remove, and reorder the trackers to follow during an event.
 | Callsign | The tracker's APRS callsign (e.g., `KO6JDL-2`) |
 | ID | Short label shown on the map marker and in the sidebar (e.g., `S2`) |
 | Name | Full name shown in the sidebar (e.g., `Rob`) |
+| Δ | Read-only diagnostic: the shortest interval between any two consecutive beacons in the last 10 received, shown as M:SS. Displays — if fewer than 2 beacons have been received. |
 
 Use the **+** button to add a tracker. Use the **×** button to remove one. Drag the handle
 on the left to reorder.
@@ -317,8 +330,17 @@ Controls the appearance of all tracker markers on the map.
 | Field | Options |
 |-------|---------|
 | Icon | circle, square, diamond, triangle, star, cross, person |
-| Size | Marker radius in pixels (4–20) |
 | Label color | Hex color for the ID/name label on the map |
+
+Marker size scales automatically with zoom level and cannot be set manually.
+
+#### Default Section Visibility
+
+Sets the initial visibility of each section when the event is loaded. Each section
+(Trackers, Courses, Aid Stations, iGates, Backgrounds) has a checkbox; uncheck any to
+hide those objects on the map by default. These defaults are saved with the event when you
+use **Save as Default Event** and are loaded by all browsers on first page load. Users can
+override the visibility locally during their session using the sidebar checkboxes.
 
 #### Map Default View
 
@@ -341,29 +363,33 @@ view on the map — the same as using the **Save Map** button on the main page.
 The **Event**, **Trackers**, **Aid Stations**, **iGates**, and **Courses** section headers
 each have a **↓** (export) and **↑** (import) button.
 
-**Exporting:**
+**Exporting** — clicking **↓** shows a format menu:
 
-- All sections can export as a `.yaml` file. The filename includes the event name and
-  today's date (e.g., `Dipsea_2026_trackers_20260614.yaml`). An **Event** export includes
-  the entire configuration.
-- **Aid Stations** and **iGates**: clicking **↓** shows a dropdown — choose **Export as
-  YAML** or **Export as GPX**. The GPX file contains a waypoint for each entry and can be
-  opened in GPS apps and mapping tools.
+| Section | Export formats |
+|---------|---------------|
+| Event | YAML only (entire configuration) |
+| Trackers | YAML, CSV (`callsign, id, name`) |
+| Aid Stations | YAML, CSV (`name, lat, lon`), GPX |
+| iGates | YAML, CSV (`name, lat, lon`), GPX |
+| Courses | YAML, CSV (`name, file, color`) |
 
-**Importing:**
+YAML filenames include the event name and today's date (e.g., `Dipsea_2026_trackers_20260614.yaml`). GPX files contain one waypoint per entry and can be opened in GPS apps and mapping tools.
 
-- All sections accept `.yaml` files previously exported from this app.
-- **Aid Stations**, **iGates**, and **Courses** also accept `.gpx`, `.kml`, `.geojson`, and
-  `.json` files. You can select multiple files at once.
-  - Aid Stations / iGates: waypoints from the file are added as new entries.
-  - Courses: the file is uploaded to the server and a new course entry is created for it,
-    with the filename (minus extension) as the default name.
+**Importing** — supported formats by section:
 
-Importing always *adds* entries and never removes or overwrites existing ones. Duplicate
-entries (same name, callsign, or file path) are skipped automatically.
+| Section | Import formats |
+|---------|---------------|
+| Event | YAML |
+| Trackers | YAML, CSV |
+| Aid Stations | YAML, CSV, GPX, KML, GeoJSON, JSON |
+| iGates | YAML, CSV, GPX, KML, GeoJSON, JSON |
+| Courses | YAML, CSV, GPX, KML, GeoJSON, JSON |
 
-For `.yaml` files: if the file has no type marker, a confirmation dialog appears. If you try
-to import a file meant for a different section, the import is blocked.
+CSV imports use the first row as column headers (case-insensitive). Aid Stations / iGates: waypoints are added as new entries. Courses location files (GPX/KML/GeoJSON/JSON) are uploaded to the server and a course entry is created automatically; CSV course files (`name, file, color`) add entries without uploading. Multiple files can be selected at once.
+
+Importing always *adds* entries and never removes or overwrites existing ones. Duplicate entries (same name, callsign, or file path) are skipped automatically.
+
+For `.yaml` files: if the file has no type marker, a confirmation dialog appears. If you try to import a file meant for a different section, the import is blocked.
 
 Importing does not save to the server. Use **Save for All Users…** afterward.
 

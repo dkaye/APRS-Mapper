@@ -1,5 +1,6 @@
 <?php
 ini_set('display_errors', '0');
+ini_set('session.gc_maxlifetime', 43200); // 12 hours — keeps session alive until browser closes
 session_start();
 /**
  * MARS APRS Map Admin
@@ -68,8 +69,31 @@ if (isset($_GET['logout'])) {
     exit;
 }
 
-// Password disabled — open access
-$authed = true;
+// Login form POST
+$loginError = '';
+if (!isset($_SESSION['aprs_admin_authed'])
+        && $_SERVER['REQUEST_METHOD'] === 'POST'
+        && isset($_POST['pw'])) {
+    if ($storedPass !== '' && $_POST['pw'] === $storedPass) {
+        $_SESSION['aprs_admin_authed'] = true;
+        header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
+        exit;
+    }
+    $loginError = 'Incorrect password';
+}
+
+$authed = isset($_SESSION['aprs_admin_authed']) && $_SESSION['aprs_admin_authed'] === true;
+
+if (!$authed) {
+    if (isset($_GET['load']) || isset($_GET['save']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['alllocationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib']) || isset($_GET['beacondeltas'])) {
+        header('Content-Type: application/json');
+        http_response_code(401);
+        echo json_encode(['error' => 'Session expired — reload and log in again']);
+        exit;
+    }
+    renderLogin($loginError);
+    exit;
+}
 
 // ── Helper: remove history entries for deleted callsigns ─────────────────────
 function pruneTrackerHistory($histPath, array $keepCallsigns) {
@@ -106,10 +130,10 @@ function pruneTrackerHistory($histPath, array $keepCallsigns) {
 }
 
 // ── Helper: sync courses between YAML and event directory ────────────────────
-// Filesystem is the source of truth.
+// YAML is the source of truth for which courses appear.
 // - YAML entries whose files are absent from the event directory are dropped.
-// - Files in the directory with no YAML entry get an auto-generated entry.
-// - Returns the merged, deduplicated course array (with '_exists' = true on all entries).
+// - Files in the directory with no YAML entry are ignored (user deleted them intentionally).
+// - Returns the filtered course array (with '_exists' = true on all entries).
 function reconcileEventCourses(string $eventDir, string $eventName, array $yamlCourses): array {
     $exts = ['gpx', 'kml', 'geojson', 'json'];
     $dirFiles = [];
@@ -132,17 +156,42 @@ function reconcileEventCourses(string $eventDir, string $eventName, array $yamlC
         }
         // entry dropped silently if file not found in directory
     }
-    // Auto-add directory files not already in YAML (sorted)
-    ksort($dirFiles);
-    foreach (array_keys($dirFiles) as $base) {
-        if (isset($seen[$base])) continue;
-        $result[] = [
-            'name'    => str_replace(['_', '-'], ' ', pathinfo($base, PATHINFO_FILENAME)),
-            'file'    => 'events/' . $eventName . '/' . $base,
-            '_exists' => true,
-        ];
-    }
     return $result;
+}
+
+// ── Helper: compute min inter-beacon gap per callsign ────────────────────────
+// Returns [callsign => minGapSeconds|null]. Null means fewer than 2 entries.
+function computeBeaconDeltas(string $histPath): array {
+    $deltas = [];
+    if (!file_exists($histPath)) return $deltas;
+    $fh = @fopen($histPath, 'r');
+    if (!$fh) return $deltas;
+    flock($fh, LOCK_SH);
+    $lines = [];
+    while (($line = fgets($fh)) !== false) $lines[] = rtrim($line);
+    flock($fh, LOCK_UN);
+    fclose($fh);
+    $cs = null; $timestamps = [];
+    $flush = function() use (&$deltas, &$cs, &$timestamps) {
+        if ($cs === null) return;
+        if (count($timestamps) < 2) { $deltas[$cs] = null; return; }
+        $min = PHP_INT_MAX;
+        for ($i = 0; $i < count($timestamps) - 1; $i++) {
+            $gap = $timestamps[$i] - $timestamps[$i + 1]; // entries are newest-first
+            if ($gap > 0 && $gap < $min) $min = $gap;
+        }
+        $deltas[$cs] = ($min === PHP_INT_MAX) ? null : $min;
+    };
+    foreach ($lines as $line) {
+        if (!$line || $line[0] === '#') continue;
+        if (preg_match('/^([A-Z0-9][\w\-]+):$/', $line, $m)) {
+            $flush(); $timestamps = []; $cs = $m[1];
+        } elseif (preg_match('/^    ts:\s*(\d+)/', $line, $m)) {
+            $timestamps[] = (int)$m[1];
+        }
+    }
+    $flush();
+    return $deltas;
 }
 
 // ── AJAX: load ────────────────────────────────────────────────────────────────
@@ -158,7 +207,15 @@ if (isset($_GET['load'])) {
         }
     }
     $cfg['_filename'] = $currentFilename;
+    $real = realpath($configPath);
+    if ($real) $cfg['_beaconDeltas'] = computeBeaconDeltas(dirname($real) . '/tracker_history.yaml');
     respondJson($cfg);
+}
+
+if (isset($_GET['beacondeltas'])) {
+    $real   = realpath($configPath);
+    $deltas = $real ? computeBeaconDeltas(dirname($real) . '/tracker_history.yaml') : [];
+    respondJson((object)$deltas);
 }
 
 // ── AJAX: save ────────────────────────────────────────────────────────────────
@@ -354,6 +411,7 @@ if (isset($_GET['loadversion'])) {
     require_once __DIR__ . '/../config_parse.php';
     $cfg = parseConfigYaml($path);
     $cfg['courses'] = reconcileEventCourses($eventsDir . '/' . $eventName, $eventName, $cfg['courses'] ?? []);
+    $cfg['_beaconDeltas'] = computeBeaconDeltas($eventsDir . '/' . $eventName . '/tracker_history.yaml');
     respondJson($cfg);
 }
 
@@ -722,12 +780,20 @@ function buildConfigYaml($cfg, $history = []) {
     $L[] = '# ── Tracker style ─────────────────────────────────────────────────────────────';
     $L[] = '# Controls the appearance of all tracker markers on the map.';
     $L[] = '#   icon        : marker shape — circle, square, diamond, triangle, star, cross, person';
-    $L[] = '#   size        : marker radius in pixels, 4–20 (default: 8)';
     $L[] = '#   label_color : hex color for the name/id label on the map (default: #000000)';
     $L[] = 'tracker_style:';
     $L[] = '  icon: '        . ys(trim($style['icon']        ?? 'circle') ?: 'circle');
-    $L[] = '  size: '        . max(4, min(20, (int)($style['size'] ?? 8)));
     $L[] = '  label_color: ' . ys($style['label_color'] ?? '#000000');
+    $L[] = '';
+    // ── Section visibility ──────────────────────────────────────────────────────
+    $L[] = '# ── Section visibility ─────────────────────────────────────────────────────────';
+    $L[] = '# Default map visibility for each sidebar section (true/false).';
+    $L[] = 'section_visibility:';
+    $sv  = $cfg['section_visibility'] ?? [];
+    foreach (['trackers','courses','aidstations','igates','backgrounds'] as $k) {
+        $v = $sv[$k] ?? true;
+        $L[] = '  ' . $k . ': ' . (($v && $v !== 'false') ? 'true' : 'false');
+    }
     $L[] = '';
     $L[] = '# ── Map default view ──────────────────────────────────────────────────────────';
     $L[] = '# Sets the map center and zoom at page load and after second-clicking a tracker.';
@@ -902,6 +968,7 @@ body { font-family: arial, helvetica, sans-serif; font-size: 14px; background: #
 /* ── Field labels ── */
 .field-label { display: flex; flex-direction: column; gap: 2px; }
 .field-label span { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: .04em; }
+.f-delta { width: 46px; font-size: 13px; font-family: monospace; color: #555; line-height: 28px; padding: 0 2px; }
 
 input[type=text], input[type=number] {
     padding: 5px 7px; border: 1px solid #ccc; border-radius: 3px;
@@ -1175,7 +1242,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 
     <!-- ── Event ── -->
     <div class="section">
-        <div class="sec-title"><span>Event</span><div class="sec-io-btns"><button type="button" class="io-btn" title="Export entire event as YAML" onclick="exportSection('event')">↓</button><button type="button" class="io-btn" title="Import entire event from YAML" onclick="importSection('event')">↑</button></div></div>
+        <div class="sec-title"><span>Event</span><div class="sec-io-btns"><button type="button" class="io-btn" title="Export entire event" onclick="showExportMenu(this,'event')">↓</button><button type="button" class="io-btn" title="Import entire event from YAML or CSV" onclick="importSection('event')">↑</button></div></div>
         <div class="sec-body">
             <div class="map-field" style="width:100%;max-width:500px">
                 <label for="f-event">Event Name</label>
@@ -1197,7 +1264,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 
     <!-- ── Trackers ── -->
     <div class="section">
-        <div class="sec-title"><span>Trackers</span><div class="sec-io-btns"><button type="button" class="io-btn" title="Export trackers as YAML" onclick="exportSection('trackers')">↓</button><button type="button" class="io-btn" title="Import trackers from YAML" onclick="importSection('trackers')">↑</button></div></div>
+        <div class="sec-title"><span>Trackers</span><div class="sec-io-btns"><button type="button" class="io-btn" title="Export trackers" onclick="showExportMenu(this,'trackers')">↓</button><button type="button" class="io-btn" title="Import trackers from YAML or CSV" onclick="importSection('trackers')">↑</button></div></div>
         <div class="sec-body">
             <div id="trackers-list"></div>
             <button class="add-btn" onclick="addTracker()">+ Add Tracker</button>
@@ -1220,11 +1287,20 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
                         style="width:36px;height:28px;padding:1px;border:1px solid #555;border-radius:3px;cursor:pointer;background:none;display:block"
                         oninput="markDirty()">
                 </div>
-                <div class="field-label">
-                    <span>Size (px)</span>
-                    <input type="number" id="f-tracker-size" value="8" min="4" max="20"
-                        style="width:52px" oninput="markDirty()">
-                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Section Visibility ── -->
+    <div class="section">
+        <div class="sec-title">Default Section Visibility</div>
+        <div class="sec-body">
+            <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
+                <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="sv-trackers" checked> Trackers</label>
+                <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="sv-courses" checked> Courses</label>
+                <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="sv-aidstations" checked> Aid Stations</label>
+                <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="sv-igates" checked> iGates</label>
+                <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="sv-backgrounds" checked> Backgrounds</label>
             </div>
         </div>
     </div>
@@ -1283,7 +1359,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 
     <!-- ── Courses ── -->
     <div class="section">
-        <div class="sec-title"><span>Courses</span><div class="sec-io-btns"><button type="button" class="io-btn" title="Export courses as YAML" onclick="exportSection('courses')">↓</button><button type="button" class="io-btn" title="Import courses from YAML or upload a location file" onclick="importCoursesSection()">↑</button></div></div>
+        <div class="sec-title"><span>Courses</span><div class="sec-io-btns"><button type="button" class="io-btn" title="Export courses" onclick="showExportMenu(this,'courses')">↓</button><button type="button" class="io-btn" title="Import courses from YAML, CSV, or location file" onclick="importCoursesSection()">↑</button></div></div>
         <div class="sec-body">
             <div id="courses-list"></div>
             <button class="add-btn" onclick="saveColors()">Save Colors</button>
@@ -1488,6 +1564,22 @@ const TRACKER_ICONS = [
     { id: 'person',   label: 'Person',   path: '<circle cx="9" cy="6" r="3"/><polygon points="9,10 5,16.5 13,16.5"/>' },
 ];
 
+function formatDelta(s) {
+    const m  = Math.floor(s / 60);
+    const ss = Math.floor(s % 60);
+    return m + ':' + String(ss).padStart(2, '0');
+}
+
+function applyBeaconDeltas(deltas) {
+    document.querySelectorAll('#trackers-list .list-row').forEach(row => {
+        const cs   = row.querySelector('.f-cs')?.value.trim();
+        const disp = row.querySelector('.f-delta');
+        if (!disp) return;
+        const d = cs && deltas[cs] != null ? deltas[cs] : null;
+        disp.textContent = d != null ? formatDelta(d) : '—';
+    });
+}
+
 function buildTrackerRow(t) {
     const row     = document.createElement('div');
     row.className = 'list-row';
@@ -1502,6 +1594,19 @@ function buildTrackerRow(t) {
     fields.appendChild(csLabel);
     fields.appendChild(fieldLabel('ID',       'f-id',   t.id,        '45px'));
     fields.appendChild(fieldLabel('Name',     'f-name', t.name,     '130px'));
+
+    const deltaWrap = document.createElement('label');
+    deltaWrap.className = 'field-label';
+    const deltaLbl = document.createElement('span');
+    deltaLbl.textContent = 'Δ';
+    const deltaDisp = document.createElement('div');
+    deltaDisp.className = 'f-delta';
+    deltaDisp.title = 'Minimum interval between successive beacons (last 10 received)';
+    deltaDisp.textContent = '—';
+    deltaWrap.appendChild(deltaLbl);
+    deltaWrap.appendChild(deltaDisp);
+    fields.appendChild(deltaWrap);
+
     row.appendChild(fields);
     row.appendChild(makeDeleteBtn());
     return row;
@@ -1528,7 +1633,6 @@ function initTrackerStyleSection(style) {
     });
     document.getElementById('f-tracker-icon').value       = cur;
     document.getElementById('f-tracker-label-color').value = style?.label_color || '#000000';
-    document.getElementById('f-tracker-size').value        = style?.size        || 8;
 }
 
 function appendTracker(t, attach) {
@@ -2286,7 +2390,6 @@ function collectConfig() {
 
     const tracker_style = {
         icon:        document.getElementById('f-tracker-icon').value || 'circle',
-        size:        parseInt(document.getElementById('f-tracker-size').value) || 8,
         label_color: document.getElementById('f-tracker-label-color').value
     };
 
@@ -2339,7 +2442,14 @@ function collectConfig() {
         });
     });
 
-    return { event: document.getElementById('f-event').value.trim(), legend: document.getElementById('f-legend').value, tracker_style, trackers, map, backgrounds, background_url, courses, aidstations, igates };
+    const section_visibility = {
+        trackers:    document.getElementById('sv-trackers').checked,
+        courses:     document.getElementById('sv-courses').checked,
+        aidstations: document.getElementById('sv-aidstations').checked,
+        igates:      document.getElementById('sv-igates').checked,
+        backgrounds: document.getElementById('sv-backgrounds').checked,
+    };
+    return { event: document.getElementById('f-event').value.trim(), legend: document.getElementById('f-legend').value, tracker_style, trackers, map, backgrounds, background_url, courses, aidstations, igates, section_visibility };
 }
 
 // ── Populate form from a config object ───────────────────────────────────────
@@ -2348,6 +2458,12 @@ function populateForm(cfg) {
     document.getElementById('f-event').value  = cfg.event  || '';
     document.getElementById('f-legend').value = cfg.legend || '';
     initTrackerStyleSection(cfg.tracker_style || {});
+    const sv = cfg.section_visibility || {};
+    document.getElementById('sv-trackers').checked    = sv.trackers    !== false;
+    document.getElementById('sv-courses').checked     = sv.courses     !== false;
+    document.getElementById('sv-aidstations').checked = sv.aidstations !== false;
+    document.getElementById('sv-igates').checked      = sv.igates      !== false;
+    document.getElementById('sv-backgrounds').checked = sv.backgrounds !== false;
 
     document.getElementById('trackers-list').innerHTML = '';
     (cfg.trackers || []).forEach(t => appendTracker(t));
@@ -2416,11 +2532,15 @@ async function doLoad() {
         }
 
         // Always fetch supporting data from server
-        const [filesResp, bgLibResp] = await Promise.all([fetch('?locationfiles'), fetch('?bglib')]);
+        const [filesResp, bgLibResp, deltasResp] = await Promise.all([
+            fetch('?locationfiles'), fetch('?bglib'), fetch('?beacondeltas')
+        ]);
         if (filesResp.ok) locationFiles = await filesResp.json();
         if (bgLibResp.ok) mergeBgLibrary(await bgLibResp.json());
+        const beaconDeltas = deltasResp.ok ? await deltasResp.json() : {};
 
         populateForm(cfg);
+        applyBeaconDeltas(cfg._beaconDeltas || beaconDeltas);
         setCurrentEvent(filename, cfg.event || '');
         originalConfig   = cfg;
         isDirty          = false;
@@ -3104,6 +3224,7 @@ async function doLoadModal() {
                 if (filesResp.ok) locationFiles = await filesResp.json();
                 const cfg = await r.json();
                 populateForm(cfg);
+                applyBeaconDeltas(cfg._beaconDeltas || {});
                 isDirty = false;
                 setCurrentEvent(v.name, cfg.event || '');
                 const eventData = { name: v.name, config: cfg, isDefault: v.active };
@@ -3332,8 +3453,15 @@ function buildSectionYaml(type, cfg) {
         const style = cfg.tracker_style || {};
         L.push('tracker_style:');
         L.push('  icon: '        + ys(style.icon        || 'circle'));
-        L.push('  size: '        + (parseInt(style.size) || 8));
         L.push('  label_color: ' + ys(style.label_color || '#000000'));
+        L.push('');
+        const sv = cfg.section_visibility || {};
+        L.push('section_visibility:');
+        L.push('  trackers: '    + (sv.trackers    !== false ? 'true' : 'false'));
+        L.push('  courses: '     + (sv.courses     !== false ? 'true' : 'false'));
+        L.push('  aidstations: ' + (sv.aidstations !== false ? 'true' : 'false'));
+        L.push('  igates: '      + (sv.igates      !== false ? 'true' : 'false'));
+        L.push('  backgrounds: ' + (sv.backgrounds !== false ? 'true' : 'false'));
         L.push('');
         const map = cfg.map || {};
         L.push('map:');
@@ -3510,11 +3638,33 @@ function importSectionData(type, cfg) {
 
 function importSection(type) {
     const inp = document.createElement('input');
-    inp.type = 'file'; inp.accept = '.yaml,.yml';
+    inp.type = 'file'; inp.accept = '.yaml,.yml,.csv';
     inp.onchange = async () => {
         const file = inp.files[0];
         if (!file) return;
+        const ext  = file.name.split('.').pop().toLowerCase();
         const text = await file.text();
+
+        if (ext === 'csv') {
+            const items = (type === 'event') ? parseCsvTrackers(text) : parseCsvTrackers(text);
+            if (!items.length) {
+                const body = document.createElement('div');
+                body.innerHTML = '<p style="margin:0;font-size:14px">No valid rows found. Expected columns: <code>callsign, id, name</code>.</p>';
+                const ok = document.createElement('button'); ok.className = 'modal-cancel-btn'; ok.textContent = 'OK';
+                const close = openModal('CSV Import Error', body, [ok]);
+                ok.addEventListener('click', close);
+                return;
+            }
+            const key = (type === 'event') ? 'trackers' : type;
+            importSectionData(key, { [key]: items });
+            markDirty(true);
+            const body = document.createElement('div');
+            body.innerHTML = `<p style="margin:0;font-size:14px;line-height:1.5">Imported ${items.length} tracker${items.length !== 1 ? 's' : ''} from CSV. Changes have not been saved to the server yet.</p>`;
+            const ok = document.createElement('button'); ok.className = 'save-btn'; ok.textContent = 'OK';
+            const close = openModal('Import Complete', body, [ok]);
+            ok.addEventListener('click', close);
+            return;
+        }
 
         // Find # type: line in first 15 lines
         const headLines = text.split('\n').slice(0, 15);
@@ -3567,14 +3717,16 @@ function importSection(type) {
 // A location file is uploaded to the server and automatically added as a new course entry.
 async function importCoursesSection() {
     const inp = document.createElement('input');
-    inp.type = 'file'; inp.accept = '.yaml,.yml,.gpx,.kml,.geojson,.json'; inp.multiple = true;
+    inp.type = 'file'; inp.accept = '.yaml,.yml,.gpx,.kml,.geojson,.json,.csv'; inp.multiple = true;
     inp.onchange = async () => {
         const files = Array.from(inp.files);
         if (!files.length) return;
 
         const locationExts = new Set(['gpx', 'kml', 'geojson', 'json']);
-        const locationFiles = files.filter(f => locationExts.has(f.name.split('.').pop().toLowerCase()));
-        const yamlFiles    = files.filter(f => !locationExts.has(f.name.split('.').pop().toLowerCase()));
+        const ext          = f => f.name.split('.').pop().toLowerCase();
+        const locationFiles = files.filter(f => locationExts.has(ext(f)));
+        const csvFiles      = files.filter(f => ext(f) === 'csv');
+        const yamlFiles     = files.filter(f => !locationExts.has(ext(f)) && ext(f) !== 'csv');
 
         let addedCount = 0;
 
@@ -3605,6 +3757,24 @@ async function importCoursesSection() {
                 const close = openModal('Upload Error', body, [okBtn]);
                 okBtn.addEventListener('click', close);
                 if (!addedCount) return;
+            }
+        }
+
+        // Process any CSV files (course list: name, file, color — no upload)
+        for (const file of csvFiles) {
+            const text  = await file.text();
+            const items = parseCsvCourses(text);
+            if (!items.length) {
+                const body = document.createElement('div');
+                body.innerHTML = `<p style="margin:0;font-size:14px"><b>${file.name}</b>: no valid rows found. Expected columns: <code>name, file, color</code>.</p>`;
+                const ok = document.createElement('button'); ok.className = 'modal-cancel-btn'; ok.textContent = 'OK';
+                await new Promise(resolve => {
+                    const close = openModal('CSV Import Error', body, [ok]);
+                    ok.addEventListener('click', () => { close(); resolve(); });
+                });
+            } else {
+                importSectionData('courses', { courses: items });
+                addedCount += items.length;
             }
         }
 
@@ -3656,6 +3826,116 @@ async function importCoursesSection() {
     inp.click();
 }
 
+// ── CSV export helpers ────────────────────────────────────────────────────────
+
+function csvField(v) {
+    const s = String(v ?? '');
+    return /[,"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function buildSectionCsv(type, cfg) {
+    let headers, rows;
+    if (type === 'trackers' || type === 'event') {
+        headers = ['callsign', 'id', 'name'];
+        rows    = (cfg.trackers || []).map(t => [t.callsign || '', t.id || '', t.name || '']);
+    } else if (type === 'aidstations' || type === 'igates') {
+        headers = ['name', 'lat', 'lon'];
+        rows    = (cfg[type] || []).map(g => [g.name || '', g.lat ?? '', g.lon ?? '']);
+    } else if (type === 'courses') {
+        headers = ['name', 'file', 'color'];
+        rows    = (cfg.courses || []).map(c => [c.name || '', c.file || '', c.color || '']);
+    } else {
+        return '';
+    }
+    return [headers, ...rows].map(r => r.map(csvField).join(',')).join('\r\n') + '\r\n';
+}
+
+function exportCsv(type) {
+    const cfg  = collectConfig();
+    const text = buildSectionCsv(type, cfg);
+    if (!text) return;
+    const ev = (cfg.event || '').trim().replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '') || 'export';
+    const d  = new Date();
+    const ds = d.getFullYear() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
+    const a  = document.createElement('a');
+    a.href     = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
+    a.download = ev + '_' + type + '_' + ds + '.csv';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+
+// ── CSV import helpers ────────────────────────────────────────────────────────
+
+// Parse CSV text → { col(…names), dataRows }.
+// col() returns the index of the first matching header name (case-insensitive, ignores spaces/underscores).
+function parseCsvRows(text) {
+    const parseRow = line => {
+        const fields = []; let i = 0;
+        while (i <= line.length) {
+            if (line[i] === '"') {
+                let j = i + 1, f = '';
+                while (j < line.length) {
+                    if (line[j] === '"' && line[j+1] === '"') { f += '"'; j += 2; }
+                    else if (line[j] === '"') { j++; break; }
+                    else f += line[j++];
+                }
+                fields.push(f);
+                i = line[j] === ',' ? j + 1 : j;
+            } else {
+                const end = line.indexOf(',', i);
+                if (end === -1) { fields.push(line.slice(i).trim()); break; }
+                fields.push(line.slice(i, end).trim());
+                i = end + 1;
+            }
+        }
+        return fields;
+    };
+    const lines    = text.replace(/\r\n?/g, '\n').split('\n').filter(l => l.trim());
+    if (lines.length < 2) return null;
+    const headers  = parseRow(lines[0]).map(h => h.toLowerCase().replace(/[\s_]+/g, ''));
+    const col      = (...names) => { for (const n of names) { const i = headers.indexOf(n); if (i !== -1) return i; } return -1; };
+    const dataRows = lines.slice(1).map(parseRow).filter(r => r.some(f => f.trim()));
+    return { col, dataRows };
+}
+
+function parseCsvTrackers(text) {
+    const p = parseCsvRows(text); if (!p) return [];
+    const csIdx   = p.col('callsign', 'call', 'cs');
+    const idIdx   = p.col('id');
+    const nameIdx = p.col('name', 'displayname', 'fullname');
+    if (csIdx === -1) return [];
+    return p.dataRows
+        .map(r => ({ callsign: (r[csIdx] || '').trim(), id: (r[idIdx] || '').trim(), name: (r[nameIdx] || '').trim() }))
+        .filter(t => t.callsign);
+}
+
+function parseCsvGeo(text) {
+    const p = parseCsvRows(text); if (!p) return [];
+    const nameIdx = p.col('name', 'title', 'label');
+    const latIdx  = p.col('lat', 'latitude');
+    const lonIdx  = p.col('lon', 'lng', 'long', 'longitude');
+    if (latIdx === -1 || lonIdx === -1) return [];
+    return p.dataRows
+        .map(r => ({ name: (r[nameIdx] || '').trim(), lat: parseFloat(r[latIdx]), lon: parseFloat(r[lonIdx]) }))
+        .filter(g => !isNaN(g.lat) && !isNaN(g.lon));
+}
+
+function parseCsvCourses(text) {
+    const p = parseCsvRows(text); if (!p) return [];
+    const nameIdx  = p.col('name', 'title');
+    const fileIdx  = p.col('file', 'filename', 'path');
+    const colorIdx = p.col('color', 'colour');
+    if (fileIdx === -1) return [];
+    return p.dataRows
+        .map(r => {
+            const c = { name: (r[nameIdx] || '').trim(), file: (r[fileIdx] || '').trim() };
+            const color = (r[colorIdx] || '').trim();
+            if (color) c.color = color;
+            return c;
+        })
+        .filter(c => c.file);
+}
+
 // ── GPX export / geo import for iGates & Aid Stations ────────────────────────
 
 function exportGpx(type) {
@@ -3683,18 +3963,24 @@ function exportGpx(type) {
     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
 
-// Show a small dropdown under btn with YAML and GPX export options.
+// Show a small dropdown under btn with export format options.
 function showExportMenu(btn, type) {
     const existing = document.getElementById('export-menu');
     if (existing) { existing.remove(); return; }
     const menu = document.createElement('div');
     menu.id = 'export-menu';
     menu.style.cssText = 'position:absolute;background:#fff;border:1px solid #ccc;border-radius:4px;' +
-        'box-shadow:0 2px 8px rgba(0,0,0,.18);z-index:9000;min-width:130px;overflow:hidden;';
-    [
+        'box-shadow:0 2px 8px rgba(0,0,0,.18);z-index:9000;min-width:140px;overflow:hidden;';
+    const opts = [
         { label: 'Export as YAML', action: () => exportSection(type) },
-        { label: 'Export as GPX',  action: () => exportGpx(type) },
-    ].forEach(opt => {
+    ];
+    if (type !== 'event') {
+        opts.push({ label: 'Export as CSV', action: () => exportCsv(type) });
+    }
+    if (type === 'aidstations' || type === 'igates') {
+        opts.push({ label: 'Export as GPX', action: () => exportGpx(type) });
+    }
+    opts.forEach(opt => {
         const item = document.createElement('button');
         item.type = 'button'; item.textContent = opt.label;
         item.style.cssText = 'display:block;width:100%;padding:7px 14px;background:none;border:none;' +
@@ -3716,11 +4002,11 @@ function showExportMenu(btn, type) {
 // Import iGates or Aid Stations from YAML, GPX, KML, JSON, or GeoJSON.
 async function importGeoSection(type) {
     const inp = document.createElement('input');
-    inp.type = 'file'; inp.accept = '.yaml,.yml,.gpx,.kml,.json,.geojson'; inp.multiple = true;
+    inp.type = 'file'; inp.accept = '.yaml,.yml,.gpx,.kml,.json,.geojson,.csv'; inp.multiple = true;
     inp.onchange = async () => {
         const files = Array.from(inp.files);
         if (!files.length) return;
-        const locationExts = new Set(['gpx', 'kml', 'geojson', 'json']);
+        const locationExts = new Set(['gpx', 'kml', 'geojson', 'json', 'csv']);
         const typeLabels   = { aidstations: 'aid stations', igates: 'iGates' };
         const targetLabel  = typeLabels[type] || type;
         let processed = false;
@@ -3734,6 +4020,7 @@ async function importGeoSection(type) {
                 let points = [];
                 if (ext === 'gpx')      points = parseGpxPoints(text);
                 else if (ext === 'kml') points = parseKmlPoints(text);
+                else if (ext === 'csv') points = parseCsvGeo(text);
                 else                    points = parseGeoJsonPoints(text);
 
                 if (!points.length) {
