@@ -76,13 +76,15 @@ if (!isset($_SESSION['aprs_admin_authed'])
         && isset($_POST['pw'])) {
     if ($storedPass !== '' && $_POST['pw'] === $storedPass) {
         $_SESSION['aprs_admin_authed'] = true;
+        $_SESSION['stats_auth']        = true;
         header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
         exit;
     }
     $loginError = 'Incorrect password';
 }
 
-$authed = isset($_SESSION['aprs_admin_authed']) && $_SESSION['aprs_admin_authed'] === true;
+$authed = (isset($_SESSION['aprs_admin_authed']) && $_SESSION['aprs_admin_authed'] === true)
+       || (isset($_SESSION['stats_auth'])        && $_SESSION['stats_auth']        === true);
 
 if (!$authed) {
     if (isset($_GET['load']) || isset($_GET['save']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['alllocationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib']) || isset($_GET['beacondeltas'])) {
@@ -1233,6 +1235,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
         <button class="sec-btn" onclick="doLoadModal()">Load…</button>
         <button class="sec-btn" onclick="doSave()">Save</button>
         <button class="sec-btn" onclick="doSaveAs()">Save as Default Event</button>
+        <button class="sec-btn" onclick="location.href='/netbird/'">NetBird</button>
         <button class="sec-btn" onclick="location.href='../'">Exit</button>
     </div>
 </div>

@@ -1,6 +1,6 @@
 # APRS Tracker Map
 
-**Version 1.9 beta**
+**Version 1.10 beta**
 
 Real-time APRS position tracking displayed on an interactive Leaflet map. A PHP daemon
 connects to the APRS-IS network, decodes incoming packets, and writes position data to a
@@ -891,17 +891,244 @@ Double-click the icon to reload the APRS map in fullscreen kiosk display mode wi
 
 ---
 
+---
+
+## NetBird Status Monitor
+
+A separate web application at `/netbird/` monitors the Raspberry Pi iGate and
+non-iGate devices used at MARS events. It polls each device over the NetBird VPN, shows
+real-time status, and provides a browser-based SSH terminal for remote access.
+
+### Architecture
+
+```
+addresses.yaml  (device list, credentials)
+      │
+      ├──▶  daemon.php  ──writes──▶  stats.json
+      │        │  UDP poll every N seconds
+      │        ▼
+      │     each device's NetBird IP : 1235
+      │
+      ├──▶  api.php  ◀── browser polls every 15 s
+      │        │  merges YAML enabled state at read time
+      │        ▼
+      │     index.php  (main status page)
+      │
+      └──▶  admin.php  (device management)
+               │
+               ├──▶  save.php  (CRUD + toggle)
+               └──▶  ssh_term.php  ──SSE──▶  ssh_stream.php
+                                                   │  proc_open
+                                                   ▼
+                                              ssh_relay.py  (paramiko)
+                                                   │  NetBird VPN
+                                                   ▼
+                                              remote device
+```
+
+| File | Role |
+|------|------|
+| `daemon.php` | UDP polling daemon; sends requests to enabled devices, writes `stats.json` |
+| `api.php` | JSON endpoint for the main page; merges `addresses.yaml` enabled state on top of `stats.json` at read time |
+| `index.php` | Main status page; **public** (no login required); polls `api.php` every 15 s; receives instant cross-tab updates via `BroadcastChannel` |
+| `admin.php` | Device list CRUD; toggle switches; SSH terminal launch |
+| `save.php` | Handles all CRUD actions and toggle; returns fresh `enabled_at` timestamp on enable |
+| `yaml_lib.php` | Custom YAML parser/writer (no `php-yaml` extension required) |
+| `addresses.yaml` | Device configuration: name, host, ip, group, enabled, ssh\_user, ssh\_pass |
+| `stats.json` | Live daemon output; read by `api.php` |
+| `ssh_term.php` | Browser SSH terminal popup (xterm.js) |
+| `ssh_stream.php` | SSE relay; spawns `ssh_relay.py` via `proc_open` |
+| `ssh_relay.py` | Python/paramiko SSH relay; reads input queue, writes output to stdout |
+| `ssh_input.php` | Receives keystrokes from browser; appends to per-session queue file |
+| `ssh_resize.php` | Receives terminal resize events; writes to per-session resize file |
+
+### Device Configuration (`addresses.yaml`)
+
+```yaml
+- name: Muir Woods
+  host: MARS-2            # APRS callsign / hostname used for status lookups
+  ip: 100.101.197.70      # NetBird IP
+  group: "via internet (WiFi or Ethernet)"
+  enabled: true
+  ssh_user: pi            # stored when first SSH login succeeds
+  ssh_pass: ""            # stored only if "Remember password" is checked
+```
+
+The `group` field becomes a section header row in both the admin and main pages. Devices
+within a group appear together. The `host` field is used for the hostname self-reporting
+endpoint (see below). `ssh_user` and `ssh_pass` are written by `save.php` when a user
+authenticates via the SSH terminal.
+
+### Status States
+
+Each enabled device passes through these states:
+
+| Status | Condition | Colour |
+|--------|-----------|--------|
+| **Online** | Device responded to the last UDP poll | Green |
+| **Enabling** | `enabled` just set to true; within the 5-min grace period | Blue |
+| **Offline** | Enabled but no response, and grace period has elapsed | Red |
+| **Disabled** | `enabled: false` in `addresses.yaml` | Gray |
+
+**Grace period formula** (JS, both pages):
+
+```javascript
+const deadline = Math.floor(d.enabled_at / 300) * 300 + 330;
+// = next 5-minute clock boundary after enabled_at, plus 30 seconds
+```
+
+Devices poll `marsaprs.org/netbird/?hostname=<callsign>` on 5-minute clock boundaries
+(00:00, 00:05, …). The 30-second buffer accounts for network and startup latency.
+
+### Immediate Status Propagation
+
+`api.php` merges `addresses.yaml` into every `stats.json` response:
+- If YAML says `enabled: true` but `stats.json` still says `enabled: false` (daemon hasn't
+  cycled yet), the response is corrected on the fly with `enabled: true` and
+  `enabled_at: time()`.
+- This means toggling a device in the admin page is reflected on the main page on its very
+  next poll — no daemon cycle needed.
+
+When a toggle is saved, `admin.php` fires a `BroadcastChannel('aprs_netbird')` message.
+If the main page is open in the same browser, it calls `doFetch()` immediately, so the
+status update appears within milliseconds.
+
+### Hostname Self-Reporting Endpoint
+
+```
+GET /netbird/?hostname=<callsign>
+```
+
+No authentication required. Returns a plain-text integer:
+
+| Value | Meaning |
+|-------|---------|
+| `1` | Device is known and `enabled: true` |
+| `0` | Device is known and `enabled: false` |
+| `-1` | Device not found in `addresses.yaml` |
+
+Devices use this to determine whether to transmit APRS beacons. They poll it on 5-minute
+clock boundaries.
+
+### SSH Terminal
+
+The SSH button (admin page, active only when the device is Online) opens a popup window
+with a full terminal powered by xterm.js.
+
+**Security:** If both `ssh_user` and `ssh_pass` are stored in `addresses.yaml`, PHP mints
+a one-time session token server-side — the password is never rendered in HTML or sent to
+the browser. If credentials are missing, a login form is shown; on success, the username
+(and optionally the password) is saved to `addresses.yaml`.
+
+**Relay architecture:**
+1. `ssh_stream.php` spawns `ssh_relay.py` via PHP `proc_open`.
+2. `ssh_relay.py` opens a paramiko PTY shell to the device using the stored credentials.
+3. The relay runs a 20 ms loop: SSH output → base64 lines on stdout → PHP reads and
+   forwards as SSE `data:` events → browser decodes and writes to xterm.js.
+4. Keystrokes from xterm.js → `fetch` to `ssh_input.php` → appended to a per-session queue
+   file (`/tmp/aprs_ssh_<token>.q`) → relay reads and sends to the SSH channel.
+5. Terminal resize events → `ssh_resize.php` → relay calls `chan.resize_pty(cols, rows)`.
+6. When the SSH session ends, the relay exits, the SSE stream closes, and the popup window
+   closes automatically.
+
+**Dependencies:** Python 3 (`/usr/bin/python3`) and `paramiko` installed system-wide:
+
+```bash
+sudo apt-get install python3-paramiko
+```
+
+### Daemon (`daemon.php`)
+
+Run by `netbird-daemon.service`. Sends UDP packets to enabled devices every
+`repeat_seconds` (default 60) when there are active viewers. Writes responses to
+`stats.json` via atomic rename (`stats.json.tmp` → `stats.json`).
+
+```bash
+sudo systemctl status netbird-daemon
+sudo systemctl restart netbird-daemon
+sudo journalctl -u netbird-daemon -f
+```
+
+Log: `/var/www/html/netbird/daemon.log`
+
+The daemon detects when a device transitions from `enabled: false` to `enabled: true`
+(re-read from `addresses.yaml` on each cycle) and records `enabled_at = now`.
+
+### API: `api.php`
+
+No authentication required. Polled by the main page every 15 seconds.
+
+**`GET api.php`** — returns the full device status:
+
+```json
+{
+  "last_updated": "2026-05-18T05:06:35+00:00",
+  "last_updated_ts": 1779080795,
+  "last_send_ts": 1779080794,
+  "repeat_seconds": 60,
+  "daemon_running": true,
+  "devices": [
+    {
+      "ip": "100.101.197.70",
+      "hostname": "MARS-2",
+      "name": "Muir Woods",
+      "group": "via internet (WiFi or Ethernet)",
+      "enabled": true,
+      "enabled_at": 1779080262,
+      "last_request": 1779080794,
+      "last_response": 1779080795,
+      "response_data": "MARS-2 Load=0.19 Temp=47.8°C ...",
+      "online": true
+    }
+  ]
+}
+```
+
+The `enabled` field and `enabled_at` in the response are the YAML-merged values, not raw
+`stats.json` values.
+
+### API: `save.php`
+
+Most actions require an active session (HTTP 401 if not authenticated). `save_config` is open to all users.
+
+| Action | Auth | Method | Key Parameters | Description |
+|--------|------|--------|---------------|-------------|
+| `add_device` | required | POST | name, host, ip, group, enabled | Append device to `addresses.yaml` |
+| `update_device` | required | POST | orig\_ip, name, host, ip, group, enabled | Edit existing device |
+| `delete_device` | required | POST | ip | Remove device |
+| `toggle_device` | required | POST | ip | Flip `enabled`; returns `{ok, enabled_at}` |
+| `save_config` | open | POST | repeat\_seconds | Update daemon poll interval in `config.json` |
+| `save_ssh_creds` | required | POST | ip, ssh\_user, ssh\_pass | Update stored credentials |
+
+### Deployment
+
+Status files are deployed individually (not part of `sync-to-pi.sh`):
+
+```bash
+scp /Users/doug/aprs/laptop/netbird/<file> pi@aprs-pi:/var/www/html/netbird/
+```
+
+---
+
 ## Infrastructure
 
-The system runs on two Raspberry Pi devices:
+The system runs on three Raspberry Pi devices:
 
-| Device | Role |
-|--------|------|
-| **aprs-pi** | Runs Apache + PHP, aprsDaemon.php, and Cloudflare Tunnel. Reachable at `marsaprs.org`. |
-| **display Pi** | Dedicated kiosk screen. Chromium fullscreen, always showing `marsaprs.org`. |
+| Device | Local IP | NetBird IP | Role |
+|--------|----------|-----------|------|
+| **aprs-pi** | 192.168.0.180 | 100.101.18.232 | Apache + PHP, aprsDaemon.php, netbird daemon. Reachable at `marsaprs.org`. SSH alias: `aprs-pi` |
+| **NetControl** | 192.168.0.36 | — | Kiosk display for Net Control operator. Chromium fullscreen → `marsaprs.org`. SSH: `pi@192.168.0.36` |
+| **BigTV** | 192.168.0.52 | 100.101.163.164 | Large kiosk display. Chromium fullscreen → `marsaprs.org`. SSH: `pi@192.168.0.52` |
 
-`marsaprs.org` is served via a Cloudflare Tunnel (no port forwarding required). The tunnel
-works on any network — home LAN, cellular hotspot, event venue WiFi — without router
-configuration.
+`marsaprs.org` is served via a Cloudflare Tunnel (replaced the old `mars-aprs.ddns.net` DDNS). No port forwarding required; works on any network.
 
 Cloudflare Tunnel ID: `b11404f2-7497-4822-92b4-f75db418a1fe`
+
+### Kiosk autostart (NetControl and BigTV)
+
+Both display Pis use the same autostart mechanism:
+- **Autostart file**: `/home/pi/.config/lxsession/rpd-x/autostart`
+- **Launcher script**: `/home/pi/start-kiosk.sh` — clears stale Chromium singleton lock files, then launches Chromium in kiosk mode
+- **Desktop icon**: `/home/pi/Desktop/Start APRS.desktop` — kills any running Chromium and relaunches
+
+Chromium singleton lock files (`~/.config/chromium/Singleton*`) left by an unclean shutdown will silently block Chromium from launching. The `start-kiosk.sh` script clears them automatically on every boot.

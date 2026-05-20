@@ -8,3 +8,15 @@ events/*/tracker_history.yaml
 publish.sh
 backup-from-pi.sh
 aprs-daemon.log
+laptop/addresses.cfg
+laptop/netbird/addresses.yaml
+laptop/netbird/addresses.cfg
+laptop/netbird/daemon.log
+laptop/netbird/stats.json
+laptop/netbird/config.json
+laptop/netbird/last_viewer.ts
+laptop/netbird/poll_force
+laptop/netbird/poll_single
+laptop/netbird/poll_now
+laptop/status/addresses.yaml
+laptop/status/addresses.cfg

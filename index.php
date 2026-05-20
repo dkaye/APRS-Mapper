@@ -884,7 +884,7 @@ new (L.Control.extend({
 			L.DomEvent.on(exitBtn, 'click', () => { location.href = location.pathname; });
 			L.DomEvent.disableClickPropagation(exitBtn);
 			const txt = L.DomUtil.create('span', '', d);
-			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.9 beta &copy; 2026 Doug Kaye (K6DRK)';
+			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.10 beta &copy; 2026 Doug Kaye (K6DRK)';
 		} else {
 			if (!isMobile) {
 				const exitBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
@@ -902,8 +902,8 @@ new (L.Control.extend({
 			}
 			const ftxt = L.DomUtil.create('span', '', d);
 			ftxt.innerHTML = isMobile
-				? 'MARS APRS v1.9 beta &copy; 2026 Doug Kaye (K6DRK)'
-				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.9 beta &copy; 2026 Doug Kaye (K6DRK)';
+				? 'MARS APRS v1.10 beta &copy; 2026 Doug Kaye (K6DRK)'
+				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.10 beta &copy; 2026 Doug Kaye (K6DRK)';
 			if (isMobile) d.style.fontSize = '10px';
 		}
 		return d;
@@ -1699,7 +1699,7 @@ function refreshMobileAbout() {
 	const rows = [
 		currentEventName ? { label: 'Event',   val: currentEventName } : null,
 		{ label: 'Org',     val: 'Marin Amateur Radio Society' },
-		{ label: 'Version', val: 'APRS Tracker Map · v1.9 beta' },
+		{ label: 'Version', val: 'APRS Tracker Map · v1.10 beta' },
 		{ label: 'Map',     val: currentBgAttribution || '' },
 		{ label: 'Credit',  val: '&copy; 2026 Doug Kaye (K6DRK)' },
 	].filter(Boolean);
@@ -2186,7 +2186,7 @@ function openAboutModal() {
 	const attrText = currentBgAttribution || '';
 	const rows = [
 		{ label: 'Organization', val: 'Marin Amateur Radio Society' },
-		{ label: 'Application',  val: 'APRS Tracker Map · Version 1.8 beta' },
+		{ label: 'Application',  val: 'APRS Tracker Map · v1.10 beta' },
 		currentEventName ? { label: 'Event', val: currentEventName } : null,
 		{ label: 'Map Data',     val: attrText },
 		{ label: 'Copyright',    val: '&copy; 2026 Doug Kaye (K6DRK). All Rights Reserved.' },

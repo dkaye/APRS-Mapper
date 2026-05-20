@@ -1,4 +1,9 @@
-<!DOCTYPE html>
+<?php
+$back      = !empty($_GET['back']) ? $_GET['back'] : '/';
+$backLabel = ($back === '/') ? '← Return to Map' : '← Back';
+$backHref  = htmlspecialchars($back, ENT_QUOTES);
+$backText  = htmlspecialchars($backLabel, ENT_QUOTES);
+?><!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -167,8 +172,8 @@
 <body>
 
 <header>
-  <h1>APRS Tracker Map</h1>
-  <a id="back-link" href="/">&#8592; Return to Map</a>
+  <h1>APRS Tracker Map — User Guide</h1>
+  <a href="<?= $backHref ?>"><?= $backText ?></a>
 </header>
 
 <div id="content">
@@ -176,13 +181,6 @@
 </div>
 
 <script>
-  const _back = new URLSearchParams(window.location.search).get('back');
-  if (_back) {
-    const el = document.getElementById('back-link');
-    el.href = _back;
-    el.textContent = '← Back';
-  }
-
   fetch('USERGUIDE.MD')
     .then(r => r.text())
     .then(md => {
