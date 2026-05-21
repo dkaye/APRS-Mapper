@@ -1,0 +1,14 @@
+[Unit]
+Description=Direwatch APRS beacon display
+After=dw-startup.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/direwatch
+ExecStart=/home/pi/direwatch-run.sh
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

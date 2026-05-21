@@ -1,0 +1,1 @@
+sudo nethogs -v 1 -C

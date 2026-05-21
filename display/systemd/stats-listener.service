@@ -1,0 +1,12 @@
+[Unit]
+Description=Stats Request Listener
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/php /home/pi/StatsRequestListener.php
+Restart=always
+RestartSec=5
+User=pi
+
+[Install]
+WantedBy=multi-user.target

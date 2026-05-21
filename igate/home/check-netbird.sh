@@ -1,0 +1,20 @@
+#!/usr/bin/bash
+RESPONSE=$(wget -qO- "https://marsaprs.org/netbird/?hostname=$HOSTNAME" 2>/dev/null)
+
+if [[ "$RESPONSE" == "1" ]]; then
+	echo "Enabling NetBird"
+	sudo systemctl enable rpcbind.socket rpcbind.service avahi-daemon
+	sudo systemctl start rpcbind.socket rpcbind.service avahi-daemon
+	sudo systemctl enable --now systemd-timesyncd
+	sudo timedatectl set-ntp true
+	sudo /usr/bin/netbird up --enable-lazy-connection
+elif [[ "$RESPONSE" == "0" ]]; then
+	echo "Disabling NetBird"
+	sudo /usr/bin/netbird down
+	sudo systemctl stop rpcbind.service rpcbind.socket avahi-daemon
+	sudo systemctl disable rpcbind.service rpcbind.socket avahi-daemon
+	sudo timedatectl set-ntp false
+	sudo systemctl disable --now systemd-timesyncd
+else
+	echo "NetBird check: no change (response: ${RESPONSE:-empty/error})"
+fi

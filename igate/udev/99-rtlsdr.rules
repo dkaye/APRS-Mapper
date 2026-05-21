@@ -1,0 +1,3 @@
+# Restart direwolf immediately when an RTL-SDR dongle is plugged in.
+ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2838", RUN+="/bin/systemctl --no-block restart direwolf.service"
+ACTION=="add", SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2832", RUN+="/bin/systemctl --no-block restart direwolf.service"

@@ -1,0 +1,13 @@
+[Unit]
+Description=iGate startup sequence (boot splash, SDR/IP/internet checks, diagnostics)
+After=basic.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=pi
+ExecStart=/usr/bin/python3 /home/pi/direwatch/dw-startup.py
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Local Chromium Kill Server
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/pi/kill-server.py
+Restart=always
+RestartSec=3
+User=pi
+
+[Install]
+WantedBy=multi-user.target

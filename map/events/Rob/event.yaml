@@ -1,0 +1,141 @@
+# APRS Tracker Map — master configuration
+#
+# @author    Doug Kaye
+# @copyright 2026 Doug Kaye. All Rights Reserved.
+#
+# Edit this file to change trackers, map backgrounds, courses, or the default map view.
+# Both aprsDaemon.php and index.php monitor this file via filemtime; changes take effect
+# within ~5 seconds without restarting the daemon or reloading the browser page.
+#
+# ── Save history ─────────────────────────────────────────────────────────────
+# 2026-05-15 01:05:36 UTC
+
+# ── Event ─────────────────────────────────────────────────────────────────────
+# Name displayed in the lower-left corner of the map.
+event: Rob's Sandbox
+
+# ── Trackers ──────────────────────────────────────────────────────────────────
+# One entry per tracked callsign.
+#   callsign : APRS callsign (e.g. W6SG-4)
+#   id       : short label displayed on the map marker (e.g. S4)
+#   name     : full name shown in the sidebar legend
+trackers:
+  - callsign: KO6JDL-2
+    id: B1
+    name: Charles
+  - callsign: N6XN-7
+    id: S1
+    name: Sheila
+  - callsign: KO6MFS-3
+    id: N1
+    name: Nick2
+  - callsign: KO6MFS-9
+    id: N2
+    name: Nick
+  - callsign: W6SG-4
+    id: S2
+    name: Rob
+  - callsign: KN6RST-7
+    id: S3
+    name: Alex
+  - callsign: KI6RGP-7
+    id: H1
+    name: James
+
+# ── Tracker style ─────────────────────────────────────────────────────────────
+# Controls the appearance of all tracker markers on the map.
+#   icon        : marker shape — circle, square, diamond, triangle, star, cross, person
+#   size        : marker radius in pixels, 4–20 (default: 8)
+#   label_color : hex color for the name/id label on the map (default: #000000)
+tracker_style:
+  icon: circle
+  size: 8
+  label_color: "#000000"
+
+# ── Map default view ──────────────────────────────────────────────────────────
+# Sets the map center and zoom at page load and after second-clicking a tracker.
+#   lat  : latitude of map center  (decimal degrees; positive = North, negative = South)
+#   lon  : longitude of map center (decimal degrees; positive = East,  negative = West)
+#   zoom : Leaflet zoom level (0=world, 5=country, 10=city, 13=neighbourhood, 15=street, 19=max)
+map:
+  lat: 37.87255
+  lon: -122.544079
+  zoom: 13
+
+# ── Map backgrounds ───────────────────────────────────────────────────────────
+# Tile layers listed in the sidebar. Click one to switch the base map.
+#   name        : label shown in the sidebar
+#   url         : Leaflet tile URL template  ({s} = subdomain, {z}/{x}/{y} = tile coordinates)
+#   attribution : HTML attribution string shown in the map corner (may contain HTML)
+backgrounds:
+  - name: OpenStreetMap
+    url: https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png
+    attribution: "&copy; <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a> contributors"
+  - name: ESRI Satellite
+    url: https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}
+    attribution: "Tiles &copy; Esri &mdash; Source: Esri, USDA, USGS, and the GIS User Community"
+  - name: USGS Topo
+    url: https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}
+    attribution: "Tiles courtesy of the <a href='https://usgs.gov/'>U.S. Geological Survey</a>"
+
+# ── Courses ───────────────────────────────────────────────────────────────────
+# GPX/KML/GeoJSON overlays listed in the sidebar. Click a name to toggle it on/off.
+# Multiple courses may be active simultaneously.
+# Files live in the configs/ subdirectory.
+#   name  : label shown in the sidebar
+#   file  : filename  (supported extensions: .gpx  .kml  .geojson  .json)
+#   color : hex color for the course line/markers (e.g. #2196f3)
+courses:
+  - name:  13 Mile
+    file:  events/Rob/13_Mile.geojson
+  - name:  18 Mile
+    file:  events/Rob/18_Mile.json
+  - name:  6 Mile
+    file:  events/Rob/6_Mile.json
+
+# ── Aid Stations ──────────────────────────────────────────────────────────────
+# Aid station locations shown as black dots on the map and listed in the sidebar.
+#   name : label shown in the sidebar and on hover
+#   lat  : latitude  (decimal degrees; positive = North, negative = South)
+#   lon  : longitude (decimal degrees; positive = East,  negative = West)
+aidstations:
+  - name: Tennessee Valley
+    lat: 37.861
+    lon: -122.53541
+  - name: Cardiac
+    lat: 37.89711
+    lon: -122.60107
+
+# ── iGates ────────────────────────────────────────────────────────────────────
+# APRS iGate stations shown as black dots on the map and listed in the sidebar.
+#   name : label shown in the sidebar and on hover
+#   lat  : latitude  (decimal degrees; positive = North, negative = South)
+#   lon  : longitude (decimal degrees; positive = East,  negative = West)
+igates:
+  - name: Muir Woods Clubhouse
+    lat: 37.89799
+    lon: -122.56667
+  - name: Pt. Reyes Station
+    lat: 38.068051179727
+    lon: -122.80801341379
+  - name: Mt. Barnabe
+    lat: 38.02682
+    lon: -122.71627
+  - name: Commonweal
+    lat: 37.9144287
+    lon: -122.7275005
+  - name: Wolfback
+    lat: 37.85106
+    lon: -122.49846
+  - name: Kentfield
+    lat: 37.95597
+    lon: -122.54416
+  - name: Tiburon
+    lat: 37.8974
+    lon: -122.4844
+  - name: Sausalito
+    lat: 37.877
+    lon: -122.50433
+  - name: East Peak
+    lat: 37.92897
+    lon: -122.57763

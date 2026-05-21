@@ -1,0 +1,13 @@
+[Unit]
+Description=APRS Server Reachability Monitor
+After=NetworkManager.service lightdm.service
+Wants=NetworkManager.service
+
+[Service]
+ExecStart=/usr/local/bin/aprs-monitor.sh
+Restart=always
+RestartSec=10
+User=root
+
+[Install]
+WantedBy=multi-user.target

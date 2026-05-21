@@ -1,0 +1,11 @@
+[Unit]
+Description=Update mars-aprs.ddns.net hosts entry via mDNS
+After=avahi-daemon.service network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/update-aprs-host.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

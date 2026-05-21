@@ -1,0 +1,7 @@
+@lxpanel-pi
+@pcmanfm-pi
+@xscreensaver -no-splash
+@xset s off
+@xset -dpms
+@xset s noblank
+@/home/pi/start-kiosk.sh

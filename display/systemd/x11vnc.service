@@ -1,0 +1,15 @@
+[Unit]
+Description=x11vnc VNC Server
+After=graphical-session.target lightdm.service
+Wants=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/x11vnc -display :0 -auth /home/pi/.Xauthority -forever -passwd guacamole 
+Restart=always
+RestartSec=5
+User=pi
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/pi/.Xauthority
+
+[Install]
+WantedBy=graphical.target

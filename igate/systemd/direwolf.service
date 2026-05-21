@@ -1,0 +1,16 @@
+[Unit]
+Description=Direwolf APRS modem and iGate
+After=dw-startup.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi
+ExecStart=/home/pi/direwolf-run.sh
+Restart=on-failure
+RestartSec=10
+KillMode=process-group
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target

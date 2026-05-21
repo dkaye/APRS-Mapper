@@ -1,22 +1,16 @@
+# macOS
 .DS_Store
-trackers.json
-admin/password.txt
-configs/*.yaml
-configs/*.yml
-temp/
-events/*/tracker_history.yaml
-publish.sh
-backup-from-pi.sh
-aprs-daemon.log
-laptop/addresses.cfg
-laptop/netbird/addresses.yaml
-laptop/netbird/addresses.cfg
-laptop/netbird/daemon.log
-laptop/netbird/stats.json
-laptop/netbird/config.json
-laptop/netbird/last_viewer.ts
-laptop/netbird/poll_force
-laptop/netbird/poll_single
-laptop/netbird/poll_now
-laptop/status/addresses.yaml
-laptop/status/addresses.cfg
+
+# Claude Code workspace settings
+.claude/
+
+# Credentials and secrets
+server/wifi/wifi.yaml
+server/netbird/addresses.yaml
+igate/home/.wifi-token
+
+# iGate live/generated data
+igate/home/direwolf.conf
+
+# Display Pi — per-device WiFi credential files
+display/home/wifi.conf

@@ -1,0 +1,49 @@
+# direwolf.conf template
+#
+# ©2025 Doug Kaye, K6DRK#
+
+#
+# iGate Configuration File for K6DRK iGate v4.0
+
+
+#=======================================
+# Edit the following for the K6DRK iGate
+#=======================================
+
+
+# Your callsign with the -xx extension
+MYCALL CONFIGURE_ME
+
+
+# If you're building an iGate with a hostname of MARS-<#>
+# then do not change the line below.
+#
+# But if you're building an iGate with a hostname other than MARS-<#>, 
+# replace the following with the hostname without the -# extension and 
+# the passcode you generated from https://w6sg.net/aprs/iGate/passcode-generator.html 
+IGLOGIN CONFIGURE_ME PASSCODE
+
+
+# Replace the lat=CONFIGURE_ME and long=CONFIGURE_ME values as appropriate for your location.
+# Replace "Kentfield, California" with whatever you'd like displayed for your location.
+PBEACON sendto=IG delay=0:30 every=30:00 symbol="igate" overlay=R lat=CONFIGURE_ME long=CONFIGURE_ME comment="iGate 5.0 by K6DRK, CONFIGURE_ME"
+
+# t/p: forward only packets with position reports
+# ! d/*: exclude packets received from any digipeater
+# ! b/K6YIL-1: exclude anything from K6YIL-1 and K6QXY-1
+# see https://groups.io/g/direwolf/topic/igate_filtering/118685542
+FILTER  0  IG  t/p & ! d/* & ! b/K6YIL-1/K6QXY-1
+
+#===============================
+# DO NOT EDIT BELOW THIS LINE!!!
+#===============================
+
+
+ADEVICE null
+CHANNEL 0
+MODEM 1200
+IGSERVER noam.aprs2.net
+LOGDIR /home/pi/aprslogs
+AGWPORT 8000
+# *drk20260113 Not using KISS
+#KISSPORT 8001
