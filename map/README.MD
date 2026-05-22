@@ -1226,9 +1226,78 @@ The system runs on three Raspberry Pi devices:
 | **NetControl** | 192.168.0.36 | — | Kiosk display for Net Control operator. Chromium fullscreen → `marsaprs.org`. SSH: `pi@192.168.0.36` |
 | **BigTV** | 192.168.0.52 | 100.101.163.164 | Large kiosk display. Chromium fullscreen → `marsaprs.org`. SSH: `pi@192.168.0.52` |
 
-`marsaprs.org` is served via a Cloudflare Tunnel. No port forwarding required; works on any network.
+### Cloudflare Tunnel
 
-Cloudflare Tunnel ID: `b11404f2-7497-4822-92b4-f75db418a1fe`
+`marsaprs.org` is served via a **Cloudflare Tunnel** (`cloudflared`). The Pi establishes
+an outbound HTTPS connection to Cloudflare's edge; no inbound port forwarding or static IP
+is required, and the Pi can run on any network including LTE.
+
+```
+Browser → Cloudflare edge (marsaprs.org) ──tunnel──▶ cloudflared (aprs-pi) → Apache :80
+```
+
+#### Tunnel config
+
+`server/cloudflared/config.yml` (deployed to `/etc/cloudflared/config.yml`):
+
+```yaml
+ingress:
+  - hostname: marsaprs.org
+    service: http://localhost:80
+  - service: http_status:404
+```
+
+All requests for `marsaprs.org` are forwarded to Apache on localhost port 80. Any other
+hostname returns 404.
+
+**Tunnel ID:** `b11404f2-7497-4822-92b4-f75db418a1fe`
+
+#### Installation
+
+`install.sh` downloads the latest `cloudflared` Debian package from Cloudflare's GitHub
+releases (architecture-aware: arm64 / amd64) and installs it. `configure.sh` then prompts
+for the tunnel token and registers the service:
+
+```bash
+sudo cloudflared service install <token>   # installs systemd unit + writes credentials file
+sudo systemctl enable cloudflared          # start on boot
+sudo systemctl start cloudflared
+```
+
+The tunnel token is obtained from the **Cloudflare Zero Trust dashboard**:
+*Networks → Tunnels → \<tunnel\> → Configure → Install and run connector*
+
+To re-install with a new token at any time:
+
+```bash
+sudo cloudflared service uninstall
+sudo cloudflared service install <new-token>
+sudo systemctl start cloudflared
+```
+
+#### Client IP
+
+Because all traffic arrives from Cloudflare's proxy, `REMOTE_ADDR` is always a Cloudflare
+IP. The real visitor IP is passed in the `CF-Connecting-IP` header. `index.php` reads it
+with a fallback chain:
+
+```php
+$_clientIp = trim(
+    $_SERVER['HTTP_CF_CONNECTING_IP']
+    ?? (isset($_SERVER['HTTP_X_FORWARDED_FOR'])
+        ? explode(',', $_SERVER['HTTP_X_FORWARDED_FOR'])[0]
+        : null)
+    ?? $_SERVER['REMOTE_ADDR']
+);
+```
+
+#### Troubleshooting
+
+```bash
+sudo systemctl status cloudflared       # service state
+sudo journalctl -u cloudflared -n 50    # recent logs
+cloudflared tunnel info                 # tunnel status (requires login)
+```
 
 ### Kiosk autostart (NetControl and BigTV)
 

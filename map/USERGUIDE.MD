@@ -53,6 +53,7 @@
     - [SSH Terminal](#ssh-terminal)
   - [Hostname Self-Reporting](#hostname-self-reporting)
 - [WiFi Manager](#wifi-manager)
+- [Cloudflare Tunnel](#cloudflare-tunnel)
 
 ---
 
@@ -633,3 +634,38 @@ Changes are saved automatically to `wifi.yaml` whenever you commit an edit or re
 entry — no manual save step is needed. iGates and display Pis pick up the new credentials
 nightly at 4 am; to apply immediately on a field device, SSH in and run
 `/home/pi/auto-update.sh`.
+
+---
+
+## Cloudflare Tunnel
+
+`marsaprs.org` is published to the internet via a **Cloudflare Tunnel** — a lightweight
+outbound connector (`cloudflared`) that runs on the server Pi and maintains a persistent
+connection to Cloudflare's global network. This means:
+
+- **No port forwarding or static IP is required.** The Pi can be on any network, including
+  a hotspot or LTE connection, and the site remains reachable at `marsaprs.org`.
+- **Traffic is proxied by Cloudflare.** All requests pass through Cloudflare before
+  reaching the Pi, providing DDoS protection and TLS termination at the edge.
+- **The tunnel is transparent to users.** The URL, behavior, and session handling are
+  identical to a conventionally hosted site.
+
+### Setup
+
+The tunnel is configured once during initial server setup via `configure.sh`, which prompts
+for a token from the Cloudflare Zero Trust dashboard (*Networks → Tunnels → Configure →
+Install and run connector*). After that it runs automatically as a systemd service and
+reconnects on reboot or network changes without any manual intervention.
+
+### Checking tunnel status
+
+```bash
+sudo systemctl status cloudflared
+```
+
+If the tunnel is down, the site will be unreachable even though Apache is running
+normally on the Pi. Restarting the service usually resolves transient connectivity issues:
+
+```bash
+sudo systemctl restart cloudflared
+```
