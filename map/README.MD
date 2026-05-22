@@ -477,6 +477,13 @@ immediately (updates the symlink and touches the file so the daemon reloads with
 
 **Delete** (in the Load dialog) permanently removes the event directory.
 
+**Lock / Unlock** — Each event row in the Save, Save as Default Event, and Load dialogs
+shows a 🔒/🔓 icon. Clicking it prompts for the admin password and toggles the lock state.
+A locked event stores `locked: true` in its `event.yaml`. The `?saveversion` and
+`?saveonly` endpoints check this flag and return HTTP 403 unless the correct password is
+included in the request body (`pw` field). The lock is preserved on every save; only the
+`?togglelock` endpoint (POST `{name, pw, lock: bool}`) can change it.
+
 ### Import / Export
 
 Section headers have small **↓** (export) and **↑** (import) buttons. Clicking **↓** always
@@ -1151,11 +1158,10 @@ all MARS Pi devices. Password-protected with the same session as the map admin p
 | `/home/pi/update-wifi.php` | Applies wifi.yaml via nmcli on each Pi |
 | `/home/pi/.wifi-token` | Shared authentication token (required on all Pi types, including server) |
 
-### Update Server button
+### Auto-save
 
-Immediately applies the current wifi.yaml to the server Pi's own WiFi connections by
-running `update-wifi.php` as the `pi` user via sudo. iGates and display Pis update on
-their nightly schedule (or manually by running `auto-update.sh`).
+Every edit commit and drag-drop reorder immediately writes `wifi.yaml` via the `?save`
+endpoint. There is no manual save step.
 
 ### Update Schedule
 
@@ -1163,7 +1169,7 @@ their nightly schedule (or manually by running `auto-update.sh`).
 |--------|------------------------|
 | iGates | Nightly at 4:00 am via `auto-update.sh` |
 | Display Pis | Nightly at 4:01 am via `auto-update.sh` |
-| Server Pi | Nightly at 4:00 am via cron, or on demand via **Update Server** |
+| Server Pi | Nightly at 4:00 am via cron |
 
 ### Token authentication
 

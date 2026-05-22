@@ -305,7 +305,6 @@ td input[type=text]:focus {
   <h1>iGate WiFi Manager</h1>
   <span id="status"></span>
   <button class="hdr-btn hdr-btn-primary" id="btn-add">+ Add Network</button>
-  <button class="hdr-btn" id="btn-apply">Update Server</button>
   <a href="javascript:history.back()" class="hdr-btn">← Back</a>
   <a href="?logout" class="hdr-btn">Sign out</a>
 </header>
@@ -526,21 +525,6 @@ function esc(s) {
     return String(s ?? '').replace(/[&<>"']/g, c =>
         ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
-
-/* ── Update server ── */
-
-document.getElementById('btn-apply').addEventListener('click', async () => {
-    setStatus('Updating server…', 'saving');
-    try {
-        const resp = await fetch('?apply', {credentials: 'same-origin'});
-        const data = await resp.json();
-        if (!resp.ok || data.error) throw new Error(data.error || 'Server error');
-        setStatus(data.ok ? 'Server updated' : 'Update failed — check server logs', data.ok ? 'saved' : 'error');
-        setTimeout(() => { if (!saving) setStatus('', ''); }, 4000);
-    } catch(err) {
-        setStatus('Error: ' + err.message, 'error');
-    }
-});
 
 /* ── Init ── */
 

@@ -1,6 +1,6 @@
 # APRS Tracker Map — User Guide
 
-**Version 1.11 beta · May 21, 2026**
+**Version 1.12 beta · May 22, 2026**
 
 ---
 
@@ -450,7 +450,8 @@ Saves the current (possibly unsaved) configuration as a named event and makes it
 event immediately. A dialog prompts for the event name (or to overwrite an existing one).
 After saving, the new configuration is live within about 5 seconds for all users who then load the website.
 
-If the name already exists, a warning is shown before the overwrite is confirmed.
+If the name already exists, a warning is shown before the overwrite is confirmed. If the
+event is locked (🔒), the admin password is required before the save proceeds.
 
 #### Load
 
@@ -460,6 +461,14 @@ Opens a list of all saved events, sorted newest-first. From this dialog:
 - **Load** (next to an event) makes the selected event the current event for this user only immediately. The map and
   switch switch to the new configuration within ~5 seconds.
 - **Delete** permanently removes the event and all its files. **This cannot be undone.**
+
+#### Locking an Event
+
+Each event in the Save and Load dialogs has a lock icon (🔒/🔓). Clicking it prompts for
+the admin password and toggles the lock state. A locked event (🔒, shown in red) cannot
+be overwritten by Save or Save as Default Event without entering the admin password first.
+Use this to protect a production event from accidental edits while still allowing it to be
+loaded and previewed.
 
 ---
 
@@ -620,9 +629,7 @@ that are no longer needed.
 
 ### Applying Changes
 
-After editing:
-
-- Click **Update Server** to immediately apply the new credentials to the server Pi's own
-  WiFi connections via nmcli.
-- iGates and display Pis update automatically the following morning (nightly at 4 am).
-- To apply immediately on a field device, SSH in and run `/home/pi/auto-update.sh`.
+Changes are saved automatically to `wifi.yaml` whenever you commit an edit or reorder an
+entry — no manual save step is needed. iGates and display Pis pick up the new credentials
+nightly at 4 am; to apply immediately on a field device, SSH in and run
+`/home/pi/auto-update.sh`.
