@@ -10,6 +10,7 @@
 # Usage (master SD card build — skips configure.sh so CONFIGURE_ME placeholders remain):
 #   bash <(curl -fsSL https://marsaprs.org/igate/install.sh) --no-configure 2>&1 | tee install.log
 #
+# Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
 # ©2025 Doug Kaye, K6DRK <doug@rds.com>
 
 set -euo pipefail
@@ -63,7 +64,7 @@ sudo apt-get install -y \
     lighttpd php8.4-common php8.4-cgi php \
     python3-pip python3-pil python3-pyinotify \
     python3-numpy python3-libgpiod python3-lgpio fonts-dejavu \
-    ufw watchdog
+    ufw watchdog nethogs
 ok "Packages installed"
 
 # ── Configure watchdog daemon ─────────────────────────────────────────────────
@@ -89,7 +90,7 @@ make -j"$(nproc)"
 sudo make install
 make install-conf
 cd /home/pi
-rm -f dw-start.sh
+rm -f dw-start.sh telem-*
 ok "Direwolf built and installed"
 
 # ── Python pip packages (for TFT display) ────────────────────────────────────
@@ -136,9 +137,13 @@ sudo wget -qO /var/www/html/igate-stations.json \
 # ── Download WiFi list ────────────────────────────────────────────────────────
 msg "Downloading WiFi list"
 if [ -f /home/pi/.wifi-token ]; then
-    wget -qO /home/pi/wifi.yaml \
-        "$BASE/wifi/get.php?token=$(cat /home/pi/.wifi-token)" \
-        && ok "WiFi list downloaded" || warn "WiFi list download failed (non-fatal)"
+    if wget -qO /home/pi/wifi.yaml \
+            "$BASE/wifi/get.php?token=$(cat /home/pi/.wifi-token)"; then
+        ok "WiFi list downloaded"
+        php /home/pi/update-wifi.php || warn "WiFi list apply failed (non-fatal)"
+    else
+        warn "WiFi list download failed (non-fatal)"
+    fi
 else
     warn "No .wifi-token found — skipping WiFi list download"
 fi

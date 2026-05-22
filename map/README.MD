@@ -370,10 +370,16 @@ The Origin is cleared by **Reset Map**.
 
 ### Map Layer Z-Order
 
-1. Trackers — always on top
-2. Aid Stations
-3. Courses
-4. iGates — always underneath
+From top to bottom:
+
+1. Trackers — always on top (pane z-index 450)
+2. Aid Stations (430)
+3. Courses (410)
+4. iGates — always underneath (390)
+
+Each layer type lives in its own Leaflet pane with an explicit CSS z-index, so the ordering is enforced at the DOM level and is never affected by background switches or `bringToFront` calls on other layers.
+
+When multiple courses are visible simultaneously, they stack within the course pane in sidebar list order: the course listed first in the sidebar renders on top. This order is restored whenever a course is toggled or the background is switched.
 
 ### Kiosk View Mode
 
@@ -883,9 +889,21 @@ Desktop launcher for the display Pi. Kills any running Chromium and relaunches i
 fullscreen kiosk display mode (`--kiosk` browser flag) pointing to `marsaprs.org`.
 
 ```bash
-cp pi-tools/start-aprs.desktop ~/Desktop/
-chmod +x ~/Desktop/start-aprs.desktop
+mkdir -p ~/Desktop
+cp pi-tools/start-aprs.desktop ~/Desktop/start-aprs.desktop
+chmod 644 ~/Desktop/start-aprs.desktop
 ```
+
+**Important (Trixie):** Do not use `chmod +x`. On Pi OS Trixie, PCManFM shows an "Executable Script" dialog for any `.desktop` file that has the execute bit set — `chmod 644` is required.
+
+Additionally, suppress the dialog system-wide on Trixie:
+
+```bash
+mkdir -p ~/.config/libfm
+printf '[config]\nquick_exec=1\n' > ~/.config/libfm/libfm.conf
+```
+
+Both fixes are applied automatically by `auto-update.sh` and `install.sh` on every run.
 
 Double-click the icon to reload the APRS map in fullscreen kiosk display mode without rebooting.
 
@@ -1110,6 +1128,88 @@ scp /Users/doug/aprs/laptop/netbird/<file> pi@aprs-pi:/var/www/html/netbird/
 
 ---
 
+## WiFi Manager
+
+A web application at `/wifi/` for managing the shared list of WiFi credentials used by
+all MARS Pi devices. Password-protected with the same session as the map admin page.
+
+### Architecture
+
+```
+/var/www/html/wifi/wifi.yaml  (on aprs-pi — master copy)
+     │
+     ├──▶  /igate/wifi/get.php?token=<token>    ──▶  iGates (nightly via auto-update.sh)
+     ├──▶  /display/wifi/get.php?token=<token>  ──▶  display Pis (nightly via auto-update.sh)
+     └──▶  update-wifi.php                      ──▶  server Pi (on demand or nightly via cron)
+```
+
+| File | Role |
+|------|------|
+| `server/www/wifi/index.php` | Web UI for viewing and editing the credential list |
+| `server/www/wifi/get.php` | Token-authenticated download endpoint for iGates |
+| `display/www/wifi/get.php` | Token-authenticated download endpoint for display Pis |
+| `/home/pi/update-wifi.php` | Applies wifi.yaml via nmcli on each Pi |
+| `/home/pi/.wifi-token` | Shared authentication token (required on all Pi types, including server) |
+
+### Update Server button
+
+Immediately applies the current wifi.yaml to the server Pi's own WiFi connections by
+running `update-wifi.php` as the `pi` user via sudo. iGates and display Pis update on
+their nightly schedule (or manually by running `auto-update.sh`).
+
+### Update Schedule
+
+| Device | When credentials update |
+|--------|------------------------|
+| iGates | Nightly at 4:00 am via `auto-update.sh` |
+| Display Pis | Nightly at 4:01 am via `auto-update.sh` |
+| Server Pi | Nightly at 4:00 am via cron, or on demand via **Update Server** |
+
+### Token authentication
+
+Each Pi has `/home/pi/.wifi-token`. Download requests without a valid token return
+HTTP 403. The server Pi must also have this file — the `get.php` scripts read it to
+authenticate incoming requests. If it is missing from the server:
+
+```bash
+tar -xzf /var/www/html/igate/files.tar.gz -C /tmp ./home/.wifi-token
+cp /tmp/home/.wifi-token /home/pi/.wifi-token
+```
+
+### Safe download pattern
+
+`auto-update.sh` on each device downloads to a temp file and validates content before
+replacing the live copy:
+
+```bash
+wget -qO /tmp/wifi.yaml.new "$BASE/wifi/get.php?token=$(cat /home/pi/.wifi-token)"
+grep -q "^- name:" /tmp/wifi.yaml.new && mv /tmp/wifi.yaml.new /home/pi/wifi.yaml
+```
+
+`update-wifi.php` will exit without making any nmcli changes if zero entries are parsed,
+preventing accidental deletion of all configured networks.
+
+---
+
+## Installing on a new Pi
+
+Run on a fresh Raspberry Pi OS Desktop install (Pi Imager should have pre-configured hostname, user `pi`/`guacamole`, WiFi, SSH, and timezone):
+
+```bash
+# iGate
+bash <(curl -fsSL https://marsaprs.org/igate/install.sh) 2>&1 | tee install.log
+
+# Display Pi (NetControl / BigTV)
+bash <(curl -fsSL https://marsaprs.org/display/install.sh) 2>&1 | tee install.log
+
+# Server Pi (aprs-pi)
+bash <(curl -fsSL https://marsaprs.org/server/install.sh) 2>&1 | tee install.log
+```
+
+Each script installs packages, downloads and applies the device's files, enables services, and then runs `configure.sh` to set the hostname and NetBird setup key.
+
+---
+
 ## Infrastructure
 
 The system runs on three Raspberry Pi devices:
@@ -1120,7 +1220,7 @@ The system runs on three Raspberry Pi devices:
 | **NetControl** | 192.168.0.36 | — | Kiosk display for Net Control operator. Chromium fullscreen → `marsaprs.org`. SSH: `pi@192.168.0.36` |
 | **BigTV** | 192.168.0.52 | 100.101.163.164 | Large kiosk display. Chromium fullscreen → `marsaprs.org`. SSH: `pi@192.168.0.52` |
 
-`marsaprs.org` is served via a Cloudflare Tunnel (replaced the old `mars-aprs.ddns.net` DDNS). No port forwarding required; works on any network.
+`marsaprs.org` is served via a Cloudflare Tunnel. No port forwarding required; works on any network.
 
 Cloudflare Tunnel ID: `b11404f2-7497-4822-92b4-f75db418a1fe`
 

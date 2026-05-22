@@ -45,6 +45,21 @@ On the APRS map page:
 
 The second Exit button calls `http://localhost:8080/exit`, handled by kill-server (see Services).
 
+### Desktop icon (Start APRS)
+
+`/home/pi/Desktop/start-aprs.desktop` — double-click to kill and relaunch Chromium in kiosk mode.
+
+The file must have mode `644` (not executable). On Pi OS Trixie, any `.desktop` file with the execute bit set triggers an "Executable Script" dialog that blocks the launch.
+
+Also required on Trixie to suppress the dialog system-wide:
+
+```bash
+mkdir -p ~/.config/libfm
+printf '[config]\nquick_exec=1\n' > ~/.config/libfm/libfm.conf
+```
+
+Both settings are applied automatically by `auto-update.sh`.
+
 ---
 
 ## Services
@@ -104,6 +119,9 @@ Manages the graphical desktop session (rpd-x / LXDE). Required for Chromium and 
 
 ```
 */5 * * * *  /home/pi/check-netbird.sh >> /tmp/checknetbird.log 2>&1
+@reboot      /home/pi/netbird-up.sh
+1 4 * * *    /home/pi/auto-update.sh >> /home/pi/update.log 2>&1
+10 4 * * *   sudo reboot
 ```
 
 View with: `crontab -l`   Edit with: `crontab -e`

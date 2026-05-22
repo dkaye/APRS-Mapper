@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+"""
+kill-server.py — MARS APRS Display Pi
+
+Minimal HTTP server acting as a splash screen while the kiosk browser waits
+for marsaprs.org to become reachable. GET /exit triggers pkill chromium.
+
+Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
+©2025 Doug Kaye, K6DRK <doug@rds.com>
+"""
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import subprocess
 
@@ -24,9 +33,9 @@ CONNECTING_HTML = b"""<!DOCTYPE html>
   <h1>MARS APRS</h1>
   <p>Connecting<span class="dots"><span>.</span><span>.</span><span>.</span></span></p>
   <script>
-    const TARGET = 'https://mars-aprs.ddns.net/';
+    const TARGET = 'https://marsaprs.org/';
     function tryConnect() {
-      fetch('https://mars-aprs.ddns.net/', { method: 'GET', mode: 'no-cors', cache: 'no-store' })
+      fetch('https://marsaprs.org/', { method: 'GET', mode: 'no-cors', cache: 'no-store' })
         .then(() => { window.location.href = TARGET; })
         .catch(() => { setTimeout(tryConnect, 5000); });
     }

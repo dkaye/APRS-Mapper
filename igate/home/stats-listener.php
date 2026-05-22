@@ -1,6 +1,7 @@
 #!/usr/bin/env php
 <?php
 /**
+ * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
  * ©2025 Doug Kaye. All Rights Reserved.
  */
 

@@ -1,5 +1,11 @@
 # SPDX-FileCopyrightText: 2021 ladyada for Adafruit Industries
 # SPDX-License-Identifier: MIT
+# dw-nosdr.py — MARS APRS iGate (direwatch)
+#
+# Shown on the TFT display when no SDR is detected; waits to retry.
+#
+# Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
+# ©2025 Doug Kaye, K6DRK <doug@rds.com>
 
 # -*- coding: utf-8 -*-
 

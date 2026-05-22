@@ -5,6 +5,7 @@ session_start();
 /**
  * MARS APRS Map Admin
  *
+ * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
  * @author    Doug Kaye
  * @copyright 2026 Doug Kaye. All Rights Reserved.
  *

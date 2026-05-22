@@ -5,6 +5,7 @@
 # Run daily at 4:01am via cron. Safe to run manually at any time.
 # Does NOT touch direwolf.conf or /var/www/html/config.php (site-specific).
 #
+# Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
 # ©2025 Doug Kaye, K6DRK <doug@rds.com>
 
 set -euo pipefail
@@ -24,7 +25,7 @@ tar -xzf "$TMP/files.tar.gz" --warning=no-unknown-keyword -C "$TMP"
 
 # Home directory scripts and utilities
 log "Updating /home/pi/ scripts..."
-rsync -a "$TMP/home/" /home/pi/
+rsync -a --ignore-times "$TMP/home/" /home/pi/
 chmod +x /home/pi/*.sh /home/pi/*.php
 
 # Direwatch display scripts
@@ -55,10 +56,16 @@ sudo wget -qO /var/www/html/igate-stations.json \
 # Download latest WiFi list from marsaprs.org
 log "Downloading WiFi list..."
 if [ -f /home/pi/.wifi-token ]; then
-    wget -qO /home/pi/wifi.yaml \
-        --header="Pragma: no-cache" --header="Cache-Control: no-cache" \
-        "$BASE/wifi/get.php?token=$(cat /home/pi/.wifi-token)" \
-        && log "WiFi list updated" || log "WiFi list download failed (non-fatal)"
+    if wget -qO /tmp/wifi.yaml.new \
+            --header="Pragma: no-cache" --header="Cache-Control: no-cache" \
+            "$BASE/wifi/get.php?token=$(cat /home/pi/.wifi-token)" \
+        && grep -q "^- name:" /tmp/wifi.yaml.new; then
+        mv /tmp/wifi.yaml.new /home/pi/wifi.yaml
+        log "WiFi list updated"
+    else
+        rm -f /tmp/wifi.yaml.new
+        log "WiFi list download failed (non-fatal)"
+    fi
 else
     log "No .wifi-token — skipping WiFi list download"
 fi

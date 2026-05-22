@@ -1,4 +1,12 @@
 #!/usr/bin/bash
+# check-netbird.sh — MARS APRS iGate
+#
+# Called every 5 minutes via cron. Asks marsaprs.org/netbird/ whether NetBird
+# should be enabled or disabled for this device, then acts accordingly.
+#
+# Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
+# ©2025 Doug Kaye, K6DRK <doug@rds.com>
+
 RESPONSE=$(wget -qO- "https://marsaprs.org/netbird/?hostname=$HOSTNAME" 2>/dev/null)
 
 if [[ "$RESPONSE" == "1" ]]; then

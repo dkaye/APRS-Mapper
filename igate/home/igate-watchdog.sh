@@ -5,6 +5,7 @@
 # IP check:       every minute — logs if no address
 # Internet check: every 5 minutes, only when NetBird is connected
 #
+# Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
 # ©2025 Doug Kaye, K6DRK <doug@rds.com>
 
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

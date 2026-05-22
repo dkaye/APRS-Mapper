@@ -3,12 +3,14 @@
 # When unreachable: immediately reload the connecting page so the user has
 # a graceful retry UI instead of a stuck browser error page.
 # When reachable again after a connecting-page reload: restart in normal mode.
+# Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
+# ©2025 Doug Kaye, K6DRK <doug@rds.com>
 
 INTERVAL=30
 was_reachable=true
 
 check_aprs() {
-    curl -sk --max-time 5 https://mars-aprs.ddns.net/ >/dev/null 2>&1
+    curl -sk --max-time 5 https://marsaprs.org/ >/dev/null 2>&1
 }
 
 start_chromium() {
@@ -33,13 +35,9 @@ while true; do
         if $was_reachable; then
             logger -t aprs-monitor "APRS unreachable — switching to connecting page"
             was_reachable=false
-            /usr/local/bin/update-aprs-host.sh
             pkill chromium 2>/dev/null
             sleep 2
             start_chromium
-        else
-            # Still unreachable — keep refreshing hosts in case IP changed
-            /usr/local/bin/update-aprs-host.sh
         fi
     fi
 done

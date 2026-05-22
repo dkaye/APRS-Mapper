@@ -1,4 +1,13 @@
 <?php
+/**
+ * userguide.php — MARS APRS Map
+ *
+ * Renders USERGUIDE.MD as HTML using the marked.js library.
+ * Accepts ?back=<url> to set the return link.
+ *
+ * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
+ * ©2025 Doug Kaye, K6DRK <doug@rds.com>
+ */
 $back      = !empty($_GET['back']) ? $_GET['back'] : '/';
 $backLabel = ($back === '/') ? '← Return to Map' : '← Back';
 $backHref  = htmlspecialchars($back, ENT_QUOTES);

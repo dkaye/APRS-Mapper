@@ -2,6 +2,7 @@
 /**
  * APRS Tracker Map
  *
+ * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
  * @author    Doug Kaye
  * @copyright 2026 Doug Kaye. All Rights Reserved.
  *
@@ -848,6 +849,9 @@ const map = L.map('map', { zoomControl: false })
 L.control.zoom({ position: 'topleft' }).addTo(map);
 if (!isMobile) L.control.scale({ position: 'bottomright', imperial: true, metric: false }).addTo(map);
 
+map.createPane('coursePane');
+map.getPane('coursePane').style.zIndex = 410;
+const courseRenderer = L.svg({ pane: 'coursePane' });
 map.createPane('trackerPane');
 map.getPane('trackerPane').style.zIndex = 450;
 map.createPane('aidPane');
@@ -884,7 +888,7 @@ new (L.Control.extend({
 			L.DomEvent.on(exitBtn, 'click', () => { location.href = location.pathname; });
 			L.DomEvent.disableClickPropagation(exitBtn);
 			const txt = L.DomUtil.create('span', '', d);
-			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.10 beta &copy; 2026 Doug Kaye (K6DRK)';
+			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.11 beta &copy; 2026 Doug Kaye (K6DRK)';
 		} else {
 			if (!isMobile) {
 				const exitBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
@@ -902,8 +906,8 @@ new (L.Control.extend({
 			}
 			const ftxt = L.DomUtil.create('span', '', d);
 			ftxt.innerHTML = isMobile
-				? 'MARS APRS v1.10 beta &copy; 2026 Doug Kaye (K6DRK)'
-				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.10 beta &copy; 2026 Doug Kaye (K6DRK)';
+				? 'MARS APRS v1.11 beta &copy; 2026 Doug Kaye (K6DRK)'
+				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.11 beta &copy; 2026 Doug Kaye (K6DRK)';
 			if (isMobile) d.style.fontSize = '10px';
 		}
 		return d;
@@ -949,7 +953,7 @@ function switchBackground(bg) {
 	if (!sectionVisible.backgrounds) currentTileLayer.setOpacity(0);
 	map.setMaxZoom(mz);
 	if (map.getZoom() > mz) map.setZoom(mz);
-	Object.values(courseLayers).forEach(l => l.bringToFront());
+	reorderCourseLayers();
 }
 
 if (kiosk) {
@@ -1699,7 +1703,7 @@ function refreshMobileAbout() {
 	const rows = [
 		currentEventName ? { label: 'Event',   val: currentEventName } : null,
 		{ label: 'Org',     val: 'Marin Amateur Radio Society' },
-		{ label: 'Version', val: 'APRS Tracker Map · v1.10 beta' },
+		{ label: 'Version', val: 'APRS Tracker Map · v1.11 beta' },
 		{ label: 'Map',     val: currentBgAttribution || '' },
 		{ label: 'Credit',  val: '&copy; 2026 Doug Kaye (K6DRK)' },
 	].filter(Boolean);
@@ -1818,16 +1822,18 @@ function loadCourseLayer(file) {
 	const ext = file.split('.').pop().toLowerCase();
 	let layer;
 	if (ext === 'gpx') {
-		layer = omnivore.gpx(file);
+		layer = omnivore.gpx(file, null, L.geoJSON(null, { renderer: courseRenderer }));
 	} else if (ext === 'kml') {
-		layer = omnivore.kml(file);
+		layer = omnivore.kml(file, null, L.geoJSON(null, { renderer: courseRenderer }));
 	} else if (ext === 'geojson' || ext === 'json') {
 		const customLayer = L.geoJSON(null, {
+			renderer: courseRenderer,
 			pointToLayer(feature, latlng) {
 				const p      = feature.properties || {};
 				const color  = courseColors[file] || (p['marker-color'] ? '#' + p['marker-color'] : DEFAULT_COURSE_COLOR);
 				const radius = Math.round((parseFloat(p['marker-size']) || 1) * 8);
 				const m = L.circleMarker(latlng, {
+					renderer: courseRenderer,
 					radius: scaledRadius(radius), color, fillColor: color, fillOpacity: 0.85, weight: 1.5
 				});
 				m._baseRadius = radius;
@@ -1974,7 +1980,7 @@ function applyIgates(igates) {
 			pane: 'igatePane', radius: scaledRadius(igateBase), color: '#222', weight: 1.5, fillColor: '#111', fillOpacity: 0.9
 		}).addTo(map);
 		m._baseRadius = igateBase;
-		m.bindTooltip(g.name, { permanent: false, direction: 'right', className: 'place-label', offset: [8, 0] });
+		m.bindTooltip(g.name, { direction: 'right', sticky: false });
 
 		let item;
 		if (isMobile) {
@@ -2018,7 +2024,7 @@ function applyAidStations(stations) {
 			pane: 'aidPane', radius: scaledRadius(aidBase), color: '#222', weight: 1.5, fillColor: '#111', fillOpacity: 0.9
 		}).addTo(map);
 		m._baseRadius = aidBase;
-		m.bindTooltip(g.name, { permanent: kiosk, direction: 'right', className: 'place-label', offset: [8, 0] });
+		m.bindTooltip(g.name, { permanent: kiosk, direction: 'right', sticky: false });
 
 		let item;
 		if (isMobile) {
@@ -2186,7 +2192,7 @@ function openAboutModal() {
 	const attrText = currentBgAttribution || '';
 	const rows = [
 		{ label: 'Organization', val: 'Marin Amateur Radio Society' },
-		{ label: 'Application',  val: 'APRS Tracker Map · v1.10 beta' },
+		{ label: 'Application',  val: 'APRS Tracker Map · v1.11 beta' },
 		currentEventName ? { label: 'Event', val: currentEventName } : null,
 		{ label: 'Map Data',     val: attrText },
 		{ label: 'Copyright',    val: '&copy; 2026 Doug Kaye (K6DRK). All Rights Reserved.' },

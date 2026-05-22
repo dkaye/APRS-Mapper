@@ -1,4 +1,13 @@
 <?php
+/**
+ * yaml_lib.php — MARS APRS NetBird
+ *
+ * Minimal YAML parser/serializer for addresses.yaml (the NetBird device list).
+ * Functions: yamlVal(), yamlStr(), loadDevices(), saveDevices().
+ *
+ * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
+ * ©2025 Doug Kaye, K6DRK <doug@rds.com>
+ */
 function yamlVal(string $s): string {
     $s = trim($s);
     if ($s === '' || $s === "''" || $s === '""') return '';

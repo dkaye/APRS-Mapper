@@ -6,6 +6,8 @@ Loops forever, refreshing the IP address every 5 seconds.
 Replaced by the normal direwatch display after configure.sh is run and the
 unit reboots.
 """
+# Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
+# ©2025 Doug Kaye, K6DRK <doug@rds.com>
 
 import time
 import subprocess
@@ -38,7 +40,7 @@ rotation = 180
 image    = Image.new("RGB", (width, height))
 draw     = ImageDraw.Draw(image)
 
-font_lg = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 26)
+font_lg = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
 font_sm = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
 
 backlight = digitalio.DigitalInOut(board.D22)
@@ -68,7 +70,7 @@ while True:
     draw.rectangle((0, 0, width, height), fill=0)
 
     y = 10
-    draw.text((0, y), "! NOT CONFIGURED !",  font=font_lg, fill="#FF4400")
+    draw.text((0, y), "! NOT CONFIGURED !",  font=font_lg, fill="#FFFFFF")
     y += line_height(font_lg, "!") + GAP + 6
 
     draw.text((0, y), "Run configure.sh",    font=font_sm, fill="#FFFFFF")
@@ -77,10 +79,10 @@ while True:
     draw.text((0, y), "via SSH:",            font=font_sm, fill="#FFFFFF")
     y += line_height(font_sm, "v") + GAP
 
-    draw.text((0, y), f"pi@{ip}",            font=font_sm, fill="#00FFFF")
+    draw.text((0, y), f"pi@{ip}",            font=font_sm, fill="#FFFFFF")
     y += line_height(font_sm, "p") + GAP * 3
 
-    draw.text((0, y), "direwolf: suppressed", font=font_sm, fill="#888888")
+    draw.text((0, y), "direwolf: suppressed", font=font_sm, fill="#FFFFFF")
 
     disp.image(image, rotation)
     time.sleep(5)

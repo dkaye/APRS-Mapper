@@ -1,6 +1,8 @@
 #!/bin/bash
 # Change the system hostname everywhere it needs to be set.
 # Usage: sudo set-hostname.sh <new-hostname>
+# Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
+# ©2025 Doug Kaye, K6DRK <doug@rds.com>
 
 set -e
 

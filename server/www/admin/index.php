@@ -5,6 +5,7 @@ session_start();
 /**
  * MARS APRS Map Admin
  *
+ * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
  * @author    Doug Kaye
  * @copyright 2026 Doug Kaye. All Rights Reserved.
  *
@@ -1236,7 +1237,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
         <button class="sec-btn" onclick="doSave()">Save</button>
         <button class="sec-btn" onclick="doSaveAs()">Save as Default Event</button>
         <button class="sec-btn" onclick="location.href='/netbird/'">NetBird</button>
-        <button class="sec-btn" onclick="location.href='/igate/wifi/'">WiFi</button>
+        <button class="sec-btn" onclick="location.href='/wifi/'">WiFi</button>
         <button class="sec-btn" onclick="location.href='../'">Exit</button>
     </div>
 </div>

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Wrapper for direwolf.service.
 # Suppresses direwolf on unconfigured units (exits 0 so systemd does not restart).
+# Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
+# ©2025 Doug Kaye, K6DRK <doug@rds.com>
+
 if grep -q "CONFIGURE_ME" /home/pi/direwolf.conf 2>/dev/null; then
     echo "iGate not configured — direwolf suppressed. Run /home/pi/configure.sh."
     exit 0

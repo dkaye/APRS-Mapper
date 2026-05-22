@@ -1,0 +1,17 @@
+[Unit]
+Description=MARS APRS NetBird Poller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+ExecStart=/usr/local/bin/netbird-poller.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/var/log/netbird-poller.log
+StandardError=append:/var/log/netbird-poller.log
+
+[Install]
+WantedBy=multi-user.target

@@ -5,9 +5,10 @@
 .claude/
 
 # Credentials and secrets
-server/wifi/wifi.yaml
-server/netbird/addresses.yaml
+server/www/wifi/wifi.yaml
+server/www/netbird/addresses.yaml
 igate/home/.wifi-token
+display/home/.wifi-token
 
 # iGate live/generated data
 igate/home/direwolf.conf

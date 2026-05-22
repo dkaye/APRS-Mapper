@@ -7,6 +7,7 @@
 # Usage:
 #   /home/pi/configure.sh
 #
+# Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
 # ©2025 Doug Kaye, K6DRK <doug@rds.com>
 
 DIREWOLF_CONF="/home/pi/direwolf.conf"

@@ -1,4 +1,13 @@
 <?php
+/**
+ * admin.php — MARS APRS NetBird Admin
+ *
+ * Session-authenticated admin UI for managing NetBird device entries
+ * (addresses.yaml), polling status, and SSH/web access to each device.
+ *
+ * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
+ * ©2025 Doug Kaye, K6DRK <doug@rds.com>
+ */
 session_start();
 
 if (isset($_GET['logout'])) {
@@ -180,7 +189,7 @@ tr.device-row.disabled td:not(.toggle-cell):not(.action-cell){opacity:.4}
   <button class="btn-add" onclick="openModal(null)">+ Add Device</button>
   <a href="index.php" class="hdr-btn">← Back</a>
   <a href="https://marsaprs.org" class="hdr-btn">Map</a>
-  <a href="/igate/wifi/" class="hdr-btn">WiFi</a>
+  <a href="/wifi/" class="hdr-btn">WiFi</a>
   <a href="/userguide.php?back=/netbird/admin.php#netbird-status-monitor" class="hdr-btn">User Guide</a>
   <a href="?logout=1" class="hdr-btn">Sign Out</a>
 </header>

@@ -1,6 +1,6 @@
 # APRS Tracker Map — User Guide
 
-**Version 1.10 beta · May 19, 2026**
+**Version 1.11 beta · May 21, 2026**
 
 ---
 
@@ -55,6 +55,7 @@
     - [Adding, Editing, and Deleting Devices](#adding-editing-and-deleting-devices)
     - [SSH Terminal](#ssh-terminal)
   - [Hostname Self-Reporting](#hostname-self-reporting)
+- [WiFi Manager](#wifi-manager)
 
 ---
 
@@ -164,9 +165,11 @@ Tapping a different tracker switches focus to that tracker.
 
 Each course entry in the sidebar is a named route overlay (GPX, KML, or GeoJSON file).
 
-- **Click the ✓* next to the course name to toggle the overlay on or off.
+- **Click the ✓** next to the course name to toggle the overlay on or off.
 
-Multiple courses can be visible simultaneously.
+Multiple courses can be visible simultaneously. When they overlap, the course listed **first in the sidebar appears on top**; courses lower in the list are drawn underneath. To change the stacking order, reorder the courses in the Admin page.
+
+Courses always appear above iGates but below Aid Stations and Trackers, regardless of background or zoom level.
 
 ---
 
@@ -604,3 +607,25 @@ GET /netbird/checkin.php?ip=<device-ip>
 
 The server records the timestamp and hostname. No authentication is required for
 this endpoint — it is intended for device-initiated calls.
+
+---
+
+## WiFi Manager
+
+The WiFi Manager at `marsaprs.org/wifi/` manages the shared list of WiFi credentials used
+by all MARS Pi devices — iGates, display Pis, and the server. Requires admin login (same
+session as the map admin page).
+
+### Managing Credentials
+
+The manager lists all configured SSIDs. Use it to add new WiFi networks or remove ones
+that are no longer needed.
+
+### Applying Changes
+
+After editing:
+
+- Click **Update Server** to immediately apply the new credentials to the server Pi's own
+  WiFi connections via nmcli.
+- iGates and display Pis update automatically the following morning (nightly at 4 am).
+- To apply immediately on a field device, SSH in and run `/home/pi/auto-update.sh`.

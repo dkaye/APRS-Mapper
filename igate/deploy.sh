@@ -6,6 +6,7 @@
 #
 # Usage: ./deploy.sh
 #
+# Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
 # ©2025 Doug Kaye, K6DRK <doug@rds.com>
 
 set -euo pipefail
@@ -39,8 +40,14 @@ ssh "$REMOTE" "tar -czf $REMOTE_DIR/files.tar.gz -C $STAGING ."
 
 # Upload the scripts that are served directly
 echo "Uploading scripts..."
-scp "$IGATE_DIR/install.sh"    "$REMOTE:$REMOTE_DIR/install.sh"
+scp "$IGATE_DIR/install.sh"     "$REMOTE:$REMOTE_DIR/install.sh"
 scp "$IGATE_DIR/auto-update.sh" "$REMOTE:$REMOTE_DIR/auto-update.sh"
+
+# Sync server-side web content (wifi token endpoint served by aprs-pi)
+echo "Syncing www/wifi/ to aprs-pi..."
+ssh "$REMOTE" "mkdir -p $REMOTE_DIR/wifi"
+rsync -a --delete "$IGATE_DIR/www/wifi/" "$REMOTE:$REMOTE_DIR/wifi/"
+ssh "$REMOTE" "sudo chown -R pi:www-data $REMOTE_DIR && sudo find $REMOTE_DIR -type d -exec chmod 775 {} + && sudo find $REMOTE_DIR -type f -exec chmod 664 {} +"
 
 echo ""
 echo "Done. Files live at:"

@@ -1,4 +1,13 @@
 <?php
+/**
+ * save.php — MARS APRS NetBird Admin API
+ *
+ * POST endpoint for admin.php actions: add/update/delete/toggle devices,
+ * save poll config, manage SSH credentials. Requires session auth.
+ *
+ * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
+ * ©2025 Doug Kaye, K6DRK <doug@rds.com>
+ */
 session_start();
 $authed = !empty($_SESSION['stats_auth']) || !empty($_SESSION['aprs_admin_authed']);
 

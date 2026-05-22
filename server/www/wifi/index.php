@@ -12,6 +12,7 @@
  *   ?wpa     POST — JSON {ssid, password} → run wpa_passphrase, return PSK (auth required)
  *   ?logout  GET  — destroy session, redirect to login
  *
+ * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
  * ©2025 Doug Kaye, K6DRK <doug@rds.com>
  */
 ini_set('display_errors', '0');
@@ -118,6 +119,11 @@ if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!is_array($body['entries'] ?? null)) jsonOut(['error' => 'Invalid request body'], 400);
     wifiSave(array_map('sanitize', $body['entries']));
     jsonOut(['ok' => true, 'count' => count($body['entries'])]);
+}
+
+if (isset($_GET['apply'])) {
+    exec('sudo -u pi /usr/bin/php /home/pi/update-wifi.php ssids=' . escapeshellarg($dataFile) . ' 2>&1', $out, $code);
+    jsonOut(['ok' => $code === 0, 'output' => implode("\n", $out)]);
 }
 
 if (isset($_GET['wpa']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -299,6 +305,7 @@ td input[type=text]:focus {
   <h1>iGate WiFi Manager</h1>
   <span id="status"></span>
   <button class="hdr-btn hdr-btn-primary" id="btn-add">+ Add Network</button>
+  <button class="hdr-btn" id="btn-apply">Update Server</button>
   <a href="javascript:history.back()" class="hdr-btn">← Back</a>
   <a href="?logout" class="hdr-btn">Sign out</a>
 </header>
@@ -519,6 +526,21 @@ function esc(s) {
     return String(s ?? '').replace(/[&<>"']/g, c =>
         ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+
+/* ── Update server ── */
+
+document.getElementById('btn-apply').addEventListener('click', async () => {
+    setStatus('Updating server…', 'saving');
+    try {
+        const resp = await fetch('?apply', {credentials: 'same-origin'});
+        const data = await resp.json();
+        if (!resp.ok || data.error) throw new Error(data.error || 'Server error');
+        setStatus(data.ok ? 'Server updated' : 'Update failed — check server logs', data.ok ? 'saved' : 'error');
+        setTimeout(() => { if (!saving) setStatus('', ''); }, 4000);
+    } catch(err) {
+        setStatus('Error: ' + err.message, 'error');
+    }
+});
 
 /* ── Init ── */
 

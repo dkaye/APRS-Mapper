@@ -1,0 +1,4 @@
+ingress:
+  - hostname: marsaprs.org
+    service: http://localhost:80
+  - service: http_status:404

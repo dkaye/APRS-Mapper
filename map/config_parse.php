@@ -2,6 +2,7 @@
 /**
  * APRS Tracker Map — shared YAML config parser
  *
+ * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
  * @author    Doug Kaye
  * @copyright 2026 Doug Kaye. All Rights Reserved.
  *

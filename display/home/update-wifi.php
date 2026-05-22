@@ -1,120 +1,153 @@
 #!/usr/bin/env php
 <?php
 /**
+ * update-wifi.php — apply /home/pi/wifi.yaml to NetworkManager
+ *
+ * Deletes all non-system WiFi connections, then re-adds every entry from
+ * wifi.yaml in order, with descending autoconnect priority so the list order
+ * controls which network is preferred.
+ *
+ * Usage:
+ *   /home/pi/update-wifi.php [ssids=<path-to-yaml>] [debug]
+ *
+ * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
  * ©2025 Doug Kaye. All Rights Reserved.
  */
 
-//defaults
-$debugging=false;
-$ssidFilename="wifi.conf";
-$connectionsToKeep=['preconfigured','lo','wt0','wlan0','eth0'];	//don't delete these connections
+$debugging    = false;
+$ssidFilename = '/home/pi/wifi.yaml';
+$connectionsToKeep = ['preconfigured', 'lo', 'wt0', 'wlan0', 'eth0'];
 
-function debug($message) {
-	global $debugging;
-	if ($debugging) {
-		echo("$message\n");
-	}
+if ($argc > 1) {
+    parse_str(implode('&', array_slice($argv, 1)), $_GET);
+    foreach ($_GET as $key => $value) {
+        switch ($key) {
+            case 'ssids':  $ssidFilename = $value; break;
+            case 'debug':  $debugging = true;       break;
+            default:
+                echo "Unknown argument: $key\n";
+                echo "Usage: update-wifi.php [ssids=<yaml-file>] [debug]\n";
+                exit(1);
+        }
+    }
 }
 
-function fatal($message) {
-	echo("FATAL: $message\n");
-	exit();
+function debug($msg) {
+    global $debugging;
+    if ($debugging) echo "$msg\n";
 }
 
-if($argc>1) {
-	parse_str(implode('&',array_slice($argv, 1)), $_GET);
-	foreach ($_GET as $key=>$value) {
-		switch ($key) {
-			case "ssids":
-				$ssidFilename=$value;
-				break;
-			case "debug":
-				$debugging=true;
-				break;
-			default:
-				commandLine ("Unknown command line argument: $key\n");
-		}
-	}
+function fatal($msg) {
+    echo "FATAL: $msg\n";
+    exit(1);
 }
 
-function commandLine ($message) {
-	global $ssidFilename;
-	echo($message);
-	echo("Command line syntax:\n");
-	echo("  php update-wifi.php [ssids=<ssid definition file>] [debug]\n");
-	echo("Defaults\n");
-	echo("  ssids=$ssidFilename\n");
-	echo("ssid file syntax:\n");
-	echo('  <name>,<ssid>,<password>' . PHP_EOL);	//e.g., "Franklin Hotspot 01,Franklin T9a FB10,guacamole"
-	exit();
+/* ── YAML parser ── */
+
+function parseWifiYaml(string $file): array {
+    $entries = [];
+    $cur = null;
+    foreach (file($file, FILE_IGNORE_NEW_LINES) as $line) {
+        if (preg_match('/^- name:\s*(.*)$/', $line, $m)) {
+            if ($cur !== null) $entries[] = $cur;
+            $cur = ['name' => yval($m[1]), 'ssid' => '', 'password' => '', 'encrypted' => ''];
+        } elseif ($cur !== null && preg_match('/^\s+(ssid|password|encrypted):\s*(.*)$/', $line, $m)) {
+            $cur[$m[1]] = yval($m[2]);
+        }
+    }
+    if ($cur !== null) $entries[] = $cur;
+    return $entries;
 }
 
-function deleteConnection($name) {
-	echo("Deleting connection: $name\n");
-	$cmd="sudo nmcli connection delete \"$name\"";
-	$result=exec($cmd);
+function yval(string $s): string {
+    $s = trim($s);
+    if (strlen($s) >= 2 && $s[0] === '"' && substr($s, -1) === '"') {
+        $s = str_replace(['\\"', '\\\\'], ['"', '\\'], substr($s, 1, -1));
+    }
+    return $s;
 }
 
-function setPriority($name,$priority) {
-	$cmd="sudo nmcli connection modify \"$name\" connection.autoconnect-priority $priority";
-	$result=exec($cmd);
+/* ── nmcli helpers ── */
+
+function deleteConnection(string $name): void {
+    echo "Deleting: $name\n";
+    exec('sudo nmcli connection delete ' . escapeshellarg($name));
 }
 
-function addConnection($line,$priority) {
-	echo("Adding $line, priority=$priority\n");
-	$element=explode(",",$line);
-	$name=$element[0];
-	$ssid=$element[1];
-	$password=$element[2];
-	$cmd="sudo nmcli connection add type wifi con-name \"$name\" ifname wlan0 ssid \"$ssid\" -- wifi-sec.key-mgmt wpa-psk wifi-sec.psk \"$password\"";
-	$result=exec($cmd);
-	setPriority($name,$priority);
+function setPriority(string $name, int $priority): void {
+    exec('sudo nmcli connection modify ' . escapeshellarg($name) .
+         ' connection.autoconnect-priority ' . $priority);
 }
 
-function deleteOldConnections() {
-	global $connectionsToKeep;
-	$lastLine=exec("sudo nmcli --terse connection show",$connections);
-	foreach ($connections as $connection) {
-		$element=explode(':',$connection);
-		$name=$element[0];
-		$device=$element[3];
-		if (!in_array($name,$connectionsToKeep) && !in_array($device,$connectionsToKeep)) {
-			deleteConnection($name);	//delete all non-default connections
-		}
-	}
+function addConnection(array $entry, int $priority): void {
+    $name      = $entry['name'];
+    $ssid      = $entry['ssid'];
+    $encrypted = $entry['encrypted'];
+    $password  = $entry['password'];
+
+    echo "Adding: $name ($ssid), priority=$priority\n";
+
+    $n = escapeshellarg($name);
+    $s = escapeshellarg($ssid);
+    $base = "sudo nmcli connection add type wifi con-name $n ifname wlan0 ssid $s";
+
+    if (preg_match('/^[a-f0-9]{64}$/i', $encrypted)) {
+        // Pre-computed PSK hash from wpa_passphrase
+        exec("$base -- wifi-sec.key-mgmt wpa-psk wifi-sec.psk " . escapeshellarg($encrypted));
+    } elseif ($password !== '') {
+        // Plain-text password — nmcli hashes it
+        exec("$base -- wifi-sec.key-mgmt wpa-psk wifi-sec.psk " . escapeshellarg($password));
+    } else {
+        // Open network (no password / "NO PASSWORD!")
+        exec($base);
+    }
+
+    setPriority($name, $priority);
 }
 
-#====================================================
+function deleteOldConnections(): void {
+    global $connectionsToKeep;
+    exec('sudo nmcli --terse connection show', $connections);
+    foreach ($connections as $connection) {
+        $parts  = explode(':', $connection);
+        $name   = $parts[0];
+        $device = $parts[3] ?? '';
+        if (!in_array($name, $connectionsToKeep) && !in_array($device, $connectionsToKeep)) {
+            deleteConnection($name);
+        }
+    }
+}
+
+/* ── Main ── */
 
 echo "----------\n";
 echo "ssids=$ssidFilename\n";
+
 if (!file_exists($ssidFilename)) {
-	fatal("SSID FILE DOESN'T EXIST!!");
+    fatal("$ssidFilename not found");
 }
 
-# get the name of the current wifi connection
-$result=exec("nmcli -f NAME,DEVICE c s --active | grep wlan0");
-$deviceInUse=trim(str_replace('wlan0','',$result) );
-echo ("Current connection: $deviceInUse\n");
+$entries = parseWifiYaml($ssidFilename);
+echo count($entries) . " entries loaded\n";
+
+if (count($entries) === 0) {
+    echo "WARNING: no entries parsed — skipping to avoid deleting all connections\n";
+    exit(0);
+}
+
+$current = trim(str_replace('wlan0', '', exec('nmcli -f NAME,DEVICE c s --active | grep wlan0')));
+echo "Current connection: $current\n";
 echo "----------\n\n";
 
 deleteOldConnections();
-$lines=file($ssidFilename);
-$priority=999;
 
-foreach ($lines as $line) {
-	$line=trim($line);
-	if (strlen($line)==0) {continue;}			//skip blank lines
-	if ($line[0]=='#') {continue;}				//skip comment lines
-	$element=explode(",",$line);
-	$name=trim($element[0]);
-	if ($name==$deviceInUse) {
-		echo ("\nFound $name. Setting priority to $priority\n");
-		setPriority($name,$priority);
-	}
-	else {
-		addConnection($line,$priority);			//add connection, starting with highest priority
-	}
-	$priority--;
+$priority = 999;
+foreach ($entries as $entry) {
+    if ($entry['name'] === $current) {
+        echo "Found current connection: {$entry['name']} — updating priority\n";
+        setPriority($entry['name'], $priority);
+    } else {
+        addConnection($entry, $priority);
+    }
+    $priority--;
 }
-?>

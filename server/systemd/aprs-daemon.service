@@ -1,0 +1,41 @@
+# APRS Tracker Map — systemd service unit
+#
+# Install: sudo cp aprs-daemon.service /etc/systemd/system/
+#          sudo systemctl daemon-reload
+#          sudo systemctl enable aprs-daemon
+#          sudo systemctl start aprs-daemon
+
+[Unit]
+Description=APRS Tracker Map Daemon
+Documentation=file:///var/www/html/README.MD
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/html
+
+ExecStart=/usr/local/bin/aprs-daemon.sh
+
+# Restart on any non-zero exit; not on clean shutdown (systemctl stop)
+Restart=on-failure
+RestartSec=10
+
+# Give up after 5 crashes in 5 minutes; leaves service in failed state
+# so the problem is visible: systemctl status aprs-daemon
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# systemd creates /run/aprs-daemon/ (PID file) and
+# /var/log/aprs-daemon/ (log file), both owned by www-data
+RuntimeDirectory=aprs-daemon
+LogsDirectory=aprs-daemon
+
+# Wrapper writes structured log lines to stdout; systemd appends them here
+StandardOutput=append:/var/log/aprs-daemon/daemon.log
+StandardError=append:/var/log/aprs-daemon/daemon.log
+
+[Install]
+WantedBy=multi-user.target

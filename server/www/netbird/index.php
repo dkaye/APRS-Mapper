@@ -1,6 +1,8 @@
 <?php
 // ── Host status query — no auth required ─────────────────────────────────────
 // GET /netbird/?hostname=K6DRK-10  →  1 (enabled), 0 (disabled), -1 (unknown)
+// Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
+// ©2025 Doug Kaye, K6DRK <doug@rds.com>
 if (isset($_GET['hostname'])) {
     require_once __DIR__ . '/yaml_lib.php';
     $needle  = trim($_GET['hostname']);
@@ -247,7 +249,7 @@ footer {
   </div>
 
   <div class="hdr-group">
-    <a href="/igate/wifi/" class="hdr-btn">WiFi</a>
+    <a href="/wifi/" class="hdr-btn">WiFi</a>
   </div>
 
   <div class="hdr-group">

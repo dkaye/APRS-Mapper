@@ -10,6 +10,7 @@
  * Usage:
  *   /home/pi/update-wifi.php [ssids=<path-to-yaml>] [debug]
  *
+ * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
  * ©2025 Doug Kaye. All Rights Reserved.
  */
 
@@ -128,6 +129,11 @@ if (!file_exists($ssidFilename)) {
 
 $entries = parseWifiYaml($ssidFilename);
 echo count($entries) . " entries loaded\n";
+
+if (count($entries) === 0) {
+    echo "WARNING: no entries parsed — skipping to avoid deleting all connections\n";
+    exit(0);
+}
 
 $current = trim(str_replace('wlan0', '', exec('nmcli -f NAME,DEVICE c s --active | grep wlan0')));
 echo "Current connection: $current\n";

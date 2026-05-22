@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Deploy display files to aprs-pi (marsaprs.org).
+#
+# Run this on your Mac after editing any files in this directory.
+# Builds files.tar.gz and uploads it along with install.sh and auto-update.sh.
+#
+# Usage: ./deploy.sh
+#
+# Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
+# ©2025 Doug Kaye, K6DRK <doug@rds.com>
+
+set -euo pipefail
+
+DISPLAY_DIR="$(cd "$(dirname "$0")" && pwd)"
+REMOTE="aprs-pi"
+REMOTE_DIR="/var/www/html/display"
+
+echo "=== Display deploy to marsaprs.org ==="
+
+# Create remote directory if needed
+ssh "$REMOTE" "mkdir -p $REMOTE_DIR"
+
+# Sync source files to aprs-pi staging, then build the archive there.
+# Building on Linux avoids macOS extended-attribute noise in the tarball.
+STAGING="$REMOTE_DIR/.staging"
+echo "Syncing files to aprs-pi..."
+ssh "$REMOTE" "mkdir -p $STAGING/home $STAGING/systemd"
+rsync -a --delete "$DISPLAY_DIR/home/"    "$REMOTE:$STAGING/home/"
+rsync -a --delete "$DISPLAY_DIR/systemd/" "$REMOTE:$STAGING/systemd/"
+# auto-update.sh goes in the archive so displays can update it nightly
+scp "$DISPLAY_DIR/auto-update.sh" "$REMOTE:$STAGING/home/auto-update.sh"
+
+echo "Building files.tar.gz on aprs-pi..."
+ssh "$REMOTE" "tar -czf $REMOTE_DIR/files.tar.gz -C $STAGING ."
+
+# Upload scripts served directly
+echo "Uploading scripts..."
+scp "$DISPLAY_DIR/install.sh"     "$REMOTE:$REMOTE_DIR/install.sh"
+scp "$DISPLAY_DIR/auto-update.sh" "$REMOTE:$REMOTE_DIR/auto-update.sh"
+
+# Sync server-side web content (wifi token endpoint served by aprs-pi)
+echo "Syncing www/ to aprs-pi..."
+ssh "$REMOTE" "mkdir -p $REMOTE_DIR/wifi"
+rsync -a --delete "$DISPLAY_DIR/www/wifi/" "$REMOTE:$REMOTE_DIR/wifi/"
+ssh "$REMOTE" "sudo chown -R pi:www-data $REMOTE_DIR && sudo find $REMOTE_DIR -type d -exec chmod 775 {} + && sudo find $REMOTE_DIR -type f -exec chmod 664 {} +"
+
+echo ""
+echo "Done. Files live at:"
+echo "  https://marsaprs.org/display/install.sh     (bootstrap for new display Pis)"
+echo "  https://marsaprs.org/display/auto-update.sh (nightly update script)"
+echo "  https://marsaprs.org/display/files.tar.gz   (update archive)"

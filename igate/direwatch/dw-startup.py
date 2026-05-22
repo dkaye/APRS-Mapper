@@ -12,6 +12,8 @@ Exits immediately when:
   - No TFT detected (GPIO23 low)
   - iGate is unconfigured (CONFIGURE_ME in direwolf.conf)
 """
+# Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
+# ©2025 Doug Kaye, K6DRK <doug@rds.com>
 
 import re
 import subprocess
