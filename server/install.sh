@@ -35,6 +35,7 @@ sudo apt-get install -y \
     python3-paramiko \
     avahi-daemon \
     curl rsync \
+    lftp \
     ufw
 ok "Packages installed"
 
@@ -136,6 +137,8 @@ crontab - << 'EOF'
 */5 * * * * /home/pi/check-netbird.sh >> /tmp/checknetbird.log 2>&1
 # Enable NetBird after any reboot
 @reboot /home/pi/netbird-up.sh
+# Nightly backup at 2:00am
+0 2 * * * /home/pi/aprs-backup.sh >> /var/log/aprs-backup.log 2>&1
 # Nightly WiFi update at 4:00am
 0 4 * * * php /home/pi/update-wifi.php ssids=/var/www/html/wifi/wifi.yaml >> /tmp/server-wifi-update.log 2>&1
 # Nightly reboot at 4:10am (after any updates)
