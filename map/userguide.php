@@ -193,7 +193,25 @@ $backText  = htmlspecialchars($backLabel, ENT_QUOTES);
   fetch('USERGUIDE.MD')
     .then(r => r.text())
     .then(md => {
-      document.getElementById('content').innerHTML = marked.parse(md);
+      const el = document.getElementById('content');
+      el.innerHTML = marked.parse(md);
+
+      // Add id attributes to headings so TOC anchor links work.
+      // Strips trailing screen-size annotations like (L), (S), (L,S) before slugifying,
+      // then tracks duplicates and appends -1, -2, … exactly as GitHub does.
+      const slugCount = {};
+      el.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(h => {
+        if (!h.id) {
+          const slug = h.textContent
+            .replace(/\s*\([LS][,\s]*[LS]?\)\s*$/i, '')
+            .toLowerCase()
+            .replace(/[^a-z0-9\s-]/g, '')
+            .replace(/\s/g, '-');
+          slugCount[slug] = (slugCount[slug] || 0) + 1;
+          h.id = slugCount[slug] === 1 ? slug : `${slug}-${slugCount[slug] - 1}`;
+        }
+      });
+
       const hash = window.location.hash;
       if (hash) {
         const target = document.querySelector(hash);

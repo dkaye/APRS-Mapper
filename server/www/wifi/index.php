@@ -20,7 +20,7 @@ ini_set('session.gc_maxlifetime', 43200);
 session_start();
 
 $dataFile     = __DIR__ . '/wifi.yaml';
-$passwordFile = __DIR__ . '/../../admin/password.txt';
+$passwordFile = __DIR__ . '/../admin/password.txt';
 
 /* ── YAML parser / writer ──────────────────────────────────────────────────── */
 
