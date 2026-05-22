@@ -88,7 +88,7 @@ $authed = (isset($_SESSION['aprs_admin_authed']) && $_SESSION['aprs_admin_authed
        || (isset($_SESSION['stats_auth'])        && $_SESSION['stats_auth']        === true);
 
 if (!$authed) {
-    if (isset($_GET['load']) || isset($_GET['save']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['alllocationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib']) || isset($_GET['beacondeltas'])) {
+    if (isset($_GET['load']) || isset($_GET['save']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['alllocationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib']) || isset($_GET['beacondeltas']) || isset($_GET['togglelock'])) {
         header('Content-Type: application/json');
         http_response_code(401);
         echo json_encode(['error' => 'Session expired — reload and log in again']);
@@ -287,7 +287,7 @@ if (isset($_GET['versions'])) {
             $filename = basename(dirname($f));
             $ecfg = parseConfigYaml($f);
             $eventName = $ecfg['event'] ?? $filename;
-            $list[] = ['name' => $filename, 'eventName' => $eventName, 'mtime' => filemtime($f), 'active' => ($filename === $currentFilename)];
+            $list[] = ['name' => $filename, 'eventName' => $eventName, 'mtime' => filemtime($f), 'active' => ($filename === $currentFilename), 'locked' => !empty($ecfg['locked'])];
         }
     }
     usort($list, fn($a, $b) => $b['mtime'] <=> $a['mtime']);
@@ -306,11 +306,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveversion'])) {
     if (!preg_match('/^[a-zA-Z0-9 _\-\.]{1,80}$/', $eventName)) {
         respondError('Name may only contain letters, numbers, spaces, hyphens, underscores, periods (max 80 chars)', 400);
     }
+
+    // Lock check: if the target event exists and is locked, require correct password
+    $existingEventPath = $eventsDir . '/' . $eventName . '/event.yaml';
+    if (file_exists($existingEventPath)) {
+        require_once __DIR__ . '/../config_parse.php';
+        $existingCfg = parseConfigYaml($existingEventPath);
+        if (!empty($existingCfg['locked'])) {
+            if ($storedPass === '' || trim($data['pw'] ?? '') !== $storedPass) {
+                respondError('Event is locked — incorrect password', 403);
+            }
+        }
+    }
+
     $eventPath = $eventsDir . '/' . $eventName;
     if (!is_dir($eventPath)) mkdir($eventPath, 0777, true);
 
     // Update course paths and copy files into the target event directory
     $cfg = $data['cfg'];
+    if (!empty($existingCfg['locked'] ?? false)) $cfg['locked'] = true;
     foreach (($cfg['courses'] ?? []) as $i => $c) {
         if (!isset($c['file'])) continue;
         if (!preg_match('|^events/[^/]+/(.+)$|', $c['file'], $m)) continue;
@@ -366,10 +380,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveonly'])) {
     if (!preg_match('/^[a-zA-Z0-9 _\-\.]{1,80}$/', $eventName)) {
         respondError('Name may only contain letters, numbers, spaces, hyphens, underscores, periods (max 80 chars)', 400);
     }
+
+    // Lock check: if the target event exists and is locked, require correct password
+    $existingOnlyPath = $eventsDir . '/' . $eventName . '/event.yaml';
+    if (file_exists($existingOnlyPath)) {
+        require_once __DIR__ . '/../config_parse.php';
+        $existingOnlyCfg = parseConfigYaml($existingOnlyPath);
+        if (!empty($existingOnlyCfg['locked'])) {
+            if ($storedPass === '' || trim($data['pw'] ?? '') !== $storedPass) {
+                respondError('Event is locked — incorrect password', 403);
+            }
+        }
+    }
+
     $eventPath = $eventsDir . '/' . $eventName;
     if (!is_dir($eventPath)) mkdir($eventPath, 0777, true);
 
     $cfg = $data['cfg'];
+    if (!empty($existingOnlyCfg['locked'] ?? false)) $cfg['locked'] = true;
     foreach (($cfg['courses'] ?? []) as $i => $c) {
         if (!isset($c['file'])) continue;
         if (!preg_match('|^events/[^/]+/(.+)$|', $c['file'], $m)) continue;
@@ -440,6 +468,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['deleteversion'])) {
         respondError('Cannot delete — check permissions');
     }
     respondJson(['ok' => true]);
+}
+
+// ── AJAX: toggle event lock ───────────────────────────────────────────────────
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['togglelock'])) {
+    $body = file_get_contents('php://input');
+    $data = json_decode($body, true);
+    $name = trim($data['name'] ?? '');
+    $pw   = trim($data['pw']   ?? '');
+    $lock = !empty($data['lock']);
+    if (!preg_match('/^[a-zA-Z0-9 _\-\.]{1,80}$/', $name)) {
+        respondError('Invalid name', 400);
+    }
+    if ($storedPass === '' || $pw !== $storedPass) {
+        respondError('Incorrect password', 403);
+    }
+    $path = $eventsDir . '/' . $name . '/event.yaml';
+    if (!file_exists($path)) {
+        respondError('Event not found', 404);
+    }
+    require_once __DIR__ . '/../config_parse.php';
+    $cfg = parseConfigYaml($path);
+    if ($lock) $cfg['locked'] = true; else unset($cfg['locked']);
+    $existing = file_get_contents($path);
+    $history  = extractHistory($existing);
+    $yaml = buildConfigYaml($cfg, $history);
+    if (file_put_contents($path, $yaml, LOCK_EX) === false) {
+        respondError('Cannot write event file — check permissions');
+    }
+    respondJson(['ok' => true, 'locked' => $lock]);
 }
 
 // ── AJAX: list location files in current event ────────────────────────────────
@@ -758,6 +816,7 @@ function buildConfigYaml($cfg, $history = []) {
         $L[] = '# ── Event ─────────────────────────────────────────────────────────────────────';
         $L[] = '# Name displayed in the lower-left corner of the map.';
         $L[] = 'event: ' . ys($event);
+        if (!empty($cfg['locked'])) $L[] = 'locked: true';
         $L[] = '';
     }
     $legend = trim($cfg['legend'] ?? '');
@@ -1175,6 +1234,11 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
     cursor: pointer; padding: 1px 4px; border-radius: 3px; line-height: 1; flex-shrink: 0;
 }
 .modal-list-item .item-del:hover { color: #e74c3c; background: #fdf0f0; }
+.modal-list-item .item-lock {
+    background: none; border: none; font-size: 13px;
+    cursor: pointer; padding: 1px 4px; border-radius: 3px; line-height: 1; flex-shrink: 0; opacity: .55;
+}
+.modal-list-item .item-lock:hover { opacity: 1; background: #f0f0f0; }
 .modal-list-live { padding: 9px 12px; font-size: 13px; color: #27ae60; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
 .modal-list-live:hover { background: #eafaf1; }
 .modal-empty { padding: 12px; font-size: 13px; color: #999; text-align: center; }
@@ -2656,6 +2720,77 @@ function fmtDate(mtime) {
     });
 }
 
+function promptPassword(title, message) {
+    return new Promise(resolve => {
+        const bd = document.createElement('div');
+        bd.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:10000';
+        const box = document.createElement('div');
+        box.style.cssText = 'background:#fff;border-radius:8px;padding:24px;width:340px;box-shadow:0 4px 20px rgba(0,0,0,.35)';
+        const h = document.createElement('h3');
+        h.textContent = title;
+        h.style.cssText = 'margin:0 0 10px;font-size:16px;color:#333';
+        const msg = document.createElement('p');
+        msg.textContent = message;
+        msg.style.cssText = 'margin:0 0 14px;font-size:13px;color:#555;line-height:1.45';
+        const inp = document.createElement('input');
+        inp.type = 'password'; inp.placeholder = 'Admin password';
+        inp.style.cssText = 'width:100%;padding:7px 10px;border:1px solid #ccc;border-radius:4px;font-size:13px;box-sizing:border-box';
+        const errEl = document.createElement('p');
+        errEl.style.cssText = 'color:#d32f2f;font-size:12px;margin:5px 0 0;min-height:16px';
+        const btns = document.createElement('div');
+        btns.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:14px';
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.style.cssText = 'padding:7px 16px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;font-size:13px';
+        const okBtn = document.createElement('button');
+        okBtn.textContent = 'OK';
+        okBtn.style.cssText = 'padding:7px 16px;border:none;border-radius:4px;background:#1976d2;color:#fff;cursor:pointer;font-size:13px;font-weight:bold';
+        cancelBtn.addEventListener('click', () => { bd.remove(); resolve(null); });
+        okBtn.addEventListener('click', () => { bd.remove(); resolve(inp.value); });
+        inp.addEventListener('keydown', e => { if (e.key === 'Enter') { bd.remove(); resolve(inp.value); } });
+        btns.appendChild(cancelBtn); btns.appendChild(okBtn);
+        box.appendChild(h); box.appendChild(msg); box.appendChild(inp); box.appendChild(errEl); box.appendChild(btns);
+        bd.appendChild(box); document.body.appendChild(bd);
+        requestAnimationFrame(() => inp.focus());
+    });
+}
+
+async function toggleLock(name, currentlyLocked, onSuccess) {
+    const pw = await promptPassword(
+        currentlyLocked ? '🔓 Unlock Event' : '🔒 Lock Event',
+        currentlyLocked
+            ? `Enter the admin password to unlock "${name}".`
+            : `Enter the admin password to lock "${name}". Saves will require the password.`
+    );
+    if (pw === null) return;
+    try {
+        const r = await fetch('?togglelock', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, pw, lock: !currentlyLocked })
+        });
+        const d = await r.json();
+        if (r.ok && d.ok) { onSuccess(!currentlyLocked); }
+        else alert(d.error || 'Failed');
+    } catch { alert('Network error'); }
+}
+
+function makeLockBtn(v) {
+    const btn = document.createElement('button');
+    btn.className = 'item-lock';
+    const update = locked => {
+        btn.textContent = locked ? '🔒' : '🔓';
+        btn.title = locked ? 'Locked — click to unlock' : 'Click to lock';
+        v.locked = locked;
+    };
+    update(v.locked);
+    btn.addEventListener('click', e => {
+        e.stopPropagation();
+        toggleLock(v.name, v.locked, update);
+    });
+    return btn;
+}
+
 function openModal(title, bodyEl, footerEls) {
     const backdrop = document.createElement('div');
     backdrop.className = 'modal-backdrop';
@@ -2759,6 +2894,7 @@ async function doSave() {
             row.appendChild(nameSpan);
             row.appendChild(eventSpan);
             row.appendChild(dateSpan);
+            row.appendChild(makeLockBtn(v));
 
             row.addEventListener('click', () => { inp.value = v.name; inp.dispatchEvent(new Event('input')); });
             list.appendChild(row);
@@ -2780,7 +2916,12 @@ async function doSave() {
     inp.addEventListener('input', () => {
         const fname = inp.value.trim();
         if (existingNames.has(fname)) {
-            warn.textContent = `"${fname}" already exists — saving will overwrite it.`;
+            const ev = versions.find(v => v.name === fname);
+            if (ev?.locked) {
+                warn.textContent = `🔒 "${fname}" is locked — you will need the admin password to save.`;
+            } else {
+                warn.textContent = `"${fname}" already exists — saving will overwrite it.`;
+            }
             warn.style.display = '';
             saveBtn.textContent = 'Overwrite';
         } else {
@@ -2793,49 +2934,55 @@ async function doSave() {
         const fname = inp.value.trim();
         if (!fname) { inp.focus(); return; }
 
+        let pw = undefined;
         if (existingNames.has(fname)) {
             const existingEvent = versions.find(v => v.name === fname);
             const eventName = existingEvent?.eventName || fname;
 
-            const confirmed = await new Promise(resolve => {
-                const backdrop = document.createElement('div');
-                backdrop.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999';
+            if (existingEvent?.locked) {
+                pw = await promptPassword('🔒 Locked Event', `"${fname}" is locked. Enter the admin password to save.`);
+                if (pw === null) return;
+            } else {
+                const confirmed = await new Promise(resolve => {
+                    const backdrop = document.createElement('div');
+                    backdrop.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999';
 
-                const modal = document.createElement('div');
-                modal.style.cssText = 'background:#fff;border-radius:8px;padding:24px;max-width:400px;box-shadow:0 4px 16px rgba(0,0,0,0.3)';
+                    const modal = document.createElement('div');
+                    modal.style.cssText = 'background:#fff;border-radius:8px;padding:24px;max-width:400px;box-shadow:0 4px 16px rgba(0,0,0,0.3)';
 
-                const heading = document.createElement('h3');
-                heading.textContent = 'Overwrite Event?';
-                heading.style.cssText = 'margin:0 0 16px 0;font-size:18px;color:#333';
+                    const heading = document.createElement('h3');
+                    heading.textContent = 'Overwrite Event?';
+                    heading.style.cssText = 'margin:0 0 16px 0;font-size:18px;color:#333';
 
-                const msg = document.createElement('div');
-                msg.innerHTML = `Warning: You are about to overwrite the event file <strong>"${fname}"</strong> for <strong>"${eventName}"</strong>.`;
-                msg.style.cssText = 'margin-bottom:24px;font-size:14px;line-height:1.5;color:#555';
+                    const msg = document.createElement('div');
+                    msg.innerHTML = `Warning: You are about to overwrite the event file <strong>"${fname}"</strong> for <strong>"${eventName}"</strong>.`;
+                    msg.style.cssText = 'margin-bottom:24px;font-size:14px;line-height:1.5;color:#555';
 
-                const btnContainer = document.createElement('div');
-                btnContainer.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+                    const btnContainer = document.createElement('div');
+                    btnContainer.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
 
-                const cancelBtn2 = document.createElement('button');
-                cancelBtn2.textContent = 'Cancel';
-                cancelBtn2.style.cssText = 'padding:8px 16px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;font-size:14px';
-                cancelBtn2.addEventListener('click', () => { backdrop.remove(); resolve(false); });
+                    const cancelBtn2 = document.createElement('button');
+                    cancelBtn2.textContent = 'Cancel';
+                    cancelBtn2.style.cssText = 'padding:8px 16px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;font-size:14px';
+                    cancelBtn2.addEventListener('click', () => { backdrop.remove(); resolve(false); });
 
-                const confirmBtn = document.createElement('button');
-                confirmBtn.textContent = 'Overwrite';
-                confirmBtn.style.cssText = 'padding:8px 16px;border:none;border-radius:4px;background:#d32f2f;color:#fff;cursor:pointer;font-size:14px;font-weight:bold';
-                confirmBtn.addEventListener('click', () => { backdrop.remove(); resolve(true); });
+                    const confirmBtn = document.createElement('button');
+                    confirmBtn.textContent = 'Overwrite';
+                    confirmBtn.style.cssText = 'padding:8px 16px;border:none;border-radius:4px;background:#d32f2f;color:#fff;cursor:pointer;font-size:14px;font-weight:bold';
+                    confirmBtn.addEventListener('click', () => { backdrop.remove(); resolve(true); });
 
-                btnContainer.appendChild(cancelBtn2);
-                btnContainer.appendChild(confirmBtn);
-                modal.appendChild(heading);
-                modal.appendChild(msg);
-                modal.appendChild(btnContainer);
-                backdrop.appendChild(modal);
-                document.body.appendChild(backdrop);
-                confirmBtn.focus();
-            });
+                    btnContainer.appendChild(cancelBtn2);
+                    btnContainer.appendChild(confirmBtn);
+                    modal.appendChild(heading);
+                    modal.appendChild(msg);
+                    modal.appendChild(btnContainer);
+                    backdrop.appendChild(modal);
+                    document.body.appendChild(backdrop);
+                    confirmBtn.focus();
+                });
 
-            if (!confirmed) return;
+                if (!confirmed) return;
+            }
         }
 
         saveBtn.disabled = true;
@@ -2846,7 +2993,7 @@ async function doSave() {
             const r = await fetch('?saveonly', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: fname, cfg })
+                body: JSON.stringify({ name: fname, cfg, ...(pw !== undefined && { pw }) })
             });
             const result = await r.json();
             if (r.ok && result.ok) {
@@ -2955,6 +3102,7 @@ async function doSaveAs() {
             row.appendChild(nameSpan);
             row.appendChild(eventSpan);
             row.appendChild(dateSpan);
+            row.appendChild(makeLockBtn(v));
 
             row.addEventListener('click', () => { inp.value = v.name; inp.dispatchEvent(new Event('input')); });
             list.appendChild(row);
@@ -2976,7 +3124,12 @@ async function doSaveAs() {
     inp.addEventListener('input', () => {
         const fname = inp.value.trim();
         if (existingNames.has(fname)) {
-            warn.textContent = `"${fname}" already exists — saving will overwrite it.`;
+            const ev = versions.find(v => v.name === fname);
+            if (ev?.locked) {
+                warn.textContent = `🔒 "${fname}" is locked — you will need the admin password to save.`;
+            } else {
+                warn.textContent = `"${fname}" already exists — saving will overwrite it.`;
+            }
             warn.style.display = '';
             saveBtn.textContent = 'Overwrite event';
         } else {
@@ -2989,67 +3142,72 @@ async function doSaveAs() {
         const fname = inp.value.trim();
         if (!fname) { inp.focus(); return; }
 
-        // If overwriting, confirm first with custom modal
+        let pw = undefined;
         if (existingNames.has(fname)) {
             const existingEvent = versions.find(v => v.name === fname);
             const eventName = existingEvent?.eventName || fname;
 
-            const confirmed = await new Promise(resolve => {
-                const backdrop = document.createElement('div');
-                backdrop.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999';
+            if (existingEvent?.locked) {
+                pw = await promptPassword('🔒 Locked Event', `"${fname}" is locked. Enter the admin password to save as default.`);
+                if (pw === null) return;
+            } else {
+                const confirmed = await new Promise(resolve => {
+                    const backdrop = document.createElement('div');
+                    backdrop.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999';
 
-                const modal = document.createElement('div');
-                modal.style.cssText = 'background:#fff;border-radius:8px;padding:24px;max-width:400px;box-shadow:0 4px 16px rgba(0,0,0,0.3)';
+                    const modal = document.createElement('div');
+                    modal.style.cssText = 'background:#fff;border-radius:8px;padding:24px;max-width:400px;box-shadow:0 4px 16px rgba(0,0,0,0.3)';
 
-                const heading = document.createElement('h3');
-                heading.textContent = 'Overwrite Event?';
-                heading.style.cssText = 'margin:0 0 16px 0;font-size:18px;color:#333';
+                    const heading = document.createElement('h3');
+                    heading.textContent = 'Overwrite Event?';
+                    heading.style.cssText = 'margin:0 0 16px 0;font-size:18px;color:#333';
 
-                const msg = document.createElement('div');
-                msg.innerHTML = `Warning: You are about to overwrite the event file <strong>"${fname}"</strong> for <strong>"${eventName}"</strong>.`;
-                msg.style.cssText = 'margin-bottom:12px;font-size:14px;line-height:1.5;color:#555';
+                    const msg = document.createElement('div');
+                    msg.innerHTML = `Warning: You are about to overwrite the event file <strong>"${fname}"</strong> for <strong>"${eventName}"</strong>.`;
+                    msg.style.cssText = 'margin-bottom:12px;font-size:14px;line-height:1.5;color:#555';
 
-                const blank = document.createElement('div');
-                blank.style.height = '12px';
+                    const blank = document.createElement('div');
+                    blank.style.height = '12px';
 
-                const warning = document.createElement('div');
-                warning.textContent = 'This will permanently change this event for all users!';
-                warning.style.cssText = 'margin-bottom:16px;font-size:14px;font-weight:bold;color:#d32f2f;animation:blink 1s infinite';
-                if (!document.querySelector('style[data-blink]')) {
-                    const style = document.createElement('style');
-                    style.setAttribute('data-blink', '1');
-                    style.textContent = '@keyframes blink{0%,50%{opacity:1}51%,100%{opacity:0.3}}';
-                    document.head.appendChild(style);
-                }
+                    const warning = document.createElement('div');
+                    warning.textContent = 'This will permanently change this event for all users!';
+                    warning.style.cssText = 'margin-bottom:16px;font-size:14px;font-weight:bold;color:#d32f2f;animation:blink 1s infinite';
+                    if (!document.querySelector('style[data-blink]')) {
+                        const style = document.createElement('style');
+                        style.setAttribute('data-blink', '1');
+                        style.textContent = '@keyframes blink{0%,50%{opacity:1}51%,100%{opacity:0.3}}';
+                        document.head.appendChild(style);
+                    }
 
-                const btnContainer = document.createElement('div');
-                btnContainer.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+                    const btnContainer = document.createElement('div');
+                    btnContainer.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
 
-                const cancelBtn = document.createElement('button');
-                cancelBtn.textContent = 'Cancel';
-                cancelBtn.style.cssText = 'padding:8px 16px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;font-size:14px';
-                cancelBtn.addEventListener('click', () => { backdrop.remove(); resolve(false); });
+                    const cancelBtn = document.createElement('button');
+                    cancelBtn.textContent = 'Cancel';
+                    cancelBtn.style.cssText = 'padding:8px 16px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;font-size:14px';
+                    cancelBtn.addEventListener('click', () => { backdrop.remove(); resolve(false); });
 
-                const confirmBtn = document.createElement('button');
-                confirmBtn.textContent = 'Overwrite';
-                confirmBtn.style.cssText = 'padding:8px 16px;border:none;border-radius:4px;background:#d32f2f;color:#fff;cursor:pointer;font-size:14px;font-weight:bold';
-                confirmBtn.addEventListener('click', () => { backdrop.remove(); resolve(true); });
+                    const confirmBtn = document.createElement('button');
+                    confirmBtn.textContent = 'Overwrite';
+                    confirmBtn.style.cssText = 'padding:8px 16px;border:none;border-radius:4px;background:#d32f2f;color:#fff;cursor:pointer;font-size:14px;font-weight:bold';
+                    confirmBtn.addEventListener('click', () => { backdrop.remove(); resolve(true); });
 
-                btnContainer.appendChild(cancelBtn);
-                btnContainer.appendChild(confirmBtn);
+                    btnContainer.appendChild(cancelBtn);
+                    btnContainer.appendChild(confirmBtn);
 
-                modal.appendChild(heading);
-                modal.appendChild(msg);
-                modal.appendChild(blank);
-                modal.appendChild(warning);
-                modal.appendChild(btnContainer);
-                backdrop.appendChild(modal);
-                document.body.appendChild(backdrop);
+                    modal.appendChild(heading);
+                    modal.appendChild(msg);
+                    modal.appendChild(blank);
+                    modal.appendChild(warning);
+                    modal.appendChild(btnContainer);
+                    backdrop.appendChild(modal);
+                    document.body.appendChild(backdrop);
 
-                confirmBtn.focus();
-            });
+                    confirmBtn.focus();
+                });
 
-            if (!confirmed) return;
+                if (!confirmed) return;
+            }
         }
 
         saveBtn.disabled = true;
@@ -3061,7 +3219,7 @@ async function doSaveAs() {
             const rVer = await fetch('?saveversion', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: fname, cfg })
+                body: JSON.stringify({ name: fname, cfg, ...(pw !== undefined && { pw }) })
             });
             const result = await rVer.json();
             if (rVer.ok && result.ok) {
@@ -3262,6 +3420,7 @@ async function doLoadModal() {
         });
 
         btnContainer.appendChild(activateBtn);
+        btnContainer.appendChild(makeLockBtn(v));
         btnContainer.appendChild(delBtn);
 
         row.appendChild(checkSpan);
