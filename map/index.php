@@ -70,14 +70,17 @@ if (isset($_GET['history'])) {
 					$entry = ['lat' => (float)$m[1], 'lon' => 0.0, 'ts' => 0];
 				} elseif (preg_match('/^    lon:\s*([\-\d.]+)/', $line, $m) && $entry !== null) {
 					$entry['lon'] = (float)$m[1];
+				} elseif (preg_match('/^    path:\s*(.+)/', $line, $m) && $entry !== null) {
+					$entry['path'] = trim($m[1]);
 				} elseif (preg_match('/^    ts:\s*(\d+)/', $line, $m) && $entry !== null) {
 					$entry['ts'] = (int)$m[1];
+					if (!isset($entry['path'])) $entry['path'] = '';
 					if ($cs !== null) $result[$cs][] = $entry;
 					$entry = null;
 				}
 			}
 		}
-		foreach ($result as &$entries) $entries = array_slice($entries, 0, 5);
+		foreach ($result as &$entries) $entries = array_slice($entries, 0, 10);
 		unset($entries);
 	}
 	echo json_encode($result);
@@ -151,6 +154,12 @@ if (isset($_GET['clientstatus'])) {
 	exit;
 }
 
+// Reached only for the HTML page (every API endpoint above exits). Stop iOS
+// Safari / installed-PWA from serving a stale cached copy so code changes land.
+header('Cache-Control: no-cache, no-store, must-revalidate');
+header('Pragma: no-cache');
+header('Expires: 0');
+
 require_once 'config_parse.php';
 $_cfg  = parseConfigYaml('config.yaml');
 $_m    = $_cfg['map'] ?? [];
@@ -201,10 +210,16 @@ html, body { width: 100%; height: 100%; overflow: hidden;
     color: var(--tracker-label-color, #000);
 }
 .place-label {
-    background: none; border: none; box-shadow: none;
+    background: #fff; border: 1px solid #bbb; box-shadow: 0 1px 3px rgba(0,0,0,.15);
     font-weight: bold; font-size: 12px; white-space: nowrap;
     color: #000;
 }
+.place-label::before { display: none; }
+.place-label-kiosk {
+    background: none; border: none; box-shadow: none;
+    font-weight: bold; font-size: 12px; white-space: nowrap; color: #000;
+}
+.place-label-kiosk::before { display: none; }
 .tracker-marker { background: none !important; border: none !important; box-shadow: none !important; }
 
 .coord-popup .leaflet-popup-content-wrapper { padding: 0; border-radius: 6px; }
@@ -413,7 +428,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 
     /* Event name label: fixed bottom-left */
     #mobile-event-name {
-        display: none; position: fixed;
+        display: none; position: absolute;
         bottom: max(10px, env(safe-area-inset-bottom));
         left:   max(10px, env(safe-area-inset-left));
         z-index: 1100;
@@ -423,9 +438,15 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
     }
 
     /* Gear button: fixed top-right, respects safe area for notch/dynamic island */
+    /* Positioned absolutely INSIDE the Leaflet map container (see JS), not
+       fixed on <body>: iOS Safari anchors position:fixed to the layout
+       viewport and hides such elements behind its toolbars during the
+       URL-bar transition. Leaflet's own controls work because they live in
+       the map container, so these overlays do too. */
     #mobile-gear-btn {
         display: flex; align-items: center; justify-content: center;
-        position: fixed;
+        position: absolute;
+        /* Fallback position; JS re-pins to the visible viewport (handles zoom). */
         top: max(10px, env(safe-area-inset-top));
         right: max(10px, env(safe-area-inset-right));
         z-index: 1400;
@@ -436,10 +457,10 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
     }
     #mobile-gear-btn:active { background: #f0f0f0; }
 
-    /* Backdrop */
+    /* Backdrop — visual dim only; pointer-events:none lets map touches through */
     #mobile-backdrop {
         display: none; position: fixed; inset: 0; z-index: 1200;
-        background: rgba(0,0,0,0.35);
+        background: rgba(0,0,0,0.35); pointer-events: none;
     }
     #mobile-backdrop.open { display: block; }
 
@@ -647,6 +668,21 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 .about-label { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #999; margin-bottom: 2px; }
 .about-val { font-size: 13px; color: #222; line-height: 1.4; }
 .about-val a { color: #2980b9; }
+
+/* ── APRS Path (inline in tracker popup + breadcrumb tooltip) ─────────────── */
+.popup-path { margin-top: 6px; padding-top: 6px; border-top: 1px solid #e2e2e2; }
+.aprs-path-tip { white-space: normal; max-width: 240px; }
+.aprs-path-popup .leaflet-popup-content { margin: 9px 12px; max-width: 240px; }
+.aprs-path-time { font-size: 12px; color: #888; margin-bottom: 6px; }
+.aprs-path-hops { display: flex; flex-direction: column; gap: 5px; }
+.aprs-path-hop { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+.aprs-path-hop code {
+    font-family: monospace; background: #eef; padding: 1px 5px;
+    border-radius: 3px; font-size: 12px; color: #1a1a6e;
+}
+.aprs-path-desc { font-size: 12px; color: #666; }
+.aprs-path-digi { font-size: 12px; color: #2a7a2a; }
+.aprs-path-empty { color: #999; font-style: italic; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -689,8 +725,11 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 			<a href="admin/" id="admin-btn" class="sidebar-btn">Admin</a>
 		</div>
 		<div class="sidebar-btn-row">
-			<a href="https://marsaprs.org/userguide.html" id="userguide-btn" class="sidebar-btn" target="_blank">User Guide</a>
+			<a href="https://marsaprs.org/userguide.html?back=/" id="userguide-btn" class="sidebar-btn" target="_blank">User Guide</a>
 			<button id="about-btn" class="sidebar-btn">About</button>
+		</div>
+		<div class="sidebar-btn-row" id="fs-sidebar-row" style="display:none">
+			<button id="fs-btn" class="sidebar-btn">Full Screen</button>
 		</div>
 	</div>
 </div>
@@ -773,7 +812,8 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 			<button id="m-reset-btn" class="m-action-btn">Reset Map</button>
 			<button id="m-save-map-btn" class="m-action-btn">Save Map</button>
 			<a href="admin/" class="m-action-btn">Admin</a>
-			<a href="https://marsaprs.org/userguide.html" class="m-action-btn" target="_blank">User Guide</a>
+			<a href="https://marsaprs.org/userguide.html?back=/" class="m-action-btn" target="_blank">User Guide</a>
+			<button id="m-fs-btn" class="m-action-btn" style="display:none">Full Screen</button>
 		</div>
 	</div>
 </div><!-- #mobile-drawer -->
@@ -917,6 +957,9 @@ new (L.Control.extend({
 let eventNameDiv;
 if (isMobile) {
 	eventNameDiv = document.getElementById('mobile-event-name');
+	// Move into the Leaflet map container so iOS Safari keeps it on screen
+	// (position:fixed on <body> gets hidden behind Safari's toolbars).
+	map.getContainer().appendChild(eventNameDiv);
 } else {
 	new (L.Control.extend({
 		onAdd() {
@@ -932,7 +975,7 @@ if (!isMobile) {
 	new (L.Control.extend({
 		onAdd() {
 			legendDiv = L.DomUtil.create('div', '');
-			legendDiv.style.cssText = 'font-size:13px;font-family:arial,helvetica,sans-serif;color:#000;padding:6px 10px;display:none;white-space:pre-line;line-height:1.5;pointer-events:none;max-width:260px;border:1px solid #000;background:rgba(255,255,255,0.15)';
+			legendDiv.style.cssText = 'font-size:13px;font-family:arial,helvetica,sans-serif;color:#000;padding:6px 10px;display:none;line-height:1.5;max-width:300px;border:1px solid #000;background:rgba(255,255,255,0.85)';
 			return legendDiv;
 		}
 	}))({ position: 'bottomleft' }).addTo(map);
@@ -1007,6 +1050,7 @@ let selectedAidIdx     = -1;
 let aidClickCount      = 0;
 let origin             = null;
 let originMarker       = null;
+let suppressOriginUntil = 0;  // ignore map contextmenu briefly after a sidebar long-press
 let configEtag         = null;
 let jsonEtag           = null;
 let historyEtag        = null;
@@ -1026,21 +1070,40 @@ function closeMobileDrawer() { if (!mobileDrawer) return; drawerOpen = false; mo
 function setSheetOpen(open)  { if (open) openMobileDrawer(); else closeMobileDrawer(); }
 
 if (mobileGearBtn) {
+	// Live inside the Leaflet map container (which fills the layout viewport).
+	map.getContainer().appendChild(mobileGearBtn);
+
+	// Pin the gear to the VISIBLE viewport's top-right corner. When Safari is
+	// zoomed (Page Zoom or pinch), the visual viewport is smaller than the
+	// layout viewport the map fills, so a right-anchored button lands off the
+	// right edge. visualViewport gives the visible window; follow it on
+	// zoom/pan. Falls back to the CSS top/right when unsupported.
+	const pinGear = () => {
+		const vv = window.visualViewport;
+		if (!vv) return;
+		const w = mobileGearBtn.offsetWidth || 36;
+		mobileGearBtn.style.right = 'auto';
+		mobileGearBtn.style.left  = (vv.offsetLeft + vv.width - w - 10) + 'px';
+		mobileGearBtn.style.top   = (vv.offsetTop + 10) + 'px';
+	};
+	if (window.visualViewport) {
+		visualViewport.addEventListener('resize', pinGear);
+		visualViewport.addEventListener('scroll', pinGear);
+		pinGear();
+		setTimeout(pinGear, 300);
+	}
+
 	refreshMobileAbout();
 	let gearTouched = false;
 	mobileGearBtn.addEventListener('touchstart', e => {
-		e.preventDefault(); gearTouched = true;
+		e.preventDefault(); e.stopPropagation(); gearTouched = true;
 		if (drawerOpen) closeMobileDrawer(); else openMobileDrawer();
 	}, { passive: false });
-	mobileGearBtn.addEventListener('click', () => {
+	mobileGearBtn.addEventListener('click', e => {
+		e.stopPropagation();
 		if (gearTouched) { gearTouched = false; return; }
 		if (drawerOpen) closeMobileDrawer(); else openMobileDrawer();
 	});
-	if (mobileBackdrop) {
-		mobileBackdrop.addEventListener('click', closeMobileDrawer);
-		mobileBackdrop.addEventListener('touchend', e => { e.preventDefault(); closeMobileDrawer(); }, { passive: false });
-	}
-	map.on('dragstart zoomstart', closeMobileDrawer);
 
 	// Accordion: touchstart + click (touchstart fires immediately; click suppressed after touch)
 	document.querySelectorAll('.drawer-sec-hdr').forEach(hdr => {
@@ -1081,8 +1144,31 @@ if (isMobile) {
 		window.scrollTo(0, 1);
 	};
 	window.addEventListener('load', retract, { once: true });
+	window.addEventListener('orientationchange', () => setTimeout(retract, 300));
 	// Prevent accidental scroll-to-0 from re-showing the bar
 	window.addEventListener('scroll', () => { if (window.scrollY === 0) window.scrollTo(0, 1); }, { passive: true });
+}
+
+// ── iOS "Add to Home Screen" nudge ───────────────────────────────────────────
+// Shown on any iOS browser (Safari, Chrome, Firefox) when not already a PWA.
+// Dismissed permanently via localStorage.
+const _isIos       = /iP(hone|ad|od)/.test(navigator.userAgent);
+const _isIosChrome = _isIos && /CriOS/.test(navigator.userAgent);
+const _isStandalone = navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+if (_isIos && !_isStandalone && !localStorage.getItem('a2hs-dismissed')) {
+	const _instruction = _isIosChrome
+		? 'tap <b>⋯</b> → <b>Add to Home Screen</b>'
+		: 'tap <b>Share ⬆</b> → <b>Add to Home Screen</b>';
+	const nudge = document.createElement('div');
+	nudge.id = 'a2hs-nudge';
+	nudge.innerHTML = 'For full-screen: ' + _instruction + ' <button id="a2hs-close" aria-label="Dismiss">✕</button>';
+	nudge.style.cssText = 'position:fixed;bottom:max(12px,env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);z-index:9000;background:rgba(30,30,30,0.92);color:#fff;font-size:13px;padding:9px 14px;border-radius:10px;white-space:nowrap;box-shadow:0 2px 12px rgba(0,0,0,.4);display:flex;align-items:center;gap:10px';
+	document.body.appendChild(nudge);
+	document.getElementById('a2hs-close').style.cssText = 'background:none;border:none;color:#aaa;font-size:16px;line-height:1;cursor:pointer;padding:0 2px;flex-shrink:0';
+	document.getElementById('a2hs-close').addEventListener('click', () => {
+		nudge.remove();
+		localStorage.setItem('a2hs-dismissed', '1');
+	});
 }
 
 // ── Origin overlay ────────────────────────────────────────────────────────
@@ -1192,8 +1278,14 @@ function makeTrackerIcon(shape, fillColor, size) {
 	return L.divIcon({ html: svg, className: 'tracker-marker', iconSize: [d, d], iconAnchor: [sz, sz], popupAnchor: [0, -sz] });
 }
 
+function esc(s) {
+	return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 function popupHtml(t) {
-	return `<b>${t.name}</b> (${t.id})<br>${t.callsign}<br>Last heard ${t.time} ago`;
+	let html = `<b>${esc(t.name)}</b> (${esc(t.id)})<br>${esc(t.callsign)}<br>Last heard ${esc(t.time)} ago`;
+	if (t.path) html += `<div class="popup-path">${formatAprsPath(t.path)}</div>`;
+	return html;
 }
 
 function relativeTime(ts) {
@@ -1220,7 +1312,7 @@ function hideAllHistoryDots() {
 }
 
 function showTrackerHistory(callsign, color) {
-	const r = Math.max(3, Math.round(trackerStyle.size * 0.42));
+	const r = Math.max(4, Math.round(trackerStyle.size * (isMobile ? 0.65 : 0.75)));
 	const headers = historyEtag ? { 'If-None-Match': historyEtag } : {};
 	fetch('index.php?history', { headers })
 		.then(res => {
@@ -1233,6 +1325,9 @@ function showTrackerHistory(callsign, color) {
 			const entries = hist[callsign] || [];
 			if (!entries.length) return;
 
+			// Remove stale layers before redrawing
+			if (historyDots[callsign]) { historyDots[callsign].forEach(d => d.remove()); }
+
 			const layers = [];
 
 			// Dots — newest first in entries array
@@ -1242,10 +1337,28 @@ function showTrackerHistory(callsign, color) {
 					fillOpacity: 0.5, weight: 1.5, pane: 'trackerPane'
 				});
 				dot._baseRadius = r;
-				dot.bindTooltip(relativeTime(e.ts), { sticky: false, direction: 'top' });
-				dot.on('mouseover', function() { dot.setTooltipContent(relativeTime(e.ts)); });
+				const tipHtml = () => `<div class="aprs-path-time">${esc(relativeTime(e.ts))}</div>` + (e.path ? formatAprsPath(e.path) : '');
 				dot.addTo(map);
 				layers.push(dot);
+				if (isMobile) {
+					// No hover on touch. A larger, transparent hit circle on top of
+					// the dot widens the tap target; tapping opens a popup (auto-pans
+					// into view, dismissable) instead of an off-screen tooltip.
+					const hit = L.circleMarker([e.lat, e.lon], {
+						radius: Math.max(scaledRadius(r) + 12, 18), stroke: false,
+						fillOpacity: 0, fillColor: color, pane: 'trackerPane'
+					});
+					hit.on('click', function(ev) {
+						L.DomEvent.stopPropagation(ev);
+						L.popup({ className: 'aprs-path-popup', autoPanPadding: [16, 16], offset: [0, -2] })
+							.setLatLng(dot.getLatLng()).setContent(tipHtml()).openOn(map);
+					});
+					hit.addTo(map);
+					layers.push(hit);
+				} else {
+					dot.bindTooltip(tipHtml(), { sticky: false, direction: 'top', className: 'aprs-path-tip' });
+					dot.on('mouseover', function() { dot.setTooltipContent(tipHtml()); });
+				}
 			});
 
 			// Build ordered path: oldest history → … → newest history → current position
@@ -1356,12 +1469,14 @@ function clearAllSelections() {
 	map.closePopup();
 }
 
-// ── iGate click cycle ──────────────────────────────────────────────────────
-function setIgateTooltip(idx, permanent) {
-	const d = igateMarkers[idx]; if (!d) return;
+// ── Place marker tooltip (shared by iGates and aid stations) ──────────────
+function setPlaceTooltip(markers, idx, permanent) {
+	const d = markers[idx]; if (!d) return;
 	d.m.unbindTooltip();
 	d.m.bindTooltip(d.name, { permanent, direction: 'right', className: 'place-label', offset: [8, 0] });
 }
+function setIgateTooltip(idx, permanent) { setPlaceTooltip(igateMarkers, idx, permanent); }
+function setAidTooltip(idx, permanent)   { if (!kiosk) setPlaceTooltip(aidMarkers, idx, permanent); }
 
 function onIgateClick(idx) {
 	const d = igateMarkers[idx];
@@ -1373,10 +1488,11 @@ function onIgateClick(idx) {
 		document.querySelectorAll(legSel).forEach(el => el.classList.remove('selected'));
 		selectedIgateIdx = idx; igateClickCount = 1;
 		d.el.classList.add('selected');
+		setIgateTooltip(idx, true);
 		triggerDotBlink(d);
 		setSheetOpen(false);
 	} else if (igateClickCount === 1) {
-		igateClickCount = 2; setIgateTooltip(idx, true);
+		igateClickCount = 2;
 		map.setView(d.latlng, 15); setSheetOpen(false);
 	} else {
 		setIgateTooltip(idx, false); d.el.classList.remove('selected');
@@ -1386,12 +1502,6 @@ function onIgateClick(idx) {
 }
 
 // ── Aid station click cycle ────────────────────────────────────────────────
-function setAidTooltip(idx, permanent) {
-	const d = aidMarkers[idx]; if (!d) return;
-	d.m.unbindTooltip();
-	d.m.bindTooltip(d.name, { permanent, direction: 'right', className: 'place-label', offset: [8, 0] });
-}
-
 function onAidClick(idx) {
 	const d = aidMarkers[idx];
 	const legSel = isMobile ? '.m-legend-item' : '.legend-item';
@@ -1402,10 +1512,11 @@ function onAidClick(idx) {
 		document.querySelectorAll(legSel).forEach(el => el.classList.remove('selected'));
 		selectedAidIdx = idx; aidClickCount = 1;
 		d.el.classList.add('selected');
+		setAidTooltip(idx, true);
 		triggerDotBlink(d);
 		setSheetOpen(false);
 	} else if (aidClickCount === 1) {
-		aidClickCount = 2; setAidTooltip(idx, true);
+		aidClickCount = 2;
 		map.setView(d.latlng, 15); setSheetOpen(false);
 	} else {
 		setAidTooltip(idx, false); d.el.classList.remove('selected');
@@ -1465,6 +1576,10 @@ function onMobileTrackerTap(callsign) {
 }
 
 function onMobileTrackerLongPress(callsign) {
+	if (originMarker) { originMarker.remove(); originMarker = null; origin = null; }
+	// The drawer closes under the still-held finger; suppress the native
+	// contextmenu the OS fires on the now-exposed map at its long-press threshold.
+	suppressOriginUntil = Date.now() + 1500;
 	onMobileTrackerTap(callsign);
 	closeMobileDrawer();
 	const m = markers[callsign];
@@ -1617,15 +1732,19 @@ function updateMap() {
 				const sz     = Math.max(4, Math.round(trackerStyle.size * markerScale()));
 				const icon   = makeTrackerIcon(trackerStyle.icon, color, sz);
 				if (markers[t.callsign]) {
+					const oldLL = markers[t.callsign].getLatLng();
+					const moved = oldLL.lat !== t.lat || oldLL.lng !== t.lon;
 					markers[t.callsign]._trackerColor = color;
 					markers[t.callsign].setLatLng(latlng);
 					markers[t.callsign].setIcon(icon);
 					if (trackerPopups[t.callsign]) trackerPopups[t.callsign].setContent(popupHtml(t));
 					markers[t.callsign].setTooltipContent(kiosk ? (t.name || t.id) : t.id);
+					// Selected tracker moved → redraw its breadcrumb trail and arrows
+					if (moved && t.callsign === selectedCallsign) showTrackerHistory(t.callsign, color);
 				} else {
 					const m = L.marker(latlng, { icon, pane: 'trackerPane' }).addTo(map);
 					m._trackerColor = color;
-					const popup = L.popup({ closeButton: isMobile, autoPan: false })
+					const popup = L.popup({ closeButton: true, autoPan: false })
 						.setContent(popupHtml(t));
 					trackerPopups[t.callsign] = popup;
 					if (isMobile) {
@@ -1633,9 +1752,24 @@ function updateMap() {
 							L.DomEvent.stopPropagation(e);
 							popup.setLatLng(m.getLatLng()).openOn(map);
 						});
+						m.on('contextmenu', L.DomEvent.stopPropagation);
 					} else if (!kiosk) {
-						m.on('mouseover', function() { popup.setLatLng(m.getLatLng()).openOn(map); });
-						m.on('mouseout',  function() { map.closePopup(popup); });
+						// Delay close so the mouse can reach interactive popup content
+						let _ct = null, _listenersAdded = false;
+						const cancelClose = () => clearTimeout(_ct);
+						const scheduleClose = () => { _ct = setTimeout(() => map.closePopup(popup), 350); };
+						m.on('mouseover', function() {
+							cancelClose();
+							popup.setLatLng(m.getLatLng()).openOn(map);
+							if (!_listenersAdded) {
+								_listenersAdded = true;
+								setTimeout(() => {
+									const el = popup.getElement();
+									if (el) { el.addEventListener('mouseenter', cancelClose); el.addEventListener('mouseleave', scheduleClose); }
+								}, 0);
+							}
+						});
+						m.on('mouseout', scheduleClose);
 					}
 					m.bindTooltip(kiosk ? (t.name || t.id) : t.id, {
 						permanent: true, direction: 'right',
@@ -1693,7 +1827,7 @@ function applyTrackerStyle(style) {
 
 function applyLegend(text) {
 	if (!legendDiv) return;
-	legendDiv.textContent   = (kiosk && text) ? text : '';
+	legendDiv.innerHTML     = (kiosk && text) ? text : '';
 	legendDiv.style.display = (kiosk && text) ? '' : 'none';
 }
 
@@ -1759,16 +1893,16 @@ function applyTrackerConfig(trackers) {
 }
 
 function applyBackgrounds(backgrounds, backgroundUrl = '') {
-	// On first call: apply the event's configured background.
-	// aprs_bg_url is written when a user clicks a background (so Save can capture it)
-	// but is not read here — the event config is always the source of truth on fresh load.
+	// On first call: pick the starting background.
+	// User's last explicit click (LS_BG) takes priority so the choice persists
+	// across kiosk ↔ normal mode switches. Falls back to the event-config URL.
 	if (!backgroundsInitialized && backgrounds.length) {
 		backgroundsInitialized = true;
-		if (backgroundUrl && backgroundUrl !== currentBgUrl) {
-			const bg = backgrounds.find(b => b.url === backgroundUrl);
-			if (bg) {
-				switchBackground(bg);
-			}
+		const stored = localStorage.getItem(LS_BG);
+		const urlToUse = (stored && backgrounds.find(b => b.url === stored)) ? stored : backgroundUrl;
+		if (urlToUse && urlToUse !== currentBgUrl) {
+			const bg = backgrounds.find(b => b.url === urlToUse);
+			if (bg) switchBackground(bg);
 		}
 	}
 
@@ -1980,7 +2114,7 @@ function applyIgates(igates) {
 			pane: 'igatePane', radius: scaledRadius(igateBase), color: '#222', weight: 1.5, fillColor: '#111', fillOpacity: 0.9
 		}).addTo(map);
 		m._baseRadius = igateBase;
-		m.bindTooltip(g.name, { direction: 'right', sticky: false });
+		m.bindTooltip(g.name, { direction: 'right', sticky: false, className: 'place-label' });
 
 		let item;
 		if (isMobile) {
@@ -2024,7 +2158,9 @@ function applyAidStations(stations) {
 			pane: 'aidPane', radius: scaledRadius(aidBase), color: '#222', weight: 1.5, fillColor: '#111', fillOpacity: 0.9
 		}).addTo(map);
 		m._baseRadius = aidBase;
-		m.bindTooltip(g.name, { permanent: kiosk, direction: 'right', sticky: false });
+		m.bindTooltip(g.name, kiosk
+			? { permanent: true, direction: 'right', className: 'place-label-kiosk' }
+			: { direction: 'right', sticky: false, className: 'place-label' });
 
 		let item;
 		if (isMobile) {
@@ -2044,7 +2180,56 @@ function applyAidStations(stations) {
 	});
 
 	section.style.display = aidMarkers.length ? '' : 'none';
+	if (kiosk) resolveAidTooltipOverlaps();
 }
+
+function resolveAidTooltipOverlaps() {
+	if (!kiosk || aidMarkers.length < 2) return;
+	// Reset any previous margin adjustments so Leaflet positions are clean
+	aidMarkers.forEach(d => {
+		const el = d.m.getTooltip()?.getElement();
+		if (el) { el.style.marginLeft = ''; el.style.marginTop = ''; }
+	});
+	requestAnimationFrame(() => {
+		const items = aidMarkers.map(d => {
+			const el = d.m.getTooltip()?.getElement();
+			if (!el) return null;
+			const r = el.getBoundingClientRect();
+			return { el, x: r.left, y: r.top, w: r.width, h: r.height, dx: 0, dy: 0 };
+		}).filter(Boolean);
+		if (items.length < 2) return;
+		const PAD = 4;
+		for (let iter = 0; iter < 30; iter++) {
+			let moved = false;
+			for (let i = 0; i < items.length; i++) {
+				for (let j = i + 1; j < items.length; j++) {
+					const a = items[i], b = items[j];
+					const ox = Math.min(a.x+a.dx+a.w, b.x+b.dx+b.w) - Math.max(a.x+a.dx, b.x+b.dx) + PAD;
+					const oy = Math.min(a.y+a.dy+a.h, b.y+b.dy+b.h) - Math.max(a.y+a.dy, b.y+b.dy) + PAD;
+					if (ox > 0 && oy > 0) {
+						moved = true;
+						if (oy <= ox) {
+							const push = oy / 2;
+							if (a.y+a.dy < b.y+b.dy) { a.dy -= push; b.dy += push; }
+							else                       { a.dy += push; b.dy -= push; }
+						} else {
+							const push = ox / 2;
+							if (a.x+a.dx < b.x+b.dx) { a.dx -= push; b.dx += push; }
+							else                       { a.dx += push; b.dx -= push; }
+						}
+					}
+				}
+			}
+			if (!moved) break;
+		}
+		items.forEach(({ el, dx, dy }) => {
+			el.style.marginLeft = dx ? `${Math.round(dx)}px` : '';
+			el.style.marginTop  = dy ? `${Math.round(dy)}px` : '';
+		});
+	});
+}
+
+map.on('zoomend', resolveAidTooltipOverlaps);
 
 map.on('moveend', function() {
 	const c = map.getCenter();
@@ -2114,6 +2299,8 @@ if (!isMobile) {
 
 // ── Map interactions ───────────────────────────────────────────────────────
 map.on('contextmenu', function(e) {
+	if (Date.now() < suppressOriginUntil) return;
+	if (e.originalEvent?.target?.closest('.tracker-marker, .tracker-label')) return;
 	origin = e.latlng;
 	if (originMarker) {
 		originMarker.setLatLng(e.latlng);
@@ -2203,6 +2390,23 @@ function openAboutModal() {
 function closeAboutModal() { document.getElementById('about-modal').style.display = 'none'; }
 document.getElementById('about-close').addEventListener('click', closeAboutModal);
 document.getElementById('about-backdrop').addEventListener('click', closeAboutModal);
+
+// ── APRS Path formatting (rendered inline in tracker popup + breadcrumb tooltip) ─
+const Q_LABELS = {
+	qAR:'received by iGate', qAC:'bidirectional iGate', qAI:'server generated',
+	qAX:'rejected by iGate', qAZ:'server generated',   qAS:'third-party iGate',
+	qAo:'received without RF', qAO:'received without RF',
+};
+function formatAprsPath(path) {
+	if (!path) return '<div class="aprs-path-empty">No path data for this beacon.</div>';
+	return '<div class="aprs-path-hops">' + path.split(',').map(hop => {
+		const clean = hop.replace('*','');
+		let desc = '';
+		if (Q_LABELS[clean])      desc = `<span class="aprs-path-desc">${esc(Q_LABELS[clean])}</span>`;
+		else if (hop.includes('*')) desc = `<span class="aprs-path-digi">digipeated</span>`;
+		return `<div class="aprs-path-hop"><code>${esc(hop)}</code>${desc ? ' '+desc : ''}</div>`;
+	}).join('') + '</div>';
+}
 if (document.getElementById('about-btn'))  document.getElementById('about-btn').addEventListener('click', openAboutModal);
 
 // ── bfcache reload ─────────────────────────────────────────────────────────
@@ -2406,6 +2610,59 @@ if (isNonDefaultEvent) {
 	// Insert into Leaflet attribution bar, to the left of existing text
 	const attrEl = document.querySelector('.leaflet-control-attribution');
 	if (attrEl) attrEl.insertBefore(note, attrEl.firstChild);
+}
+
+// ── Chrome OS full-screen toggle ─────────────────────────────────────────────
+if (/CrOS/.test(navigator.userAgent)) {
+	document.getElementById('fs-sidebar-row').style.display = '';
+	document.getElementById('m-fs-btn').style.display = '';
+
+	function toggleFullScreen() {
+		if (!document.fullscreenElement) {
+			document.documentElement.requestFullscreen();
+		} else {
+			document.exitFullscreen();
+		}
+	}
+
+	function updateFsLabels() {
+		const label = document.fullscreenElement ? 'Exit Full Screen' : 'Full Screen';
+		document.getElementById('fs-btn').textContent = label;
+		document.getElementById('m-fs-btn').textContent = label;
+	}
+
+	document.getElementById('fs-btn').onclick = toggleFullScreen;
+	document.getElementById('m-fs-btn').onclick = toggleFullScreen;
+	document.addEventListener('fullscreenchange', updateFsLabels);
+
+	// Reset Map: sits just below the gear button, same style, only on mobile
+	if (isMobile) {
+		const crosResetBtn = document.createElement('button');
+		crosResetBtn.title = 'Reset Map';
+		crosResetBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>';
+		crosResetBtn.style.cssText = 'position:fixed;top:calc(max(10px,env(safe-area-inset-top)) + 44px);right:max(10px,env(safe-area-inset-right));z-index:1400;width:36px;height:36px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.95);color:#555;border:1px solid #ccc;border-radius:6px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.18);';
+		document.body.appendChild(crosResetBtn);
+		crosResetBtn.addEventListener('touchend', e => { e.stopPropagation(); clearAllSelections(); map.setView([defaultView.lat, defaultView.lon], defaultView.zoom); });
+		crosResetBtn.addEventListener('click',    e => { e.stopPropagation(); clearAllSelections(); map.setView([defaultView.lat, defaultView.lon], defaultView.zoom); });
+	}
+
+	document.addEventListener('contextmenu', e => e.preventDefault());
+	const crosStyle = document.createElement('style');
+	crosStyle.textContent = '#map, #map * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }';
+	document.head.appendChild(crosStyle);
+
+	// Auto full-screen: show tap-to-start overlay if not already in full-screen
+	if (!document.fullscreenElement) {
+		const fsOverlay = document.createElement('div');
+		fsOverlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;cursor:pointer';
+		fsOverlay.innerHTML = '<div style="color:#fff;font-size:22px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;pointer-events:none">Tap to enter full screen</div>';
+		document.body.appendChild(fsOverlay);
+		fsOverlay.addEventListener('touchend', e => {
+			e.preventDefault();
+			document.documentElement.requestFullscreen().catch(() => {});
+			fsOverlay.remove();
+		}, { once: true, passive: false });
+	}
 }
 
 // Always poll for live tracker data; skip config polling only when previewing a non-default event
