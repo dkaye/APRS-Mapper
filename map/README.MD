@@ -27,6 +27,7 @@
     - [NetBird Status Monitor](#netbird-status-monitor) · [WiFi Manager](#wifi-manager)
 13. [Appendix](#appendix)
     - [File Formats](#file-formats) · [Server](#server) · [Display Pi](#display-pi) · [iGate](#igate) · [Pi-Tools](#pi-tools)
+14. [Testing](#testing)
 
 ---
 
@@ -1304,3 +1305,77 @@ aprs-pi. Restarts the APRS daemon to reconnect to APRS-IS on the new interface.
 
 **`aprs-daemon.service` / `aprs-daemon.sh`** — Systemd service unit and wrapper script
 for the APRS daemon. See [Running the Daemon](#running-the-daemon).
+
+---
+
+## Testing
+
+A regression test suite covers the logic that is testable without live hardware: APRS parsers,
+YAML config read/write, tracker history file I/O, and the pure JavaScript utility functions.
+Hardware-dependent code (radio, SDR, GPIO, TFT display) is not tested here.
+
+### Prerequisites
+
+Install PHPUnit (PHP tests) and Jest (JavaScript tests) once from the repo root:
+
+```bash
+composer install                          # installs PHPUnit into vendor/
+cd map/tests/js && npm install            # installs Jest into map/tests/js/node_modules/
+```
+
+Both tools are listed as dev dependencies (`composer.json` / `map/tests/js/package.json`) and
+are excluded from git via `.gitignore`.
+
+### Running the PHP tests
+
+From the repo root:
+
+```bash
+vendor/bin/phpunit --configuration map/tests/phpunit.xml
+```
+
+Expected output: `OK (88 tests, 156 assertions)`
+
+| Test class | What it covers |
+|------------|----------------|
+| `AprsParserTest` | `parseAprsPosition()` — uncompressed, Base91 compressed, and Mic-E position formats; malformed packets |
+| `ConfigParseTest` | `parseConfigYaml()` and `yamlScalar()` — all config sections, edge cases, missing files |
+| `YamlLibTest` | `yaml_lib.php` — `yamlVal`, `yamlStr`, `loadDevices`/`saveDevices` roundtrip |
+| `TrackerHistoryTest` | `readTrackerHistoryFile()` / `writeTrackerHistoryFile()` — roundtrip, 10-entry cap, missing file |
+| `AdminConfigTest` | `buildConfigYaml()` → `parseConfigYaml()` roundtrip — all sections, special chars, booleans |
+
+Test files live in `map/tests/php/`. Fixtures (sample YAML files) are in `map/tests/fixtures/`.
+
+### Running the JavaScript tests
+
+From `map/tests/js/`:
+
+```bash
+npx jest --no-coverage
+```
+
+Expected output: `Tests: 59 passed, 59 total`
+
+| Function tested | Cases |
+|-----------------|-------|
+| `esc(s)` | All five HTML special characters; null/undefined coerced to `''` |
+| `relativeTime(ts)` | "just now", seconds, minutes, hours; boundary conditions at 10 s, 60 s, 3600 s |
+| `haversineDistance()` | Same point = 0; SF→LA; SF→NYC; pole-to-pole |
+| `bearingTo()` | Due N/S/E/W; result always in [0°, 360°) |
+| `compassDir()` | All 16 cardinal/intercardinal points; 359° wraps to N |
+| `formatAprsPath()` | Q-code expansion; digipeated hops; unknown hops; HTML escaping; empty/null path |
+
+The JS functions (`esc`, `relativeTime`, `haversineDistance`, `bearingTo`, `compassDir`,
+`Q_LABELS`, `formatAprsPath`) live in `map/utils.js` and are loaded by `map/index.php`
+via `<script src="utils.js">`. The `module.exports` shim at the bottom of `utils.js`
+allows Jest to import them in Node without a browser.
+
+### Scope
+
+| In scope | Out of scope |
+|----------|-------------|
+| APRS position parsers | APRS-IS socket connection |
+| YAML config read/write | iGate (RTL-SDR, direwolf, GPIO) |
+| Tracker history file I/O | Display Pi (TFT screen) |
+| Admin config serialiser/parser roundtrip | Leaflet map UI interactions |
+| Pure JS utility functions | — |

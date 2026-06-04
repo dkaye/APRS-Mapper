@@ -187,6 +187,7 @@ $_serverIp = $_serverIp ? explode(' ', $_serverIp)[0] : $_SERVER['SERVER_ADDR'];
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet-omnivore@0.3.4/leaflet-omnivore.min.js"></script>
+<script src="utils.js"></script>
 <style>
 /* ── Reset & shared ──────────────────────────────────────────────────────── */
 * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -1356,24 +1357,10 @@ function makeTrackerIcon(shape, fillColor, size) {
 	return L.divIcon({ html: svg, className: 'tracker-marker', iconSize: [d, d], iconAnchor: [sz, sz], popupAnchor: [0, -sz] });
 }
 
-function esc(s) {
-	return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
-
 function popupHtml(t) {
 	let html = `<b>${esc(t.name)}</b> (${esc(t.id)})<br>${esc(t.callsign)}<br>Last heard ${esc(t.time)} ago`;
 	if (t.path) html += `<div class="popup-path">${formatAprsPath(t.path)}</div>`;
 	return html;
-}
-
-function relativeTime(ts) {
-	const s = Math.floor(Date.now() / 1000) - ts;
-	if (s < 10)  return 'just now';
-	if (s < 60)  return s + 's ago';
-	const m = Math.floor(s / 60), r = s % 60;
-	if (m < 60)  return m + 'm ' + r + 's ago';
-	const h = Math.floor(m / 60);
-	return h + 'h ' + (m % 60) + 'm ago';
 }
 
 function showNoLocation(name) {
@@ -1471,25 +1458,6 @@ function showTrackerHistory(callsign, color) {
 			historyDots[callsign] = layers;
 			if (blinkTimers[callsign]) blinkHistoryLayers(callsign, true);
 		});
-}
-
-function haversineDistance(lat1, lng1, lat2, lng2) {
-	const R = 3958.8, r = Math.PI / 180;
-	const dLat = (lat2 - lat1) * r, dLng = (lng2 - lng1) * r;
-	const a = Math.sin(dLat/2)**2 + Math.cos(lat1*r) * Math.cos(lat2*r) * Math.sin(dLng/2)**2;
-	return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function bearingTo(lat1, lng1, lat2, lng2) {
-	const r = Math.PI / 180, dLng = (lng2 - lng1) * r;
-	const y = Math.sin(dLng) * Math.cos(lat2 * r);
-	const x = Math.cos(lat1*r) * Math.sin(lat2*r) - Math.sin(lat1*r) * Math.cos(lat2*r) * Math.cos(dLng);
-	return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
-}
-
-function compassDir(deg) {
-	return ['N','NNE','NE','ENE','E','ESE','SE','SSE',
-	        'S','SSW','SW','WSW','W','WNW','NW','NNW'][Math.round(deg / 22.5) % 16];
 }
 
 // ── Blink ─────────────────────────────────────────────────────────────────
@@ -2476,22 +2444,7 @@ function closeAboutModal() { document.getElementById('about-modal').style.displa
 document.getElementById('about-close').addEventListener('click', closeAboutModal);
 document.getElementById('about-backdrop').addEventListener('click', closeAboutModal);
 
-// ── APRS Path formatting (rendered inline in tracker popup + breadcrumb tooltip) ─
-const Q_LABELS = {
-	qAR:'received by iGate', qAC:'bidirectional iGate', qAI:'server generated',
-	qAX:'rejected by iGate', qAZ:'server generated',   qAS:'third-party iGate',
-	qAo:'received without RF', qAO:'received without RF',
-};
-function formatAprsPath(path) {
-	if (!path) return '<div class="aprs-path-empty">No path data for this beacon.</div>';
-	return '<div class="aprs-path-hops">' + path.split(',').map(hop => {
-		const clean = hop.replace('*','');
-		let desc = '';
-		if (Q_LABELS[clean])      desc = `<span class="aprs-path-desc">${esc(Q_LABELS[clean])}</span>`;
-		else if (hop.includes('*')) desc = `<span class="aprs-path-digi">digipeated</span>`;
-		return `<div class="aprs-path-hop"><code>${esc(hop)}</code>${desc ? ' '+desc : ''}</div>`;
-	}).join('') + '</div>';
-}
+// Q_LABELS, formatAprsPath: loaded from utils.js
 if (document.getElementById('about-btn'))  document.getElementById('about-btn').addEventListener('click', openAboutModal);
 
 // ── bfcache reload ─────────────────────────────────────────────────────────

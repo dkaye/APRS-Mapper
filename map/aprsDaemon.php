@@ -51,7 +51,7 @@ function fatal($message) {
 	exit();
 }
 
-if($argc>1) {
+if(!defined('APRS_DAEMON_INCLUDE_ONLY') && isset($argc) && $argc>1) {
 	parse_str(implode('&',array_slice($argv, 1)), $_GET);
 	foreach ($_GET as $key=>$value) {
 		switch ($key) {
@@ -93,18 +93,20 @@ function commandLine ($message) {
 	exit();
 }
 
-if (!file_exists($configFilename)) {
-	commandLine("CONFIG FILE DOESN'T EXIST!!\n");
-}
-if (!file_exists($trackerStatusFilename)) {
-	if (file_put_contents($trackerStatusFilename, "") === false) {
-		commandLine("CAN'T CREATE TRACKERSTATUS FILE!!\n");
+if (!defined('APRS_DAEMON_INCLUDE_ONLY')) {
+	if (!file_exists($configFilename)) {
+		commandLine("CONFIG FILE DOESN'T EXIST!!\n");
 	}
+	if (!file_exists($trackerStatusFilename)) {
+		if (file_put_contents($trackerStatusFilename, "") === false) {
+			commandLine("CAN'T CREATE TRACKERSTATUS FILE!!\n");
+		}
+	}
+	echo "----------\n";
+	echo "config=$configFilename\n";
+	echo "trackerstatus=$trackerStatusFilename\n";
+	echo "----------\n\n";
 }
-echo "----------\n";
-echo "config=$configFilename\n";
-echo "trackerstatus=$trackerStatusFilename\n";
-echo "----------\n\n";
 
 // Parse latitude and longitude from an APRS packet line.
 // Handles uncompressed, compressed (Base91), and Mic-E position formats.
@@ -374,6 +376,8 @@ function writeNewTrackerstatusFile($filename) {
 	fclose($fh);
 }
 
+if (!defined('APRS_DAEMON_INCLUDE_ONLY')) {
+
 $trackers=array();
 loadTrackers();
 if (empty($trackers)) fatal("No trackers loaded from $configFilename");
@@ -441,4 +445,6 @@ while (TRUE) {
 		sleep($sleepSeconds);
 	}
 }
+
+} // end APRS_DAEMON_INCLUDE_ONLY guard
 ?>
