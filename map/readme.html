@@ -208,12 +208,12 @@
 <li><a href="#backup-recovery-and-updates">Backup, Recovery and Updates</a></li>
 <li><a href="#server-pi">Server Pi</a> · <a href="#display-pis">Display Pis</a> · <a href="#igates">iGates</a></li>
 <li><a href="#log-rotation">Log Rotation</a></li>
-<li><a href="#building--deploying-devices">Building &amp; Deploying Devices</a><ul>
-<li><a href="#netbird-setup-keys">NetBird Setup Keys</a> · <a href="#aprs-server">APRS Server</a> · <a href="#display-pis--igates">Display Pis &amp; iGates</a></li>
+<li><a href="#building-deploying-devices">Building &amp; Deploying Devices</a><ul>
+<li><a href="#netbird-setup-keys">NetBird Setup Keys</a> · <a href="#aprs-server">APRS Server</a> · <a href="#display-pis-igates">Display Pis &amp; iGates</a></li>
 </ul>
 </li>
 <li><a href="#creating-new-master-images">Creating New Master Images</a><ul>
-<li><a href="#aprs-server-1">APRS Server</a> · <a href="#display-pis-1">Display Pis</a> · <a href="#igates-1">iGates</a></li>
+<li><a href="#aprs-server_1">APRS Server</a> · <a href="#display-pis_1">Display Pis</a> · <a href="#igates_1">iGates</a></li>
 </ul>
 </li>
 <li><a href="#supporting-systems">Supporting Systems</a><ul>
@@ -224,6 +224,7 @@
 <li><a href="#file-formats">File Formats</a> · <a href="#server">Server</a> · <a href="#display-pi">Display Pi</a> · <a href="#igate">iGate</a> · <a href="#pi-tools">Pi-Tools</a></li>
 </ul>
 </li>
+<li><a href="#testing">Testing</a></li>
 </ol>
 <hr />
 <h2 id="overview">Overview</h2>
@@ -1926,6 +1927,131 @@ printf '[config]\nquick_exec=1\n' &gt; ~/.config/libfm/libfm.conf
 aprs-pi. Restarts the APRS daemon to reconnect to APRS-IS on the new interface.</p>
 <p><strong><code>aprs-daemon.service</code> / <code>aprs-daemon.sh</code></strong> — Systemd service unit and wrapper script
 for the APRS daemon. See <a href="#running-the-daemon">Running the Daemon</a>.</p>
+<hr />
+<h2 id="testing">Testing</h2>
+<p>A regression test suite covers the logic that is testable without live hardware: APRS parsers,
+YAML config read/write, tracker history file I/O, and the pure JavaScript utility functions.
+Hardware-dependent code (radio, SDR, GPIO, TFT display) is not tested here.</p>
+<h3 id="prerequisites">Prerequisites</h3>
+<p>Install PHPUnit (PHP tests) and Jest (JavaScript tests) once:</p>
+<pre><code class="language-bash">cd ~/marsaprs/map
+composer install                # installs PHPUnit into map/vendor/
+
+cd tests/js
+npm install                     # installs Jest into map/tests/js/node_modules/
+</code></pre>
+<p>Both tools are listed as dev dependencies (<code>composer.json</code> / <code>map/tests/js/package.json</code>) and
+are excluded from the production server via <code>sync-to-pi.sh</code>.</p>
+<h3 id="running-the-php-tests">Running the PHP tests</h3>
+<p>From <code>map/</code>:</p>
+<pre><code class="language-bash">./vendor/bin/phpunit -c tests/phpunit.xml
+</code></pre>
+<p>Expected output: <code>OK (88 tests, 156 assertions)</code></p>
+<table>
+<thead>
+<tr>
+<th>Test class</th>
+<th>What it covers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AprsParserTest</code></td>
+<td><code>parseAprsPosition()</code> — uncompressed, Base91 compressed, and Mic-E position formats; malformed packets</td>
+</tr>
+<tr>
+<td><code>ConfigParseTest</code></td>
+<td><code>parseConfigYaml()</code> and <code>yamlScalar()</code> — all config sections, edge cases, missing files</td>
+</tr>
+<tr>
+<td><code>YamlLibTest</code></td>
+<td><code>yaml_lib.php</code> — <code>yamlVal</code>, <code>yamlStr</code>, <code>loadDevices</code>/<code>saveDevices</code> roundtrip</td>
+</tr>
+<tr>
+<td><code>TrackerHistoryTest</code></td>
+<td><code>readTrackerHistoryFile()</code> / <code>writeTrackerHistoryFile()</code> — roundtrip, 10-entry cap, missing file</td>
+</tr>
+<tr>
+<td><code>AdminConfigTest</code></td>
+<td><code>buildConfigYaml()</code> → <code>parseConfigYaml()</code> roundtrip — all sections, special chars, booleans</td>
+</tr>
+</tbody>
+</table>
+<p>Test files live in <code>map/tests/php/</code>. Fixtures (sample YAML files) are in <code>map/tests/fixtures/</code>.</p>
+<h3 id="running-the-javascript-tests">Running the JavaScript tests</h3>
+<p>From <code>map/tests/js/</code>:</p>
+<pre><code class="language-bash">npx jest
+</code></pre>
+<p>Expected output: <code>Tests: 59 passed, 59 total</code></p>
+<table>
+<thead>
+<tr>
+<th>Function tested</th>
+<th>Cases</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>esc(s)</code></td>
+<td>All five HTML special characters; null/undefined coerced to <code>''</code></td>
+</tr>
+<tr>
+<td><code>relativeTime(ts)</code></td>
+<td>"just now", seconds, minutes, hours; boundary conditions at 10 s, 60 s, 3600 s</td>
+</tr>
+<tr>
+<td><code>haversineDistance()</code></td>
+<td>Same point = 0; SF→LA; SF→NYC; pole-to-pole</td>
+</tr>
+<tr>
+<td><code>bearingTo()</code></td>
+<td>Due N/S/E/W; result always in [0°, 360°)</td>
+</tr>
+<tr>
+<td><code>compassDir()</code></td>
+<td>All 16 cardinal/intercardinal points; 359° wraps to N</td>
+</tr>
+<tr>
+<td><code>formatAprsPath()</code></td>
+<td>Q-code expansion; digipeated hops; unknown hops; HTML escaping; empty/null path</td>
+</tr>
+</tbody>
+</table>
+<p>The JS functions (<code>esc</code>, <code>relativeTime</code>, <code>haversineDistance</code>, <code>bearingTo</code>, <code>compassDir</code>,
+<code>Q_LABELS</code>, <code>formatAprsPath</code>) live in <code>map/utils.js</code> and are loaded by <code>map/index.php</code>
+via <code>&lt;script src="utils.js"&gt;</code>. The <code>module.exports</code> shim at the bottom of <code>utils.js</code>
+allows Jest to import them in Node without a browser.</p>
+<h3 id="scope">Scope</h3>
+<table>
+<thead>
+<tr>
+<th>In scope</th>
+<th>Out of scope</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>APRS position parsers</td>
+<td>APRS-IS socket connection</td>
+</tr>
+<tr>
+<td>YAML config read/write</td>
+<td>iGate (RTL-SDR, direwolf, GPIO)</td>
+</tr>
+<tr>
+<td>Tracker history file I/O</td>
+<td>Display Pi (TFT screen)</td>
+</tr>
+<tr>
+<td>Admin config serialiser/parser roundtrip</td>
+<td>Leaflet map UI interactions</td>
+</tr>
+<tr>
+<td>Pure JS utility functions</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
 </div>
 
 </body>

@@ -1,0 +1,49 @@
+# APRS Tracker Map — sample config for testing
+# comment line
+
+event: Test Race 2026
+
+trackers:
+  - callsign: W6SG-4
+    id: S4
+    name: Alice
+  - callsign: K6DRK-9
+    id: D9
+    name: Bob
+
+tracker_style:
+  icon: circle
+  label_color: #000000
+
+section_visibility:
+  trackers: true
+  courses: true
+  aidstations: true
+  igates: true
+  backgrounds: true
+
+map:
+  lat: 37.9456
+  lon: -122.5400
+  zoom: 13
+
+backgrounds:
+  - name: OpenStreetMap
+    url: https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png
+    attribution: "&copy; OpenStreetMap contributors"
+
+courses:
+  - name:  Main Course
+    file:  events/test/course.gpx
+    color: #2196f3
+
+aidstations:
+  - name: Start/Finish
+    lat: 37.9456
+    lon: -122.5400
+
+igates:
+  - name: K6DRK iGate
+    callsign: K6DRK
+    lat: 37.9500
+    lon: -122.5350

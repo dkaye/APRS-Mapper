@@ -19,10 +19,10 @@
 8. [Backup, Recovery and Updates](#backup-recovery-and-updates)
    - [Server Pi](#server-pi) · [Display Pis](#display-pis) · [iGates](#igates)
 9. [Log Rotation](#log-rotation)
-10. [Building & Deploying Devices](#building--deploying-devices)
-    - [NetBird Setup Keys](#netbird-setup-keys) · [APRS Server](#aprs-server) · [Display Pis & iGates](#display-pis--igates)
+10. [Building & Deploying Devices](#building-deploying-devices)
+    - [NetBird Setup Keys](#netbird-setup-keys) · [APRS Server](#aprs-server) · [Display Pis & iGates](#display-pis-igates)
 11. [Creating New Master Images](#creating-new-master-images)
-    - [APRS Server](#aprs-server-1) · [Display Pis](#display-pis-1) · [iGates](#igates-1)
+    - [APRS Server](#aprs-server_1) · [Display Pis](#display-pis_1) · [iGates](#igates_1)
 12. [Supporting Systems](#supporting-systems)
     - [NetBird Status Monitor](#netbird-status-monitor) · [WiFi Manager](#wifi-manager)
 13. [Appendix](#appendix)
@@ -1316,22 +1316,25 @@ Hardware-dependent code (radio, SDR, GPIO, TFT display) is not tested here.
 
 ### Prerequisites
 
-Install PHPUnit (PHP tests) and Jest (JavaScript tests) once from the repo root:
+Install PHPUnit (PHP tests) and Jest (JavaScript tests) once:
 
 ```bash
-composer install                          # installs PHPUnit into vendor/
-cd map/tests/js && npm install            # installs Jest into map/tests/js/node_modules/
+cd ~/marsaprs/map
+composer install                # installs PHPUnit into map/vendor/
+
+cd tests/js
+npm install                     # installs Jest into map/tests/js/node_modules/
 ```
 
 Both tools are listed as dev dependencies (`composer.json` / `map/tests/js/package.json`) and
-are excluded from git via `.gitignore`.
+are excluded from the production server via `sync-to-pi.sh`.
 
 ### Running the PHP tests
 
-From the repo root:
+From `map/`:
 
 ```bash
-vendor/bin/phpunit --configuration map/tests/phpunit.xml
+./vendor/bin/phpunit -c tests/phpunit.xml
 ```
 
 Expected output: `OK (88 tests, 156 assertions)`
@@ -1351,7 +1354,7 @@ Test files live in `map/tests/php/`. Fixtures (sample YAML files) are in `map/te
 From `map/tests/js/`:
 
 ```bash
-npx jest --no-coverage
+npx jest
 ```
 
 Expected output: `Tests: 59 passed, 59 total`

@@ -32,4 +32,6 @@ rsync -avz --delete --omit-dir-times --no-perms \
   --exclude='display/' \
   --exclude='server/' \
   --exclude='wifi/' \
+  --exclude='tests/' \
+  --exclude='vendor/' \
   "$SRC" "$DST"

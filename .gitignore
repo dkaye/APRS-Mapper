@@ -1,6 +1,12 @@
 # macOS
 .DS_Store
 
+# PHP/Composer
+vendor/
+
+# Node.js
+map/tests/js/node_modules/
+
 # Claude Code workspace settings
 .claude/
 
