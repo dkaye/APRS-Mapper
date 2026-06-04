@@ -81,13 +81,21 @@ log "Archive size: ${SIZE}"
 
 log "Uploading to ${FTP_HOST}/${FTP_DIR}/..."
 
+# Create directory if needed — suppress error if it already exists
+lftp -c "
+set ftp:ssl-allow yes
+set ssl:verify-certificate no
+set net:timeout 30
+open -u '${FTP_USER}','${FTP_PASS}' '${FTP_HOST}'
+mkdir '${FTP_DIR}'
+" 2>/dev/null || true
+
 lftp -c "
 set ftp:ssl-allow yes
 set ssl:verify-certificate no
 set net:timeout 30
 set net:max-retries 3
 open -u '${FTP_USER}','${FTP_PASS}' '${FTP_HOST}'
-mkdir -p '${FTP_DIR}'
 cd '${FTP_DIR}'
 put -O . '${TMP_FILE}'
 "

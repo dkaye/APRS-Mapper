@@ -24,9 +24,10 @@ ssh "$REMOTE" "mkdir -p $REMOTE_DIR"
 # Building on Linux avoids macOS extended-attribute noise in the tarball.
 STAGING="$REMOTE_DIR/.staging"
 echo "Syncing files to aprs-pi..."
-ssh "$REMOTE" "mkdir -p $STAGING/home $STAGING/systemd"
+ssh "$REMOTE" "sudo chown -R pi:www-data $REMOTE_DIR 2>/dev/null || true && mkdir -p $STAGING/home $STAGING/systemd $STAGING/etc/logrotate.d"
 rsync -a --delete "$DISPLAY_DIR/home/"    "$REMOTE:$STAGING/home/"
 rsync -a --delete "$DISPLAY_DIR/systemd/" "$REMOTE:$STAGING/systemd/"
+rsync -a --delete "$DISPLAY_DIR/etc/"     "$REMOTE:$STAGING/etc/"
 # auto-update.sh goes in the archive so displays can update it nightly
 scp "$DISPLAY_DIR/auto-update.sh" "$REMOTE:$STAGING/home/auto-update.sh"
 

@@ -30,7 +30,7 @@ chmod +x /home/pi/*.sh /home/pi/*.php
 
 # Direwatch display scripts
 log "Updating direwatch scripts..."
-rsync -a "$TMP/direwatch/" /home/pi/direwatch/
+rsync -a --ignore-times "$TMP/direwatch/" /home/pi/direwatch/
 
 # Web dashboard (excludes config.php — site-specific)
 log "Updating web dashboard..."

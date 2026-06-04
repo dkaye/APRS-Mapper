@@ -81,6 +81,55 @@ try:
 except OSError:
     pass
 
+# ── SDR check ─────────────────────────────────────────────────────────────────
+def sdr_present():
+    return bool(re.search(r'0bda:2838|0bda:2832|RTL28', sh("lsusb"), re.IGNORECASE))
+
+if not sdr_present():
+    TIMER = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 56)
+    NOSDR_SECS = 120
+
+    start = time.monotonic()
+    while True:
+        elapsed   = int(time.monotonic() - start)
+        remaining = max(0, NOSDR_SECS - elapsed)
+
+        mins, secs = remaining // 60, remaining % 60
+        lines = [
+            ("No SDR found.",         BOLD),
+            ("Rebooting in",          DIAG),
+            (f"{mins}:{secs:02d}",   TIMER),
+        ]
+        heights = [draw.textbbox((0, 0), t, font=f)[3] - draw.textbbox((0, 0), t, font=f)[1]
+                   for t, f in lines]
+        widths  = [draw.textbbox((0, 0), t, font=f)[2] - draw.textbbox((0, 0), t, font=f)[0]
+                   for t, f in lines]
+        gap     = 8
+        total_h = sum(heights) + gap * (len(lines) - 1)
+
+        draw.rectangle((0, 0, W, H), fill=0)
+        y = (H - total_h) // 2
+        for (text, font), h, w in zip(lines, heights, widths):
+            draw.text(((W - w) // 2, y), text, font=font, fill="#FFFFFF")
+            y += h + gap
+        disp.image(image, rotation)
+
+        if elapsed % 2 == 0 and sdr_present():
+            break   # SDR reconnected — continue to diagnostic screen
+
+        if remaining == 0:
+            open('/tmp/aprs-rebooting', 'w').close()
+            draw.rectangle((0, 0, W, H), fill=0)
+            draw.text((0, 20), "Booting...", font=BOLD, fill="#FFFFFF")
+            draw.text((0, 20 + lh(BOLD) + 14), "This could take",  font=DIAG, fill="#AAAAAA")
+            draw.text((0, 20 + lh(BOLD) + 14 + lh(DIAG) + 6), "a few minutes.", font=DIAG, fill="#AAAAAA")
+            disp.image(image, rotation)
+            time.sleep(1)
+            subprocess.run(["sudo", "reboot"])
+            sys.exit(0)
+
+        time.sleep(1)
+
 # ── Step 2: Diagnostic screen (10-second countdown) ──────────────────────────
 DH = lh(DIAG) + 5
 

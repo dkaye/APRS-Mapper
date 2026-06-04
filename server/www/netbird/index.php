@@ -20,6 +20,53 @@ if (isset($_GET['hostname'])) {
 }
 
 session_start();
+
+$passFile   = '/var/www/html/admin/password.txt';
+$loginError = '';
+
+if (isset($_POST['password'])) {
+    $stored = trim((string)@file_get_contents($passFile));
+    if ($stored !== '' && $_POST['password'] === $stored) {
+        $_SESSION['stats_auth']        = true;
+        $_SESSION['aprs_admin_authed'] = true;
+        header('Location: index.php');
+        exit;
+    }
+    $loginError = 'Incorrect password';
+}
+
+if (empty($_SESSION['stats_auth']) && empty($_SESSION['aprs_admin_authed'])) { ?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MARS APRS NetBird — Sign In</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#f3f4f6;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+.box{background:#fff;border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,.08);padding:36px 40px;width:300px}
+h1{font-size:17px;font-weight:700;color:#111827;margin-bottom:4px}
+p{font-size:13px;color:#6b7280;margin-bottom:22px}
+input{width:100%;padding:9px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:15px;color:#111827;background:#f9fafb;margin-bottom:12px}
+input:focus{outline:none;border-color:#2563eb;background:#fff}
+button{width:100%;padding:9px;background:#2563eb;color:#fff;border:none;border-radius:6px;font-size:15px;font-weight:500;cursor:pointer}
+button:hover{background:#1d4ed8}
+.err{color:#dc2626;font-size:13px;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>MARS APRS NetBird — Status</h1>
+  <p>Sign in to continue</p>
+  <form method="post">
+    <input type="password" name="password" placeholder="Password" autofocus autocomplete="current-password">
+    <button type="submit">Sign In</button>
+    <?php if ($loginError): ?><div class="err"><?= htmlspecialchars($loginError) ?></div><?php endif; ?>
+  </form>
+</div>
+</body>
+</html>
+<?php exit; }
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -253,7 +300,7 @@ footer {
   </div>
 
   <div class="hdr-group">
-    <a href="/userguide.php?back=/netbird/#netbird-status-monitor" class="hdr-btn">User Guide</a>
+    <a href="/userguide.html?back=/netbird/" class="hdr-btn">User Guide</a>
   </div>
 
 </header>
@@ -446,21 +493,23 @@ function copyIP(ip) {
 // ── State ─────────────────────────────────────────────────────────────────────
 
 let devices = [];
-const pendingIPs = new Set();
 let lastSendTs = null, repeatSecs = 60, pollSliderSetAt = 0;
-let lastDynKeysStr = '', inActiveWindow = false;
-let rapidPollTimer = null, windowExpiryTimer = null;
+let lastDynKeysStr = '';
 let backgroundTimer = null, ageCellTimer = null;
 let bgMs = 8000, lastFetchTime = 0;
 
-const WINDOW_MS = 10000, RAPID_MS = 1000, AGE_MS = 10000;
+const AGE_MS = 10000;
 
 // ── Status helper ─────────────────────────────────────────────────────────────
 
 function getStatus(d) {
-    if (!d.enabled)            return ['disabled', 'Disabled'];
-    if (pendingIPs.has(d.ip))  return ['pending',  'Pending'];
-    if (d.online)              return ['online',   'Online'];
+    const pending = d.pending_until && Date.now() / 1000 < d.pending_until;
+    if (d.online) {
+        if (!d.enabled && pending) return ['pending', 'Pending'];
+        return d.enabled ? ['online', 'Online'] : ['disabled', 'Disabled'];
+    }
+    if (pending)    return ['pending',  'Pending'];
+    if (!d.enabled) return ['disabled', 'Disabled'];
     return ['offline', 'Offline'];
 }
 
@@ -498,7 +547,7 @@ function refreshSliderDone(idx) {
     bgMs = REFRESH_STEPS[idx] * 1000;
     document.getElementById('refresh-val').textContent = fmtSecs(REFRESH_STEPS[idx]);
     try { localStorage.setItem('nb-refresh-idx', idx); } catch(e) {}
-    if (!inActiveWindow) startBgPolling();
+    startBgPolling();
 }
 
 function updateProgressBars() {
@@ -511,30 +560,6 @@ function updateProgressBars() {
         const pct = Math.min(100, (now - lastFetchTime) / bgMs * 100);
         document.getElementById('refresh-bar').style.width = pct + '%';
     }
-}
-
-// ── Active polling window ─────────────────────────────────────────────────────
-
-function startActiveWindow() {
-    clearInterval(backgroundTimer);
-    backgroundTimer = null;
-    clearTimeout(windowExpiryTimer);
-    if (!inActiveWindow) {
-        inActiveWindow = true;
-        clearInterval(rapidPollTimer);
-        rapidPollTimer = setInterval(doFetch, RAPID_MS);
-    }
-    windowExpiryTimer = setTimeout(expireWindow, WINDOW_MS);
-}
-
-function expireWindow() {
-    inActiveWindow = false;
-    clearInterval(rapidPollTimer);
-    rapidPollTimer = null;
-    pendingIPs.clear();
-    patchAllStatuses();
-    updateSummary();
-    startBgPolling();
 }
 
 function startBgPolling() {
@@ -553,6 +578,7 @@ function doFetch(init = false) {
     lastFetchTime = Date.now();
     fetch('api.php?_=' + lastFetchTime + (init ? '&init=1' : ''))
         .then(r => {
+            if (r.status === 401) { location.reload(); return null; }
             if (!r.ok) throw new Error('HTTP ' + r.status);
             return r.json();
         })
@@ -584,35 +610,17 @@ function processData(data, wasInit) {
         || incoming.some((d, i) => !devices[i] || d.ip !== devices[i].ip);
     lastDynKeysStr = dynStr;
 
-    // Patch live fields into existing objects so pendingIPs stays consistent
+    // Patch live fields into existing objects to avoid a full re-render on every poll
     incoming.forEach(ad => {
         const d = devices.find(x => x.ip === ad.ip);
         if (d) {
             d.online = ad.online; d.last_request = ad.last_request;
             d.last_response = ad.last_response; d.response_data = ad.response_data;
             d.enabled = ad.enabled; d.hostname = ad.hostname;
-            if (d.online) pendingIPs.delete(d.ip);
+            d.pending_until = ad.pending_until ?? null;
         }
     });
     if (needsFull) devices = incoming;
-
-    // api.php sets last_request=null when a device transitions disabled→enabled.
-    // Treat such devices as Pending so a fresh page load after a toggle-ON shows
-    // Pending instead of Offline.
-    if (!wasInit) {
-        const before = pendingIPs.size;
-        incoming.forEach(ad => {
-            if (ad.enabled && !ad.online && ad.last_request === null) pendingIPs.add(ad.ip);
-        });
-        if (pendingIPs.size > before && !inActiveWindow) startActiveWindow();
-    }
-
-    if (wasInit) {
-        devices.forEach(d => { if (d.enabled) pendingIPs.add(d.ip); });
-        startActiveWindow();
-    } else if (isNewCycle && !inActiveWindow) {
-        startActiveWindow();
-    }
 
     data.error ? showNotice(data.error) : hideNotice();
 
@@ -769,15 +777,9 @@ try {
         if (!e.data || e.data.type !== 'toggle') return;
         const d = devices.find(x => x.ip === e.data.ip);
         if (!d) return;
-        d.enabled = e.data.enabled;
-        if (d.enabled) {
-            d.online = false; d.last_request = null;
-            pendingIPs.add(d.ip);
-            startActiveWindow();
-        } else {
-            pendingIPs.delete(d.ip);
-            d.online = false;
-        }
+        d.enabled       = e.data.enabled;
+        d.pending_until = e.data.pending_until ?? null;
+        d.online        = false;
         patchAllStatuses();
         updateSummary();
     };
@@ -788,18 +790,7 @@ startBgPolling();
 
 // ── Inactivity timeout ────────────────────────────────────────────────────────
 (function() {
-    const IDLE_SECS  = 20 * 60;
-    const GRACE_SECS =  2 * 60;
-
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center';
-    overlay.innerHTML =
-        '<div style="background:#fff;border-radius:12px;padding:32px 36px;width:min(360px,90vw);text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.25)">' +
-          '<h2 style="font-size:18px;font-weight:700;color:#111827;margin-bottom:10px">Still there?</h2>' +
-          '<p style="font-size:14px;color:#6b7280;margin-bottom:22px">Polling will pause in <strong id="idle-cd" style="color:#dc2626"></strong>.</p>' +
-          '<button id="idle-stay" style="background:#2563eb;color:#fff;border:none;padding:10px 28px;border-radius:7px;font-size:15px;font-weight:500;cursor:pointer">I\'m still here</button>' +
-        '</div>';
-    document.body.appendChild(overlay);
+    const IDLE_SECS = 10 * 60;
 
     const pauseOverlay = document.createElement('div');
     pauseOverlay.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center';
@@ -811,39 +802,7 @@ startBgPolling();
         '</div>';
     document.body.appendChild(pauseOverlay);
 
-    let idleTimer, graceTimer, graceCount;
-
-    function fmt(s) {
-        const m = Math.floor(s / 60), r = s % 60;
-        return m > 0 ? m + ':' + String(r).padStart(2, '0') : s + 's';
-    }
-
-    function resetIdle() {
-        if (overlay.style.display !== 'none') return;
-        clearTimeout(idleTimer);
-        idleTimer = setTimeout(showPrompt, IDLE_SECS * 1000);
-    }
-
-    function showPrompt() {
-        graceCount = GRACE_SECS;
-        document.getElementById('idle-cd').textContent = fmt(graceCount);
-        overlay.style.display = 'flex';
-        graceTimer = setInterval(() => {
-            graceCount--;
-            document.getElementById('idle-cd').textContent = fmt(graceCount);
-            if (graceCount <= 0) pausePolling();
-        }, 1000);
-    }
-
-    function stayHere() {
-        clearInterval(graceTimer);
-        overlay.style.display = 'none';
-        resetIdle();
-    }
-
     function pausePolling() {
-        clearInterval(graceTimer);
-        overlay.style.display = 'none';
         stopBgPolling();
         pauseOverlay.style.display = 'flex';
     }
@@ -852,15 +811,10 @@ startBgPolling();
         pauseOverlay.style.display = 'none';
         doFetch(false);
         startBgPolling();
-        resetIdle();
     }
 
-    document.getElementById('idle-stay').onclick = stayHere;
     document.getElementById('idle-resume').onclick = resumePolling;
-    ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'].forEach(e =>
-        document.addEventListener(e, resetIdle, { passive: true })
-    );
-    resetIdle();
+    setTimeout(pausePolling, IDLE_SECS * 1000);
 })();
 </script>
 </body>

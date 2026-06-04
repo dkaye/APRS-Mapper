@@ -2,120 +2,151 @@
 # SPDX-License-Identifier: MIT
 # dw-nointernet.py — MARS APRS iGate (direwatch)
 #
-# Shown on the TFT display when internet access is lost; reboots.
+# Shown on the TFT display when internet access is lost. Counts down 2 minutes,
+# checking every 2 seconds. Reboots if still offline; restarts direwatch and
+# exits cleanly if connectivity is restored.
 #
 # Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
 # ©2025 Doug Kaye, K6DRK <doug@rds.com>
 
-# -*- coding: utf-8 -*-
-
-import argparse
-import time
-import subprocess
-import digitalio
-import board
-from PIL import Image, ImageDraw, ImageFont
-import re
-import adafruit_rgb_display.st7789 as st7789
-import adafruit_rgb_display.ili9341 as ili9341
-#import ILI9486_gpiod as ili9486
-import ILI9486 as ili9486
-import pyinotify
-import gpiod
-from gpiod.line import Direction, Value
-import threading
-import signal
 import os
-import aprslib
-import math
-import numpy
+import signal
+import subprocess
+import sys
+import time
 
-# Config for display baudrate (default max is 24mhz):
-BAUDRATE = 64000000
+REBOOT_SECS = 120
+PIDFILE     = '/tmp/aprs-nointernet.pid'
 
-# square adafruit screen 1.3" (240x240), two buttons
-displaytype = st7789
-dc_pin = digitalio.DigitalInOut(board.D25)
-cs_pin = digitalio.DigitalInOut(board.D4)
-spi = board.SPI()
-disp = st7789.ST7789(
-    spi,
-    cs=cs_pin,
-    dc=dc_pin,
-    baudrate=BAUDRATE,
-    height=240,
-    width=240,
-    y_offset=80,
-    rotation=180
-)
-fontsize = 30
-width=240
-height=240
+# ── Single-instance guard ──────────────────────────────────────────────────────
+_mypid = str(os.getpid())
+if os.path.exists(PIDFILE):
+    try:
+        _old = open(PIDFILE).read().strip()
+        if _old and os.path.exists(f'/proc/{_old}'):
+            sys.exit(0)
+    except Exception:
+        pass
+with open(PIDFILE, 'w') as _f:
+    _f.write(_mypid)
 
-# don't write to display concurrently with thread
-display_lock = threading.Lock()
 
-# Draw some shapes.
-# First define some constants to allow easy resizing of shapes.
-padding = -2
-top = padding
-bottom = height - padding
+def _cleanup(*_):
+    try:
+        os.remove(PIDFILE)
+    except FileNotFoundError:
+        pass
 
-#image = Image.new("RGBA", (width, height))
-image = Image.new("RGB", (width, height))
-draw = ImageDraw.Draw(image)
 
-chipdev = '/dev/gpiochip0'
+signal.signal(signal.SIGTERM, _cleanup)
 
-# Move left to right keeping track of the current x position for drawing shapes.
-x = 0
+# ── Display detection ──────────────────────────────────────────────────────────
+_has_display = "hi" in subprocess.run(
+    ["pinctrl", "get", "23"], capture_output=True, text=True
+).stdout
 
-# Alternatively load a TTF font.  Make sure the .ttf font file is in the
-# same directory as the python script!
-# Some other nice fonts to try: http://www.dafont.com/bitmap.php
-font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 24)
-Hostfont = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 22)
+if _has_display:
+    import board
+    import digitalio
+    from adafruit_rgb_display import st7789
+    from PIL import Image, ImageDraw, ImageFont
 
-# Load a TTF font.
-fontname = "DejaVuSans.ttf"
-fontname_bold = "DejaVuSans-Bold.ttf"
-if os.path.exists("/usr/share/fonts/truetype/dejavu/" + fontname):
-   fontpath = "/usr/share/fonts/truetype/dejavu/" + fontname
-elif os.path.exists("./" + fontname):
-   fontpath = "./" + fontname
-else:
-   print("Couldn't find font " +  fontname + " in working dir or /usr/share/fonts/truetype/dejavu/")
-   exit(1)
-if os.path.exists("/usr/share/fonts/truetype/dejavu/" + fontname_bold):
-   fontpath_bold = "/usr/share/fonts/truetype/dejavu/" + fontname_bold
-elif os.path.exists("./" + fontname_bold):
-   fontpath_bold = "./" + fontname_bold
-else:
-   print("Couldn't find font " +  fontname_bold + " in working dir or /usr/share/fonts/truetype/dejavu/")
-   exit(1)
+    subprocess.run(['sudo', 'systemctl', 'stop', 'direwatch.service'], capture_output=True)
 
-bump = 10
-#font(no suffix) is defined on command line, used in list mode
-font = ImageFont.truetype(fontpath, fontsize)
-font_small = ImageFont.truetype(fontpath_bold, 18 + bump)
-font_big = ImageFont.truetype(fontpath_bold, 24)            # title bar font
-font_huge = ImageFont.truetype(fontpath_bold, 34 + bump)
-font_epic = ImageFont.truetype(fontpath_bold, 38 + bump)
+    _disp = st7789.ST7789(
+        board.SPI(),
+        cs=digitalio.DigitalInOut(board.D4),
+        dc=digitalio.DigitalInOut(board.D25),
+        baudrate=64000000,
+        width=240, height=240,
+        x_offset=0, y_offset=80,
+    )
+    _W, _H   = 240, 240
+    _rot     = 180
+    _fbase   = "/usr/share/fonts/truetype/dejavu/"
+    _fbold   = _fbase + "DejaVuSans-Bold.ttf"
+    _freg    = _fbase + "DejaVuSans.ttf"
+    font_msg   = ImageFont.truetype(_fbold, 24)
+    font_timer = ImageFont.truetype(_fbold, 56)
+    font_boot  = ImageFont.truetype(_fbold, 28)
+    font_sub   = ImageFont.truetype(_freg,  22)
 
-# Draw a black filled box to clear the image.
-draw.rectangle((0, 0, width, height), outline=0, fill=0)
 
-# Shell scripts for system monitoring from here:
-# https://unix.stackexchange.com/questions/119126/command-to-display-memory-usage-disk-usage-and-cpu-load
-Line1 = "No internet access."
-Line2 = "Rebooting!"
+def render(remaining):
+    if not _has_display:
+        return
+    mins, secs = remaining // 60, remaining % 60
+    image = Image.new("RGB", (_W, _H))
+    draw  = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, _W, _H), fill=0)
 
-# Write two lines of text.
-y = top
-draw.text((x, y), Line1, font=Hostfont, fill="#FFFFFF")
-y += font.getbbox(Line1)[3]
-draw.text((x, y), Line2, font=font, fill="#FFFFFF")
-y += font.getbbox(Line2)[3]
+    lines = [
+        ("No internet.",           font_msg),
+        ("Rebooting in",           font_msg),
+        (f"{mins}:{secs:02d}",    font_timer),
+    ]
+    gap     = 8
+    heights = [draw.textbbox((0, 0), t, font=f)[3] - draw.textbbox((0, 0), t, font=f)[1]
+               for t, f in lines]
+    widths  = [draw.textbbox((0, 0), t, font=f)[2] - draw.textbbox((0, 0), t, font=f)[0]
+               for t, f in lines]
+    total_h = sum(heights) + gap * (len(lines) - 1)
 
-# Display image.
-disp.image(image, disp.rotation)
+    y = (_H - total_h) // 2
+    for (text, font), h, w in zip(lines, heights, widths):
+        draw.text(((_W - w) // 2, y), text, font=font, fill="#FFFFFF")
+        y += h + gap
+    _disp.image(image, _rot)
+
+
+def do_reboot():
+    open('/tmp/aprs-rebooting', 'w').close()
+    if _has_display:
+        image = Image.new("RGB", (_W, _H))
+        draw  = ImageDraw.Draw(image)
+        draw.rectangle((0, 0, _W, _H), fill=0)
+        bh  = font_boot.getbbox("A")[3]
+        sh_ = font_sub.getbbox("A")[3]
+        draw.text((0, 20),                       "Booting...",      font=font_boot, fill="#FFFFFF")
+        draw.text((0, 20 + bh + 14),             "This could take", font=font_sub,  fill="#AAAAAA")
+        draw.text((0, 20 + bh + 14 + sh_ + 6),   "a few minutes.", font=font_sub,  fill="#AAAAAA")
+        _disp.image(image, _rot)
+    time.sleep(1)
+    _cleanup()
+    subprocess.run(['sudo', 'reboot'])
+    sys.exit(0)
+
+
+# ── Countdown ─────────────────────────────────────────────────────────────────
+try:
+    start = time.monotonic()
+    _ping = None
+    while True:
+        elapsed   = int(time.monotonic() - start)
+        remaining = max(0, REBOOT_SECS - elapsed)
+        render(remaining)
+
+        # Launch a background ping every 2 seconds (non-blocking)
+        if elapsed % 2 == 0 and _ping is None:
+            _ping = subprocess.Popen(
+                ['ping', '-c1', '-W2', '8.8.8.8'],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+
+        # Check whether the last ping finished
+        if _ping is not None and _ping.poll() is not None:
+            if _ping.returncode == 0:
+                subprocess.run(['sudo', 'systemctl', 'start', 'direwatch.service'],
+                               capture_output=True)
+                _cleanup()
+                sys.exit(0)
+            _ping = None
+
+        if remaining == 0:
+            break
+
+        time.sleep(1)
+
+    do_reboot()
+finally:
+    _cleanup()

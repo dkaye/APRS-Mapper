@@ -68,7 +68,14 @@ fi
 tar -xzf "$TMP/files.tar.gz" --warning=no-unknown-keyword -C "$TMP"
 
 rsync -a "$TMP/home/"     /home/pi/
-sudo rsync -a "$TMP/www/"        /var/www/html/
+sudo rsync -a \
+    --ignore-times \
+    --exclude='config.yaml' \
+    --exclude='events/' \
+    --exclude='trackers.json' \
+    --exclude='netbird/addresses.yaml' \
+    --exclude='netbird/toggle_state.json' \
+    "$TMP/www/" /var/www/html/
 sudo rsync -a "$TMP/bin/"        /usr/local/bin/
 sudo rsync -a "$TMP/systemd/"    /etc/systemd/system/
 sudo rsync -a "$TMP/apache/"     /etc/apache2/sites-available/
@@ -178,6 +185,12 @@ sudo chown -R pi:pi /home/pi
 chmod +x /home/pi/*.sh /home/pi/*.php 2>/dev/null || true
 ok "Permissions set"
 
+# ── Log rotation ──────────────────────────────────────────────────────────────
+if [ -f "$TMP/etc/logrotate.d/aprs" ]; then
+    sudo cp "$TMP/etc/logrotate.d/aprs" /etc/logrotate.d/aprs
+    ok "Logrotate configured"
+fi
+
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 msg "Cleaning up"
 sudo apt-get autoremove -y
@@ -185,5 +198,14 @@ ok "Cleanup done"
 
 # ── Configure site-specific settings ─────────────────────────────────────────
 chmod +x /home/pi/configure.sh
-msg "Site configuration"
-/home/pi/configure.sh
+msg "Installation complete"
+echo ""
+read -rp "Run configure.sh now to set hostname and NetBird key? [y/N]: " RUN_CONFIGURE
+if [[ "${RUN_CONFIGURE,,}" == "y" ]]; then
+    /home/pi/configure.sh
+else
+    ok "Skipping configuration — CONFIGURE_ME placeholders are in place."
+    echo ""
+    echo "  To configure this server later:  /home/pi/configure.sh"
+    echo "  To build a master image: shut down cleanly, then clone the SD card."
+fi

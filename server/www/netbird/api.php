@@ -9,6 +9,14 @@
  * ©2025 Doug Kaye, K6DRK <doug@rds.com>
  */
 
+session_start();
+if (empty($_SESSION['stats_auth']) && empty($_SESSION['aprs_admin_authed'])) {
+    http_response_code(401);
+    header('Content-Type: application/json');
+    echo json_encode(['error' => 'Authentication required']);
+    exit;
+}
+
 header('Content-Type: application/json');
 header('Cache-Control: no-store');
 
@@ -43,18 +51,36 @@ foreach (($stats['devices'] ?? []) as $sd) {
     $responseDataMap[$ip] = $sd['response_data'] ?? null;
 }
 
+// Toggle timestamps — used to compute pending_until per device
+$togglesRaw = @file_get_contents(__DIR__ . '/toggle_state.json');
+$toggleMap  = $togglesRaw ? (json_decode($togglesRaw, true) ?? []) : [];
+
 // Merge static device list with live status
 $devices = loadDevices(__DIR__ . '/addresses.yaml');
 $out = [];
 foreach ($devices as $d) {
-    $ip    = $d['ip'] ?? '';
+    $ip      = $d['ip'] ?? '';
+    $enabled = (bool)($d['enabled'] ?? true);
+
+    // Compute pending_until entirely server-side.
+    // Toggles take effect at the next 5-min boundary + 30 s.
+    // For enable: add 3 × poll_interval so the client waits for 3 missed polls
+    // before declaring Offline.  For disable: deadline alone is sufficient.
+    $pendingUntil = null;
+    if (isset($toggleMap[$ip])) {
+        $toggledAt    = (int)$toggleMap[$ip];
+        $deadline     = (int)(ceil($toggledAt / 300) * 300) + 30;
+        $pendingUntil = $enabled ? $deadline + ($repeatSeconds * 3) : $deadline;
+    }
+
     $out[] = [
         'ip'            => $ip,
         'hostname'      => $d['host']  ?? '',
         'name'          => $d['name']  ?? '',
         'group'         => $d['group'] ?? '',
-        'enabled'       => (bool)($d['enabled'] ?? true),
+        'enabled'       => $enabled,
         'online'        => $onlineMap[$ip]       ?? false,
+        'pending_until' => $pendingUntil,
         'last_request'  => $lastRequestMap[$ip]  ?? null,
         'last_response' => $lastResponseMap[$ip] ?? null,
         'response_data' => $responseDataMap[$ip] ?? null,

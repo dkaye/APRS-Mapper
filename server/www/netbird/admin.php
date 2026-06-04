@@ -69,23 +69,34 @@ $allGroups = array_values(array_unique(array_column($devices, 'group')));
 
 // Merge live status from daemon stats
 $onlineMap       = [];
-$enabledAtMap    = [];
 $lastRequestMap  = [];
 $lastResponseMap = [];
 $statsRaw = @file_get_contents(__DIR__ . '/stats.json');
 if ($statsRaw) {
     foreach ((json_decode($statsRaw, true)['devices'] ?? []) as $sd) {
         $onlineMap[$sd['ip']]       = !empty($sd['online']);
-        $enabledAtMap[$sd['ip']]    = $sd['enabled_at']    ?? null;
         $lastRequestMap[$sd['ip']]  = $sd['last_request']  ?? null;
         $lastResponseMap[$sd['ip']] = $sd['last_response'] ?? null;
     }
 }
+$configRaw     = @file_get_contents(__DIR__ . '/config.json');
+$configArr     = $configRaw ? (json_decode($configRaw, true) ?? []) : [];
+$repeatSeconds = (int)($configArr['repeat_seconds'] ?? 60);
+$togglesRaw    = @file_get_contents(__DIR__ . '/toggle_state.json');
+$toggleMap     = $togglesRaw ? (json_decode($togglesRaw, true) ?? []) : [];
 foreach ($devices as &$d) {
-    $d['online']        = $onlineMap[$d['ip']]       ?? false;
-    $d['enabled_at']    = $enabledAtMap[$d['ip']]    ?? null;
-    $d['last_request']  = $lastRequestMap[$d['ip']]  ?? null;
-    $d['last_response'] = $lastResponseMap[$d['ip']] ?? null;
+    $ip      = $d['ip'];
+    $enabled = (bool)($d['enabled'] ?? true);
+    $pendingUntil = null;
+    if (isset($toggleMap[$ip])) {
+        $toggledAt    = (int)$toggleMap[$ip];
+        $deadline     = (int)(ceil($toggledAt / 300) * 300) + 30;
+        $pendingUntil = $enabled ? $deadline + ($repeatSeconds * 3) : $deadline;
+    }
+    $d['online']        = $onlineMap[$ip]       ?? false;
+    $d['pending_until'] = $pendingUntil;
+    $d['last_request']  = $lastRequestMap[$ip]  ?? null;
+    $d['last_response'] = $lastResponseMap[$ip] ?? null;
 }
 unset($d);
 ?>
@@ -143,11 +154,11 @@ tr.device-row.disabled td:not(.toggle-cell):not(.action-cell){opacity:.4}
 .status-label{font-size:13px;font-weight:400;white-space:nowrap}
 .online  .pulse{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.2)}
 .offline .pulse{background:#ef4444}
-.pending .pulse{background:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.2)}
+.status-cell.pending .pulse{background:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.2)}
 .disabled .pulse{background:#d1d5db}
 .online  .status-label{color:#16a34a}
 .offline .status-label{color:#dc2626}
-.pending .status-label{color:#2563eb}
+.status-cell.pending .status-label{color:#2563eb}
 .disabled .status-label{color:#9ca3af}
 
 /* Modal */
@@ -190,7 +201,7 @@ tr.device-row.disabled td:not(.toggle-cell):not(.action-cell){opacity:.4}
   <a href="index.php" class="hdr-btn">← Back</a>
   <a href="https://marsaprs.org" class="hdr-btn">Map</a>
   <a href="/wifi/" class="hdr-btn">WiFi</a>
-  <a href="/userguide.php?back=/netbird/admin.php#netbird-status-monitor" class="hdr-btn">User Guide</a>
+  <a href="/userguide.html?back=/netbird/admin.php" class="hdr-btn">User Guide</a>
   <a href="?logout=1" class="hdr-btn">Sign Out</a>
 </header>
 
@@ -259,37 +270,29 @@ let devices = <?= json_encode(array_values($devices), JSON_HEX_TAG) ?>;
 const GROUPS = <?= json_encode($allGroups) ?>;
 
 // ── State ─────────────────────────────────────────────────────────────────────
-const pendingIPs = new Set();
-let lastSendTs = null, inActiveWindow = false;
-let rapidPollTimer = null, windowExpiryTimer = null, backgroundTimer = null;
-const WINDOW_MS = 10000, RAPID_MS = 1000, BG_MS = 8000;
+let lastSendTs = null, repeatSecs = 60, backgroundTimer = null;
+const BG_MS = 8000;
 
 // ── Status helper (identical to index.php) ───────────────────────────────────
 function getStatus(d) {
-    if (!d.enabled)            return ['disabled', 'Disabled'];
-    if (pendingIPs.has(d.ip))  return ['pending',  'Pending'];
-    if (d.online)              return ['online',   'Online'];
+    const pending = d.pending_until && Date.now() / 1000 < d.pending_until;
+    if (d.online) {
+        if (!d.enabled && pending) return ['pending', 'Pending'];
+        return d.enabled ? ['online', 'Online'] : ['disabled', 'Disabled'];
+    }
+    if (pending)    return ['pending',  'Pending'];
+    if (!d.enabled) return ['disabled', 'Disabled'];
     return ['offline', 'Offline'];
 }
 
-// ── Active polling window ─────────────────────────────────────────────────────
-function startActiveWindow() {
-    clearInterval(backgroundTimer); backgroundTimer = null;
-    clearTimeout(windowExpiryTimer);
-    if (!inActiveWindow) {
-        inActiveWindow = true;
-        clearInterval(rapidPollTimer);
-        rapidPollTimer = setInterval(doFetch, RAPID_MS);
-    }
-    windowExpiryTimer = setTimeout(expireWindow, WINDOW_MS);
+function applyToggle(d, enabled, pending_until) {
+    d.enabled       = enabled;
+    d.pending_until = pending_until ?? null;
+    d.online        = false;
+    if (enabled) { d.last_request = null; d.last_response = null; }
+    renderTable();
 }
-function expireWindow() {
-    inActiveWindow = false;
-    clearInterval(rapidPollTimer); rapidPollTimer = null;
-    pendingIPs.clear();
-    patchStatusCells();
-    startBgPolling();
-}
+
 function startBgPolling() {
     clearInterval(backgroundTimer);
     backgroundTimer = setInterval(doFetch, BG_MS);
@@ -302,7 +305,7 @@ function patchStatusCells() {
         if (!row) return;
         const [sc, sl] = getStatus(d);
         const cell = row.querySelector('.status-cell');
-        if (cell) {
+        if (cell && !cell.classList.contains(sc)) {
             cell.className = 'status-cell ' + sc;
             cell.innerHTML = `<span class="pulse"></span><span class="status-label">${sl}</span>`;
         }
@@ -318,23 +321,15 @@ function doFetch() {
         .then(r => { if (r.status === 401) { location.reload(); return null; } return r.json(); })
         .then(data => {
             if (!data) return;
-            const newSendTs  = data.last_send_ts || null;
-            const isNewCycle = newSendTs && lastSendTs !== null && newSendTs !== lastSendTs;
-            if (newSendTs) lastSendTs = newSendTs;
+            if (data.repeat_seconds) repeatSecs = data.repeat_seconds;
+            if (data.last_send_ts) lastSendTs = data.last_send_ts;
             (data.devices || []).forEach(ad => {
                 const d = devices.find(x => x.ip === ad.ip);
                 if (d) {
-                    d.online = ad.online; d.last_request = ad.last_request; d.last_response = ad.last_response;
-                    if (d.online) pendingIPs.delete(d.ip);
+                    d.online = ad.online; d.last_request = ad.last_request;
+                    d.last_response = ad.last_response; d.pending_until = ad.pending_until ?? null;
                 }
             });
-            if (isNewCycle && !inActiveWindow) startActiveWindow();
-            // Detect devices awaiting first poll since being enabled
-            const before = pendingIPs.size;
-            (data.devices || []).forEach(ad => {
-                if (ad.enabled && !ad.online && ad.last_request === null) pendingIPs.add(ad.ip);
-            });
-            if (pendingIPs.size > before && !inActiveWindow) startActiveWindow();
             patchStatusCells();
         })
         .catch(() => {});
@@ -362,7 +357,7 @@ function renderTable() {
         groupMap.get(g).forEach(d => {
             const safeD = JSON.stringify(d).replace(/</g, '\\u003c').replace(/'/g, '\\u0027');
             const [sc, sl] = getStatus(d);
-            html += `<tr class="device-row${d.enabled ? '' : ' disabled'}" data-ip="${esc(d.ip)}">
+            html += `<tr class="device-row${(d.enabled || sc === 'pending') ? '' : ' disabled'}" data-ip="${esc(d.ip)}">
               <td class="toggle-cell">
                 <label class="toggle" title="${d.enabled ? 'Enabled' : 'Disabled'}">
                   <input type="checkbox" ${d.enabled ? 'checked' : ''}
@@ -400,22 +395,8 @@ function toggleDevice(ip, cb) {
             if (resp.ok) {
                 const d = devices.find(x => x.ip === ip);
                 if (d) {
-                    d.enabled = cb.checked;
-                    if (d.enabled) {
-                        d.enabled_at    = resp.enabled_at || Math.floor(Date.now() / 1000);
-                        d.last_request  = null;
-                        d.last_response = null;
-                        d.online        = false;
-                        pendingIPs.add(ip);
-                        renderTable();
-                        startActiveWindow();
-                    } else {
-                        pendingIPs.delete(ip);
-                        d.enabled_at = null;
-                        d.online     = false;
-                        renderTable();
-                    }
-                    try { const bc = new BroadcastChannel('aprs_netbird'); bc.postMessage({type:'toggle', ip, enabled: d.enabled}); bc.close(); } catch(e) {}
+                    applyToggle(d, cb.checked, resp.pending_until);
+                    try { const bc = new BroadcastChannel('aprs_netbird'); bc.postMessage({type:'toggle', ip, enabled: d.enabled, pending_until: d.pending_until}); bc.close(); } catch(e) {}
                 }
             } else {
                 cb.checked = !cb.checked;
@@ -624,17 +605,7 @@ try {
         if (!e.data || e.data.type !== 'toggle') return;
         const d = devices.find(x => x.ip === e.data.ip);
         if (!d) return;
-        d.enabled = e.data.enabled;
-        if (d.enabled) {
-            d.online = false; d.last_request = null;
-            pendingIPs.add(d.ip);
-            renderTable();
-            startActiveWindow();
-        } else {
-            pendingIPs.delete(d.ip);
-            d.online = false;
-            renderTable();
-        }
+        applyToggle(d, e.data.enabled, e.data.pending_until);
     };
 } catch(e) {}
 

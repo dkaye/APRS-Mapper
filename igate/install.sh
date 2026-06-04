@@ -4,21 +4,16 @@
 # Run once on a fresh Raspberry Pi OS installation.
 # Pi Imager should have already configured: hostname, pi/guacamole, WiFi, SSH, timezone.
 #
-# Usage (normal — new iGate):
+# Usage:
 #   bash <(curl -fsSL https://marsaprs.org/igate/install.sh) 2>&1 | tee install.log
 #
-# Usage (master SD card build — skips configure.sh so CONFIGURE_ME placeholders remain):
-#   bash <(curl -fsSL https://marsaprs.org/igate/install.sh) --no-configure 2>&1 | tee install.log
+# At the end, the script asks whether to run configure.sh.
+# Answer No when building a master SD card image.
 #
 # Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
 # ©2025 Doug Kaye, K6DRK <doug@rds.com>
 
 set -euo pipefail
-
-NO_CONFIGURE=0
-for arg in "$@"; do
-    [[ "$arg" == "--no-configure" ]] && NO_CONFIGURE=1
-done
 
 BASE="https://marsaprs.org/igate"
 
@@ -242,15 +237,14 @@ ok "Cleanup done"
 
 # ── Configure site-specific settings ─────────────────────────────────────────
 chmod +x /home/pi/configure.sh
-if [[ "$NO_CONFIGURE" == "1" ]]; then
-    msg "Master build complete"
-    ok "CONFIGURE_ME placeholders are in place"
-    echo ""
-    echo "Shut this Pi down cleanly, then on your Mac run:"
-    echo "  ./make-master.sh"
-    echo ""
-    echo "On each cloned unit, boot and run: /home/pi/configure.sh"
-else
-    msg "Site configuration"
+msg "Installation complete"
+echo ""
+read -rp "Run configure.sh now to set callsign, location, and NetBird key? [y/N]: " RUN_CONFIGURE
+if [[ "${RUN_CONFIGURE,,}" == "y" ]]; then
     /home/pi/configure.sh
+else
+    ok "Skipping configuration — CONFIGURE_ME placeholders are in place."
+    echo ""
+    echo "  To configure this iGate later:  /home/pi/configure.sh"
+    echo "  To build a master image: shut down cleanly, then clone the SD card."
 fi

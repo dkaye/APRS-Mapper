@@ -13,6 +13,20 @@
 DIREWOLF_CONF="/home/pi/direwolf.conf"
 WEB_CONFIG="/var/www/html/config.php"
 
+# ── Bootstrap: ensure direwolf.conf has the expected template lines ───────────
+if ! grep -q "^MYCALL " "$DIREWOLF_CONF" 2>/dev/null; then
+    echo "direwolf.conf is missing or empty — downloading template..."
+    wget -qO "$DIREWOLF_CONF" "https://marsaprs.org/igate/templates/direwolf.conf.template" 2>/dev/null \
+        || { echo "Download failed. Is the iGate connected to the internet?"; exit 1; }
+    echo "Template installed."
+fi
+
+# ── Bootstrap: ensure log directory exists ────────────────────────────────────
+if [ ! -d /var/log/direwolf ]; then
+    sudo mkdir -p /var/log/direwolf
+    sudo chown pi:pi /var/log/direwolf
+fi
+
 # ── Colors ────────────────────────────────────────────────────────────────────
 BOLD='\033[1m'
 CYAN='\033[1;36m'
@@ -25,6 +39,118 @@ header() { echo -e "\n${CYAN}══ $1 ══${RESET}"; }
 ok()     { echo -e "${GREEN}✓ $1${RESET}"; }
 err()    { echo -e "${RED}✗ $1${RESET}"; }
 prompt() { echo -e "${BOLD}$1${RESET}"; }
+
+# ── APRS-IS filter validator + explainer ─────────────────────────────────────
+# Prints a plain-English breakdown. Exits 1 (with error messages) if invalid.
+check_filter() {
+    python3 - "$1" << 'PYEOF'
+import sys, re
+
+expr = sys.argv[1].strip() if len(sys.argv) > 1 else ''
+if not expr:
+    print("    (no filter — all received packets are forwarded)")
+    sys.exit(0)
+
+TYPE_NAMES = {
+    'p': 'position', 'o': 'object', 'm': 'message', 'w': 'weather',
+    's': 'status',   't': 'telemetry', 'i': 'item',  'n': 'NWS weather',
+    'q': 'query',    'u': 'user-defined',
+}
+VALID_PREFIXES = ('t/', 'd/', 'b/', 'r/', 'f/', 's/')
+
+errors = []
+
+def validate_token(raw):
+    tok = raw.strip()
+    if not tok:
+        return None
+    neg = tok.startswith('!')
+    base = tok[1:].strip() if neg else tok
+
+    if not any(base.startswith(p) for p in VALID_PREFIXES):
+        errors.append(f"Unknown filter type '{base}' (valid: t/ d/ b/ r/ f/ s/)")
+        return None
+
+    if base.startswith('t/'):
+        codes = base[2:].replace('/', '')
+        if not codes:
+            errors.append("t/ needs type letters, e.g. t/p or t/pom")
+            return None
+        bad = [c for c in codes if c not in TYPE_NAMES]
+        if bad:
+            errors.append(f"Unknown type code(s) '{''.join(bad)}' in '{base}' "
+                          f"(valid: {' '.join(sorted(TYPE_NAMES))})")
+            return None
+        names = ', '.join(TYPE_NAMES[c] for c in codes)
+        desc = f"only {names} packets"
+        return ("exclude " + names + " packets") if neg else desc
+
+    if base.startswith('d/'):
+        via = base[2:]
+        noun = ('any station' if via in ('*', '') else
+                ', '.join(via.split('/')))
+        return (f"exclude packets digipeated via {noun}") if neg else (f"include packets digipeated via {noun}")
+
+    if base.startswith('b/'):
+        calls = base[2:]
+        if not calls:
+            errors.append("b/ needs at least one callsign, e.g. b/K6DRK")
+            return None
+        stations = ', '.join(calls.split('/'))
+        return (f"exclude stations: {stations}") if neg else (f"only from: {stations}")
+
+    if base.startswith('r/'):
+        parts = base[2:].split('/')
+        if len(parts) < 3:
+            errors.append(f"r/ needs lat/lon/dist, e.g. r/37.9/-122.5/50")
+            return None
+        try:
+            float(parts[0]); float(parts[1]); float(parts[2])
+        except ValueError:
+            errors.append(f"r/ lat/lon/dist must be numbers: '{base}'")
+            return None
+        desc = f"within {parts[2]} km of {parts[0]}, {parts[1]}"
+        return ("exclude " + desc) if neg else ("only " + desc)
+
+    if base.startswith('f/'):
+        parts = base[2:].split('/')
+        if len(parts) < 2:
+            errors.append(f"f/ needs call/dist, e.g. f/K6DRK/50")
+            return None
+        desc = f"within {parts[1]} km of {parts[0]}"
+        return ("exclude " + desc) if neg else ("only " + desc)
+
+    if base.startswith('s/'):
+        sym = base[2:]
+        return (f"exclude symbol {sym}") if neg else (f"symbol {sym} only")
+
+    return None
+
+parts  = re.split(r'\s*([&|])\s*', expr)
+lines  = []
+cur_op = None
+for p in parts:
+    p = p.strip()
+    if p in ('&', '|'):
+        cur_op = 'AND' if p == '&' else 'OR'
+    elif p:
+        desc = validate_token(p)
+        if desc is not None:
+            lines.append((cur_op, desc))
+
+if errors:
+    print("    Errors in filter expression:")
+    for e in errors:
+        print(f"      • {e}")
+    sys.exit(1)
+
+print("    This means:")
+for i, (op, desc) in enumerate(lines):
+    bullet = '    •' if i == 0 else f'    {op}'
+    print(f"{bullet} {desc}")
+sys.exit(0)
+PYEOF
+}
 
 # ── APRS passcode calculator ──────────────────────────────────────────────────
 calc_passcode() {
@@ -45,11 +171,12 @@ cur_lat=$(grep        "^PBEACON " "$DIREWOLF_CONF" 2>/dev/null | grep -oP 'lat=\
 cur_lon=$(grep        "^PBEACON " "$DIREWOLF_CONF" 2>/dev/null | grep -oP 'long=\K[0-9.-]+')
 cur_location=$(grep   "^PBEACON " "$DIREWOLF_CONF" 2>/dev/null | grep -oP 'comment="iGate [^,]+, \K[^"]+')
 cur_apikey=$(grep     'apikey'    "$WEB_CONFIG"    2>/dev/null | grep -oP '\$apikey = "\K[^"]+')
+cur_filter=$(grep "^FILTER " "$DIREWOLF_CONF" 2>/dev/null | sed 's/^FILTER[[:space:]]*0[[:space:]]*IG[[:space:]]*//')
 
 # ── Banner ────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${CYAN}╔══════════════════════════════════════════╗${RESET}"
-echo -e "${CYAN}║   iGate v5.0 — Configuration       ║${RESET}"
+echo -e "${CYAN}║        iGate v5.0 — Configuration        ║${RESET}"
 echo -e "${CYAN}╚══════════════════════════════════════════╝${RESET}"
 echo ""
 echo "Press Enter at any prompt to keep the current value shown in [brackets]."
@@ -101,14 +228,88 @@ echo ""
 ok "  IGLOGIN callsign: $IGLOGIN_CALL"
 ok "  APRS-IS passcode: $PASSCODE"
 
-# ── Prompt: latitude ─────────────────────────────────────────────────────────
+# ── Prompt: APRS-IS filter ───────────────────────────────────────────────────
+header "APRS-IS Filter"
+echo "  Controls which received packets are forwarded to the APRS-IS server."
+echo "  See: https://groups.io/g/direwolf/topic/igate_filtering/118685542"
+echo ""
+echo "  Edit the expression below, or clear the line to remove the filter."
+echo ""
+FILTER_EXPR="$cur_filter"
+while true; do
+    if [ -n "$FILTER_EXPR" ]; then
+        check_filter "$FILTER_EXPR"
+    else
+        echo "  (no filter — all received packets are forwarded to APRS-IS)"
+    fi
+    echo ""
+    read -re -i "$FILTER_EXPR" -p "  Filter: " INPUT
+    INPUT="$(printf '%s' "$INPUT" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    if [ -z "$INPUT" ]; then
+        if [ -n "$FILTER_EXPR" ]; then
+            read -rp "  Remove the filter (all packets forwarded)? [y/N]: " CONFIRM
+            [[ "${CONFIRM,,}" == "y" ]] || { echo ""; continue; }
+            FILTER_EXPR=""
+        fi
+        echo ""
+        ok "  No filter — all packets forwarded."
+        break
+    elif [ "$INPUT" = "$FILTER_EXPR" ]; then
+        echo ""
+        ok "  APRS-IS filter unchanged."
+        break
+    else
+        echo ""
+        if check_filter "$INPUT"; then
+            echo ""
+            read -rp "  Accept this filter? [Y/n]: " FILTER_CONFIRM
+            if [[ "${FILTER_CONFIRM,,}" == "n" ]]; then
+                echo ""
+                continue
+            fi
+            FILTER_EXPR="$INPUT"
+            echo ""
+            ok "  Filter updated."
+            break
+        else
+            echo ""
+            err "  Invalid filter expression — please try again."
+            echo ""
+        fi
+    fi
+done
+
+# ── Prompt: latitude (also accepts pasted "lat, lon") ────────────────────────
 header "Location"
 echo "  Decimal degrees. Positive = North, Negative = South."
-echo "  Example: 37.955970"
+echo "  Tip: paste 'lat, lon' here to fill both fields at once."
+echo "  Example: 37.955970  or  37.955970, -122.544160"
 echo ""
+LON_PASTED=""
 while true; do
     prompt "  Latitude [${cur_lat:-none}]: "
-    read -r INPUT
+    read -re INPUT
+    # Check for combined lat,lon paste (comma / semicolon / slash / space-separated)
+    PARSED=$(echo "$INPUT" | python3 -c "
+import re, sys
+s = sys.stdin.read().strip()
+m = re.match(r'^([+\-]?[0-9]+\.?[0-9]*)\s*[,;/\t]\s*([+\-]?[0-9]+\.?[0-9]*)$', s)
+if not m:
+    parts = re.split(r'\s+(?=[+\-]?\d)', s)
+    if len(parts) == 2:
+        m2 = re.fullmatch(r'[+\-]?[0-9]+\.?[0-9]*', parts[0].strip())
+        m3 = re.fullmatch(r'[+\-]?[0-9]+\.?[0-9]*', parts[1].strip())
+        if m2 and m3: m = type('M', (), {'group': lambda self,i: parts[i-1].strip()})()
+if m:
+    lat, lon = float(m.group(1)), float(m.group(2))
+    if -90 <= lat <= 90 and -180 <= lon <= 180:
+        print(lat, lon)
+" 2>/dev/null)
+    if [ -n "$PARSED" ]; then
+        LAT=$(echo "$PARSED" | cut -d' ' -f1)
+        LON_PASTED=$(echo "$PARSED" | cut -d' ' -f2)
+        break
+    fi
     LAT="${INPUT:-$cur_lat}"
     if [[ "$LAT" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] && \
        python3 -c "exit(0 if -90 <= float('$LAT') <= 90 else 1)" 2>/dev/null; then
@@ -123,17 +324,22 @@ echo ""
 echo "  Decimal degrees. Positive = East, Negative = West."
 echo "  Example: -122.544160"
 echo ""
-while true; do
-    prompt "  Longitude [${cur_lon:-none}]: "
-    read -r INPUT
-    LON="${INPUT:-$cur_lon}"
-    if [[ "$LON" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] && \
-       python3 -c "exit(0 if -180 <= float('$LON') <= 180 else 1)" 2>/dev/null; then
-        break
-    else
-        err "  Must be a decimal number between -180 and 180. Try again."
-    fi
-done
+if [ -n "$LON_PASTED" ]; then
+    LON="$LON_PASTED"
+    echo "  Longitude set from paste: $LON"
+else
+    while true; do
+        prompt "  Longitude [${cur_lon:-none}]: "
+        read -re INPUT
+        LON="${INPUT:-$cur_lon}"
+        if [[ "$LON" =~ ^-?[0-9]+(\.[0-9]+)?$ ]] && \
+           python3 -c "exit(0 if -180 <= float('$LON') <= 180 else 1)" 2>/dev/null; then
+            break
+        else
+            err "  Must be a decimal number between -180 and 180. Try again."
+        fi
+    done
+fi
 
 # ── Prompt: location description ─────────────────────────────────────────────
 echo ""
@@ -172,6 +378,7 @@ echo -e "${CYAN}══ Review — press Enter to apply, Ctrl-C to cancel ══$
 echo ""
 echo "  Callsign / Hostname:    $CALLSIGN"
 echo "  IGLOGIN:                $IGLOGIN_CALL $PASSCODE"
+echo "  APRS-IS filter:         ${FILTER_EXPR:-(none)}"
 echo "  Latitude:               $LAT"
 echo "  Longitude:              $LON"
 echo "  Location:               $LOCATION"
@@ -212,6 +419,18 @@ sed -i "s|^IGLOGIN .*|IGLOGIN $IGLOGIN_CALL $PASSCODE|" "$DIREWOLF_CONF"
 sed -i "s|lat=[^ ]*|lat=$LAT|g" "$DIREWOLF_CONF"
 sed -i "s|long=[^ ]*|long=$LON|g" "$DIREWOLF_CONF"
 sed -i "s|comment=\"[^\"]*\"|comment=\"iGate 5.0 by $BASE_CALL, $LOCATION\"|" "$DIREWOLF_CONF"
+if [ -n "$FILTER_EXPR" ]; then
+    # Escape & and \ so sed doesn't treat them as metacharacters in replacement
+    FILTER_SAFE="${FILTER_EXPR//\\/\\\\}"
+    FILTER_SAFE="${FILTER_SAFE//&/\\&}"
+    if grep -q "^FILTER " "$DIREWOLF_CONF"; then
+        sed -i "s|^FILTER[[:space:]].*|FILTER  0  IG  $FILTER_SAFE|" "$DIREWOLF_CONF"
+    else
+        echo "FILTER  0  IG  $FILTER_EXPR" >> "$DIREWOLF_CONF"
+    fi
+else
+    sed -i "/^FILTER /d" "$DIREWOLF_CONF"
+fi
 
 # ── Apply to config.php ───────────────────────────────────────────────────────
 sudo sed -i "s|\(\$sysopcallsign = \)\"[^\"]*\"|\1\"$BASE_CALL\"|" "$WEB_CONFIG"

@@ -135,10 +135,14 @@ def poll_all(devices, stats):
         entry['last_request'] = now
         if ip in responses:
             entry['online']        = True
+            entry['miss_count']    = 0
             entry['last_response'] = now
             entry['response_data'] = responses[ip]
         else:
-            entry['online'] = False
+            misses = entry.get('miss_count', 0) + 1
+            entry['miss_count'] = misses
+            if misses >= 3:
+                entry['online'] = False
         out.append(entry)
 
     stats['last_send_ts'] = now
@@ -155,10 +159,14 @@ def poll_one(ip, stats):
     entry['last_request'] = now
     if ip in responses:
         entry['online']        = True
+        entry['miss_count']    = 0
         entry['last_response'] = now
         entry['response_data'] = responses[ip]
     else:
-        entry['online'] = False
+        misses = entry.get('miss_count', 0) + 1
+        entry['miss_count'] = misses
+        if misses >= 3:
+            entry['online'] = False
     existing[ip]     = entry
     stats['devices'] = list(existing.values())
     return stats

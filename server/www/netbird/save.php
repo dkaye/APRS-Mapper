@@ -82,6 +82,15 @@ if ($action === 'save_addresses') {
         echo json_encode(['error' => 'Cannot write addresses.yaml — check permissions']);
         exit;
     }
+    $newIp = trim($_POST['ip'] ?? '');
+    if ($newIp) {
+        $toggleFile = __DIR__ . '/toggle_state.json';
+        $toggles = json_decode(@file_get_contents($toggleFile) ?: '{}', true) ?? [];
+        $toggles[$newIp] = time();
+        @file_put_contents($toggleFile . '.tmp', json_encode($toggles));
+        @rename($toggleFile . '.tmp', $toggleFile);
+        @chmod($toggleFile, 0664);
+    }
     @file_put_contents(__DIR__ . '/poll_force',     time());
     @file_put_contents(__DIR__ . '/last_viewer.ts', time());
     echo json_encode(['ok' => true]);
@@ -146,11 +155,50 @@ if ($action === 'save_addresses') {
         echo json_encode(['error' => 'Cannot write addresses.yaml — check permissions']);
         exit;
     }
+    // Record toggle time and compute pending_until so the client has it immediately
+    $configRaw     = @file_get_contents(__DIR__ . '/config.json');
+    $config        = $configRaw ? (json_decode($configRaw, true) ?? []) : [];
+    $repeatSeconds = (int)($config['repeat_seconds'] ?? 60);
+
+    $toggleFile  = __DIR__ . '/toggle_state.json';
+    $toggles     = json_decode(@file_get_contents($toggleFile) ?: '{}', true) ?? [];
+    $toggledAt   = time();
+    $toggles[$ip] = $toggledAt;
+    @file_put_contents($toggleFile . '.tmp', json_encode($toggles));
+    @rename($toggleFile . '.tmp', $toggleFile);
+    @chmod($toggleFile, 0664);
+
+    $deadline     = (int)(ceil($toggledAt / 300) * 300) + 30;
+    $pendingUntil = $newEnabled ? $deadline + ($repeatSeconds * 3) : $deadline;
+
     if ($newEnabled) {
+        // Reset miss_count so the poller starts fresh.
+        // If the device has never been polled, add it to stats.json so api.php
+        // returns miss_count=0 rather than the default of 3.
+        $statsFile = __DIR__ . '/stats.json';
+        $stats = json_decode(@file_get_contents($statsFile) ?: '{}', true) ?? [];
+        $found = false;
+        foreach (($stats['devices'] ?? []) as &$sd) {
+            if (($sd['ip'] ?? '') === $ip) {
+                $sd['miss_count'] = 0;
+                $sd['online']     = false;
+                $found = true;
+                break;
+            }
+        }
+        unset($sd);
+        if (!$found) {
+            $stats['devices'][] = ['ip' => $ip, 'miss_count' => 0, 'online' => false,
+                                   'last_request' => null, 'last_response' => null,
+                                   'response_data' => null];
+        }
+        $tmp = $statsFile . '.tmp';
+        @file_put_contents($tmp, json_encode($stats));
+        @rename($tmp, $statsFile);
         @file_put_contents(__DIR__ . '/poll_single', $ip);
     }
     @file_put_contents(__DIR__ . '/last_viewer.ts', time());
-    echo json_encode(['ok' => true, 'enabled' => $newEnabled, 'enabled_at' => $newEnabled ? time() : null]);
+    echo json_encode(['ok' => true, 'enabled' => $newEnabled, 'pending_until' => $pendingUntil]);
 
 } elseif ($action === 'save_ssh_creds') {
     require_once __DIR__ . '/yaml_lib.php';

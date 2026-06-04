@@ -65,6 +65,18 @@ for script in aprs-monitor.sh wifi-watchdog.sh wifi-restored.sh; do
 done
 ok "Daemon scripts installed"
 
+# ── HDMI hotplug ─────────────────────────────────────────────────────────────
+# Without this the GPU skips HDMI init if no monitor is connected at boot,
+# so plugging one in later produces no video.
+msg "Enabling HDMI hotplug"
+BOOT_CFG=/boot/firmware/config.txt
+if ! grep -q "hdmi_force_hotplug" "$BOOT_CFG"; then
+    echo "" | sudo tee -a "$BOOT_CFG" > /dev/null
+    echo "# Always init HDMI so a monitor can be connected after boot" | sudo tee -a "$BOOT_CFG" > /dev/null
+    echo "hdmi_force_hotplug=1" | sudo tee -a "$BOOT_CFG" > /dev/null
+fi
+ok "HDMI hotplug enabled (takes effect after reboot)"
+
 # ── Force X11 session (rpd-x, not Wayland rpd-labwc) ─────────────────────────
 msg "Configuring X11 autologin session"
 sudo sed -i 's/autologin-session=rpd-labwc/autologin-session=rpd-x/' /etc/lightdm/lightdm.conf
@@ -158,6 +170,12 @@ sudo chmod 755 /home/pi
 chmod +x /home/pi/*.sh /home/pi/*.php /home/pi/*.py 2>/dev/null || true
 ok "Permissions set"
 
+# ── Log rotation ──────────────────────────────────────────────────────────────
+if [ -f "$TMP/etc/logrotate.d/aprs" ]; then
+    sudo cp "$TMP/etc/logrotate.d/aprs" /etc/logrotate.d/aprs
+    ok "Logrotate configured"
+fi
+
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 msg "Cleaning up"
 sudo apt-get autoremove -y
@@ -165,5 +183,14 @@ ok "Cleanup done"
 
 # ── Configure site-specific settings ─────────────────────────────────────────
 chmod +x /home/pi/configure.sh
-msg "Site configuration"
-/home/pi/configure.sh
+msg "Installation complete"
+echo ""
+read -rp "Run configure.sh now to set hostname and NetBird key? [y/N]: " RUN_CONFIGURE
+if [[ "${RUN_CONFIGURE,,}" == "y" ]]; then
+    /home/pi/configure.sh
+else
+    ok "Skipping configuration — CONFIGURE_ME placeholders are in place."
+    echo ""
+    echo "  To configure this display later:  /home/pi/configure.sh"
+    echo "  To build a master image: shut down cleanly, then clone the SD card."
+fi

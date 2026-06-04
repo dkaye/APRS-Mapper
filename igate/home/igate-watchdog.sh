@@ -16,6 +16,10 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOGFILE"; }
 display=0
 pinctrl get 23 | grep -q hi && display=1
 
+# ── Suppress all checks during boot sequence or pending reboot ────────────────
+pgrep -f dw-startup.py > /dev/null 2>&1 && exit 0
+[ -f /tmp/aprs-rebooting ] && exit 0
+
 # ── SDR check ─────────────────────────────────────────────────────────────────
 if lsusb | grep -qiE '0bda:2838|0bda:2832|RTL28'; then
     if ! systemctl is-active --quiet direwolf.service; then
@@ -24,7 +28,7 @@ if lsusb | grep -qiE '0bda:2838|0bda:2832|RTL28'; then
     fi
 else
     log "No SDR found."
-    [ "$display" -eq 1 ] && python3 /home/pi/direwatch/dw-nosdr.py
+    [ "$display" -eq 1 ] && python3 /home/pi/direwatch/dw-nosdr.py &
 fi
 
 # ── IP address check ──────────────────────────────────────────────────────────
@@ -37,9 +41,8 @@ MIN=$(date +%M)
 if [ $(( 10#$MIN % 5 )) -eq 0 ]; then
     if command -v netbird &>/dev/null && netbird status 2>/dev/null | grep -q "NetBird IP:"; then
         if ! ping -c1 -W3 8.8.8.8 &>/dev/null; then
-            log "No internet. Rebooting."
-            [ "$display" -eq 1 ] && python3 /home/pi/direwatch/dw-nointernet.py
-            sudo reboot
+            log "No internet."
+            python3 /home/pi/direwatch/dw-nointernet.py &
         fi
     fi
 fi

@@ -1,0 +1,9 @@
+/home/pi/update.log {
+    daily
+    rotate 7
+    compress
+    missingok
+    notifempty
+    copytruncate
+    create 0644 pi pi
+}
