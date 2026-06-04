@@ -4,9 +4,12 @@
 
 ---
 
+This document is a guide for users of the MARS APRS system. For technical details on the architecture and software see the [README](https://marsaprs.org/readme.html?back=/userguide.html) file.
+
 ## Contents
 
 - [The Concept of Events](#the-concept-of-events)
+- [Full-Screen on Mobile Devices](#full-screen-on-mobile-devices-s)
 - [Main Map](#main-map)
   - [Sidebar (L)](#sidebar)
   - [Sidebar (S)](#sidebar-1)
@@ -59,7 +62,7 @@
 
 ## The Concept of Events
 
-When a user first comes to the website, they will see a map configured for the current **default event**. 
+When you first come to the website, you will see a map configured for the current **default event**. 
 A user with admin privileges can switch to a different default event, which all new visitors will then see, using an administrative page described later.
 
 You are free to make a variety of changes to how the map and various objects appear and are treated. So long as you don't Save your view (which requires that administration privilege and password) the changes you make are strictly local and won't affect what other users see.
@@ -70,9 +73,44 @@ Instructions that refer to large screens (desktops or laptops) are indicated by 
 
 ---
 
+## Full-Screen on Mobile Devices (S)
+
+The map is designed to run full-screen on phones and tablets, with no browser address bar or tab bar visible. How to achieve this depends on your device and browser.
+
+### iOS and iPadOS — Safari
+
+The first time you visit the site, a nudge appears at the bottom of the screen:
+
+> **For full-screen: tap Share ⬆ → Add to Home Screen**
+
+Tap **Share ⬆** in the Safari toolbar, choose **Add to Home Screen**, and confirm. From then on, opening the site from your home screen runs it as a standalone app — no address bar, no tab bar.
+
+Tap **✕** on the nudge to dismiss it permanently. It will not appear again.
+
+### iOS and iPadOS — Chrome
+
+The same nudge appears, but the instruction reads:
+
+> **For full-screen: tap ⋯ → Add to Home Screen**
+
+After adding it to your home screen, the site opens in full-screen standalone mode just like Safari.
+
+### Android — Chrome
+
+Chrome on Android automatically hides the address bar as you scroll, so no nudge is needed. For a permanently full-screen experience, tap **⋮** (the three-dot menu) → **Add to Home Screen** to pin the site as a home screen app.
+
+---
+
 ## Main Map
 
 Open the map at [marsaprs.org](https://marsaprs.org). 
+
+### Map controls
+
+- **Zoom buttons** — the **+** / **−** buttons in the upper-left zoom the map in and out.
+- **Distance scale** — a small scale bar in the lower-right corner shows the current map
+  scale. **Click (or tap) the scale** to switch between imperial (miles / feet) and metric
+  (kilometers / meters). Your choice stays in effect as you pan and zoom.
 
 ### Sidebar (L) 
 
@@ -131,9 +169,11 @@ The tracker's marker on the map and sidebar entry both update every 5 seconds.
 #### Clicking a tracker (L)
 
 1. **First click** — The tracker's map marker and sidebar entry blink for 5 seconds.
-   Up to 5 recent beacon positions appear as "breadcrumbs" on the map as small dots connected by a dotted
+   Up to 10 recent beacon positions appear as "breadcrumbs" on the map as small dots connected by a dotted
    line with directional arrows. The dots blink in sync with the tracker marker. Hover
-   over any dot to see how long ago that position was received (e.g., "3m 45s ago").
+   over any dot to see when that position was received and, if available, the APRS path
+   it traveled (iGates and digipeaters it passed through). Consecutive duplicate beacons
+   (the same position reported twice in a row) are collapsed into a single breadcrumb.
 
 2. **Second click** — The map zooms to the tracker's last known position.
 
@@ -150,7 +190,8 @@ If a tracker has not yet reported a position, a notification appears instead of 
 On phones and tablets the tracker list uses touch gestures instead of a click cycle:
 
 - **Short tap** — The tracker blinks and its breadcrumb history appears on the map. The
-  drawer stays open. Tapping the same tracker again repeats the blink; there is no
+  drawer stays open. Tap any breadcrumb dot to see when that position was received and
+  its APRS path. Tapping the same tracker again repeats the blink; there is no
   second- or third-tap action.
 - **Long press (hold ~½ second)** — Same as a short tap, and additionally closes the
   drawer and zooms the map to the tracker's last known position.
@@ -173,11 +214,13 @@ Courses always appear above iGates but below Aid Stations and Trackers, regardle
 
 ### Aid Stations and iGates (L, S)
 
-Aid stations appear as black dots on the map; iGates appear as smaller black dots.
+Aid stations and iGates appear as black dots on the map.
 
-- **Click an entry in the sidebar** to zoom the map to that location and show a label.
+- **Hover over a dot** to see its name (and APRS callsign, if configured) in a white label.
+- **Click an entry in the sidebar** to make the label permanent and zoom the map to that location.
 - **Click it again** to dismiss the label and reset the map.
-- **Hover over a dot** to see to what it refers.
+
+In kiosk mode, aid station names are shown permanently as floating black labels with transparent backgrounds.
 
 ---
 
@@ -209,7 +252,7 @@ The Origin is cleared by **Reset Map**.
 
 ### Reset Map (L,S)
 
-Click **Reset Map** in the sidebar (or press the **Escape** key) to:
+Click **Reset Map** in the sidebar (or press the **Escape** key on large-screen devices) to:
 
 - Return the map to its default position and zoom level.
 - Clear any tracker history dots (breadcrumbs).
@@ -261,7 +304,7 @@ Click **Clients** in the page footer to open a panel showing:
 Click on the Admin button and enter the password when prompted. After logging in,
 you can edit the configuration for the currently default event. Your session remains active
 for 12 hours; you will not be asked for the password again if you return to the admin page
-within that window. As mentioned earlier, all changes will be strictly local unless and until you use Save as Default Event... or Activate to publish them for others.
+within that timeframe. As mentioned earlier, all changes will be strictly local unless and until you use Save as Default Event... to publish them for others to see.
 
 The header and footer each contain action buttons:
 
@@ -278,7 +321,7 @@ There are three additional buttons in the header of the Admin page:
 
 - **Exit** (far right of the header) leaves the admin page without saving.
 - **Sign Out** ends your admin session.
-- **Load...** presents a list of previously saved events from which you can choose. Loading an event has no effect on other users.
+- **Load...** presents a list of previously saved events from which you can choose. Loading an event has no effect on other users. In order to set the default event, use Save as Default Event.
 
 ---
 
@@ -300,7 +343,7 @@ Add and remove the trackers to follow during an event.
 | Callsign | The tracker's APRS callsign (e.g., `KO6JDL-2`) |
 | ID | Short label shown on the map marker and in the sidebar (e.g., `S2`) |
 | Name | Full name shown in the sidebar (e.g., `Rob`) |
-| Δ | Read-only diagnostic: the shortest interval between any two consecutive beacons in the last 10 received, shown as M:SS. Displays — if fewer than 2 beacons have been received. |
+| Δ | Read-only diagnostic: the shortest interval between any two consecutive beacons in the last 10 received, shown as M:SS. Displays `—` if fewer than 2 beacons have been received. Refreshes automatically every 30 seconds; the last refresh time is shown next to the Trackers heading. |
 
 Use the **+** button to add a tracker. Use the **×** button to remove one. 
 
@@ -350,11 +393,11 @@ each have a **↓** (export) and **↑** (import) button.
 |---------|---------------|
 | Event | YAML only (entire configuration) |
 | Trackers | YAML, CSV (`callsign, id, name`) |
-| Aid Stations | YAML, CSV (`name, lat, lon`), GPX |
-| iGates | YAML, CSV (`name, lat, lon`), GPX |
+| Aid Stations | YAML, CSV (`name, callsign, lat, lon`), GPX |
+| iGates | YAML, CSV (`name, callsign, lat, lon`), GPX |
 | Courses | YAML, CSV (`name, file, color`) |
 
-YAML filenames include the event name and today's date (e.g., `Dipsea_2026_trackers_20260614.yaml`). GPX files contain one waypoint per entry and can be opened in GPS apps and mapping tools.
+YAML filenames include the event name and today's date (e.g., `Dipsea_2026_trackers_20260614.yaml`). GPX files contain one waypoint per entry (callsign stored in the `<cmt>` field) and can be opened in GPS apps and mapping tools.
 
 **Importing** — supported formats by section:
 
@@ -366,7 +409,7 @@ YAML filenames include the event name and today's date (e.g., `Dipsea_2026_track
 | iGates | YAML, CSV, GPX, KML, GeoJSON, JSON |
 | Courses | YAML, CSV, GPX, KML, GeoJSON, JSON |
 
-CSV imports use the first row as column headers (case-insensitive). Aid Stations / iGates: waypoints are added as new entries. Courses location files (GPX/KML/GeoJSON/JSON) are uploaded to the server and a course entry is created automatically; CSV course files (`name, file, color`) add entries without uploading. Multiple files can be selected at once.
+CSV imports use the first row as column headers (case-insensitive). For Aid Stations and iGates, a `callsign` column is optional — rows without it import fine. GPX imports read the callsign from the `<cmt>` field if present; KML reads it from `<description>`; GeoJSON reads a `callsign` property. Waypoints are added as new entries. Courses location files (GPX/KML/GeoJSON/JSON) are uploaded to the server and a course entry is created automatically; CSV course files (`name, file, color`) add entries without uploading. Multiple files can be selected at once.
 
 Importing always *adds* entries and never removes or overwrites existing ones. Duplicate entries (same name, callsign, or file path) are skipped automatically.
 
@@ -401,18 +444,14 @@ Click the **Manage Location Files** button to open the course manager panel. Thi
 every course file across all events in a sortable table with columns for file name, event,
 and last modified date. Click any column header to sort; click again to reverse the order.
 
-##### Adding a course to the current event
-
-The rightmost column shows either a green ✓ (the file is already in the current event) or
+**Adding a course to the current event -* The rightmost column shows either a green ✓ (the file is already in the current event) or
 an **Add** button. Clicking **Add** adds the course to the current event's course list.
 The change is local until you save.
 
 If the file comes from a different event, it is automatically copied into the current
 event's directory when you save.
 
-##### Uploading a new file
-
-Click **Upload** (or drag and drop a file onto the panel) to upload a new course file.
+**Uploading a new file -** Click **Upload** (or drag and drop a file onto the panel) to upload a new course file.
 Supported formats: `.gpx`, `.kml`, `.geojson`, `.json`.
 
 The uploaded file is saved into the default event's directory and appears immediately in
@@ -420,17 +459,21 @@ the table and the Courses section.
 
 #### Aid Stations and iGates
 
-Fixed locations shown on the map. Each entry has a name, latitude, and longitude.
+Fixed locations shown on the map. Each entry has a name, an optional APRS callsign, a latitude, and a longitude. When a callsign is set it appears alongside the name in the map tooltip (on hover or after clicking the sidebar entry); it is not shown in the sidebar list itself.
 
 **Smart coordinate paste** — you can paste a combined latitude/longitude string (such as
 `37.7749, -122.4194` copied from Google Maps) into either the lat or lon field and both
 fields will be filled in automatically. Comma, semicolon, slash, and space separators are
-recognised, as are N/S/E/W direction letters.
+recognized, as are N/S/E/W direction letters.
 
 #### Legend
 
-Free-text shown in the lower-left corner of the map in kiosk mode, below the event name. Use `\n`
-for line breaks.
+HTML displayed in the lower-left corner of the map in kiosk mode. The field accepts any HTML — use tags like `<b>`, `<br>`, `<a>`, `<img>`, and inline styles to format the content.
+
+Example:
+```html
+<b>Race Day — June 14</b><br>Start: 7:00 AM at Mill Valley
+```
 
 ---
 
@@ -449,7 +492,7 @@ Event** dialog to name it first.
 
 Saves the current (possibly unsaved) configuration as a named event and makes it the active
 event immediately. A dialog prompts for the event name (or to overwrite an existing one).
-After saving, the new configuration is live within about 5 seconds for all users who then load the website.
+After saving, the new configuration is live within about 5 seconds for all users who subsequently load the website.
 
 If the name already exists, a warning is shown before the overwrite is confirmed. If the
 event is locked (🔒), the admin password is required before the save proceeds.
@@ -461,11 +504,11 @@ Opens a list of all saved events, sorted newest-first. From this dialog:
 - **Click an event name** to load it into the editor for review without activating it.
 - **Load** (next to an event) makes the selected event the current event for this user only immediately. The map and
   switch switch to the new configuration within ~5 seconds.
-- **Delete** permanently removes the event and all its files. **This cannot be undone.**
+- **Delete** permanently removes the event and all its files from the server. **This cannot be undone.**
 
 #### Locking an Event
 
-Each event in the Save and Load dialogs has a lock icon (🔒/🔓). Clicking it prompts for
+Each event in the Save and Load dialogs has a lock icon (🔒). Clicking it prompts for
 the admin password and toggles the lock state. A locked event (🔒, shown in red) cannot
 be overwritten by Save or Save as Default Event without entering the admin password first.
 Use this to protect a production event from accidental edits while still allowing it to be
@@ -475,24 +518,25 @@ loaded and previewed.
 
 ## NetBird Status Monitor (L,S)
 
-The Device Status Monitor is a separate tool for tracking the online/offline state of the
-network devices that support the APRS system — radios, iGates, digipeaters, and similar
+The NetBird Status Monitor is a separate tool for tracking the online/offline state of the
+network devices that support the APRS system — iGates, digipeaters, and similar
 equipment. It is independent of the tracker map.
 
 ---
 
+**The Problem with NetBird:*
+In order for NetBird to keep track of devices, those devices must frequently announce themselves to the NetBird servers. Unfortunately, this generates a great deal of internet traffic -- more than the traffic generated by our devices themselves. In some permanent iGate locations we use cellular hotspots to connect to the internet. Our hotspot provider gives us 1GB/month free of charge. The problem is that the NetBird traffic can easily surpass that limit.
+
+We have therefore implemented a system that allows us to turn NetBird on and off remotely. Each device contacts the marsaprs.org server every five minutes to see if should turn its NetBird service on or off. This is controlled by the WiFi admin page on our server. A user with the admin password can use this admin page to enable or disable NetBird on any remote device. The device will act on any changes at its next five-minute interval. Note that we generally keep NetBird off for any permanently located iGate that uses a cellular hotspot. This isn't necessary for temporary or "guerrilla" iGates since they're usually on for less than 24 hours per event.
+
 ### Accessing the Monitor
 
-There are two pages:
+There are two password-protected pages:
 
-| Page | URL | Access |
-|------|-----|--------|
-| Status | `/netbird/` | **Public** — no login required |
-| Admin | `/netbird/admin.php` | Password-protected |
-
-The status page is open to anyone. The admin page requires a password; once authenticated,
-your session stays active for 12 hours. Logging in to either the NetBird admin page or the
-main map admin page authenticates you for both.
+| Page | URL |
+|------|-----|
+| Status | `/netbird/` |
+| Admin | `/netbird/admin.php` |
 
 ---
 
@@ -514,10 +558,10 @@ Five boxes appear at the top of the page showing a count for each state:
 | Box | Color | Meaning |
 |-----|-------|---------|
 | **Total** | Black | Sum of all four state boxes |
-| **Online** | Green | Devices actively responding to polls |
-| **Pending** | Blue | Devices recently switched on, waiting for first response |
-| **Offline** | Red | Devices enabled but not responding |
-| **Disabled** | Gray | Devices excluded from polling |
+| **Online** | Green | Devices actively responding to polls via NetBird |
+| **Pending** | Blue | Devices recently enabled or disabled; waiting for the change to take effect |
+| **Offline** | Red | Devices enabled but not responding after the pending period has elapsed |
+| **Disabled** | Gray | Devices excluded from polling (NetBird is off and no pending transition) |
 
 #### Device Table
 
@@ -526,7 +570,7 @@ Each row shows one monitored device:
 | Column | Description |
 |--------|-------------|
 | Device | Name and hostname |
-| IP Address | The IP address being polled |
+| IP Address | The NetBird IP address being polled |
 | Group | Logical grouping (e.g., "iGate", "Digipeater") |
 | Status | Current state badge |
 | Last Seen | How long ago the device last responded |
@@ -535,14 +579,23 @@ Each row shows one monitored device:
 
 | Status | Badge color | What it means |
 |--------|-------------|---------------|
-| **Online** | Green | The device responded to the most recent poll |
-| **Pending** | Blue | The device was just switched on; the system is waiting for it to respond |
-| **Offline** | Red | The device is enabled but has not responded within the grace period |
-| **Disabled** | Gray | The device has been switched off in the admin page and is not being polled |
+| **Online** | Green | The device responded to the most recent NetBird poll |
+| **Pending** | Blue | The device was recently enabled or disabled; the system is waiting to confirm the change |
+| **Offline** | Red | The device is enabled but has not responded after the pending period has fully elapsed |
+| **Disabled** | Gray | The device's NetBird has been switched off and the transition is complete |
 
-**Pending** — when a device is first switched on, it may take time to boot and connect.
-The badge shows **Pending** (blue) until the daemon receives a response, so operators
-are not alarmed by a brief startup delay.
+**Pending** applies to both enabling and disabling a device, because NetBird changes take
+effect on 5-minute clock boundaries (0:00, 0:05, 0:10, …), not immediately:
+
+- **Enabling** — after the server marks a device enabled, the device won't connect via
+  NetBird until ~30 seconds past the next 5-minute boundary. The status shows Pending
+  during that window, then continues showing Pending for up to three more polling intervals
+  while waiting for the first response. Only after all of that time has passed without a
+  response does the status switch to Offline.
+
+- **Disabling** — after the server marks a device disabled, it will keep responding to
+  polls until ~30 seconds past the next 5-minute boundary. The status shows Pending during
+  that window rather than immediately showing Disabled, since the device is still reachable.
 
 ---
 
@@ -553,22 +606,31 @@ control which devices are polled.
 
 #### Enabling and Disabling Devices
 
-Each device row has an **On/Off** toggle switch in the first column. Flipping the switch:
+Each device row has an **On/Off** toggle switch in the first column. Flipping the switch
+takes effect immediately on the server, but the device itself acts on the change at its
+next 5-minute clock boundary. Both the admin and status pages reflect the change instantly
+— no need to wait for the next automatic poll.
 
-- **On** — the device is added to the polling cycle. The Status column immediately shows
-  **Enabling** (blue) while the system waits for the first response. The main status page
-  also updates instantly — no need to wait for the next automatic poll.
-- **Off** — the device is removed from the polling cycle. Status immediately shows
-  **Disabled** (gray) on both the admin and main pages.
+- **On** — the device is added to the polling cycle. Status shows **Pending** (blue).
+  Expect it to change to **Online** roughly 30 seconds after the next 5-minute boundary.
+  If no response arrives even after that deadline plus three polling intervals, status
+  changes to **Offline**.
+
+- **Off** — the device is removed from the polling cycle. Status shows **Pending** (blue)
+  until ~30 seconds past the next 5-minute boundary, then switches to **Disabled** (gray).
+  The device may continue to respond to polls during this window — that is normal.
+
+In the worst case (e.g., a change made just after a 5-minute boundary), the transition can
+take just under 5 minutes to complete.
 
 #### Adding, Editing, and Deleting Devices
 
 Use the buttons at the bottom of the table to manage the device list:
 
-- **Add Device** — opens a form to enter the device name, hostname, IP address, group, and
+- **Add Device** — opens a form to enter the device name, hostname, NetBird IP address, group, and
   initial enabled state. The device is added to the list and saved immediately.
 - **Edit** (pencil icon) — opens an inline form to modify any field for an existing device.
-  The IP address is used as the unique identifier; changing it updates the record in place.
+  The NetBird IP address is used as the unique identifier; changing it updates the record in place.
 - **Delete** (×) — permanently removes the device from the list after confirmation. This
   cannot be undone.
 
@@ -583,44 +645,16 @@ Each device row has up to four action buttons:
 | **Edit** | Always | Opens an inline form to edit device fields |
 | **Del** | Always | Deletes the device after confirmation |
 
-#### SSH Terminal
-
-If SSH credentials have been saved for a device, clicking **ssh** opens a terminal.
-The button is grayed out if the device is not currently Online.
-
-Clicking **ssh** opens a browser-based terminal window connected to that device via SSH.
-The terminal fills the popup window and resizes automatically if you resize the window.
-
-When you exit the SSH session (type `exit`, press Ctrl-D, or the connection closes for
-any reason), the terminal window closes automatically.
-
-**Saving credentials** — SSH credentials are stored per-device in the server configuration.
-Check **Remember password** when prompted to save the password alongside the username.
-If a password is not saved, you will be prompted for it each time you open an SSH session.
-
----
-
-### Hostname Self-Reporting
-
-Devices can report their own hostname by making an HTTP request to the server. This
-allows the status page to display the device's self-reported hostname alongside the
-configured name, which can be useful when IP addresses are assigned by DHCP.
-
-To enable self-reporting, configure a device to periodically call:
-
-```
-GET /netbird/checkin.php?ip=<device-ip>
-```
-
-The server records the timestamp and hostname. No authentication is required for
-this endpoint — it is intended for device-initiated calls.
-
 ---
 
 ## WiFi Manager
 
+We try to keep track of all the SSIDs and passwords for all the WiFi access points we use. They're maintained in an ever-growing file, which is organized in order or priority. When one of our devices boots, it starts at the top of the list and works its way down until it finds an SSID to which it can connect. The WiFi manager is used to edit and re-order this list.
+
+It's important to keep at least one device such as a mobile phone's hotspot at the top of the list. These are "recovery hotspots". The idea is that we can always get a device to connect to a recovery hotspot in case we need to perform some manual maintenance.
+
 The WiFi Manager at `marsaprs.org/wifi/` manages the shared list of WiFi credentials used
-by all MARS Pi devices — iGates, display Pis, and the server. Requires admin login (same
+by all MARS Pi devices — iGates, display Pis, and the server. It requires admin login (same
 session as the map admin page).
 
 ### Managing Credentials
@@ -634,6 +668,16 @@ Changes are saved automatically to `wifi.yaml` whenever you commit an edit or re
 entry — no manual save step is needed. iGates and display Pis pick up the new credentials
 nightly at 4 am; to apply immediately on a field device, SSH in and run
 `/home/pi/auto-update.sh`.
+
+### Adding a New SSID in the Field
+
+It sometimes happens that we show up for an event for which we don't know the WiFi credentials in advance. To solve this, first turn on a recovery hotspot such as a mobile phone's personal hotspot. (This is why we keep them at the top of the list.) Next, connect a laptop to the same SSID. You will need to know the IP address of the device you're trying to configure. Most of our devices will display their IP address when they boot. Then login into the device from the laptop and run this command on the device:
+
+`/home/pi/add-wifi.php`
+
+You will be asked for the Name (pick something like "Stinson Community Center"), the SSID, and the password (8–63 characters). The script will append the hotspot to the end of the list (i.e., at the lowest priority). **Remember to turn off the recovery hotspot** so the device won't reconnect to it when rebooted. Then reboot the device.
+
+**Note that the appended hotspot is temporary. It will be deleted when a new list is downloaded from the server.**
 
 ---
 

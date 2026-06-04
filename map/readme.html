@@ -1,0 +1,1932 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MARS APRS — README</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #222;
+    background: #f5f5f5;
+  }
+
+  header {
+    background: #444;
+    color: #fff;
+    padding: 14px 24px;
+  }
+
+  header h1 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+
+  #content {
+    max-width: 820px;
+    margin: 20px auto 40px;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 24px 40px;
+  }
+
+  #content h1 {
+    font-size: 1.7rem;
+    font-weight: 700;
+    margin-bottom: 6px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid #ddd;
+    margin-top: 24px;
+  }
+
+  #content h1:first-child { margin-top: 0; }
+
+  #content h2 {
+    font-size: 1.2rem;
+    font-weight: 700;
+    margin-top: 28px;
+    margin-bottom: 8px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid #e0e0e0;
+  }
+
+  #content h3 {
+    font-size: 1rem;
+    font-weight: 700;
+    margin-top: 18px;
+    margin-bottom: 6px;
+    color: #333;
+  }
+
+  #content h4 {
+    font-size: 0.92rem;
+    font-weight: 700;
+    margin-top: 14px;
+    margin-bottom: 5px;
+    color: #444;
+  }
+
+  #content p { margin-bottom: 8px; }
+
+  #content ul, #content ol {
+    margin: 4px 0 10px 22px;
+  }
+
+  #content li { margin-bottom: 3px; }
+
+  #content li > p { margin-bottom: 3px; }
+
+  #content strong { font-weight: 700; }
+
+  #content em { font-style: italic; }
+
+  #content code {
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 0.88em;
+    background: #f0f0f0;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    padding: 1px 5px;
+  }
+
+  #content pre {
+    background: #f0f0f0;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 10px 0 16px;
+    font-size: 0.88em;
+    line-height: 1.5;
+  }
+
+  #content pre code {
+    background: none;
+    border: none;
+    padding: 0;
+  }
+
+  #content table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 8px 0 12px;
+    font-size: 0.9em;
+  }
+
+  #content th {
+    background: #444;
+    color: #fff;
+    text-align: left;
+    padding: 5px 10px;
+    font-weight: 600;
+  }
+
+  #content td {
+    padding: 4px 10px;
+    border-bottom: 1px solid #e0e0e0;
+    vertical-align: top;
+  }
+
+  #content tr:nth-child(even) td { background: #fafafa; }
+
+  #content hr {
+    border: none;
+    border-top: 1px solid #e0e0e0;
+    margin: 16px 0;
+  }
+
+  #content a { color: #0969da; text-decoration: none; }
+  #content a:hover { text-decoration: underline; }
+
+  @media (max-width: 680px) {
+    #content { padding: 24px 18px; margin: 16px 8px 40px; }
+    header { padding: 12px 16px; }
+  }
+
+  @media print {
+    header { display: none; }
+    body { background: #fff; font-size: 12px; }
+    #content {
+      margin: 0;
+      border: none;
+      border-radius: 0;
+      padding: 0;
+      max-width: 100%;
+    }
+    pre {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    h2, h3, h4 {
+      break-after: avoid;
+      page-break-after: avoid;
+    }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div id="hdr-inner" style="display:flex;align-items:baseline;gap:20px">
+    <h1>MARS APRS — README</h1>
+  </div>
+</header>
+<script>
+(function(){
+  var b = new URLSearchParams(window.location.search).get('back');
+  var a = document.createElement('a');
+  a.href = b || '/';
+  a.textContent = b ? '← Back' : '← Map';
+  a.style.cssText = 'color:#bbb;font-size:0.85rem;font-weight:400;text-decoration:none;white-space:nowrap;flex-shrink:0';
+  a.onmouseover = function(){ this.style.color='#fff'; };
+  a.onmouseout  = function(){ this.style.color='#bbb'; };
+  document.getElementById('hdr-inner').appendChild(a);
+})();
+</script>
+
+<div id="content">
+<h1 id="mars-aprs-system">MARS APRS System</h1>
+<p><strong>Author:</strong> Doug Kaye (K6DRK) · <strong>Copyright:</strong> 2026 Doug Kaye. All Rights Reserved.</p>
+<p><strong>Version:</strong> Server &amp; Displays (v1.11 beta); iGates (v5.0)</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol>
+<li><a href="#overview">Overview</a></li>
+<li><a href="#system-architecture">System Architecture</a></li>
+<li><a href="#netbird-vpn">NetBird VPN</a></li>
+<li><a href="#igates-v50">iGates (v5.0)</a></li>
+<li><a href="#aprs-server-v111-beta">APRS Server (v1.11 beta)</a></li>
+<li><a href="#cloudflare-tunnel">Cloudflare Tunnel</a></li>
+<li><a href="#display-pis-v111-beta">Display Pis (v1.11 beta)</a></li>
+<li><a href="#user-interfaces">User Interfaces</a></li>
+<li><a href="#backup-recovery-and-updates">Backup, Recovery and Updates</a></li>
+<li><a href="#server-pi">Server Pi</a> · <a href="#display-pis">Display Pis</a> · <a href="#igates">iGates</a></li>
+<li><a href="#log-rotation">Log Rotation</a></li>
+<li><a href="#building--deploying-devices">Building &amp; Deploying Devices</a><ul>
+<li><a href="#netbird-setup-keys">NetBird Setup Keys</a> · <a href="#aprs-server">APRS Server</a> · <a href="#display-pis--igates">Display Pis &amp; iGates</a></li>
+</ul>
+</li>
+<li><a href="#creating-new-master-images">Creating New Master Images</a><ul>
+<li><a href="#aprs-server-1">APRS Server</a> · <a href="#display-pis-1">Display Pis</a> · <a href="#igates-1">iGates</a></li>
+</ul>
+</li>
+<li><a href="#supporting-systems">Supporting Systems</a><ul>
+<li><a href="#netbird-status-monitor">NetBird Status Monitor</a> · <a href="#wifi-manager">WiFi Manager</a></li>
+</ul>
+</li>
+<li><a href="#appendix">Appendix</a><ul>
+<li><a href="#file-formats">File Formats</a> · <a href="#server">Server</a> · <a href="#display-pi">Display Pi</a> · <a href="#igate">iGate</a> · <a href="#pi-tools">Pi-Tools</a></li>
+</ul>
+</li>
+</ol>
+<hr />
+<h2 id="overview">Overview</h2>
+<p>This document is intended for a technical audience who want to understand the inner workings of our APRS system. Users are encouraged to view the User Guide at <a href="https://marsaprs.org/userguide.html?back=/readme.html">https://marsaprs.org/userguide.html</a>.</p>
+<p>The MARS APRS System provides real-time position tracking for MARS (Marin Amateur Radio
+Society) public-service events. Operators carry APRS trackers that
+transmit their GPS position over radio. The system receives those transmissions, publishes
+them to a live web map, and gives net control a browser-based view of all tracker positions
+updated every five seconds.</p>
+<p>Three Raspberry Pi device types work together. <strong>iGates</strong> are devices that
+receive APRS transmissions on 144.39 MHz and forward decoded packets to the APRS-IS internet
+network. The <strong>APRS Server</strong> pulls packets from APRS-IS, maintains tracker state, and serves
+the web map and all supporting tools. <strong>Display Pis</strong> are screens at net control and
+other locations that show the live map in fullscreen. Anyone is free to connect to <a href="https://marsaprs.org">https://marsaprs.org</a> to view the current default event. We expect this will be used by aid station, rest stop and other personnel as well as anyone interested in the events.</p>
+<p>All devices are connected over a NetBird WireGuard VPN, which provides remote SSH access,
+device health monitoring, and nightly configuration distribution — without requiring port
+forwarding or static public IP addresses.</p>
+<hr />
+<h2 id="system-architecture">System Architecture</h2>
+<pre><code>APRS Radio (144.39 MHz)
+      │
+      ▼
+┌─────────────────────┐
+│  iGate  (×N)        │  Pi Zero 2 W · v5.0
+│  RTL-SDR dongle     │
+│  direwolf TNC       │
+│  direwatch.py       │
+└──────────┬──────────┘
+           │ TCP 14580
+           ▼
+┌──────────────────────────────────────┐
+│           APRS-IS Network            │
+│         noam.aprs2.net:14580         │
+└────────────────┬─────────────────────┘
+                 │ TCP 14580
+┌────────────────▼─────────────────────┐
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.11 beta
+│  aprsDaemon.php → trackers.json      │
+│  Apache + PHP · netbird/ · wifi/     │
+│  marsaprs.org  (Cloudflare Tunnel)   │
+└──┬───────────────────────────────────┘
+   │ HTTPS via Cloudflare
+┌──▼─────────────────────┐
+│  Display Pi  (×2)      │  Pi 4 · v1.11 beta
+│  Chromium fullscreen   │
+│  marsaprs.org          │
+└────────────────────────┘
+
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Runs on</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>direwolf</code></td>
+<td>iGate</td>
+<td>AX.25 TNC; decodes RF packets; forwards to APRS-IS</td>
+</tr>
+<tr>
+<td><code>direwatch.py</code></td>
+<td>iGate</td>
+<td>Drives TFT status display</td>
+</tr>
+<tr>
+<td><code>aprsDaemon.php</code></td>
+<td>Server</td>
+<td>Pulls from APRS-IS; writes <code>trackers.json</code></td>
+</tr>
+<tr>
+<td><code>index.php</code></td>
+<td>Server</td>
+<td>Serves the live map; JSON polling endpoint</td>
+</tr>
+<tr>
+<td><code>admin/index.php</code></td>
+<td>Server</td>
+<td>Admin UI; event and tracker management</td>
+</tr>
+<tr>
+<td><code>netbird-poller.py</code></td>
+<td>Server</td>
+<td>Polls all Pi devices over VPN; writes <code>stats.json</code></td>
+</tr>
+<tr>
+<td><code>wifi/</code></td>
+<td>Server</td>
+<td>Master WiFi credential store; distributes to all Pis</td>
+</tr>
+<tr>
+<td>Chromium</td>
+<td>Display Pi</td>
+<td>Fullscreen kiosk pointing at <code>marsaprs.org</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="netbird-vpn">NetBird VPN</h2>
+<p><a href="https://netbird.io">NetBird</a> is a WireGuard-based mesh VPN. Every MARS Pi device — iGates
+at remote locations, the server, and display Pis — is enrolled in the same NetBird network
+and gets a stable private IP address (100.x.x.x range) that never changes regardless of
+which WiFi network the device is on.</p>
+<p><strong>Why NetBird:</strong></p>
+<p>By using NetBird addresses for all our devices, they can communicate with one another without regard to how they're connected to the internet. NetBird can find them wherever they are. It also allows us to reach them from a laptop or other NetBird-capable device for maintenance, diagnostics, etc. We specifically use NetBird addressing for gathering statistics and operational data from devices in the field.</p>
+<ul>
+<li><strong>Remote SSH</strong> — connect to any Pi from anywhere with no port forwarding or public IP</li>
+<li><strong>Device monitoring</strong> — the NetBird status page polls every device on its VPN IP</li>
+<li><strong>iGate enable/disable</strong> — each iGate queries <code>marsaprs.org/netbird/?hostname=&lt;call&gt;</code>
+  every 5 minutes to check whether NetBird should be enabled or not</li>
+<li><strong>WiFi credential distribution</strong> — <code>auto-update.sh</code> downloads <code>wifi.yaml</code> from the server
+  over the VPN each night and applies it via <code>nmcli</code></li>
+</ul>
+<p><strong>The Problem with NetBird:</strong>
+In order for NetBird to keep track of devices, those devices must frequently announce themselves to the NetBird servers. Unfortunately, this generates a great deal of internet traffic -- more than the traffic generated by our devices themselves. In some permanent iGate locations we use cellular hotspots to connect to the internet. Our hotspot provider gives us 1GB/month free of charge. The problem is that the NetBird traffic can easily surpass that limit.</p>
+<p>We have therefore implemented a system that allows us to turn NetBird on and off remotely. Each device contacts the marsaprs.org server every five minutes to see if should turn its NetBird service on or off. This is controlled by the WiFi admin page on our server. A user with the admin password can use this admin page to enable or disable NetBird on any remote device. The device will act on any changes at its next five-minute interval. Note that we generally keep NetBird off for any permanently located iGate that uses a cellular hotspot. This isn't necessary for temporary or "guerrilla" iGates since they're usually on for less than 24 hours per event.</p>
+<hr />
+<h2 id="igates-v50">iGates (v5.0)</h2>
+<p>An iGate receives APRS radio packets and forwards them to the APRS-IS network. Each iGate
+is a Raspberry Pi Zero 2 W with a USB RTL-SDR dongle listening on 144.39 MHz. An optional
+1.3-inch TFT display shows boot status and countdown timers for fault conditions.</p>
+<p><strong>Architecture:</strong></p>
+<pre><code>144.39 MHz RF
+      │
+      ▼
+RTL-SDR USB dongle
+      │
+      ▼
+direwolf  (TNC + iGate daemon)
+      │
+      ├──▶ APRS-IS  (noam.aprs2.net:14580)
+      │
+      └──▶ direwatch.service  (display manager)
+                 │
+                 ├──▶ TFT display (status screens)
+                 └──▶ UDP port 1235 → server (health monitoring)
+
+igate-watchdog.sh  (cron, every minute)
+      ├── SDR presence check → dw-nosdr.py (every 2 min, then 2-min countdown + reboot)
+      └── Internet check (every 5 min) → dw-nointernet.py (2-min countdown + reboot)
+</code></pre>
+<p><strong>Watchdog:</strong></p>
+<p><code>igate-watchdog.sh</code> runs every minute via cron and handles three health checks:</p>
+<ul>
+<li><strong>SDR</strong> — runs <code>lsusb</code> looking for RTL-SDR USB IDs (<code>0bda:2838</code>, <code>0bda:2832</code>, <code>RTL28</code>). If the SDR is absent, logs the event and (if a TFT display is attached) launches <code>dw-nosdr.py</code>, which shows a 2-minute countdown and reboots. If the SDR reappears while direwolf is down, restarts direwolf immediately.</li>
+<li><strong>IP address</strong> — logs a warning if the device has no IP address.</li>
+<li><strong>Internet</strong> — every 5 minutes, if NetBird is connected, pings <code>8.8.8.8</code>. On failure, launches <code>dw-nointernet.py</code> (same 2-minute countdown + reboot pattern).</li>
+</ul>
+<p>The watchdog suppresses all checks while <code>dw-startup.py</code> is running (boot sequence) or while a reboot is already pending (<code>/tmp/aprs-rebooting</code>). TFT presence is detected by reading GPIO 23: <code>pinctrl get 23 | grep -q hi</code>.</p>
+<p>Log: <code>/var/log/direwolf/watchdog.log</code></p>
+<p><strong>Key files on the iGate Pi:</strong></p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Location</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>direwolf.conf</code></td>
+<td><code>/home/pi/</code></td>
+<td>TNC frequency, callsign, APRS-IS login, filter</td>
+</tr>
+<tr>
+<td><code>configure.sh</code></td>
+<td><code>/home/pi/</code></td>
+<td>Interactive configuration wizard</td>
+</tr>
+<tr>
+<td><code>auto-update.sh</code></td>
+<td><code>/home/pi/</code></td>
+<td>Nightly script + WiFi credential update</td>
+</tr>
+<tr>
+<td><code>igate-watchdog.sh</code></td>
+<td><code>/home/pi/</code></td>
+<td>Cron watchdog (SDR + internet checks)</td>
+</tr>
+<tr>
+<td><code>direwatch.py</code></td>
+<td><code>/home/pi/direwatch/</code></td>
+<td>APRS-IS connection + TFT display manager</td>
+</tr>
+<tr>
+<td><code>dw-startup.py</code></td>
+<td><code>/home/pi/direwatch/</code></td>
+<td>Boot sequence display (stats + SDR check)</td>
+</tr>
+<tr>
+<td><code>dw-nosdr.py</code></td>
+<td><code>/home/pi/direwatch/</code></td>
+<td>"No SDR found" countdown display</td>
+</tr>
+<tr>
+<td><code>dw-nointernet.py</code></td>
+<td><code>/home/pi/direwatch/</code></td>
+<td>"No internet" countdown display</td>
+</tr>
+<tr>
+<td><code>StatsRequestListener.php</code></td>
+<td><code>/home/pi/</code></td>
+<td>UDP responder for NetBird monitor</td>
+</tr>
+</tbody>
+</table>
+<p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code></p>
+<hr />
+<h2 id="aprs-server-v111-beta">APRS Server (v1.11 beta)</h2>
+<p>The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
+APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
+NetBird monitor and WiFi credential manager. It is reachable at <code>marsaprs.org</code> via a
+Cloudflare Tunnel — no inbound port forwarding or static IP required.</p>
+<p>Note that anyone can always view the then-current event at https://marsaprs.org. No pasword is required.</p>
+<p><strong>Architecture:</strong></p>
+<pre><code>APRS-IS (noam.aprs2.net:14580)
+      │ TCP
+      ▼
+aprsDaemon.php  ──writes──▶  trackers.json
+      │                            │
+      └── reads ──▶ config.yaml ◀──┘
+            │  (symlink → events/&lt;Event&gt;/event.yaml)
+            ▼
+       index.php  ◀── browser polls every 5 s
+            │
+       admin/index.php  (event + tracker management)
+
+netbird/daemon.php  ──UDP──▶  all Pi devices (port 1235)
+       └──writes──▶  netbird/stats.json
+
+wifi/index.php  (credential editor)
+       └──▶  wifi.yaml  (downloaded nightly by all Pis)
+</code></pre>
+<p><strong>Key files:</strong></p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>aprsDaemon.php</code></td>
+<td>Background daemon; APRS-IS connection; writes <code>trackers.json</code></td>
+</tr>
+<tr>
+<td><code>config.yaml</code></td>
+<td>Symlink → active event's <code>event.yaml</code></td>
+</tr>
+<tr>
+<td><code>trackers.json</code></td>
+<td>Live tracker state (daemon writes, browser reads)</td>
+</tr>
+<tr>
+<td><code>index.php</code></td>
+<td>Map page + JSON/config/history endpoints</td>
+</tr>
+<tr>
+<td><code>admin/index.php</code></td>
+<td>Admin UI; all admin API endpoints</td>
+</tr>
+<tr>
+<td><code>events/&lt;Name&gt;/event.yaml</code></td>
+<td>Per-event configuration</td>
+</tr>
+</tbody>
+</table>
+<p>Each event's configuration lives in <code>events/&lt;EventName&gt;/event.yaml</code>. <code>config.yaml</code> is a
+symlink to the active event's file.</p>
+<h3 id="cloudflare-tunnel">Cloudflare Tunnel</h3>
+<p>All traffic to <code>marsaprs.org</code> is routed through a Cloudflare Tunnel. The Pi establishes
+an outbound HTTPS connection to Cloudflare's edge — no inbound firewall rules needed, and
+the Pi works on any network including cellular.</p>
+<pre><code>Browser → Cloudflare edge (marsaprs.org)
+                  │ tunnel
+          cloudflared (aprs-pi) → Apache :80
+</code></pre>
+<p>Tunnel ID: <code>b11404f2-7497-4822-92b4-f75db418a1fe</code></p>
+<p>Config at <code>/etc/cloudflared/config.yml</code> (repo: <code>server/cloudflared/config.yml</code>):</p>
+<pre><code class="language-yaml">ingress:
+  - hostname: marsaprs.org
+    service: http://localhost:80
+  - service: http_status:404
+</code></pre>
+<p>To reinstall with a new token:</p>
+<pre><code class="language-bash">sudo cloudflared service uninstall
+sudo cloudflared service install &lt;new-token&gt;
+sudo systemctl start cloudflared
+</code></pre>
+<p>The tunnel token is obtained from the <strong>Cloudflare Zero Trust dashboard</strong>:
+<em>Networks → Tunnels → \&lt;tunnel&gt; → Configure → Install and run connector</em></p>
+<hr />
+<h2 id="display-pis-v111-beta">Display Pis (v1.11 beta)</h2>
+<p>A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
+<code>marsaprs.org</code>. It is a read-only display device — no long-term local configuration or data storage.
+Two display Pis are in use: <strong>NetControl</strong> (operator screen) and <strong>BigTV</strong> (large audience
+screen).</p>
+<p><strong>Architecture:</strong></p>
+<pre><code>marsaprs.org  (via WiFi + Cloudflare)
+      │ HTTPS
+      ▼
+Chromium  (fullscreen kiosk)
+      │ localhost:8080
+      ├──▶ kill-server.py   (handles /exit from kiosk mode)
+      │
+aprs-monitor.sh   (polls marsaprs.org every 30 s;
+      │             relaunches Chromium via localhost:8080
+      │             if server is unreachable)
+wifi-watchdog.sh  (checks WiFi every 30 s;
+                   calls wifi-restored.sh on reconnect)
+</code></pre>
+<p><strong>Autostart:</strong> Chromium launches automatically at boot via LXDE autostart
+(<code>~/.config/lxsession/rpd-x/autostart</code>).</p>
+<p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code> · VNC: <code>vnc://&lt;ip&gt;:5901</code></p>
+<p>For details on using the map, see <a href="https://marsaprs.org/userguide.html?back=/readme.html">USERGUIDE.MD</a>.</p>
+<hr />
+<h2 id="user-interfaces">User Interfaces</h2>
+<p>Five browser-based interfaces run on <code>marsaprs.org</code>. All are served by Apache on the server
+Pi, accessible at <code>https://marsaprs.org/&lt;path&gt;</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Interface</th>
+<th>URL</th>
+<th>Access</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Map</strong></td>
+<td><code>/</code></td>
+<td>Public</td>
+<td>Live tracker positions on an interactive Leaflet map</td>
+</tr>
+<tr>
+<td><strong>Map Admin</strong></td>
+<td><code>/admin/</code></td>
+<td>Password</td>
+<td>Event configuration, tracker list, course and aid station management</td>
+</tr>
+<tr>
+<td><strong>NetBird Monitor</strong></td>
+<td><code>/netbird/</code></td>
+<td>Password</td>
+<td>Real-time health status of all Pi devices</td>
+</tr>
+<tr>
+<td><strong>NetBird Admin</strong></td>
+<td><code>/netbird/admin.php</code></td>
+<td>Password</td>
+<td>Add/remove devices, enable/disable, SSH terminal</td>
+</tr>
+<tr>
+<td><strong>WiFi Manager</strong></td>
+<td><code>/wifi/</code></td>
+<td>Password</td>
+<td>Edit the shared WiFi credential list distributed to all Pis</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Map</strong> — Shows tracker positions updated every 5 seconds. Sidebar lists trackers (with
+elapsed time and breadcrumb history), courses, aid stations, iGates, and map backgrounds.
+Hovering a tracker or breadcrumb dot shows its APRS path (iGates/digipeaters the packet
+traveled); consecutive duplicate beacons are collapsed into one breadcrumb. Aid station and
+iGate tooltips include an optional callsign. A scale bar in the lower-right corner toggles
+between miles/feet and kilometers/meters when clicked. Kiosk mode removes controls for
+unattended display use.</p>
+<p><strong>Map Admin</strong> — Password-protected. Manages all event configuration: tracker callsigns and
+IDs, GPX/KML/GeoJSON course overlays, aid station and iGate locations (with optional APRS
+callsign), map default view, and background tile layers. Supports multiple named events;
+switching events is instant.
+See <a href="#admin-interface">Appendix — Server — Admin Interface</a> for full details.</p>
+<p><strong>NetBird Monitor</strong> — Password-protected. Page that polls all registered Pi devices every 60 seconds (default; adjustable) over
+the NetBird VPN and shows online/offline/enabling/disabled status. Includes an SSH terminal
+for online devices. See <a href="#netbird-status-monitor">Supporting Systems — NetBird Status Monitor</a>
+for full details.</p>
+<p><strong>NetBird Admin</strong> — Password-protected. Manages the device list in <code>addresses.yaml</code>: add, edit, delete, enable,
+and disable devices. Access to the SSH terminal for any online device.</p>
+<p><strong>WiFi Manager</strong> — Password-protected. Edits <code>wifi.yaml</code>, the master list of WiFi networks distributed to all
+Pis nightly. Auto-saves on every change; no manual save step.</p>
+<hr />
+<h2 id="backup-recovery-and-updates">Backup, Recovery and Updates</h2>
+<h3 id="server-pi">Server Pi</h3>
+<p>The server is backed up nightly to an FTP server using <code>aprs-backup.sh</code> (requires <code>lftp</code>).
+The backup includes event configs, tracker history, and the WiFi credential file.</p>
+<p>To restore: run <code>aprs-recover.sh</code>, which downloads the latest backup from the FTP server
+and restores files in place.</p>
+<h3 id="display-pis">Display Pis</h3>
+<p>Each display Pi runs <code>auto-update.sh</code> nightly at 4:00 am. It downloads a tar archive of
+updated scripts from the server, applies them via rsync, updates WiFi credentials, and
+reboots at 4:10 am to pick up any changes.</p>
+<p>To force an immediate update:</p>
+<pre><code class="language-bash">ssh pi@&lt;ip&gt; /home/pi/auto-update.sh
+</code></pre>
+<p>There is no backup for the display Pis since their data are all temporary.</p>
+<h3 id="igates">iGates</h3>
+<p>Each iGate runs <code>auto-update.sh</code> nightly at 4:00 am. It downloads updated direwatch
+scripts and the WiFi credential list from the server, applies them, and restarts affected
+services. If <code>direwolf.conf</code> has changed it restarts direwolf.</p>
+<p>To force an immediate update:</p>
+<pre><code class="language-bash">ssh pi@&lt;ip&gt; /home/pi/auto-update.sh
+</code></pre>
+<p>There is no backup for the iGates since their data are all temporary.</p>
+<hr />
+<h2 id="log-rotation">Log Rotation</h2>
+<p>Log rotation is configured via <code>/etc/logrotate.d/aprs</code>, installed by <code>install.sh</code> on iGates and the server.</p>
+<p><strong>iGates</strong> — logs in <code>/var/log/direwolf/</code>:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Written by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>console.log</code></td>
+<td>direwolf (RF decoding, APRS-IS forwarding)</td>
+</tr>
+<tr>
+<td><code>watchdog.log</code></td>
+<td><code>igate-watchdog.sh</code> (SDR, IP, internet checks)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Display Pis</strong> — logs in <code>/home/pi/</code>:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Written by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>update.log</code></td>
+<td><code>auto-update.sh</code> (nightly update)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Server</strong> — multiple locations:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Written by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/var/log/aprs-daemon/daemon.log</code></td>
+<td><code>aprsDaemon.php</code> (APRS-IS connection, packet processing)</td>
+</tr>
+<tr>
+<td><code>/var/log/netbird-poller.log</code></td>
+<td><code>netbird-poller.py</code> (NetBird device polling)</td>
+</tr>
+<tr>
+<td><code>/var/log/aprs-backup.log</code></td>
+<td><code>aprs-backup.sh</code> (nightly FTP backup)</td>
+</tr>
+<tr>
+<td><code>/var/log/boot.log</code></td>
+<td>System boot messages (kernel + service startup output)</td>
+</tr>
+</tbody>
+</table>
+<p>All three APRS-specific logs are covered by <code>/etc/logrotate.d/aprs</code> (installed by <code>install.sh</code>). <code>boot.log</code> is managed by the system's default logrotate config. Logs are rotated daily, compressed, and seven days of history are retained.</p>
+<hr />
+<h2 id="building-deploying-devices">Building &amp; Deploying Devices</h2>
+<p>Master SD card images for each device type are stored on the FTP server: <a href="ftp://ftp.w6sg.net/APRS-SD-Masters">ftp://ftp.w6sg.net/APRS-SD-Masters</a>. They include
+the results of running <code>install.sh</code> but not <code>configure.sh</code> — so packages, services, and
+scripts are pre-installed, but site-specific settings (callsign, location, hostname) are
+set when deploying each individual device.</p>
+<h3 id="netbird-setup-keys">NetBird Setup Keys</h3>
+<p>As part of configuring any device, you will need a NetBird key. At the moment, the only way to get one is to email Doug Kaye at <a href="mailto:doug@rds.com">doug@rds.com</a>. </p>
+<h3 id="aprs-server">APRS Server</h3>
+<p>The server master image is a complete, fully-configured copy of the running server. Flashing
+it to a replacement Pi produces a working server immediately — no further steps needed.</p>
+<ol>
+<li>Download and flash the server master image from the FTP server using <strong>Apple Pi Baker</strong> or Raspberry Pi Imager.</li>
+<li>Insert SD card and boot. The server is ready.</li>
+<li>Configuration should only be necessary if something (such as a NetBird address) has changed from the standard setup.</li>
+</ol>
+<h3 id="display-pis-igates">Display Pis &amp; iGates</h3>
+<ol>
+<li>Download and flash the display Pi master image.</li>
+<li>Insert SD card, connect to your local network, and boot.</li>
+<li>Find the Pi's IP address (from your router or <code>arp -a &lt;hostname&gt;</code>).</li>
+<li>SSH in: <code>ssh pi@&lt;ip&gt;</code> (password: <code>guacamole</code>)</li>
+<li>Run the configuration wizard:
+   <code>bash
+   /home/pi/configure.sh</code>
+   Expected hostnames: <code>NetControl</code> and <code>BigTV</code>.</li>
+<li>Reboot when prompted.</li>
+</ol>
+<hr />
+<h2 id="creating-new-master-images">Creating New Master Images</h2>
+<h3 id="aprs-server_1">APRS Server</h3>
+<p>The server master is simply a snapshot of the current running server. No install script is
+needed (and none is available — the script would be served by the very Pi being built).</p>
+<ol>
+<li>Shut down aprs-pi cleanly: <code>sudo shutdown -h now</code></li>
+<li>Remove the SD card and copy it using <strong>Apple Pi Baker</strong> or <code>dd</code>.</li>
+<li>Reinstall the original card and reboot.</li>
+</ol>
+<h3 id="display-pis_1">Display Pis</h3>
+<ol>
+<li>Flash a fresh <strong>Raspberry Pi OS Desktop (64-bit, Trixie)</strong> to an SD card using
+   Raspberry Pi Imager. In the OS customization dialog set:</li>
+<li>Model: <strong>Pi 4</strong></li>
+<li>Hostname: <code>displayClone</code></li>
+<li>Username / password: <code>pi</code> / <code>guacamole</code></li>
+<li>WiFi: your local network</li>
+<li>SSH: enabled</li>
+<li>Timezone: as appropriate</li>
+<li>Insert the card into a Pi 4 and boot.</li>
+<li>Find the IP and SSH in.</li>
+<li>Download and run the install script:
+   <code>bash
+   bash &lt;(curl -fsSL https://marsaprs.org/display/install.sh) 2&gt;&amp;1 | tee install.log</code></li>
+<li><strong>Do not run <code>configure.sh</code></strong> — that step is done when deploying each device.</li>
+<li>Shut down: <code>sudo shutdown -h now</code></li>
+<li>Copy the SD card using <strong>Apple Pi Baker</strong> — this is the new display Pi master.</li>
+<li>Upload the image file to <strong><code>ftp.w6sg.net/APRS-SD-Masters</code></strong> for later cloning.</li>
+</ol>
+<h3 id="igates_1">iGates</h3>
+<ol>
+<li>Flash a fresh <strong>Raspberry Pi OS Desktop (64-bit, Trixie)</strong> to an SD card using
+   Raspberry Pi Imager. In the OS customization dialog set:</li>
+<li>Model: <strong>Pi Zero 2 W</strong></li>
+<li>Hostname: <code>trackerClone</code></li>
+<li>Username / password: <code>pi</code> / <code>guacamole</code></li>
+<li>WiFi: your local network</li>
+<li>SSH: enabled</li>
+<li>Timezone: as appropriate</li>
+<li>Insert the card into a Pi Zero 2 W and boot.</li>
+<li>Find the IP and SSH in.</li>
+<li>Download and run the install script:
+   <code>bash
+   bash &lt;(curl -fsSL https://marsaprs.org/igate/install.sh) 2&gt;&amp;1 | tee install.log</code></li>
+<li><strong>Do not run <code>configure.sh</code></strong> — that step is done when deploying each device.</li>
+<li>Shut down: <code>sudo shutdown -h now</code></li>
+<li>Copy the SD card using <strong>Apple Pi Baker</strong> — this is the new iGate master.</li>
+<li>Upload the image file to <strong><code>ftp.w6sg.net/APRS-SD-Masters</code></strong> for later cloning.</li>
+</ol>
+<hr />
+<h2 id="supporting-systems">Supporting Systems</h2>
+<h3 id="netbird-status-monitor">NetBird Status Monitor</h3>
+<p>A web application at <code>/netbird/</code> that monitors all registered Pi devices over the NetBird
+VPN, showing real-time health status and providing a browser-based SSH terminal.</p>
+<h4 id="architecture">Architecture</h4>
+<pre><code>addresses.yaml  (device list, credentials)
+toggle_state.json  (per-device toggle timestamps)
+      │
+      ├──▶  netbird-poller.py  ──writes──▶  stats.json
+      │        │  UDP poll every N seconds
+      │        ▼
+      │     each device's NetBird IP : 1235
+      │
+      ├──▶  api.php  ◀── browser polls every N seconds
+      │        │  merges YAML + stats.json + toggle_state.json
+      │        ▼
+      │     index.php  (main status page)
+      │
+      └──▶  admin.php  (device management)
+               │
+               ├──▶  save.php  (CRUD + toggle)
+               └──▶  ssh_term.php  ──SSE──▶  ssh_stream.php
+                                                   │  proc_open
+                                                   ▼
+                                              ssh_relay.py  (paramiko)
+                                                   │  NetBird VPN
+                                                   ▼
+                                              remote device
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>netbird-poller.py</code></td>
+<td>UDP polling daemon (Python); sends requests to enabled devices, writes <code>stats.json</code></td>
+</tr>
+<tr>
+<td><code>api.php</code></td>
+<td>JSON endpoint; merges <code>addresses.yaml</code>, <code>stats.json</code>, and <code>toggle_state.json</code>; computes <code>pending_until</code> server-side</td>
+</tr>
+<tr>
+<td><code>index.php</code></td>
+<td>Main status page; password-protected; polls <code>api.php</code> every N seconds</td>
+</tr>
+<tr>
+<td><code>admin.php</code></td>
+<td>Device list CRUD; toggle switches; SSH terminal launch</td>
+</tr>
+<tr>
+<td><code>save.php</code></td>
+<td>Handles all CRUD actions and toggle; computes and returns <code>pending_until</code> on toggle</td>
+</tr>
+<tr>
+<td><code>yaml_lib.php</code></td>
+<td>Custom YAML parser/writer (no <code>php-yaml</code> extension required)</td>
+</tr>
+<tr>
+<td><code>addresses.yaml</code></td>
+<td>Device configuration: name, host, ip, group, enabled, ssh_user, ssh_pass</td>
+</tr>
+<tr>
+<td><code>stats.json</code></td>
+<td>Live poller output; read by <code>api.php</code></td>
+</tr>
+<tr>
+<td><code>toggle_state.json</code></td>
+<td>Per-device toggle timestamps (Unix epoch); written by <code>save.php</code> on every enable/disable</td>
+</tr>
+<tr>
+<td><code>ssh_term.php</code></td>
+<td>Browser SSH terminal popup (xterm.js)</td>
+</tr>
+<tr>
+<td><code>ssh_stream.php</code></td>
+<td>SSE relay; spawns <code>ssh_relay.py</code> via <code>proc_open</code></td>
+</tr>
+<tr>
+<td><code>ssh_relay.py</code></td>
+<td>Python/paramiko SSH relay; reads input queue, writes output to stdout</td>
+</tr>
+<tr>
+<td><code>ssh_input.php</code></td>
+<td>Receives keystrokes from browser; appends to per-session queue file</td>
+</tr>
+<tr>
+<td><code>ssh_resize.php</code></td>
+<td>Receives terminal resize events; writes to per-session resize file</td>
+</tr>
+</tbody>
+</table>
+<h4 id="device-configuration-addressesyaml">Device Configuration (<code>addresses.yaml</code>)</h4>
+<pre><code class="language-yaml">- name: Muir Woods
+  host: MARS-2            # APRS callsign / hostname used for status lookups
+  ip: 100.101.197.70      # NetBird IP
+  group: &quot;via internet (WiFi or Ethernet)&quot;
+  enabled: true
+  ssh_user: pi            # stored when first SSH login succeeds
+  ssh_pass: &quot;&quot;            # stored only if &quot;Remember password&quot; is checked
+</code></pre>
+<p>The <code>group</code> field becomes a section header in both the admin and main pages. The <code>host</code>
+field is used for the hostname self-reporting endpoint. <code>ssh_user</code> and <code>ssh_pass</code> are
+written by <code>save.php</code> when a user authenticates via the SSH terminal.</p>
+<h4 id="status-states">Status States</h4>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>Condition</th>
+<th>Color</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Online</strong></td>
+<td>Device responded to the last UDP poll</td>
+<td>Green</td>
+</tr>
+<tr>
+<td><strong>Pending</strong></td>
+<td>Device was recently enabled or disabled; waiting for the change to take effect</td>
+<td>Blue</td>
+</tr>
+<tr>
+<td><strong>Offline</strong></td>
+<td>Enabled but no response after the pending period has fully elapsed</td>
+<td>Red</td>
+</tr>
+<tr>
+<td><strong>Disabled</strong></td>
+<td><code>enabled: false</code> in <code>addresses.yaml</code>, and not in a pending window</td>
+<td>Gray</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Pending</strong> applies to both transitions:</p>
+<ul>
+<li><strong>Enable (off → on):</strong> Devices check whether to start NetBird on 5-minute clock boundaries (0:00, 0:05, 0:10, …). After the server sets a device enabled, it won't respond via its NetBird address until ~30 seconds after the next 5-minute boundary. Once past that deadline, the system allows 3 additional polling intervals for the device to respond before declaring it Offline.</li>
+<li><strong>Disable (on → off):</strong> Similarly, a disabled device will keep responding until ~30 seconds past the next 5-minute boundary. The status shows Pending until the deadline passes, rather than showing Disabled prematurely while the device is still reachable.</li>
+</ul>
+<p><code>pending_until</code> is computed entirely server-side by <code>api.php</code> and <code>save.php</code>:</p>
+<pre><code class="language-php">$deadline     = (int)(ceil($toggled_at / 300) * 300) + 30;
+$pending_until = $enabled
+    ? $deadline + ($repeat_seconds * 3)   // enable: extra time for 3 missed polls
+    : $deadline;                           // disable: deadline only
+</code></pre>
+<p>The browser compares <code>Date.now() / 1000 &lt; pending_until</code> and renders the Pending badge accordingly. No scheduling logic lives in the client.</p>
+<h4 id="stats-response-format">Stats Response Format</h4>
+<p>Each Pi runs <code>stats-listener.php</code> (iGate: <code>stats-listener.php</code>; display Pi / server: <code>StatsRequestListener.php</code>) as a systemd service listening on UDP port 1235. When polled by <code>daemon.php</code>, it responds with a single line of plain text.</p>
+<p><strong>Full response</strong> (default):</p>
+<pre><code>&lt;hostname&gt;  Load=&lt;load&gt;  Temp=&lt;temp&gt;  Mem=&lt;disk&gt;  Throttled=&lt;throttled&gt;  &lt;NetBird-IP&gt;  SSID=&lt;ssid&gt;  [Low Voltage][High Temp]
+</code></pre>
+<p><strong>Short response</strong> (when the request contains the word <code>short</code>):</p>
+<pre><code>&lt;hostname&gt; Load=&lt;load&gt; &lt;temp&gt; Throttled=&lt;throttled&gt; SSID=&lt;ssid&gt; [Low Voltage][High Temp]
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Source</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hostname</code></td>
+<td><code>hostname</code> command</td>
+<td></td>
+</tr>
+<tr>
+<td><code>Load</code></td>
+<td><code>uptime</code></td>
+<td>1, 5, and 15-minute load averages</td>
+</tr>
+<tr>
+<td><code>Temp</code></td>
+<td><code>vcgencmd measure_temp</code></td>
+<td>e.g. <code>temp=47.8'C</code></td>
+</tr>
+<tr>
+<td><code>Mem</code></td>
+<td><code>du -sh ~</code></td>
+<td>Home directory size; proxy for total disk use</td>
+</tr>
+<tr>
+<td><code>Throttled</code></td>
+<td><code>vcgencmd get_throttled</code></td>
+<td>Hex bitmask; <code>0x00000</code> = normal</td>
+</tr>
+<tr>
+<td><code>&lt;NetBird-IP&gt;</code></td>
+<td><code>netbird status</code></td>
+<td>Omitted in short form</td>
+</tr>
+<tr>
+<td><code>SSID</code></td>
+<td><code>nmcli</code></td>
+<td>WiFi network name, or <code>&lt;Ethernet&gt;</code></td>
+</tr>
+<tr>
+<td><code>Low Voltage</code></td>
+<td>Throttled bit 0</td>
+<td>Appended only when set</td>
+</tr>
+<tr>
+<td><code>High Temp</code></td>
+<td>Throttled bit 3</td>
+<td>Appended only when set</td>
+</tr>
+</tbody>
+</table>
+<p>Example response as shown on the NetBird Status page:</p>
+<pre><code>0.02,0.06,0.11  40.4'C  128M  TerraceLan2  Low Voltage
+</code></pre>
+<h4 id="immediate-status-propagation">Immediate Status Propagation</h4>
+<p><code>api.php</code> merges <code>addresses.yaml</code>, <code>stats.json</code>, and <code>toggle_state.json</code> on every request,
+so toggling a device in the admin page is reflected on the status page on its very next poll
+— no poller cycle needed. <code>save.php</code> also returns <code>pending_until</code> directly in the toggle
+response so the admin page can render the correct Pending state immediately, before the next
+poll completes. A <code>BroadcastChannel('aprs_netbird')</code> message carries <code>pending_until</code> to the
+status page if it is open in the same browser.</p>
+<h4 id="hostname-self-reporting-endpoint">Hostname Self-Reporting Endpoint</h4>
+<pre><code>GET /netbird/?hostname=&lt;callsign&gt;
+</code></pre>
+<p>No authentication required. Returns a plain-text integer:</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>1</code></td>
+<td>Device is known and <code>enabled: true</code></td>
+</tr>
+<tr>
+<td><code>0</code></td>
+<td>Device is known and <code>enabled: false</code></td>
+</tr>
+<tr>
+<td><code>-1</code></td>
+<td>Device not found in <code>addresses.yaml</code></td>
+</tr>
+</tbody>
+</table>
+<p>iGates use this to determine whether to transmit APRS beacons. They poll it on 5-minute
+clock boundaries.</p>
+<h4 id="ssh-terminal">SSH Terminal</h4>
+<p>The SSH button (admin page, active when device is Online) opens a popup with a full
+terminal powered by xterm.js.</p>
+<p><strong>Security:</strong> If both <code>ssh_user</code> and <code>ssh_pass</code> are stored, PHP mints a one-time session
+token server-side — the password is never sent to the browser. If credentials are missing,
+a login form is shown; on success the credentials are saved to <code>addresses.yaml</code>.</p>
+<p><strong>Relay architecture:</strong>
+1. <code>ssh_stream.php</code> spawns <code>ssh_relay.py</code> via PHP <code>proc_open</code>.
+2. <code>ssh_relay.py</code> opens a paramiko PTY shell to the device.
+3. SSH output → base64 lines → PHP → SSE → browser → xterm.js.
+4. Keystrokes → <code>ssh_input.php</code> → queue file → relay → SSH channel.
+5. Terminal resize events → <code>ssh_resize.php</code> → <code>chan.resize_pty(cols, rows)</code>.</p>
+<p><strong>Dependency:</strong> <code>sudo apt-get install python3-paramiko</code></p>
+<h4 id="poller-netbird-pollerpy">Poller (<code>netbird-poller.py</code>)</h4>
+<p>Run by <code>netbird-daemon.service</code>. Polls enabled devices every <code>repeat_seconds</code> (default 60)
+when there are active viewers. Writes responses to <code>stats.json</code> via atomic rename. Requires
+3 consecutive missed polls before marking a device Offline.</p>
+<pre><code class="language-bash">sudo systemctl status netbird-daemon
+sudo systemctl restart netbird-daemon
+sudo journalctl -u netbird-daemon -f
+</code></pre>
+<p>Log: <code>/var/www/html/netbird/daemon.log</code></p>
+<h4 id="api-apiphp">API: <code>api.php</code></h4>
+<p>No authentication required. Polled by the main page every 15 seconds.</p>
+<p><code>GET api.php</code> — returns full device status for all devices:</p>
+<pre><code class="language-json">{
+  &quot;last_send_ts&quot;: 1779080795,
+  &quot;repeat_seconds&quot;: 60,
+  &quot;daemon_running&quot;: true,
+  &quot;devices&quot;: [
+    {
+      &quot;ip&quot;: &quot;100.101.197.70&quot;,
+      &quot;hostname&quot;: &quot;MARS-2&quot;,
+      &quot;name&quot;: &quot;Muir Woods&quot;,
+      &quot;group&quot;: &quot;via internet (WiFi or Ethernet)&quot;,
+      &quot;enabled&quot;: true,
+      &quot;online&quot;: true,
+      &quot;pending_until&quot;: null,
+      &quot;last_request&quot;: 1779080795,
+      &quot;last_response&quot;: 1779080795,
+      &quot;response_data&quot;: &quot;MARS-2 Load=0.19 Temp=47.8°C ...&quot;
+    }
+  ]
+}
+</code></pre>
+<p><code>pending_until</code> is a Unix timestamp (or <code>null</code>). The browser renders Pending while <code>Date.now() / 1000 &lt; pending_until</code>.</p>
+<h4 id="api-savephp">API: <code>save.php</code></h4>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Auth</th>
+<th>Method</th>
+<th>Key Parameters</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>add_device</code></td>
+<td>required</td>
+<td>POST</td>
+<td>name, host, ip, group, enabled</td>
+<td>Append device</td>
+</tr>
+<tr>
+<td><code>update_device</code></td>
+<td>required</td>
+<td>POST</td>
+<td>orig_ip, name, host, ip, group, enabled</td>
+<td>Edit device</td>
+</tr>
+<tr>
+<td><code>delete_device</code></td>
+<td>required</td>
+<td>POST</td>
+<td>ip</td>
+<td>Remove device</td>
+</tr>
+<tr>
+<td><code>toggle_device</code></td>
+<td>required</td>
+<td>POST</td>
+<td>ip</td>
+<td>Flip <code>enabled</code>; returns <code>{ok, enabled, pending_until}</code></td>
+</tr>
+<tr>
+<td><code>save_config</code></td>
+<td>open</td>
+<td>POST</td>
+<td>repeat_seconds</td>
+<td>Update poll interval</td>
+</tr>
+<tr>
+<td><code>save_ssh_creds</code></td>
+<td>required</td>
+<td>POST</td>
+<td>ip, ssh_user, ssh_pass</td>
+<td>Update credentials</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h3 id="wifi-manager">WiFi Manager</h3>
+<p>A web application at <code>/wifi/</code> for managing the shared list of WiFi credentials distributed
+to all MARS Pi devices nightly.</p>
+<h4 id="architecture_1">Architecture</h4>
+<pre><code>/var/www/html/wifi/wifi.yaml  (on aprs-pi — master copy)
+     │
+     ├──▶  /igate/wifi/get.php?token=&lt;token&gt;    ──▶  iGates
+     ├──▶  /display/wifi/get.php?token=&lt;token&gt;  ──▶  Display Pis
+     └──▶  update-wifi.php                      ──▶  Server Pi (nightly via cron)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>server/www/wifi/index.php</code></td>
+<td>Web UI for viewing and editing the credential list</td>
+</tr>
+<tr>
+<td><code>server/www/wifi/get.php</code></td>
+<td>Token-authenticated download endpoint for iGates</td>
+</tr>
+<tr>
+<td><code>display/www/wifi/get.php</code></td>
+<td>Token-authenticated download endpoint for display Pis</td>
+</tr>
+<tr>
+<td><code>/home/pi/update-wifi.php</code></td>
+<td>Applies <code>wifi.yaml</code> via <code>nmcli</code> on each Pi</td>
+</tr>
+<tr>
+<td><code>/home/pi/.wifi-token</code></td>
+<td>Shared authentication token (required on all Pi types)</td>
+</tr>
+</tbody>
+</table>
+<p>Every edit and drag-drop reorder immediately writes <code>wifi.yaml</code> via the <code>?save</code> endpoint.
+There is no manual save step.</p>
+<h4 id="update-schedule">Update Schedule</h4>
+<table>
+<thead>
+<tr>
+<th>Device</th>
+<th>When credentials update</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>iGates</td>
+<td>Nightly at 4:00 am via <code>auto-update.sh</code></td>
+</tr>
+<tr>
+<td>Display Pis</td>
+<td>Nightly at 4:01 am via <code>auto-update.sh</code></td>
+</tr>
+<tr>
+<td>Server Pi</td>
+<td>Nightly at 4:00 am via cron</td>
+</tr>
+</tbody>
+</table>
+<p>Note that display Pis (Net Control and Big TV) are likely not running at 4am and therefore must be updated manually.</p>
+<h4 id="token-authentication">Token Authentication</h4>
+<p>Each Pi has <code>/home/pi/.wifi-token</code>. Download requests without a valid token return HTTP 403.
+If the token is missing from the server:</p>
+<pre><code class="language-bash">tar -xzf /var/www/html/igate/files.tar.gz -C /tmp ./home/.wifi-token
+cp /tmp/home/.wifi-token /home/pi/.wifi-token
+</code></pre>
+<h4 id="safe-download-pattern">Safe Download Pattern</h4>
+<p><code>auto-update.sh</code> downloads to a temp file and validates content before replacing the live copy:</p>
+<pre><code class="language-bash">wget -qO /tmp/wifi.yaml.new &quot;$BASE/wifi/get.php?token=$(cat /home/pi/.wifi-token)&quot;
+grep -q &quot;^- name:&quot; /tmp/wifi.yaml.new &amp;&amp; mv /tmp/wifi.yaml.new /home/pi/wifi.yaml
+</code></pre>
+<p><code>update-wifi.php</code> exits without making any <code>nmcli</code> changes if zero entries are parsed,
+preventing accidental deletion of all configured networks.</p>
+<hr />
+<h2 id="appendix">Appendix</h2>
+<hr />
+<h3 id="file-formats">File Formats</h3>
+<h4 id="eventyaml"><code>event.yaml</code></h4>
+<p>Each event's configuration lives in <code>events/&lt;EventName&gt;/event.yaml</code>. <code>config.yaml</code> is a
+symlink to the active event's file. <code>aprsDaemon.php</code> and <code>index.php</code> monitor it via
+<code>filemtime</code>; changes take effect within ~5 seconds without restarting the daemon.</p>
+<h5 id="event"><code>event</code></h5>
+<pre><code class="language-yaml">event: Dipsea 2026
+</code></pre>
+<h5 id="legend"><code>legend</code></h5>
+<p>Optional HTML displayed in the lower-left corner of the map in kiosk mode (ie, for the Big TV). The value is injected as <code>innerHTML</code>, so any HTML tags, inline styles, and attributes are supported. In the YAML file, use <code>\n</code> inside a quoted string to break across lines for readability.</p>
+<pre><code class="language-yaml">legend: &quot;&lt;b&gt;Race Day — June 14&lt;/b&gt;&lt;br&gt;Start: 7:00 AM at Mill Valley&quot;
+</code></pre>
+<h5 id="trackers"><code>trackers</code></h5>
+<pre><code class="language-yaml">trackers:
+  - callsign: W6SG-4    # APRS callsign
+    id: S2              # short label on the map marker and sidebar
+    name: Rob           # full name shown in the sidebar
+</code></pre>
+<h5 id="tracker_style"><code>tracker_style</code></h5>
+<pre><code class="language-yaml">tracker_style:
+  icon: circle          # circle, square, diamond, triangle, star, cross, person
+  label_color: &quot;#000000&quot;
+</code></pre>
+<p>Marker size scales with zoom level: full at zoom ≥ 14, down to 30 % at zoom 7 and below.</p>
+<h5 id="map"><code>map</code></h5>
+<pre><code class="language-yaml">map:
+  lat: 37.87255
+  lon: -122.544079
+  zoom: 13
+</code></pre>
+<h5 id="backgrounds"><code>backgrounds</code></h5>
+<pre><code class="language-yaml">backgrounds:
+  - name: OpenStreetMap
+    url: https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png
+    attribution: &quot;&amp;copy; &lt;a href='https://www.openstreetmap.org/copyright'&gt;OpenStreetMap&lt;/a&gt; contributors&quot;
+    max_zoom: 19
+</code></pre>
+<p><code>max_zoom</code> caps the Leaflet zoom level for this tile layer. Omit to default to 19.</p>
+<h5 id="courses"><code>courses</code></h5>
+<p>GPX, KML, GeoJSON, or JSON overlays. Files must be in the event directory.</p>
+<pre><code class="language-yaml">courses:
+  - name: 13 Mile
+    file: events/Dipsea 2026/13_Mile.geojson
+    color: &quot;#2196f3&quot;
+</code></pre>
+<p>Supported extensions: <code>.gpx</code> <code>.kml</code> <code>.geojson</code> <code>.json</code></p>
+<h5 id="aidstations"><code>aidstations</code></h5>
+<pre><code class="language-yaml">aidstations:
+  - name: Muir Woods Clubhouse
+    lat: 37.89799
+    lon: -122.56667
+</code></pre>
+<h5 id="igates_2"><code>igates</code></h5>
+<pre><code class="language-yaml">igates:
+  - name: Pt. Reyes Station
+    lat: 38.068051
+    lon: -122.808013
+</code></pre>
+<h5 id="section_visibility"><code>section_visibility</code></h5>
+<p>Default visibility of each sidebar section on page load.</p>
+<pre><code class="language-yaml">section_visibility:
+  trackers: true
+  courses: true
+  aidstations: true
+  igates: true
+  backgrounds: true
+</code></pre>
+<hr />
+<h3 id="server">Server</h3>
+<h4 id="requirements">Requirements</h4>
+<ul>
+<li>PHP 8.x CLI (daemon) and web (Apache)</li>
+<li>PHP <code>sockets</code> extension enabled</li>
+<li>Web root (<code>/var/www/html/</code>) writable by <code>www-data</code> group</li>
+<li>Network access to <code>noam.aprs2.net:14580</code></li>
+<li><code>python3-paramiko</code> for the SSH terminal relay</li>
+</ul>
+<h4 id="configuration-configyaml">Configuration (<code>config.yaml</code>)</h4>
+<p><code>config.yaml</code> is a symlink to the active event's <code>event.yaml</code>. Changes take effect within
+~5 seconds without restarting the daemon. See <a href="#file-formats">File Formats</a> for the full
+<code>event.yaml</code> field reference.</p>
+<h4 id="event-directory-structure">Event Directory Structure</h4>
+<p>Each event lives in <code>events/&lt;EventName&gt;/</code>. <code>config.yaml</code> is a symlink to the active event.</p>
+<pre><code>events/
+├── Dipsea 2026/
+│   ├── event.yaml              # event configuration
+│   ├── Dipsea.json             # course overlay
+│   └── tracker_history.yaml    # auto-generated; not committed to git
+└── Marin Ultra Challenge 2026/
+    ├── event.yaml
+    ├── 13_Mile.geojson
+    ├── 18_Mile.json
+    └── 6_Mile.json
+config.yaml → events/Dipsea 2026/event.yaml   (symlink)
+</code></pre>
+<p><code>tracker_history.yaml</code> — auto-generated by <code>aprsDaemon.php</code>. Stores the 10 most-recent
+beacon positions per tracker. Pruned when a tracker is removed from the config.</p>
+<h4 id="running-the-daemon">Running the Daemon</h4>
+<p><strong>Direct (foreground):</strong></p>
+<pre><code class="language-bash">php aprsDaemon.php
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>server=&lt;host&gt;</code></td>
+<td><code>noam.aprs2.net</code></td>
+<td>APRS-IS server hostname</td>
+</tr>
+<tr>
+<td><code>config=&lt;file&gt;</code></td>
+<td><code>config.yaml</code></td>
+<td>Path to configuration file</td>
+</tr>
+<tr>
+<td><code>trackerstatus=&lt;file&gt;</code></td>
+<td><code>trackers.json</code></td>
+<td>Path to tracker status output file</td>
+</tr>
+<tr>
+<td><code>sleep=&lt;seconds&gt;</code></td>
+<td><code>5</code></td>
+<td>Seconds between packet reads</td>
+</tr>
+<tr>
+<td><code>debug</code></td>
+<td>off</td>
+<td>Print every received APRS line to stdout</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Via systemd:</strong></p>
+<pre><code class="language-bash">sudo systemctl status aprs-daemon
+sudo journalctl -u aprs-daemon -f
+sudo systemctl restart aprs-daemon
+</code></pre>
+<p>Log: <code>/var/log/aprs-daemon/daemon.log</code></p>
+<p>The wrapper script (<code>aprs-daemon.sh</code>) handles PID-file-based duplicate-start protection.
+systemd restarts the daemon on failure (10 s delay, 5 retries per 5 minutes).</p>
+<p><strong>Tracker colors:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Color</th>
+<th>Condition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Green</td>
+<td>Heard within the last 2 minutes</td>
+</tr>
+<tr>
+<td>Blue</td>
+<td>Heard within the last 5 minutes</td>
+</tr>
+<tr>
+<td>Red</td>
+<td>Not heard for more than 5 minutes</td>
+</tr>
+</tbody>
+</table>
+<p><strong>APRS packet decoding:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Uncompressed</td>
+<td><code>DDmm.mmN/DDDmm.mmW</code> — degrees and decimal minutes</td>
+</tr>
+<tr>
+<td>Compressed Base91</td>
+<td>4-byte Base91-encoded lat/lon in the payload</td>
+</tr>
+<tr>
+<td>Mic-E</td>
+<td>Latitude in the 6-character AX.25 destination field; longitude in payload</td>
+</tr>
+</tbody>
+</table>
+<p>The daemon maintains a 60-second socket receive timeout; if no data arrives (e.g., network
+change) the socket is closed and a new connection established automatically.</p>
+<h4 id="web-interface">Web Interface</h4>
+<p>The map is at <code>https://marsaprs.org/</code>. Layout adapts automatically:</p>
+<ul>
+<li><strong>Desktop</strong> — fixed sidebar on the left; map fills the rest.</li>
+<li><strong>Touch/mobile</strong> — map fills the screen; slide-in drawer opened with the ⚙ icon.</li>
+</ul>
+<p><strong>Mobile full-screen:</strong> On iOS and iPadOS, <code>index.php</code> shows a one-time nudge at the bottom of the screen on first visit. Safari users see "tap Share ⬆ → Add to Home Screen"; Chrome (<code>CriOS</code>) users see "tap ⋯ → Add to Home Screen". Dismissing the nudge via ✕ sets <code>localStorage['a2hs-dismissed']</code> so it never reappears. Once installed as a home screen app (standalone mode), the page runs without address bar or tab bar, enabled by the <code>apple-mobile-web-app-capable</code> and <code>apple-mobile-web-app-status-bar-style</code> meta tags. On Android Chrome, the address bar auto-hides on scroll; no nudge is needed.</p>
+<p><strong>Sidebar sections (desktop):</strong> Each section header has a visibility checkbox (show/hide map
+objects) and a click-to-collapse toggle. Sidebar width is adjustable by dragging the divider;
+width is saved in <code>localStorage</code>.</p>
+<p><strong>Mobile drawer:</strong> Sections are collapsible accordions. Visibility checkboxes work the same
+as desktop. Footer buttons: Reset Map, Save Map, Admin, User Guide, Kiosk Mode, Clients.</p>
+<p><strong>Tracker clicks (desktop — three-click cycle):</strong>
+1. Blink tracker + show beacon history (up to 10 positions as dots + dotted polyline)
+2. Zoom to tracker's last position (zoom 15)
+3. Reset map to default view</p>
+<p><strong>Tracker touches (mobile):</strong>
+- Short tap — blink + show history; drawer stays open
+- Long press (≥ 500 ms) — blink + history + close drawer + zoom to position</p>
+<p><strong>Origin, distance, bearing:</strong> Right-click sets a red Origin marker. Left-click anywhere
+shows distance (miles) and bearing from Origin. Origin clears on Reset Map.</p>
+<p><strong>Map layer z-order (top to bottom):</strong></p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>z-index</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Trackers</td>
+<td>450</td>
+</tr>
+<tr>
+<td>Aid Stations</td>
+<td>430</td>
+</tr>
+<tr>
+<td>Courses</td>
+<td>410</td>
+</tr>
+<tr>
+<td>iGates</td>
+<td>390</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Kiosk mode:</strong> <code>?kiosk=1</code> or click <strong>Kiosk Mode</strong>. Shows Trackers, Aid Stations, and
+iGates only. Footer: Sidebar toggle, Reset Map, Exit (navigates to <code>localhost:8080/exit</code>).</p>
+<p><strong>Live polling:</strong> The browser polls <code>?json</code> every 5 seconds when viewing the default event
+and when the tracker list has not been locally edited. Only tracker positions and timestamps
+are updated; all other config sections are left unchanged by polls.</p>
+<h4 id="admin-interface">Admin Interface</h4>
+<p>Open <code>https://marsaprs.org/admin/</code>. Password stored in <code>admin/password.txt</code>. Session lasts
+12 hours.</p>
+<p><strong>Editable sections:</strong> Trackers (callsign, ID, name), Tracker Style (icon, color), Map
+Default View, Default Section Visibility, Backgrounds, Courses, Aid Stations, iGates, Legend.</p>
+<p><strong>Tracker Δ column:</strong> Each tracker row shows a read-only Δ field — the minimum interval
+between consecutive beacons in the last 10 received, displayed as M:SS. Shows <code>—</code> until at
+least 2 beacons have been received. The column refreshes automatically every 30 seconds;
+the last refresh time is shown next to the Trackers section heading. Deleting and re-adding
+a tracker resets its history — avoid this while trying to verify the beacon interval.</p>
+<p><strong>Header/footer buttons:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Button</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Update</strong></td>
+<td>Saves local-only sections to <code>localStorage</code>; returns to map. Does not write to server.</td>
+</tr>
+<tr>
+<td><strong>Save</strong></td>
+<td>Writes config to the current event's <code>event.yaml</code>. Does not change the active event symlink.</td>
+</tr>
+<tr>
+<td><strong>Save as Default Event</strong></td>
+<td>Writes config + re-points <code>config.yaml</code> symlink. All users pick up changes within ~5 s.</td>
+</tr>
+<tr>
+<td><strong>Exit</strong></td>
+<td>Leaves without saving.</td>
+</tr>
+<tr>
+<td><strong>Sign Out</strong></td>
+<td>Destroys the session.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Local vs server sections:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Classification</th>
+<th>Sections</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Local (Update saves)</td>
+<td>Event Name, Legend, Tracker Style, Map Default View</td>
+</tr>
+<tr>
+<td>Server-only</td>
+<td>Trackers, Backgrounds, Courses, Aid Stations, iGates</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Event management:</strong> Save as Default Event creates or overwrites a named event directory and re-points
+the symlink. Load shows all events newest-first; Load &amp; Activate switches the active event.
+Delete removes the event directory permanently. Events can be locked (<code>locked: true</code> in
+<code>event.yaml</code>); locked events reject saves without the admin password.</p>
+<p><strong>Import / Export:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Section</th>
+<th>Export</th>
+<th>Import</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Event</td>
+<td>YAML</td>
+<td>YAML</td>
+</tr>
+<tr>
+<td>Trackers</td>
+<td>YAML, CSV</td>
+<td>YAML, CSV</td>
+</tr>
+<tr>
+<td>Aid Stations</td>
+<td>YAML, CSV, GPX</td>
+<td>YAML, CSV, GPX, KML, GeoJSON, JSON</td>
+</tr>
+<tr>
+<td>iGates</td>
+<td>YAML, CSV, GPX</td>
+<td>YAML, CSV, GPX, KML, GeoJSON, JSON</td>
+</tr>
+<tr>
+<td>Courses</td>
+<td>YAML, CSV</td>
+<td>YAML, CSV, GPX, KML, GeoJSON, JSON</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Smart lat/lon paste:</strong> Pasting a combined coordinate string (e.g., <code>37.7749, -122.4194</code>
+from Google Maps) into either lat or lon field auto-splits and populates both fields.</p>
+<p><strong>Tile Provider Browser:</strong> The ⊞ button opens a grid of all free Leaflet tile providers
+with thumbnail previews. Clicking a provider inserts it into Backgrounds with all fields
+pre-filled.</p>
+<p><strong>Manage Location Files:</strong> Sortable table of course files across all events. Upload
+(drag-and-drop or file picker), rename, delete, or add to the current event.</p>
+<h4 id="api-endpoints-indexphp">API Endpoints — <code>index.php</code></h4>
+<p>All endpoints return <code>Cache-Control: no-store</code> unless noted. ETag/304 caching is used
+for <code>?json</code>, <code>?config</code>, and <code>?history</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Method</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>?json</code></td>
+<td>GET</td>
+<td>Current tracker state from <code>trackers.json</code></td>
+</tr>
+<tr>
+<td><code>?config</code></td>
+<td>GET</td>
+<td>Parsed active configuration (all sections)</td>
+</tr>
+<tr>
+<td><code>?history</code></td>
+<td>GET</td>
+<td>Beacon history — 5 most-recent positions per tracker</td>
+</tr>
+<tr>
+<td><code>?clientstatus</code></td>
+<td>GET</td>
+<td>Apache worker stats and connected client IPs</td>
+</tr>
+</tbody>
+</table>
+<h4 id="api-endpoints-adminindexphp">API Endpoints — <code>admin/index.php</code></h4>
+<p>All endpoints require an active session (HTTP 401 if not authenticated).</p>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Method</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>?logout</code></td>
+<td>GET</td>
+<td>Destroy session and redirect to login</td>
+</tr>
+<tr>
+<td><code>?load</code></td>
+<td>GET</td>
+<td>Active event config as JSON</td>
+</tr>
+<tr>
+<td><code>?save</code></td>
+<td>POST</td>
+<td>Write full config to <code>config.yaml</code></td>
+</tr>
+<tr>
+<td><code>?versions</code></td>
+<td>GET</td>
+<td>All saved events, newest-first</td>
+</tr>
+<tr>
+<td><code>?saveonly</code></td>
+<td>POST</td>
+<td>Write config to named event; do not change symlink</td>
+</tr>
+<tr>
+<td><code>?saveversion</code></td>
+<td>POST</td>
+<td>Write config + re-point <code>config.yaml</code> symlink</td>
+</tr>
+<tr>
+<td><code>?loadversion&amp;name=&lt;N&gt;</code></td>
+<td>GET</td>
+<td>Named event's config as JSON</td>
+</tr>
+<tr>
+<td><code>?deleteversion</code></td>
+<td>POST</td>
+<td>Delete event directory</td>
+</tr>
+<tr>
+<td><code>?locationfiles</code></td>
+<td>GET</td>
+<td>Course files in the active event directory</td>
+</tr>
+<tr>
+<td><code>?alllocationfiles</code></td>
+<td>GET</td>
+<td>Course files across all events</td>
+</tr>
+<tr>
+<td><code>?upload</code></td>
+<td>POST</td>
+<td>Upload a course file to the active event directory</td>
+</tr>
+<tr>
+<td><code>?renamefile</code></td>
+<td>POST</td>
+<td>Rename a course file</td>
+</tr>
+<tr>
+<td><code>?deletefile</code></td>
+<td>POST</td>
+<td>Delete a course file</td>
+</tr>
+<tr>
+<td><code>?setactiveevent</code></td>
+<td>POST</td>
+<td>Re-point <code>config.yaml</code> without saving content</td>
+</tr>
+<tr>
+<td><code>?bglib</code></td>
+<td>GET</td>
+<td>Deduplicated background tile layers from all events</td>
+</tr>
+<tr>
+<td><code>?beacondeltas</code></td>
+<td>GET</td>
+<td>Min inter-beacon gap per tracker callsign (from <code>tracker_history.yaml</code>)</td>
+</tr>
+<tr>
+<td><code>?togglelock</code></td>
+<td>POST</td>
+<td>Lock or unlock an event (requires password)</td>
+</tr>
+</tbody>
+</table>
+<h4 id="file-permissions">File Permissions</h4>
+<p>Web root <code>/var/www/html/</code> is owned <code>pi:www-data</code> with mode <code>775</code>.
+The daemon runs as <code>www-data</code> with <code>UMask=0002</code>; files it creates get mode <code>664</code>.</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Needs write access</th>
+<th>Created by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>trackers.json</code></td>
+<td>www-data (daemon)</td>
+<td>daemon on first run</td>
+</tr>
+<tr>
+<td><code>config.yaml</code></td>
+<td>www-data (admin page)</td>
+<td>manual / admin Save as Default Event</td>
+</tr>
+<tr>
+<td><code>events/&lt;E&gt;/event.yaml</code></td>
+<td>www-data (admin page)</td>
+<td>admin Save as Default Event</td>
+</tr>
+<tr>
+<td><code>events/&lt;E&gt;/tracker_history.yaml</code></td>
+<td>www-data (daemon)</td>
+<td>daemon on first beacon</td>
+</tr>
+<tr>
+<td>Course files (<code>*.gpx</code>, etc.)</td>
+<td>www-data (upload)</td>
+<td>admin upload or rsync</td>
+</tr>
+</tbody>
+</table>
+<p>To repair ownership after manual file operations:</p>
+<pre><code class="language-bash">sudo chown -R pi:www-data /var/www/html/events/
+sudo chmod -R g+w /var/www/html/events/
+</code></pre>
+<hr />
+<h3 id="display-pi">Display Pi</h3>
+<h4 id="services">Services</h4>
+<p>All services start automatically at boot via systemd.</p>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th>Port</th>
+<th>Script</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>x11vnc</code></td>
+<td>5901</td>
+<td>—</td>
+<td>VNC remote desktop (password: guacamole)</td>
+</tr>
+<tr>
+<td><code>kill-server</code></td>
+<td>8080 (localhost)</td>
+<td><code>kill-server.py</code></td>
+<td><code>GET /exit</code> kills Chromium</td>
+</tr>
+<tr>
+<td><code>stats-listener</code></td>
+<td>1235 UDP</td>
+<td><code>StatsRequestListener.php</code></td>
+<td>Responds to health-check polls</td>
+</tr>
+<tr>
+<td><code>aprs-monitor</code></td>
+<td>—</td>
+<td><code>aprs-monitor.sh</code></td>
+<td>Polls <code>marsaprs.org</code> every 30 s; relaunches Chromium if unreachable</td>
+</tr>
+<tr>
+<td><code>wifi-watchdog</code></td>
+<td>—</td>
+<td><code>wifi-watchdog.sh</code></td>
+<td>Checks WiFi every 30 s; calls <code>wifi-restored.sh</code> on reconnect</td>
+</tr>
+<tr>
+<td><code>lightdm</code></td>
+<td>—</td>
+<td>—</td>
+<td>X11 display manager; required for Chromium and VNC</td>
+</tr>
+</tbody>
+</table>
+<h4 id="crontab">Crontab</h4>
+<pre><code># MARS APRS Display Pi
+# Check every 5 minutes whether to enable/disable NetBird
+*/5 * * * * /home/pi/check-netbird.sh &gt;&gt; /tmp/checknetbird.log 2&gt;&amp;1
+# Enable NetBird after any reboot
+@reboot /home/pi/netbird-up.sh
+# Nightly auto-update at 4:01am
+1 4 * * * /home/pi/auto-update.sh &gt;&gt; /home/pi/update.log 2&gt;&amp;1
+# Nightly reboot at 4:10am (after updates)
+10 4 * * * sudo reboot
+</code></pre>
+<h4 id="kiosk-autostart">Kiosk Autostart</h4>
+<p>Chromium is launched at boot by LXDE autostart
+(<code>/home/pi/.config/lxsession/rpd-x/autostart</code>):</p>
+<pre><code>@chromium --password-store=basic --kiosk --noerrdialogs --disable-infobars
+          --disable-dev-shm-usage --incognito
+          --disable-features=BlockInsecurePrivateNetworkRequests
+          https://marsaprs.org/
+</code></pre>
+<h4 id="useful-commands">Useful Commands</h4>
+<pre><code class="language-bash"># Check all services
+sudo systemctl status x11vnc kill-server stats-listener aprs-monitor wifi-watchdog
+
+# Restart Chromium in kiosk mode
+sudo -u pi DISPLAY=:0 XAUTHORITY=/home/pi/.Xauthority \
+  chromium --password-store=basic --kiosk --noerrdialogs \
+  --disable-infobars --disable-dev-shm-usage --incognito \
+  --disable-features=BlockInsecurePrivateNetworkRequests \
+  'https://marsaprs.org/' &amp;
+</code></pre>
+<p><strong><code>add-wifi.php</code></strong> — Adds a WiFi network to <code>wifi.conf</code> on the local device. Accepts name, SSID, and password as arguments (or prompts interactively). Hashes the password via <code>wpa_passphrase</code> and appends the entry to <code>wifi.conf</code>, then calls <code>update-wifi.php</code> to apply it immediately. Available on all Pi types.</p>
+<pre><code class="language-bash">php /home/pi/add-wifi.php &quot;Home Network&quot; &quot;MySSID&quot; &quot;MyPassword&quot;
+</code></pre>
+<p><strong>Note:</strong> The addition applies immediately but will be overwritten the next time <code>auto-update.sh</code> runs (nightly). Use the WiFi Manager web UI (<code>/wifi/</code>) to make permanent changes.</p>
+<hr />
+<h3 id="igate">iGate</h3>
+<h4 id="crontab_1">Crontab</h4>
+<pre><code># Health watchdog: SDR + IP every minute, internet every 5 min
+* * * * *    /home/pi/igate-watchdog.sh
+# Nightly update at 4:01am
+1 4 * * *    /home/pi/auto-update.sh
+# Nightly reboot at 4:10am (after updates)
+10 4 * * *   sudo reboot
+# Check every 5 minutes whether to enable/disable NetBird
+*/5 * * * *  /home/pi/check-netbird.sh
+# Enable NetBird after any reboot
+@reboot      /home/pi/netbird-up.sh
+</code></pre>
+<h4 id="direwolfconf-key-directives">direwolf.conf Key Directives</h4>
+<table>
+<thead>
+<tr>
+<th>Directive</th>
+<th>Example</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MYCALL</code></td>
+<td><code>MYCALL MARS-5</code></td>
+<td>Station callsign used on RF and APRS-IS</td>
+</tr>
+<tr>
+<td><code>IGLOGIN</code></td>
+<td><code>IGLOGIN K6DRK 12345</code></td>
+<td>APRS-IS login callsign and passcode</td>
+</tr>
+<tr>
+<td><code>PBEACON</code></td>
+<td><code>PBEACON lat=37.96 long=-122.54 comment="iGate 5.0 by K6DRK, Richmond CA"</code></td>
+<td>Position beacon</td>
+</tr>
+<tr>
+<td><code>FILTER</code></td>
+<td><code>FILTER 0 IG t/p &amp; ! d/*</code></td>
+<td>APRS-IS server-side packet filter</td>
+</tr>
+</tbody>
+</table>
+<p>Run <code>/home/pi/configure.sh</code> to set all of these interactively.</p>
+<h4 id="file-permissions_1">File Permissions</h4>
+<p>All iGate scripts live in <code>/home/pi/</code>, owned by <code>pi</code>. The direwolf log directory
+(<code>/var/log/direwolf/</code>) is owned by <code>pi</code> for the watchdog to write to.</p>
+<hr />
+<h3 id="pi-tools">Pi-Tools</h3>
+<p>These utility scripts live in their device source directories on the Mac
+(<code>display/home/</code>, <code>display/systemd/</code>, <code>server/bin/</code>, <code>server/home/</code>,
+<code>server/systemd/</code>) and are installed to <code>/home/pi/</code>, <code>/usr/local/bin/</code>, and
+<code>/etc/systemd/system/</code> by <code>install.sh</code> as part of the standard device setup.</p>
+<h4 id="all-pis">All Pis</h4>
+<p><strong><code>add-wifi.php</code></strong> — Adds a WiFi network to the local <code>wifi.conf</code>. Takes name, SSID, and password as arguments or prompts interactively. Hashes the password with <code>wpa_passphrase</code>, appends the entry, and calls <code>update-wifi.php</code> to apply it. The change is immediate but will be overwritten by the next nightly <code>auto-update.sh</code> — use the WiFi Manager web UI for permanent additions.</p>
+<p><strong><code>wifi-watchdog.sh</code> / <code>wifi-watchdog.service</code></strong> — Generic WiFi watchdog. Checks
+connectivity every 30 seconds; calls <code>/usr/local/bin/wifi-lost.sh</code> on loss and
+<code>/usr/local/bin/wifi-restored.sh</code> on restore. <code>install.sh</code> installs and enables
+both. To install manually after the script has been placed in <code>/home/pi/</code>:</p>
+<pre><code class="language-bash">sudo cp ~/wifi-watchdog.sh /usr/local/bin/
+sudo chmod +x /usr/local/bin/wifi-watchdog.sh
+sudo systemctl daemon-reload &amp;&amp; sudo systemctl enable --now wifi-watchdog
+</code></pre>
+<h4 id="display-pi_1">Display Pi</h4>
+<p><strong><code>set-hostname.sh</code></strong> — Changes the hostname everywhere it needs to be set so the change
+persists across reboots (updates <code>/boot/firmware/user-data</code>, <code>/etc/hostname</code>, <code>/etc/hosts</code>,
+kernel UTS name, and <code>hostnamectl</code>).</p>
+<pre><code class="language-bash">sudo ~/set-hostname.sh &lt;new-hostname&gt;
+exec $SHELL   # refresh the shell prompt
+</code></pre>
+<p><strong><code>kill-server.py</code></strong> — Minimal Python HTTP server on <code>localhost:8080</code>. <code>GET /</code> returns
+a "Connecting…" page that auto-redirects when <code>marsaprs.org</code> is reachable. <code>GET /exit</code>
+kills Chromium. Used by the map's kiosk Exit button (via <code>window.location.href</code> to bypass
+Chrome's Private Network Access preflight).</p>
+<p><strong><code>aprs-monitor.sh</code></strong> — Polls <code>marsaprs.org</code> every 30 seconds. If unreachable, kills
+Chromium and relaunches it pointing to <code>localhost:8080</code>. When the site is reachable again,
+the connecting page auto-redirects.</p>
+<p><strong><code>wifi-restored.sh</code></strong> (display Pi hook) — Called by <code>wifi-watchdog.sh</code> when WiFi is
+restored. Kills Chromium and relaunches it via <code>localhost:8080</code>.</p>
+<p><strong><code>start-aprs.desktop</code></strong> — Desktop launcher; kills any running Chromium and relaunches
+in kiosk mode. <code>install.sh</code> places it in <code>/home/pi/</code>; copy it to the Desktop manually:</p>
+<pre><code class="language-bash">cp ~/start-aprs.desktop ~/Desktop/start-aprs.desktop
+chmod 644 ~/Desktop/start-aprs.desktop   # must NOT be executable on Trixie
+</code></pre>
+<p>On Pi OS Trixie, also suppress the "Executable Script" dialog system-wide:</p>
+<pre><code class="language-bash">mkdir -p ~/.config/libfm
+printf '[config]\nquick_exec=1\n' &gt; ~/.config/libfm/libfm.conf
+</code></pre>
+<h4 id="server-pi_1">Server Pi</h4>
+<p><strong><code>wifi-restored.sh</code></strong> — Called by <code>wifi-watchdog.sh</code> when WiFi is restored on
+aprs-pi. Restarts the APRS daemon to reconnect to APRS-IS on the new interface.</p>
+<p><strong><code>aprs-daemon.service</code> / <code>aprs-daemon.sh</code></strong> — Systemd service unit and wrapper script
+for the APRS daemon. See <a href="#running-the-daemon">Running the Daemon</a>.</p>
+</div>
+
+</body>
+</html>

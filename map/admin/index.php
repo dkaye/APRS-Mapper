@@ -822,7 +822,7 @@ function buildConfigYaml($cfg, $history = []) {
     $legend = trim($cfg['legend'] ?? '');
     if ($legend !== '') {
         $L[] = '# ── Legend ────────────────────────────────────────────────────────────────────';
-        $L[] = '# Multi-line text displayed in the lower-left corner of the map.';
+        $L[] = '# HTML displayed in the lower-left corner of the map in kiosk mode.';
         $L[] = 'legend: ' . ym($legend);
         $L[] = '';
     }
@@ -900,24 +900,28 @@ function buildConfigYaml($cfg, $history = []) {
     $L[] = '';
     $L[] = '# ── Aid Stations ──────────────────────────────────────────────────────────────';
     $L[] = '# Aid station locations shown as black dots on the map and listed in the sidebar.';
-    $L[] = '#   name : label shown in the sidebar and on hover';
-    $L[] = '#   lat  : latitude  (decimal degrees; positive = North, negative = South)';
-    $L[] = '#   lon  : longitude (decimal degrees; positive = East,  negative = West)';
+    $L[] = '#   name     : label shown in the sidebar and on hover';
+    $L[] = '#   callsign : (optional) APRS callsign appended to the tooltip';
+    $L[] = '#   lat      : latitude  (decimal degrees; positive = North, negative = South)';
+    $L[] = '#   lon      : longitude (decimal degrees; positive = East,  negative = West)';
     $L[] = 'aidstations:';
     foreach ($cfg['aidstations'] ?? [] as $g) {
         $L[] = '  - name: ' . ys($g['name'] ?? '');
+        if (!empty($g['callsign'])) $L[] = '    callsign: ' . ys($g['callsign']);
         $L[] = '    lat: '  . (is_numeric($g['lat'] ?? '') ? (float)$g['lat'] : 0);
         $L[] = '    lon: '  . (is_numeric($g['lon'] ?? '') ? (float)$g['lon'] : 0);
     }
     $L[] = '';
     $L[] = '# ── iGates ────────────────────────────────────────────────────────────────────';
     $L[] = '# APRS iGate stations shown as black dots on the map and listed in the sidebar.';
-    $L[] = '#   name : label shown in the sidebar and on hover';
-    $L[] = '#   lat  : latitude  (decimal degrees; positive = North, negative = South)';
-    $L[] = '#   lon  : longitude (decimal degrees; positive = East,  negative = West)';
+    $L[] = '#   name     : label shown in the sidebar and on hover';
+    $L[] = '#   callsign : (optional) APRS callsign appended to the tooltip';
+    $L[] = '#   lat      : latitude  (decimal degrees; positive = North, negative = South)';
+    $L[] = '#   lon      : longitude (decimal degrees; positive = East,  negative = West)';
     $L[] = 'igates:';
     foreach ($cfg['igates'] ?? [] as $g) {
         $L[] = '  - name: ' . ys($g['name'] ?? '');
+        if (!empty($g['callsign'])) $L[] = '    callsign: ' . ys($g['callsign']);
         $L[] = '    lat: '  . (is_numeric($g['lat'] ?? '') ? (float)$g['lat'] : 0);
         $L[] = '    lon: '  . (is_numeric($g['lon'] ?? '') ? (float)$g['lon'] : 0);
     }
@@ -1235,10 +1239,15 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 }
 .modal-list-item .item-del:hover { color: #e74c3c; background: #fdf0f0; }
 .modal-list-item .item-lock {
-    background: none; border: none; font-size: 13px;
-    cursor: pointer; padding: 1px 4px; border-radius: 3px; line-height: 1; flex-shrink: 0; opacity: .55;
+    background: none; border: none; font-size: 14px;
+    cursor: pointer; padding: 1px 4px; border-radius: 3px; line-height: 1; flex-shrink: 0;
+    filter: grayscale(1) opacity(.35);
 }
-.modal-list-item .item-lock:hover { opacity: 1; background: #f0f0f0; }
+.modal-list-item .item-lock:hover { filter: grayscale(1) opacity(.7); background: #f0f0f0; }
+.modal-list-item .item-lock.is-locked {
+    filter: invert(27%) sepia(96%) saturate(1852%) hue-rotate(338deg) brightness(95%);
+}
+.modal-list-item .item-lock.is-locked:hover { filter: invert(20%) sepia(96%) saturate(2000%) hue-rotate(338deg) brightness(85%); }
 .modal-list-live { padding: 9px 12px; font-size: 13px; color: #27ae60; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
 .modal-list-live:hover { background: #eafaf1; }
 .modal-empty { padding: 12px; font-size: 13px; color: #999; text-align: center; }
@@ -1324,15 +1333,15 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
         <div class="sec-title">Legend</div>
         <div class="sec-body">
             <div class="map-field" style="width:100%;max-width:500px">
-                <label for="f-legend">Map Legend Text</label>
-                <textarea id="f-legend" rows="6" style="width:100%;font-family:arial,helvetica,sans-serif;font-size:14px;resize:vertical" placeholder="Text displayed in the lower-left corner of the map." oninput="markDirty()"></textarea>
+                <label for="f-legend">Map Legend HTML</label>
+                <textarea id="f-legend" rows="6" style="width:100%;font-family:monospace;font-size:13px;resize:vertical" placeholder="HTML displayed in the lower-left corner of the map in kiosk mode. Example: &lt;b&gt;Race Day&lt;/b&gt;&lt;br&gt;Start: 7:00 AM" oninput="markDirty()"></textarea>
             </div>
         </div>
     </div>
 
     <!-- ── Trackers ── -->
     <div class="section">
-        <div class="sec-title"><span>Trackers</span><div class="sec-io-btns"><button type="button" class="io-btn" title="Export trackers" onclick="showExportMenu(this,'trackers')">↓</button><button type="button" class="io-btn" title="Import trackers from YAML or CSV" onclick="importSection('trackers')">↑</button></div></div>
+        <div class="sec-title"><span>Trackers</span><span id="delta-refresh-time" style="font-size:0.75rem;font-weight:400;color:#888;margin-left:10px"></span><div class="sec-io-btns"><button type="button" class="io-btn" title="Export trackers" onclick="showExportMenu(this,'trackers')">↓</button><button type="button" class="io-btn" title="Import trackers from YAML or CSV" onclick="importSection('trackers')">↑</button></div></div>
         <div class="sec-body">
             <div id="trackers-list"></div>
             <button class="add-btn" onclick="addTracker()">+ Add Tracker</button>
@@ -1550,14 +1559,19 @@ function makeDragHandle() {
     return s;
 }
 
+let _fieldSeq = 0;
 function fieldLabel(labelText, cls, value, width, extra) {
+    const id      = 'fl-' + (++_fieldSeq);
     const wrap    = document.createElement('label');
     wrap.className = 'field-label';
+    wrap.htmlFor  = id;
     const span    = document.createElement('span');
     span.textContent = labelText;
     const inp     = document.createElement('input');
     inp.type      = extra?.type || 'text';
     inp.className = cls;
+    inp.id        = id;
+    inp.name      = cls;
     inp.value     = value ?? '';
     inp.style.width = width;
     if (extra?.placeholder) inp.placeholder = extra.placeholder;
@@ -1646,6 +1660,12 @@ function applyBeaconDeltas(deltas) {
         const d = cs && deltas[cs] != null ? deltas[cs] : null;
         disp.textContent = d != null ? formatDelta(d) : '—';
     });
+    const t = new Date();
+    const ts = t.getHours().toString().padStart(2,'0') + ':' +
+               t.getMinutes().toString().padStart(2,'0') + ':' +
+               t.getSeconds().toString().padStart(2,'0');
+    const el = document.getElementById('delta-refresh-time');
+    if (el) el.textContent = 'Δ refreshed ' + ts;
 }
 
 function buildTrackerRow(t) {
@@ -2401,9 +2421,10 @@ function buildIgateRow(g) {
     row.appendChild(makeDragHandle());
     const fields  = document.createElement('div');
     fields.className = 'row-fields';
-    fields.appendChild(fieldLabel('Name', 'f-iname', g.name, '160px'));
-    fields.appendChild(fieldLabel('Lat',  'f-ilat',  g.lat,  '120px', { type: 'number', step: 'any' }));
-    fields.appendChild(fieldLabel('Lon',  'f-ilon',  g.lon,  '130px', { type: 'number', step: 'any' }));
+    fields.appendChild(fieldLabel('Name',     'f-iname',     g.name,     '150px'));
+    fields.appendChild(fieldLabel('Callsign', 'f-icallsign', g.callsign, '110px'));
+    fields.appendChild(fieldLabel('Lat',      'f-ilat',      g.lat,      '120px', { type: 'number', step: 'any' }));
+    fields.appendChild(fieldLabel('Lon',      'f-ilon',      g.lon,      '130px', { type: 'number', step: 'any' }));
     attachLatLonPaste(fields.querySelector('.f-ilat'), fields.querySelector('.f-ilon'));
     row.appendChild(fields);
     row.appendChild(makeDeleteBtn());
@@ -2427,9 +2448,10 @@ function buildAidRow(g) {
     row.appendChild(makeDragHandle());
     const fields  = document.createElement('div');
     fields.className = 'row-fields';
-    fields.appendChild(fieldLabel('Name', 'f-aname', g.name, '160px'));
-    fields.appendChild(fieldLabel('Lat',  'f-alat',  g.lat,  '120px', { type: 'number', step: 'any' }));
-    fields.appendChild(fieldLabel('Lon',  'f-alon',  g.lon,  '130px', { type: 'number', step: 'any' }));
+    fields.appendChild(fieldLabel('Name',     'f-aname',     g.name,     '150px'));
+    fields.appendChild(fieldLabel('Callsign', 'f-acallsign', g.callsign, '110px'));
+    fields.appendChild(fieldLabel('Lat',      'f-alat',      g.lat,      '120px', { type: 'number', step: 'any' }));
+    fields.appendChild(fieldLabel('Lon',      'f-alon',      g.lon,      '130px', { type: 'number', step: 'any' }));
     attachLatLonPaste(fields.querySelector('.f-alat'), fields.querySelector('.f-alon'));
     row.appendChild(fields);
     row.appendChild(makeDeleteBtn());
@@ -2494,20 +2516,26 @@ function collectConfig() {
 
     const aidstations = [];
     document.querySelectorAll('#aidstations-list > .list-row').forEach(row => {
-        aidstations.push({
+        const acs = row.querySelector('.f-acallsign').value.trim();
+        const aid = {
             name: row.querySelector('.f-aname').value.trim(),
             lat:  parseFloat(row.querySelector('.f-alat').value),
             lon:  parseFloat(row.querySelector('.f-alon').value)
-        });
+        };
+        if (acs) aid.callsign = acs;
+        aidstations.push(aid);
     });
 
     const igates = [];
     document.querySelectorAll('#igates-list > .list-row').forEach(row => {
-        igates.push({
+        const ics = row.querySelector('.f-icallsign').value.trim();
+        const ig = {
             name: row.querySelector('.f-iname').value.trim(),
             lat:  parseFloat(row.querySelector('.f-ilat').value),
             lon:  parseFloat(row.querySelector('.f-ilon').value)
-        });
+        };
+        if (ics) ig.callsign = ics;
+        igates.push(ig);
     });
 
     const section_visibility = {
@@ -2780,7 +2808,8 @@ function makeLockBtn(v) {
     btn.className = 'item-lock';
     const update = locked => {
         btn.textContent = locked ? '🔒' : '🔓';
-        btn.title = locked ? 'Locked — click to unlock' : 'Click to lock';
+        btn.title = locked ? 'Locked — click to unlock' : 'Click to lock this event';
+        btn.classList.toggle('is-locked', locked);
         v.locked = locked;
     };
     update(v.locked);
@@ -3481,11 +3510,16 @@ function hideErrors() {
 
 function parseGpxPoints(text) {
     const doc = new DOMParser().parseFromString(text, 'text/xml');
-    return Array.from(doc.querySelectorAll('wpt')).map(wpt => ({
-        name: wpt.querySelector('name')?.textContent?.trim() || '',
-        lat:  parseFloat(wpt.getAttribute('lat')),
-        lon:  parseFloat(wpt.getAttribute('lon'))
-    })).filter(p => !isNaN(p.lat) && !isNaN(p.lon));
+    return Array.from(doc.querySelectorAll('wpt')).map(wpt => {
+        const g = {
+            name: wpt.querySelector('name')?.textContent?.trim() || '',
+            lat:  parseFloat(wpt.getAttribute('lat')),
+            lon:  parseFloat(wpt.getAttribute('lon'))
+        };
+        const cs = (wpt.querySelector('cmt')?.textContent?.trim() || '');
+        if (cs) g.callsign = cs;
+        return g;
+    }).filter(p => !isNaN(p.lat) && !isNaN(p.lon));
 }
 
 function parseKmlPoints(text) {
@@ -3498,7 +3532,10 @@ function parseKmlPoints(text) {
         if (parts.length < 2) return;
         const lon = parseFloat(parts[0]), lat = parseFloat(parts[1]);
         if (isNaN(lat) || isNaN(lon)) return;
-        result.push({ name: pm.querySelector('name')?.textContent?.trim() || '', lat, lon });
+        const g = { name: pm.querySelector('name')?.textContent?.trim() || '', lat, lon };
+        const cs = pm.querySelector('description')?.textContent?.trim() || '';
+        if (cs) g.callsign = cs;
+        result.push(g);
     });
     return result;
 }
@@ -3512,7 +3549,10 @@ function parseGeoJsonPoints(text) {
         const [lon, lat] = f.geometry.coordinates;
         if (isNaN(lat) || isNaN(lon)) return;
         const p = f.properties || {};
-        result.push({ name: String(p.name ?? p.Name ?? p.title ?? p.label ?? ''), lat, lon });
+        const g = { name: String(p.name ?? p.Name ?? p.title ?? p.label ?? ''), lat, lon };
+        const cs = String(p.callsign ?? p.call ?? '').trim();
+        if (cs) g.callsign = cs;
+        result.push(g);
     };
     if (data.type === 'FeatureCollection') (data.features || []).forEach(addFeature);
     else if (data.type === 'Feature')      addFeature(data);
@@ -3520,8 +3560,12 @@ function parseGeoJsonPoints(text) {
         data.forEach(item => {
             const lat = parseFloat(item.lat ?? item.latitude ?? item.Lat ?? NaN);
             const lon = parseFloat(item.lon ?? item.lng ?? item.longitude ?? item.Lon ?? NaN);
-            if (!isNaN(lat) && !isNaN(lon))
-                result.push({ name: String(item.name ?? item.Name ?? item.title ?? ''), lat, lon });
+            if (!isNaN(lat) && !isNaN(lon)) {
+                const g = { name: String(item.name ?? item.Name ?? item.title ?? ''), lat, lon };
+                const cs = String(item.callsign ?? item.call ?? '').trim();
+                if (cs) g.callsign = cs;
+                result.push(g);
+            }
         });
     }
     return result;
@@ -3581,6 +3625,7 @@ function buildSectionYaml(type, cfg) {
         L.push('aidstations:');
         (cfg.aidstations || []).forEach(g => {
             L.push('  - name: ' + ys(g.name || ''));
+            if (g.callsign) L.push('    callsign: ' + ys(g.callsign));
             L.push('    lat: '  + (isNaN(g.lat) ? 0 : g.lat));
             L.push('    lon: '  + (isNaN(g.lon) ? 0 : g.lon));
         });
@@ -3588,6 +3633,7 @@ function buildSectionYaml(type, cfg) {
         L.push('igates:');
         (cfg.igates || []).forEach(g => {
             L.push('  - name: ' + ys(g.name || ''));
+            if (g.callsign) L.push('    callsign: ' + ys(g.callsign));
             L.push('    lat: '  + (isNaN(g.lat) ? 0 : g.lat));
             L.push('    lon: '  + (isNaN(g.lon) ? 0 : g.lon));
         });
@@ -3650,6 +3696,7 @@ function buildSectionYaml(type, cfg) {
         L.push('aidstations:');
         (cfg.aidstations || []).forEach(g => {
             L.push('  - name: ' + ys(g.name || ''));
+            if (g.callsign) L.push('    callsign: ' + ys(g.callsign));
             L.push('    lat: '  + (isNaN(g.lat) ? 0 : g.lat));
             L.push('    lon: '  + (isNaN(g.lon) ? 0 : g.lon));
         });
@@ -3657,6 +3704,7 @@ function buildSectionYaml(type, cfg) {
         L.push('igates:');
         (cfg.igates || []).forEach(g => {
             L.push('  - name: ' + ys(g.name || ''));
+            if (g.callsign) L.push('    callsign: ' + ys(g.callsign));
             L.push('    lat: '  + (isNaN(g.lat) ? 0 : g.lat));
             L.push('    lon: '  + (isNaN(g.lon) ? 0 : g.lon));
         });
@@ -4002,8 +4050,8 @@ function buildSectionCsv(type, cfg) {
         headers = ['callsign', 'id', 'name'];
         rows    = (cfg.trackers || []).map(t => [t.callsign || '', t.id || '', t.name || '']);
     } else if (type === 'aidstations' || type === 'igates') {
-        headers = ['name', 'lat', 'lon'];
-        rows    = (cfg[type] || []).map(g => [g.name || '', g.lat ?? '', g.lon ?? '']);
+        headers = ['name', 'callsign', 'lat', 'lon'];
+        rows    = (cfg[type] || []).map(g => [g.name || '', g.callsign || '', g.lat ?? '', g.lon ?? '']);
     } else if (type === 'courses') {
         headers = ['name', 'file', 'color'];
         rows    = (cfg.courses || []).map(c => [c.name || '', c.file || '', c.color || '']);
@@ -4075,11 +4123,17 @@ function parseCsvTrackers(text) {
 function parseCsvGeo(text) {
     const p = parseCsvRows(text); if (!p) return [];
     const nameIdx = p.col('name', 'title', 'label');
+    const csIdx   = p.col('callsign', 'call', 'cs');
     const latIdx  = p.col('lat', 'latitude');
     const lonIdx  = p.col('lon', 'lng', 'long', 'longitude');
     if (latIdx === -1 || lonIdx === -1) return [];
     return p.dataRows
-        .map(r => ({ name: (r[nameIdx] || '').trim(), lat: parseFloat(r[latIdx]), lon: parseFloat(r[lonIdx]) }))
+        .map(r => {
+            const g = { name: (r[nameIdx] || '').trim(), lat: parseFloat(r[latIdx]), lon: parseFloat(r[lonIdx]) };
+            const cs = csIdx !== -1 ? (r[csIdx] || '').trim() : '';
+            if (cs) g.callsign = cs;
+            return g;
+        })
         .filter(g => !isNaN(g.lat) && !isNaN(g.lon));
 }
 
@@ -4116,6 +4170,7 @@ function exportGpx(type) {
         if (isNaN(item.lat) || isNaN(item.lon)) return;
         lines.push(`  <wpt lat="${item.lat}" lon="${item.lon}">`);
         lines.push(`    <name>${esc(item.name || '')}</name>`);
+        if (item.callsign) lines.push(`    <cmt>${esc(item.callsign)}</cmt>`);
         lines.push('  </wpt>');
     });
     lines.push('</gpx>');
@@ -4240,6 +4295,13 @@ async function importGeoSection(type) {
 
 attachLatLonPaste(document.getElementById('map-lat'), document.getElementById('map-lon'));
 doLoad();
+setInterval(async () => {
+    try {
+        const r = await fetch('?beacondeltas');
+        if (r.ok) applyBeaconDeltas(await r.json());
+        else console.warn('[beacondeltas] HTTP', r.status);
+    } catch (e) { console.warn('[beacondeltas] poll failed:', e); }
+}, 30000);
 </script>
 </body>
 </html>

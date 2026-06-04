@@ -3,7 +3,7 @@
   "short_name": "APRS Map",
   "description": "Marin Amateur Radio Society APRS live tracker map",
   "start_url": "/",
-  "display": "standalone",
+  "display": "fullscreen",
   "background_color": "#1c2833",
   "theme_color": "#1c2833",
   "icons": [

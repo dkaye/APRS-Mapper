@@ -226,8 +226,11 @@ function readTrackerHistoryFile() {
 			$entry = ['lat' => (float)$m[1], 'lon' => 0.0, 'ts' => 0];
 		} elseif (preg_match('/^    lon:\s*([\-\d.]+)/', $line, $m) && $entry !== null) {
 			$entry['lon'] = (float)$m[1];
+		} elseif (preg_match('/^    path:\s*(.+)/', $line, $m) && $entry !== null) {
+			$entry['path'] = trim($m[1]);
 		} elseif (preg_match('/^    ts:\s*(\d+)/', $line, $m) && $entry !== null) {
 			$entry['ts'] = (int)$m[1];
+			if (!isset($entry['path'])) $entry['path'] = '';
 			if ($cs !== null) $trackerHistory[$cs][] = $entry;
 			$entry = null;
 		}
@@ -244,7 +247,8 @@ function writeTrackerHistoryFile() {
 	foreach ($trackerHistory as $cs => $entries) {
 		$yaml .= $cs . ":\n";
 		foreach ($entries as $e) {
-			$yaml .= "  - lat: {$e['lat']}\n    lon: {$e['lon']}\n    ts: {$e['ts']}\n";
+			$pathLine = (isset($e['path']) && $e['path'] !== '') ? "    path: {$e['path']}\n" : '';
+			$yaml .= "  - lat: {$e['lat']}\n    lon: {$e['lon']}\n{$pathLine}    ts: {$e['ts']}\n";
 		}
 	}
 	$fh = fopen($historyFilePath, 'w');
@@ -297,7 +301,7 @@ function loadTrackers() {
 			$e["name"] = $entry['name'] ?? $e["name"];
 			$new[] = $e;
 		} else {
-			$new[] = array("callsign"=>$callsign, "id"=>$entry['id'] ?? '', "name"=>$entry['name'] ?? '', "lastUpdate"=>0, "lat"=>null, "lon"=>null);
+			$new[] = array("callsign"=>$callsign, "id"=>$entry['id'] ?? '', "name"=>$entry['name'] ?? '', "lastUpdate"=>0, "lat"=>null, "lon"=>null, "path"=>'');
 		}
 	}
 	$trackers = $new;
@@ -358,7 +362,8 @@ function writeNewTrackerstatusFile($filename) {
 			"time"=>$time,
 			"color"=>$color,
 			"lat"=>$tracker["lat"],
-			"lon"=>$tracker["lon"]
+			"lon"=>$tracker["lon"],
+			"path"=>$tracker["path"] ?? ''
 		);
 	}
 	$fh = fopen($filename, 'w');
@@ -406,15 +411,24 @@ while (TRUE) {
 				$callsign=$element[0];							//extract callsign
 				list($lat,$lon) = parseAprsPosition($line);		//extract position if present
 
+				// Extract via path: everything between '>' and ':' minus the destination field
+				$aprsPath = '';
+				if (isset($element[1])) {
+					$headerBody = explode(':', $element[1], 2);
+					$headerParts = explode(',', $headerBody[0]);
+					array_shift($headerParts);					//remove destination (e.g. APRS, APX203)
+					$aprsPath = implode(',', $headerParts);
+				}
 
 				foreach ($trackers as $key=>$tracker) {			//find it in our array
 					if ($tracker["callsign"]==$callsign) {
 						$trackers[$key]["lastUpdate"]=time();	//update time last seen for that callsign
+						$trackers[$key]["path"]=$aprsPath;
 						if ($lat !== null) {
 							$trackers[$key]["lat"]=$lat;
 							$trackers[$key]["lon"]=$lon;
 							if (!isset($trackerHistory[$callsign])) $trackerHistory[$callsign] = [];
-							array_unshift($trackerHistory[$callsign], ['lat'=>$lat,'lon'=>$lon,'ts'=>time()]);
+							array_unshift($trackerHistory[$callsign], ['lat'=>$lat,'lon'=>$lon,'path'=>$aprsPath,'ts'=>time()]);
 							if (count($trackerHistory[$callsign]) > 10) array_pop($trackerHistory[$callsign]);
 							writeTrackerHistoryFile();
 						}

@@ -251,6 +251,26 @@ body { display: flex; }
 .leaflet-grab,
 .leaflet-dragging .leaflet-grab { cursor: default !important; }
 
+/* Custom scale control: an opaque, padded button. Click toggles miles ↔ km. */
+.aprs-scale {
+    background: rgba(255,255,255,0.92);
+    padding: 4px 8px 5px;
+    border: 1px solid #bbb;
+    border-radius: 5px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.2);
+    cursor: pointer;
+    pointer-events: auto !important;
+    user-select: none;
+    font: 11px/1.1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #333;
+}
+.aprs-scale:hover { background: #fff; }
+.aprs-scale-bar {
+    border: 2px solid #555; border-top: none;
+    padding: 1px 4px 2px; text-align: center; white-space: nowrap;
+    box-sizing: content-box; min-width: 24px;
+}
+
 #sidebar {
     display: flex; flex-direction: column;
     width: 160px; min-width: 160px; height: 100vh;
@@ -296,6 +316,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 .legend-text { font-size: 13px; line-height: 1.3; flex: 1; }
 .legend-id   { }
 .legend-name { color: #444; }
+.legend-sub  { font-size: 11px; color: #888; }
 .legend-time { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .sidebar-item {
@@ -887,7 +908,64 @@ const map = L.map('map', { zoomControl: false })
 	.setView([defaultView.lat, defaultView.lon], defaultView.zoom);
 
 L.control.zoom({ position: 'topleft' }).addTo(map);
-if (!isMobile) L.control.scale({ position: 'bottomright', imperial: true, metric: false }).addTo(map);
+
+// Scale control — fully custom so we own the click target and the unit toggle.
+// Click anywhere on the box to switch miles/feet ↔ km/m.
+let scaleImperial = true;
+const ScaleControl = L.Control.extend({
+	options: { position: 'bottomright' },
+	onAdd: function (m) {
+		const box = L.DomUtil.create('div', 'aprs-scale');
+		const bar = L.DomUtil.create('div', 'aprs-scale-bar', box);
+		this._box = box; this._bar = bar; this._map = m;
+		const refresh = () => this._update();
+		m.on('move zoom moveend zoomend', refresh);
+		m.whenReady(refresh);
+		// Own the gesture: stop it reaching the map (no pan/click/dblclick-zoom).
+		L.DomEvent.disableClickPropagation(box);
+		L.DomEvent.disableScrollPropagation(box);
+		L.DomEvent.on(box, 'dblclick', L.DomEvent.stop);
+		L.DomEvent.on(box, 'click', (e) => {
+			L.DomEvent.stop(e);
+			scaleImperial = !scaleImperial;
+			this._update();
+		});
+		return box;
+	},
+	_roundNum: function (n) {
+		const pow10 = Math.pow(10, (Math.floor(n) + '').length - 1);
+		let d = n / pow10;
+		d = d >= 10 ? 10 : d >= 5 ? 5 : d >= 3 ? 3 : d >= 2 ? 2 : 1;
+		return pow10 * d;
+	},
+	_update: function () {
+		const m = this._map, maxWidth = 100, y = m.getSize().y / 2;
+		const maxMeters = m.distance(
+			m.containerPointToLatLng([0, y]),
+			m.containerPointToLatLng([maxWidth, y]));
+		if (!maxMeters) return;
+		let dist, label, ratio;
+		if (scaleImperial) {
+			const maxFeet = maxMeters * 3.2808399;
+			if (maxFeet > 5280) {
+				const maxMiles = maxFeet / 5280;
+				dist = this._roundNum(maxMiles);
+				label = dist + ' mi'; ratio = dist / maxMiles;
+			} else {
+				dist = this._roundNum(maxFeet);
+				label = dist + ' ft'; ratio = dist / maxFeet;
+			}
+		} else {
+			const meters = this._roundNum(maxMeters);
+			label = meters < 1000 ? meters + ' m' : (meters / 1000) + ' km';
+			ratio = meters / maxMeters;
+		}
+		this._bar.style.width = Math.round(maxWidth * ratio) + 'px';
+		this._bar.textContent = label;
+		this._box.title = 'Click to switch to ' + (scaleImperial ? 'kilometers' : 'miles');
+	}
+});
+new ScaleControl().addTo(map);
 
 map.createPane('coursePane');
 map.getPane('coursePane').style.zIndex = 410;
@@ -1322,7 +1400,9 @@ function showTrackerHistory(callsign, color) {
 		})
 		.then(hist => {
 			if (!hist) return;
-			const entries = hist[callsign] || [];
+			const raw = hist[callsign] || [];
+			// Drop consecutive duplicate positions (same lat+lon reported twice in a row)
+			const entries = raw.filter((e, i) => i === 0 || e.lat !== raw[i-1].lat || e.lon !== raw[i-1].lon);
 			if (!entries.length) return;
 
 			// Remove stale layers before redrawing
@@ -1473,7 +1553,8 @@ function clearAllSelections() {
 function setPlaceTooltip(markers, idx, permanent) {
 	const d = markers[idx]; if (!d) return;
 	d.m.unbindTooltip();
-	d.m.bindTooltip(d.name, { permanent, direction: 'right', className: 'place-label', offset: [8, 0] });
+	const label = d.callsign ? `${d.name} (${d.callsign})` : d.name;
+	d.m.bindTooltip(label, { permanent, direction: 'right', className: 'place-label', offset: [8, 0] });
 }
 function setIgateTooltip(idx, permanent) { setPlaceTooltip(igateMarkers, idx, permanent); }
 function setAidTooltip(idx, permanent)   { if (!kiosk) setPlaceTooltip(aidMarkers, idx, permanent); }
@@ -1744,7 +1825,7 @@ function updateMap() {
 				} else {
 					const m = L.marker(latlng, { icon, pane: 'trackerPane' }).addTo(map);
 					m._trackerColor = color;
-					const popup = L.popup({ closeButton: true, autoPan: false })
+					const popup = L.popup({ closeButton: true, autoPan: isMobile, autoPanPadding: [16, 16] })
 						.setContent(popupHtml(t));
 					trackerPopups[t.callsign] = popup;
 					if (isMobile) {
@@ -2114,7 +2195,9 @@ function applyIgates(igates) {
 			pane: 'igatePane', radius: scaledRadius(igateBase), color: '#222', weight: 1.5, fillColor: '#111', fillOpacity: 0.9
 		}).addTo(map);
 		m._baseRadius = igateBase;
-		m.bindTooltip(g.name, { direction: 'right', sticky: false, className: 'place-label' });
+		const tipLabel = g.callsign ? `${g.name} (${g.callsign})` : g.name;
+		m.bindTooltip(tipLabel, { direction: 'right', sticky: false, className: 'place-label' });
+		if (isMobile) m.on('click', function(e) { L.DomEvent.stopPropagation(e); onIgateClick(igateMarkers.length); });
 
 		let item;
 		if (isMobile) {
@@ -2125,10 +2208,10 @@ function applyIgates(igates) {
 		} else {
 			item = document.createElement('div'); item.className = 'legend-item clickable';
 			item.innerHTML = `<span class="legend-dot" style="background:#111;border-color:#333"></span>`
-			               + `<span class="legend-text"><span class="legend-name">${g.name}</span></span>`;
+			               + `<span class="legend-text"><span class="legend-name">${esc(g.name)}</span></span>`;
 		}
 		const idx = igateMarkers.length;
-		igateMarkers.push({ m, name: g.name, latlng, el: item });
+		igateMarkers.push({ m, name: g.name, callsign: g.callsign || '', latlng, el: item });
 		item.addEventListener('click', () => onIgateClick(idx));
 		container.appendChild(item);
 	});
@@ -2158,9 +2241,11 @@ function applyAidStations(stations) {
 			pane: 'aidPane', radius: scaledRadius(aidBase), color: '#222', weight: 1.5, fillColor: '#111', fillOpacity: 0.9
 		}).addTo(map);
 		m._baseRadius = aidBase;
-		m.bindTooltip(g.name, kiosk
+		const aidTipLabel = g.callsign ? `${g.name} (${g.callsign})` : g.name;
+		m.bindTooltip(aidTipLabel, kiosk
 			? { permanent: true, direction: 'right', className: 'place-label-kiosk' }
 			: { direction: 'right', sticky: false, className: 'place-label' });
+		if (isMobile) m.on('click', function(e) { L.DomEvent.stopPropagation(e); onAidClick(aidMarkers.length); });
 
 		let item;
 		if (isMobile) {
@@ -2171,10 +2256,10 @@ function applyAidStations(stations) {
 		} else {
 			item = document.createElement('div'); item.className = 'legend-item clickable';
 			item.innerHTML = `<span class="legend-dot" style="background:#111;border-color:#333"></span>`
-			               + `<span class="legend-text"><span class="legend-name">${g.name}</span></span>`;
+			               + `<span class="legend-text"><span class="legend-name">${esc(g.name)}</span></span>`;
 		}
 		const idx = aidMarkers.length;
-		aidMarkers.push({ m, name: g.name, latlng, el: item });
+		aidMarkers.push({ m, name: g.name, callsign: g.callsign || '', latlng, el: item });
 		item.addEventListener('click', () => onAidClick(idx));
 		container.appendChild(item);
 	});
