@@ -2689,17 +2689,19 @@ if (/CrOS/.test(navigator.userAgent)) {
 	crosStyle.textContent = '#map, #map * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }';
 	document.head.appendChild(crosStyle);
 
-	// Auto full-screen: show tap-to-start overlay if not already in full-screen
-	if (!document.fullscreenElement) {
+	// Auto full-screen overlay: touch/mobile CrOS only (laptops use the Full Screen button)
+	if (!document.fullscreenElement && isMobile) {
 		const fsOverlay = document.createElement('div');
 		fsOverlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;cursor:pointer';
 		fsOverlay.innerHTML = '<div style="color:#fff;font-size:22px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;pointer-events:none">Tap to enter full screen</div>';
 		document.body.appendChild(fsOverlay);
-		fsOverlay.addEventListener('touchend', e => {
+		const enterFs = e => {
 			e.preventDefault();
 			document.documentElement.requestFullscreen().catch(() => {});
 			fsOverlay.remove();
-		}, { once: true, passive: false });
+		};
+		fsOverlay.addEventListener('touchend', enterFs, { once: true, passive: false });
+		fsOverlay.addEventListener('click',    enterFs, { once: true });
 	}
 }
 

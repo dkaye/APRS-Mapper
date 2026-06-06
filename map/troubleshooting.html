@@ -192,88 +192,83 @@
 
 <div id="content">
 <h1 id="troubleshooting">Troubleshooting</h1>
-<hr />
 <h2 id="is-my-igate-working">Is my iGate working?</h2>
 <p><strong>Quick check — external:</strong>
-Go to <a href="https://aprs.fi">aprs.fi</a> and search for your iGate callsign (e.g. <code>K6DRK-6</code>).
-If it shows a packet received in the last few minutes, your iGate is reaching the APRS
+Go to <a href="https://aprs.fi">aprs.fi</a> and search for the iGate's callsign (e.g. <code>K6DRK-6</code>).
+If it shows a packet received in the last few minutes, the iGate is reaching the APRS
 network.</p>
-<p><strong>Quick check — on the map:</strong>
-Open <a href="https://marsaprs.org">marsaprs.org</a>. If the iGates section is visible, your iGate
-callsign should appear in the list. Its presence confirms the event configuration recognizes
-your station; aprs.fi confirms it is actually passing packets.</p>
-<p><strong>If your iGate is not appearing on aprs.fi:</strong></p>
+<p><strong>If the iGate is not appearing on aprs.fi:</strong></p>
 <ol>
 <li>
-<p><strong>Check the local status page.</strong> From a computer on the same network as the iGate,
-   open a browser to <code>http://&lt;igate-ip&gt;/system.php</code> (replace <code>&lt;igate-ip&gt;</code> with the Pi's
-   local IP address). This page shows whether Direwolf is running and whether it is
-   connected to the APRS-IS server (<code>noam.aprs2.net</code>).</p>
+<p><strong>Check the NetBird Status page.</strong> On the MARS APRS map <a href="https://marsaprs.org">marsaprs.org</a>
+   click on Admin→NetBird. If the iGate is listed, you should see <em>Online</em> next to the iGate's ID.
+   If the iGate isn't on the list, you can add it via Admin→NetBird→Admin using the iGate's NetBird address.
+   If the iGate is listed, but shows as <em>Disabled</em>, go to Admin→NetBird→Admin and turn it on. Nothing will happen until
+   35 seconds after the next five-minute interval (i.e., 5, 10, 15, etc., minutes past the hour).
+   If the iGate can't be reached, its status will change to <em>Offline</em>.</p>
 </li>
 <li>
 <p><strong>Check internet connectivity.</strong> The iGate must have internet access to forward packets
-   to APRS-IS. If the local status page doesn't load, or shows no internet, check the
-   network connection and WiFi configuration.</p>
+   to APRS-IS. If the Admin→NetBird page doesn't show <em>Online</em> after the above steps, have the
+   operator check whether the cellular hotspot (if one is being used) is on and has a cellular connection.</p>
 </li>
 <li>
-<p><strong>Verify the SDR is recognized.</strong> The RTL-SDR dongle must be plugged in. If Direwolf
-   is stopped and the SDR is missing, the watchdog will restart Direwolf when the dongle
-   is re-inserted. Check <code>http://&lt;igate-ip&gt;/system.php</code> for SDR status.</p>
+<p><strong>Reboot the iGate.</strong> Regardless of whether the iGate is connected voa a cellular hotspot or a local WiFi access point,
+   have the operator reboot the iGate and check for an IP address and SSID on the diagnostic display, which appears 1-2 minutes
+   after a reboot and stays on for about 15 seconds. 
+   If the iGate bypasses the diagnostic screen, the iGate has no internet connection.</p>
 </li>
 <li>
-<p><strong>Check the APRS-IS connection.</strong> The status page shows the connected server. If it
-   reads "not connected," Direwolf may need to be restarted: <code>sudo systemctl restart
-   direwolf.service</code>.</p>
+<p><strong>Verify the SDR is recognized.</strong> If the SDR isn't connected or has malfunctioned, the iGate will display <em>No SDR Found</em>
+   and will wait until one is found or reboot. Tell the opertor to check the USB connection to the SDR.</p>
 </li>
 </ol>
-<hr />
 <h2 id="are-you-receiving-my-tracker">Are you receiving my tracker?</h2>
 <p><strong>Quick check:</strong>
-Open <a href="https://marsaprs.org">marsaprs.org</a> and find your callsign (or assigned ID/name) in
-the <strong>Trackers</strong> list. The color of the dot tells you how recently a beacon was received:</p>
-<table>
-<thead>
-<tr>
-<th>Color</th>
-<th>Meaning</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Green</td>
-<td>Heard within the last 2 minutes</td>
-</tr>
-<tr>
-<td>Blue</td>
-<td>Heard within the last 5 minutes</td>
-</tr>
-<tr>
-<td>Red</td>
-<td>Not heard for more than 5 minutes</td>
-</tr>
-</tbody>
-</table>
-<p>The elapsed time next to your name updates every 5 seconds.</p>
+Open <a href="https://marsaprs.org">marsaprs.org</a> and find the callsign (or assigned ID/name) in
+the <em>Trackers</em> list. </p>
 <p><strong>See where your packets were received:</strong>
-Click your name in the tracker list (or tap it on mobile) to show your breadcrumb history —
+Click the tracker's name in the tracker list (or tap it on mobile) to show its breadcrumb history —
 the last 10 beacon positions as dots on the map. Hover (desktop) or tap (mobile) any dot to
-see the timestamp and the <strong>APRS path</strong>: which iGates and digipeaters your packet traveled
+see the timestamp and the <em>APRS path</em>: which iGates and digipeaters the beacons traveled
 through before reaching the internet.</p>
-<p><strong>If your tracker is not appearing or is stuck on red:</strong></p>
+<p><strong>If the tracker is not appearing or is stuck on red</strong> (&gt;5 minutes since last beacon received):</p>
 <ol>
-<li><strong>Confirm your transmitter is on 144.390 MHz</strong> (the standard APRS frequency in North
-   America).</li>
-<li><strong>Confirm your callsign matches</strong> what is configured for you in the event. The
-   callsign your radio transmits must match what is entered in the map's tracker list.
-   Contact the event administrator if you are unsure.</li>
-<li><strong>Check aprs.fi.</strong> Go to <a href="https://aprs.fi">aprs.fi</a> and search your callsign. If
+<li>
+<p><strong>Is it in a good location?</strong> Assuming the tracker has been properly configured, it's likely not close enough to an iGate or digipeater to be received.</p>
+</li>
+<li>
+<p><strong>Check aprs.fi.</strong> Go to <a href="https://aprs.fi">aprs.fi</a> and search for the tracker's callsign. If
    packets appear there but not on the event map, the callsign in the event configuration
    may not match. If they don't appear on aprs.fi either, the issue is RF or
-   transmitter-side.</li>
-<li><strong>Verify at least one iGate is operational.</strong> If no iGates are receiving, no trackers
-   will be heard. Check the iGate status (see above) or contact the net control operator.</li>
+   transmitter-side.</p>
+</li>
+<li>
+<p><strong>Check the tracker's configuration:</strong> </p>
+<ul>
+<li>
+<p>Confirm the transmitter is on 144.390 MHz.</p>
+</li>
+<li>
+<p>Check that the tracker's GPS is on.</p>
+</li>
+<li>
+<p>Check that the tracker is receiving latitude/longitude from the GPS.</p>
+</li>
+<li>
+<p>Check that the tracker's APRS function is using GPS for location.</p>
+</li>
+<li>
+<p>Check the tracker's beaconing period. Ideally, use <strong><em>smart beaconing</em></strong> which will adjust the beaconing period based on 
+  travel speed, etc. If that's not available, use 30 seconds for a vehicle, 60 seconds for a bicycle or 90 seconds for a
+  hiker/runner. 60 seconds is a good compromise for all uses.</p>
+</li>
+<li>
+<p>Check the tracker's callsign such as MARS-3.</p>
+</li>
+</ul>
+</li>
 </ol>
-<hr />
 <h2 id="how-do-i-add-a-new-wifi-hotspot-in-the-field">How do I add a new WiFi hotspot in the field?</h2>
 <p>The iGates and display Pis download a shared WiFi credential list from the server every
 night at 4:00 AM. There are two ways to add a new hotspot:</p>
@@ -286,28 +281,24 @@ night at 4:00 AM. There are two ways to add a new hotspot:</p>
    field devices at the next nightly update (4:00 AM).</li>
 </ol>
 <p>Networks at the top of the list have higher priority. Drag to reorder if needed.</p>
+<p><strong>N.B.</strong>: Be careful when reordering the list. We purposely keep cellphone hotspots at or near the top
+so they can be used as <em>recovery hotspots</em>, superseding other devices farther down in the list.</p>
 <h3 id="temporary-directly-on-a-field-device">Temporary — directly on a field device</h3>
-<p>Use this when you are on-site and need a device to connect to a new hotspot right away,
-before the next nightly sync.</p>
+<p>Use this when you are on-site and need a device to connect to a new hotspot before the next nightly sync.</p>
 <ol>
-<li>Connect your laptop to the device via its <strong>recovery hotspot</strong> (the personal-hotspot
-   entry at the top of the WiFi list that the device falls back to).</li>
+<li>Connect your laptop to the device via a <em>recovery hotspot</em> (such as the personal-hotspot
+   entry at the top of the WiFi list) or any other hotspot on the list.</li>
+<li>Get the device's IP address. (The NetControl and BigTV devices show their IP address when they reboot.)</li>
 <li>SSH to the device: <code>ssh pi@&lt;device-ip&gt;</code></li>
 <li>Run: <code>/home/pi/add-wifi.php</code></li>
 <li>Enter the network name, SSID, and password when prompted.</li>
 <li>The device will connect immediately.</li>
 <li><strong>Turn off the recovery hotspot</strong> once the device has connected to the new network.</li>
 </ol>
-<blockquote>
-<p><strong>Important:</strong> Hotspots added this way are <strong>temporary</strong>. At 4:00 AM the device will
+<p><strong>N.B.</strong>: Hotspots added this way are <em>temporary</em>. At 4:00 AM the device will
 re-download the master WiFi list from the server and the locally added entry will be
 removed unless you also added it via the web admin (step above).</p>
-</blockquote>
-<hr />
 <h2 id="how-do-i-determine-how-frequently-a-tracker-is-beaconing">How do I determine how frequently a tracker is beaconing?</h2>
-<p>There is no single "beacon interval" setting visible to the map — the interval is
-determined by the tracker hardware/software itself. But you can infer it from packet
-history.</p>
 <h3 id="quickest-method-admin-page">Quickest method — Admin page</h3>
 <p>Log in to the <strong>Map Admin</strong> page at <a href="https://marsaprs.org/admin/">marsaprs.org/admin/</a>
 and look at the <strong>Trackers</strong> table. The <strong>Δ</strong> column shows the shortest observed interval

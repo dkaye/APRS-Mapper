@@ -1,0 +1,6 @@
+# Prevent Cloudflare (and other caches) from caching the iGate update archive
+# and install scripts — these must always be served fresh from the origin.
+<FilesMatch "\.(tar\.gz|sh)$">
+    Header set Cache-Control "no-store, no-cache, must-revalidate"
+    Header set Pragma "no-cache"
+</FilesMatch>

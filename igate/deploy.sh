@@ -45,9 +45,11 @@ scp "$IGATE_DIR/install.sh"     "$REMOTE:$REMOTE_DIR/install.sh"
 scp "$IGATE_DIR/auto-update.sh" "$REMOTE:$REMOTE_DIR/auto-update.sh"
 
 # Sync server-side web content (wifi token endpoint served by aprs-pi)
-echo "Syncing www/wifi/ to aprs-pi..."
+echo "Syncing www/ to aprs-pi..."
 ssh "$REMOTE" "mkdir -p $REMOTE_DIR/wifi"
 rsync -a --delete "$IGATE_DIR/www/wifi/" "$REMOTE:$REMOTE_DIR/wifi/"
+# .htaccess prevents Cloudflare from caching files.tar.gz and shell scripts
+scp "$IGATE_DIR/www/.htaccess" "$REMOTE:$REMOTE_DIR/.htaccess"
 ssh "$REMOTE" "sudo chown -R pi:www-data $REMOTE_DIR && sudo find $REMOTE_DIR -type d -exec chmod 775 {} + && sudo find $REMOTE_DIR -type f -exec chmod 664 {} +"
 
 echo ""
