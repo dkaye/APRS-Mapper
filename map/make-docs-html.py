@@ -223,9 +223,8 @@ def build(src_name, dst_name, title):
     print(f"Written: {dst}")
 
 DOCS = [
-    ("README.MD",          "readme.html",          "MARS APRS — README"),
-    ("USERGUIDE.MD",       "userguide.html",       "MARS APRS — User Guide"),
-    ("TROUBLESHOOTING.MD", "troubleshooting.html", "MARS APRS — Troubleshooting"),
+    ("README.MD",    "readme.html",    "MARS APRS — README"),
+    ("USERGUIDE.MD", "userguide.html", "MARS APRS — User Guide"),
 ]
 
 for args in DOCS:

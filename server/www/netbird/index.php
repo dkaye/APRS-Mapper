@@ -325,7 +325,7 @@ footer {
   </div>
 </main>
 
-<footer>Marin Amateur Radio Society &middot; APRS NetBird Status Monitor &middot; v1.10 beta &copy; 2026 Doug Kaye (K6DRK)</footer>
+<footer>Marin Amateur Radio Society &middot; APRS NetBird Status Monitor &middot; v1.12 &copy; 2026 Doug Kaye (K6DRK)</footer>
 
 <div id="copy-toast">Copied!</div>
 

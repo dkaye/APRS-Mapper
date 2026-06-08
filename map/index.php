@@ -183,6 +183,8 @@ $_serverIp = $_serverIp ? explode(' ', $_serverIp)[0] : $_SERVER['SERVER_ADDR'];
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
 <title>MARS APRS Map</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -1007,7 +1009,7 @@ new (L.Control.extend({
 			L.DomEvent.on(exitBtn, 'click', () => { location.href = location.pathname; });
 			L.DomEvent.disableClickPropagation(exitBtn);
 			const txt = L.DomUtil.create('span', '', d);
-			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.11 beta &copy; 2026 Doug Kaye (K6DRK)';
+			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.12 &copy; 2026 Doug Kaye (K6DRK)';
 		} else {
 			if (!isMobile) {
 				const exitBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
@@ -1025,8 +1027,8 @@ new (L.Control.extend({
 			}
 			const ftxt = L.DomUtil.create('span', '', d);
 			ftxt.innerHTML = isMobile
-				? 'MARS APRS v1.11 beta &copy; 2026 Doug Kaye (K6DRK)'
-				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.11 beta &copy; 2026 Doug Kaye (K6DRK)';
+				? 'MARS APRS v1.12 &copy; 2026 Doug Kaye (K6DRK)'
+				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.12 &copy; 2026 Doug Kaye (K6DRK)';
 			if (isMobile) d.style.fontSize = '10px';
 		}
 		return d;
@@ -1886,7 +1888,7 @@ function refreshMobileAbout() {
 	const rows = [
 		currentEventName ? { label: 'Event',   val: currentEventName } : null,
 		{ label: 'Org',     val: 'Marin Amateur Radio Society' },
-		{ label: 'Version', val: 'APRS Tracker Map · v1.11 beta' },
+		{ label: 'Version', val: 'APRS Tracker Map · v1.12' },
 		{ label: 'Map',     val: currentBgAttribution || '' },
 		{ label: 'Credit',  val: '&copy; 2026 Doug Kaye (K6DRK)' },
 	].filter(Boolean);
@@ -2432,7 +2434,7 @@ function openAboutModal() {
 	const attrText = currentBgAttribution || '';
 	const rows = [
 		{ label: 'Organization', val: 'Marin Amateur Radio Society' },
-		{ label: 'Application',  val: 'APRS Tracker Map · v1.11 beta' },
+		{ label: 'Application',  val: 'APRS Tracker Map · v1.12' },
 		currentEventName ? { label: 'Event', val: currentEventName } : null,
 		{ label: 'Map Data',     val: attrText },
 		{ label: 'Copyright',    val: '&copy; 2026 Doug Kaye (K6DRK). All Rights Reserved.' },
