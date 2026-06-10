@@ -5,7 +5,7 @@
 # Nightly FTP backup of all dynamic data (events, credentials, passwords).
 # Keeps backups from the last 5 days; deletes older ones from the remote server.
 #
-# Cron: 0 2 * * * /home/pi/aprs-backup.sh >> /var/log/aprs-backup.log 2>&1
+# Cron: 0 2 * * * /home/pi/aprs-backup.sh >> /var/log/aprs-backup/aprs-backup.log 2>&1
 #
 # Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
 # ©2025 Doug Kaye, K6DRK <doug@rds.com>

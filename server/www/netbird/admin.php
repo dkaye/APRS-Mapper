@@ -12,56 +12,14 @@ session_start();
 
 if (isset($_GET['logout'])) {
     session_destroy();
-    header('Location: admin.php');
+    header('Location: /admin/');
     exit;
 }
 
-$passFile   = '/var/www/html/admin/password.txt';
-$loginError = '';
-
-if (isset($_POST['password'])) {
-    $stored = trim((string)@file_get_contents($passFile));
-    if ($stored !== '' && $_POST['password'] === $stored) {
-        $_SESSION['stats_auth']        = true;
-        $_SESSION['aprs_admin_authed'] = true;
-        header('Location: admin.php');
-        exit;
-    }
-    $loginError = 'Incorrect password';
+if (empty($_SESSION['stats_auth']) && empty($_SESSION['aprs_admin_authed'])) {
+    header('Location: /admin/?next=' . urlencode('/netbird/admin.php'));
+    exit;
 }
-
-if (empty($_SESSION['stats_auth']) && empty($_SESSION['aprs_admin_authed'])) { ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>MARS APRS NetBird — Sign In</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:#f3f4f6;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
-.box{background:#fff;border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,.08);padding:36px 40px;width:300px}
-h1{font-size:17px;font-weight:700;color:#111827;margin-bottom:4px}
-p{font-size:13px;color:#6b7280;margin-bottom:22px}
-input{width:100%;padding:9px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:15px;color:#111827;background:#f9fafb;margin-bottom:12px}
-input:focus{outline:none;border-color:#2563eb;background:#fff}
-button{width:100%;padding:9px;background:#2563eb;color:#fff;border:none;border-radius:6px;font-size:15px;font-weight:500;cursor:pointer}
-button:hover{background:#1d4ed8}
-.err{color:#dc2626;font-size:13px;margin-top:8px}
-</style>
-</head>
-<body>
-<div class="box">
-  <h1>MARS APRS NetBird — Admin</h1>
-  <p>Sign in to continue</p>
-  <form method="post">
-    <input type="password" name="password" placeholder="Password" autofocus autocomplete="current-password">
-    <button type="submit">Sign In</button>
-    <?php if ($loginError): ?><div class="err"><?= htmlspecialchars($loginError) ?></div><?php endif; ?>
-  </form>
-</div>
-</body>
-</html>
-<?php exit; }
 
 require_once __DIR__ . '/yaml_lib.php';
 $devices   = loadDevices(__DIR__ . '/addresses.yaml');
@@ -99,6 +57,24 @@ foreach ($devices as &$d) {
     $d['last_response'] = $lastResponseMap[$ip] ?? null;
 }
 unset($d);
+
+function aprs_admin_log(string $action, array $ctx = []): void {
+    $ip = $_SERVER['HTTP_CF_CONNECTING_IP']
+       ?? (isset($_SERVER['HTTP_X_FORWARDED_FOR'])
+            ? trim(explode(',', $_SERVER['HTTP_X_FORWARDED_FOR'])[0])
+            : null)
+       ?? $_SERVER['REMOTE_ADDR']
+       ?? '-';
+    $ts  = (new DateTime('now', new DateTimeZone('America/Los_Angeles')))->format('Y-m-d H:i:s T');
+    $who = isset($_SESSION['aprs_log_name']) && $_SESSION['aprs_log_name'] !== ''
+         ? preg_replace('/[^A-Za-z0-9 _\-\.]/', '', $_SESSION['aprs_log_name'])
+         : '';
+    $extra = $who !== '' ? " user=$who" : '';
+    foreach ($ctx as $k => $v) $extra .= " $k=$v";
+    @file_put_contents('/var/log/aprs-admin/aprs-admin.log',
+        "$ts | $ip | $action$extra\n", FILE_APPEND | LOCK_EX);
+}
+aprs_admin_log('netbird_page_load');
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -664,6 +640,14 @@ try {
         document.addEventListener(e, resetIdle, { passive: true })
     );
     resetIdle();
+})();
+
+// Sync log name from localStorage into the PHP session.
+(function() {
+    const n = localStorage.getItem('aprs_log_name') || '';
+    if (!n) return;
+    const fd = new FormData(); fd.append('logname', n);
+    fetch('/admin/?updatename', { method: 'POST', body: fd }).catch(() => {});
 })();
 </script>
 </body>

@@ -13,12 +13,20 @@ check_aprs() {
     curl -sk --max-time 5 https://marsaprs.org/ >/dev/null 2>&1
 }
 
-start_chromium() {
+start_connecting() {
     sudo -u pi DISPLAY=:0 XAUTHORITY=/home/pi/.Xauthority nohup chromium \
         --password-store=basic --noerrdialogs --disable-infobars \
         --disable-dev-shm-usage --incognito \
         --disable-features=BlockInsecurePrivateNetworkRequests \
         'http://localhost:8080/' >/tmp/chromium.log 2>&1 &
+}
+
+start_kiosk() {
+    sudo -u pi DISPLAY=:0 XAUTHORITY=/home/pi/.Xauthority nohup chromium \
+        --password-store=basic --kiosk --noerrdialogs --disable-infobars \
+        --disable-dev-shm-usage --incognito \
+        --disable-features=BlockInsecurePrivateNetworkRequests \
+        'https://marsaprs.org/' >/tmp/chromium.log 2>&1 &
 }
 
 while true; do
@@ -30,14 +38,20 @@ while true; do
     fi
 
     if check_aprs; then
-        was_reachable=true
+        if ! $was_reachable; then
+            logger -t aprs-monitor "APRS reachable — switching back to kiosk"
+            was_reachable=true
+            pkill chromium 2>/dev/null
+            sleep 2
+            start_kiosk
+        fi
     else
         if $was_reachable; then
             logger -t aprs-monitor "APRS unreachable — switching to connecting page"
             was_reachable=false
             pkill chromium 2>/dev/null
             sleep 2
-            start_chromium
+            start_connecting
         fi
     fi
 done

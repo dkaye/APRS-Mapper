@@ -1,4 +1,4 @@
-/var/log/aprs-backup.log {
+/var/log/aprs-backup/aprs-backup.log {
     daily
     rotate 7
     compress
@@ -18,7 +18,17 @@
     create 0644 www-data www-data
 }
 
-/var/log/netbird-poller.log {
+/var/log/netbird-poller/netbird-poller.log {
+    daily
+    rotate 7
+    compress
+    missingok
+    notifempty
+    copytruncate
+    create 0644 www-data www-data
+}
+
+/var/log/aprs-admin/aprs-admin.log {
     daily
     rotate 7
     compress

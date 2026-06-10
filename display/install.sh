@@ -77,6 +77,23 @@ if ! grep -q "hdmi_force_hotplug" "$BOOT_CFG"; then
 fi
 ok "HDMI hotplug enabled (takes effect after reboot)"
 
+# udev rule: re-enable display when HDMI cable is reconnected while Pi is running
+sudo tee /usr/local/bin/hdmi-hotplug.sh > /dev/null << 'SCRIPT'
+#!/bin/bash
+sleep 2
+sudo -u pi DISPLAY=:0 XAUTHORITY=/home/pi/.Xauthority \
+    xrandr --output HDMI-1 --mode 1920x1080 --rate 60 2>/dev/null || \
+sudo -u pi DISPLAY=:0 XAUTHORITY=/home/pi/.Xauthority \
+    xrandr --auto 2>/dev/null
+SCRIPT
+sudo chmod +x /usr/local/bin/hdmi-hotplug.sh
+
+sudo tee /etc/udev/rules.d/99-hdmi-hotplug.rules > /dev/null << 'RULE'
+ACTION=="change", SUBSYSTEM=="drm", ENV{HOTPLUG}=="1", RUN+="/usr/local/bin/hdmi-hotplug.sh"
+RULE
+sudo udevadm control --reload-rules
+ok "HDMI hotplug udev rule installed (auto-recovers on cable reconnect)"
+
 # ── Force X11 session (rpd-x, not Wayland rpd-labwc) ─────────────────────────
 msg "Configuring X11 autologin session"
 sudo sed -i 's/autologin-session=rpd-labwc/autologin-session=rpd-x/' /etc/lightdm/lightdm.conf

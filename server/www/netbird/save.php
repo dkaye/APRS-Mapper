@@ -14,6 +14,34 @@ $authed = !empty($_SESSION['stats_auth']) || !empty($_SESSION['aprs_admin_authed
 header('Content-Type: application/json');
 header('Cache-Control: no-store');
 
+function aprs_admin_log(string $action, array $ctx = []): void {
+    $ip = $_SERVER['HTTP_CF_CONNECTING_IP']
+       ?? (isset($_SERVER['HTTP_X_FORWARDED_FOR'])
+            ? trim(explode(',', $_SERVER['HTTP_X_FORWARDED_FOR'])[0])
+            : null)
+       ?? $_SERVER['REMOTE_ADDR']
+       ?? '-';
+    $ts  = (new DateTime('now', new DateTimeZone('America/Los_Angeles')))->format('Y-m-d H:i:s T');
+    $who = isset($_SESSION['aprs_log_name']) && $_SESSION['aprs_log_name'] !== ''
+         ? preg_replace('/[^A-Za-z0-9 _\-\.]/', '', $_SESSION['aprs_log_name'])
+         : '';
+    $extra = $who !== '' ? " user=$who" : '';
+    foreach ($ctx as $k => $v) $extra .= " $k=$v";
+    @file_put_contents('/var/log/aprs-admin/aprs-admin.log',
+        "$ts | $ip | $action$extra\n", FILE_APPEND | LOCK_EX);
+}
+
+require_once __DIR__ . '/yaml_lib.php';
+
+function nb_device_name(string $ip): string {
+    static $map = null;
+    if ($map === null) {
+        $devs = loadDevices(__DIR__ . '/addresses.yaml');
+        $map  = array_column($devs, 'name', 'ip');
+    }
+    return $map[$ip] ?? $ip;
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     echo json_encode(['error' => 'POST required']);
@@ -93,6 +121,7 @@ if ($action === 'save_addresses') {
     }
     @file_put_contents(__DIR__ . '/poll_force',     time());
     @file_put_contents(__DIR__ . '/last_viewer.ts', time());
+    aprs_admin_log('add_device', ['name' => trim($_POST['name'] ?? ''), 'ip' => trim($_POST['ip'] ?? '')]);
     echo json_encode(['ok' => true]);
 
 } elseif ($action === 'update_device') {
@@ -119,6 +148,7 @@ if ($action === 'save_addresses') {
     }
     @file_put_contents(__DIR__ . '/poll_force',     time());
     @file_put_contents(__DIR__ . '/last_viewer.ts', time());
+    aprs_admin_log('update_device', ['orig_ip' => $origIp, 'name' => trim($_POST['name'] ?? ''), 'ip' => trim($_POST['ip'] ?? '')]);
     echo json_encode(['ok' => true]);
 
 } elseif ($action === 'delete_device') {
@@ -134,6 +164,7 @@ if ($action === 'save_addresses') {
     }
     @file_put_contents(__DIR__ . '/poll_force',     time());
     @file_put_contents(__DIR__ . '/last_viewer.ts', time());
+    aprs_admin_log('delete_device', ['device' => nb_device_name($_POST['ip'] ?? '')]);
     echo json_encode(['ok' => true]);
 
 } elseif ($action === 'toggle_device') {
@@ -198,6 +229,7 @@ if ($action === 'save_addresses') {
         @file_put_contents(__DIR__ . '/poll_single', $ip);
     }
     @file_put_contents(__DIR__ . '/last_viewer.ts', time());
+    aprs_admin_log('toggle_device', ['device' => nb_device_name($ip), 'enabled' => $newEnabled ? 'true' : 'false']);
     echo json_encode(['ok' => true, 'enabled' => $newEnabled, 'pending_until' => $pendingUntil]);
 
 } elseif ($action === 'save_ssh_creds') {
@@ -218,6 +250,7 @@ if ($action === 'save_addresses') {
         echo json_encode(['error' => 'Cannot write addresses.yaml']);
         exit;
     }
+    aprs_admin_log('save_ssh_creds', ['device' => nb_device_name($_POST['ip'] ?? '')]);
     echo json_encode(['ok' => true]);
 
 } elseif ($action === 'toggle_web') {
@@ -239,6 +272,7 @@ if ($action === 'save_addresses') {
         echo json_encode(['error' => 'Cannot write addresses.yaml — check permissions']);
         exit;
     }
+    aprs_admin_log('toggle_web', ['device' => nb_device_name($ip), 'web' => $newWeb ? 'true' : 'false']);
     echo json_encode(['ok' => true, 'web' => $newWeb]);
 
 } else {

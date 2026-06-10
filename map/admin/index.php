@@ -36,6 +36,23 @@ function respondError($message, $statusCode = 500) {
 	respondJson(['error' => $message], $statusCode);
 }
 
+function aprs_admin_log(string $action, array $ctx = []): void {
+    $ip = $_SERVER['HTTP_CF_CONNECTING_IP']
+       ?? (isset($_SERVER['HTTP_X_FORWARDED_FOR'])
+            ? trim(explode(',', $_SERVER['HTTP_X_FORWARDED_FOR'])[0])
+            : null)
+       ?? $_SERVER['REMOTE_ADDR']
+       ?? '-';
+    $ts  = (new DateTime('now', new DateTimeZone('America/Los_Angeles')))->format('Y-m-d H:i:s T');
+    $who = isset($_SESSION['aprs_log_name']) && $_SESSION['aprs_log_name'] !== ''
+         ? preg_replace('/[^A-Za-z0-9 _\-\.]/', '', $_SESSION['aprs_log_name'])
+         : '';
+    $extra = $who !== '' ? " user=$who" : '';
+    foreach ($ctx as $k => $v) $extra .= " $k=$v";
+    @file_put_contents('/var/log/aprs-admin/aprs-admin.log',
+        "$ts | $ip | $action$extra\n", FILE_APPEND | LOCK_EX);
+}
+
 $configPath   = __DIR__ . '/../config.yaml';
 $passwordFile = __DIR__ . '/password.txt';
 $eventsDir    = __DIR__ . '/../events';    // event directories live here
@@ -80,7 +97,13 @@ if (!isset($_SESSION['aprs_admin_authed'])
     if ($storedPass !== '' && $_POST['pw'] === $storedPass) {
         $_SESSION['aprs_admin_authed'] = true;
         $_SESSION['stats_auth']        = true;
-        header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
+        $_SESSION['aprs_log_name']     = trim($_POST['logname'] ?? '');
+        aprs_admin_log('login');
+        $redir = $_POST['next'] ?? '';
+        if (!$redir || !preg_match('/^\/[a-zA-Z0-9\/_\-\.?=&%]*$/', $redir) || strpos($redir, '//') !== false) {
+            $redir = strtok($_SERVER['REQUEST_URI'], '?');
+        }
+        header('Location: ' . $redir);
         exit;
     }
     $loginError = 'Incorrect password';
@@ -96,8 +119,21 @@ if (!$authed) {
         echo json_encode(['error' => 'Session expired — reload and log in again']);
         exit;
     }
-    renderLogin($loginError);
+    $next = '';
+    if (isset($_GET['next'])) {
+        $n = $_GET['next'];
+        if (preg_match('/^\/[a-zA-Z0-9\/_\-\.?=&%]*$/', $n) && strpos($n, '//') === false) {
+            $next = $n;
+        }
+    }
+    renderLogin($loginError, $next);
     exit;
+}
+
+// ── Update log name from localStorage (fires on every page load via JS) ──────
+if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['updatename'])) {
+    $_SESSION['aprs_log_name'] = preg_replace('/[^A-Za-z0-9 _\-\.]/', '', trim($_POST['logname'] ?? ''));
+    respondJson(['ok' => true]);
 }
 
 // ── Helper: remove history entries for deleted callsigns ─────────────────────
@@ -276,6 +312,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['save'])) {
 
     $real = realpath($configPath);
     if ($real) pruneTrackerHistory(dirname($real) . '/tracker_history.yaml', array_column($cfg['trackers'] ?? [], 'callsign'));
+    aprs_admin_log('save_config', $eventParam ? ['event' => $eventParam] : []);
     respondJson(['ok' => true]);
 }
 
@@ -367,6 +404,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveversion'])) {
     }
 
     pruneTrackerHistory($eventPath . '/tracker_history.yaml', array_column($cfg['trackers'] ?? [], 'callsign'));
+    aprs_admin_log('save_default_event', ['event' => $eventName]);
     respondJson(['ok' => true]);
 }
 
@@ -427,6 +465,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveonly'])) {
 
     // Intentionally does NOT update the config.yaml symlink
     pruneTrackerHistory($eventPath . '/tracker_history.yaml', array_column($cfg['trackers'] ?? [], 'callsign'));
+    aprs_admin_log('save_event', ['event' => $eventName]);
     respondJson(['ok' => true]);
 }
 
@@ -469,6 +508,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['deleteversion'])) {
     if (!rmdir($path)) {
         respondError('Cannot delete — check permissions');
     }
+    aprs_admin_log('delete_event', ['event' => $name]);
     respondJson(['ok' => true]);
 }
 
@@ -499,6 +539,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['togglelock'])) {
     if (file_put_contents($path, $yaml, LOCK_EX) === false) {
         respondError('Cannot write event file — check permissions');
     }
+    aprs_admin_log('toggle_lock', ['event' => $name, 'locked' => $lock ? 'true' : 'false']);
     respondJson(['ok' => true, 'locked' => $lock]);
 }
 
@@ -674,6 +715,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['setactiveevent'])) {
     if (!symlink($targetPath, $configPath)) {
         respondError('Cannot create symlink', 500);
     }
+    aprs_admin_log('set_active_event', ['event' => $eventName]);
     respondJson(['ok' => true]);
 }
 
@@ -702,7 +744,7 @@ if (isset($_GET['bglib'])) {
 
 // ── Login form ────────────────────────────────────────────────────────────────
 
-function renderLogin($error = '') { ?>
+function renderLogin($error = '', $next = '') { ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -765,16 +807,32 @@ body {
         <?php if ($error): ?>
             <div class="error"><?= htmlspecialchars($error) ?></div>
         <?php endif; ?>
-        <form method="POST">
+        <form method="POST" id="login-form">
+            <?php if ($next): ?><input type="hidden" name="next" value="<?= htmlspecialchars($next) ?>"><?php endif; ?>
+            <div class="field">
+                <label for="logname">Your name for logging</label>
+                <input type="text" id="logname" name="logname" autocomplete="name" placeholder="e.g. Doug">
+            </div>
             <div class="field">
                 <label for="pw">Password</label>
-                <input type="password" id="pw" name="pw" autofocus autocomplete="current-password">
+                <input type="password" id="pw" name="pw" autocomplete="current-password">
             </div>
             <div class="btn-row">
                 <button type="submit" class="submit-btn">Sign In</button>
                 <a href="../" class="cancel-btn">Cancel</a>
             </div>
         </form>
+        <script>
+        (function() {
+            var n = document.getElementById('logname');
+            var saved = localStorage.getItem('aprs_log_name');
+            if (saved) { n.value = saved; document.getElementById('pw').focus(); }
+            else n.focus();
+            document.getElementById('login-form').addEventListener('submit', function() {
+                if (n.value.trim()) localStorage.setItem('aprs_log_name', n.value.trim());
+            });
+        })();
+        </script>
     </div>
 </div>
 </body>
@@ -783,6 +841,7 @@ body {
 
 // ── YAML serialiser (functions live in config_yaml.php, loaded at top) ───────
 
+aprs_admin_log('page_load');
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -4134,6 +4193,16 @@ setInterval(async () => {
         else console.warn('[beacondeltas] HTTP', r.status);
     } catch (e) { console.warn('[beacondeltas] poll failed:', e); }
 }, 30000);
+
+// Sync log name from localStorage into the PHP session so all logged actions
+// carry the user's name even when they were already logged in before the name
+// field was added.
+(function() {
+    const n = localStorage.getItem('aprs_log_name') || '';
+    if (!n) return;
+    const fd = new FormData(); fd.append('logname', n);
+    fetch('?updatename', { method: 'POST', body: fd }).catch(() => {});
+})();
 </script>
 </body>
 </html>

@@ -351,7 +351,11 @@ function writeNewTrackerstatusFile($filename) {
 		$timeSinceLastUpdate=$now-$lastUpdate;
 		$seconds=$timeSinceLastUpdate % 60;
 		$minutes=($timeSinceLastUpdate-$seconds)/60;
-		if ($minutes>=60) {$time="stale";} else {$time=sprintf("%d:%02d",$minutes,$seconds);}
+		if ($minutes>=60) {
+			$hours = intdiv($minutes, 60);
+			$mins  = $minutes % 60;
+			$time  = $hours > 0 ? ">{$hours}h {$mins}m" : ">{$minutes}m";
+		} else {$time=sprintf("%d:%02d",$minutes,$seconds);}
 		if ($timeSinceLastUpdate<=$minSecondsGreen) {$color="green";}
 		elseif ($timeSinceLastUpdate<=$minSecondsBlue) {$color="blue";}
 		else {$color="red";}

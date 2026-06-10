@@ -192,6 +192,7 @@ $_serverIp = $_serverIp ? explode(' ', $_serverIp)[0] : $_SERVER['SERVER_ADDR'];
 <script src="utils.js"></script>
 <style>
 /* ── Reset & shared ──────────────────────────────────────────────────────── */
+:root { --aprs-sat: env(safe-area-inset-top, 0px); } /* read in JS for standalone status-bar floor */
 * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { width: 100%; height: 100%; overflow: hidden;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', arial, sans-serif; }
@@ -478,6 +479,8 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
         background: rgba(255,255,255,0.95); color: #555;
         border: 1px solid #ccc; border-radius: 6px;
         cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.18);
+        touch-action: manipulation; /* prevent iOS scroll-gesture delay on 1px-scrollable doc */
+        pointer-events: auto;
     }
     #mobile-gear-btn:active { background: #f0f0f0; }
 
@@ -1146,8 +1149,8 @@ const mobileBackdrop = document.getElementById('mobile-backdrop');
 const mobileGearBtn  = document.getElementById('mobile-gear-btn');
 let drawerOpen = false;
 
-function openMobileDrawer()  { if (!mobileDrawer) return; drawerOpen = true;  mobileDrawer.classList.add('open'); if (mobileBackdrop) mobileBackdrop.classList.add('open'); }
-function closeMobileDrawer() { if (!mobileDrawer) return; drawerOpen = false; mobileDrawer.classList.remove('open'); if (mobileBackdrop) mobileBackdrop.classList.remove('open'); }
+function openMobileDrawer()  { if (!mobileDrawer) return; drawerOpen = true;  mobileDrawer.classList.add('open'); }
+function closeMobileDrawer() { if (!mobileDrawer) return; drawerOpen = false; mobileDrawer.classList.remove('open'); }
 function setSheetOpen(open)  { if (open) openMobileDrawer(); else closeMobileDrawer(); }
 
 if (mobileGearBtn) {
@@ -1162,10 +1165,11 @@ if (mobileGearBtn) {
 	const pinGear = () => {
 		const vv = window.visualViewport;
 		if (!vv) return;
-		const w = mobileGearBtn.offsetWidth || 36;
+		const w   = mobileGearBtn.offsetWidth || 36;
+		const sat = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--aprs-sat')) || 0;
 		mobileGearBtn.style.right = 'auto';
 		mobileGearBtn.style.left  = (vv.offsetLeft + vv.width - w - 10) + 'px';
-		mobileGearBtn.style.top   = (vv.offsetTop + 10) + 'px';
+		mobileGearBtn.style.top   = Math.max(vv.offsetTop + 10, sat + 10) + 'px';
 	};
 	if (window.visualViewport) {
 		visualViewport.addEventListener('resize', pinGear);
@@ -1225,7 +1229,24 @@ if (isMobile) {
 		window.scrollTo(0, 1);
 	};
 	window.addEventListener('load', retract, { once: true });
-	window.addEventListener('orientationchange', () => setTimeout(retract, 300));
+
+	// On orientation change, wait for the viewport to actually report the new
+	// dimensions before retracting and telling Leaflet to recalculate.
+	// orientationchange fires *before* iOS updates innerHeight/visualViewport,
+	// so a fixed setTimeout races; visualViewport.resize fires once the new
+	// size is ready. We also call map.invalidateSize() so Leaflet redraws for
+	// the new container dimensions (otherwise the map renders in the wrong half).
+	let _awaitingOrient = false;
+	window.addEventListener('orientationchange', () => { _awaitingOrient = true; });
+	const _afterOrient = () => {
+		if (!_awaitingOrient) return;
+		_awaitingOrient = false;
+		retract();
+		map.invalidateSize();
+	};
+	if (window.visualViewport) visualViewport.addEventListener('resize', _afterOrient);
+	else window.addEventListener('resize', _afterOrient);
+
 	// Prevent accidental scroll-to-0 from re-showing the bar
 	window.addEventListener('scroll', () => { if (window.scrollY === 0) window.scrollTo(0, 1); }, { passive: true });
 }
@@ -1634,7 +1655,10 @@ function onMobileTrackerLongPress(callsign) {
 	onMobileTrackerTap(callsign);
 	closeMobileDrawer();
 	const m = markers[callsign];
-	if (m) map.setView(m.getLatLng(), 15);
+	// Delay setView until the drawer slide animation (280ms) finishes so the
+	// marker isn't behind the drawer when Leaflet computes the center, and
+	// invalidateSize so Leaflet uses the current container dimensions.
+	if (m) setTimeout(() => { map.invalidateSize(); map.setView(m.getLatLng(), 15); }, 310);
 }
 
 // ── Update legend ──────────────────────────────────────────────────────────
@@ -1681,7 +1705,7 @@ function updateDesktopLegend(trackers) {
 			item.className = 'legend-item' + (hasBeacon ? ' clickable' : '');
 			item.innerHTML = `<span class="legend-dot"></span>`
 			               + `<span class="legend-text"><span class="legend-id">${t.id}</span> <span class="legend-name">${t.name}</span></span>`
-			               + `<span class="legend-time">${t.time}</span>`;
+			               + `<span class="legend-time">${(t.color||'red')==='red'?'stale':t.time}</span>`;
 			if (hasBeacon) item.addEventListener('click', () => onLegendClick(t.callsign));
 		}
 		const color = t.color || 'red';
@@ -1689,7 +1713,7 @@ function updateDesktopLegend(trackers) {
 		item.querySelector('.legend-time').style.color      = color;
 		item.querySelector('.legend-id').textContent        = t.id;
 		item.querySelector('.legend-name').textContent      = t.name;
-		item.querySelector('.legend-time').textContent      = t.time;
+		item.querySelector('.legend-time').textContent      = color === 'red' ? 'stale' : t.time;
 		if (hasBeacon && !item.classList.contains('clickable')) {
 			item.classList.add('clickable');
 			item.addEventListener('click', () => onLegendClick(t.callsign));
@@ -1716,10 +1740,11 @@ function updateMobileLegend(trackers) {
 			item.dataset.callsign = t.callsign;
 			item.className = 'm-legend-item';
 			item.innerHTML = `<span class="m-dot"></span><span class="m-id">${t.id}</span>`
-			               + `<span class="m-name">${t.name}</span><span class="m-time">${t.time}</span>`;
-			let pressTimer = null, didLongPress = false;
-			item.addEventListener('touchstart', () => {
+			               + `<span class="m-name">${t.name}</span><span class="m-time">${(t.color||'red')==='red'?'stale':t.time}</span>`;
+			let pressTimer = null, didLongPress = false, _lpX = 0, _lpY = 0;
+			item.addEventListener('touchstart', e => {
 				didLongPress = false;
+				_lpX = e.touches[0].clientX; _lpY = e.touches[0].clientY;
 				pressTimer = setTimeout(() => { pressTimer = null; didLongPress = true; onMobileTrackerLongPress(t.callsign); }, 500);
 			}, { passive: true });
 			item.addEventListener('touchend', () => {
@@ -1727,7 +1752,12 @@ function updateMobileLegend(trackers) {
 				if (!didLongPress) onMobileTrackerTap(t.callsign);
 			});
 			item.addEventListener('touchcancel', () => { if (pressTimer !== null) { clearTimeout(pressTimer); pressTimer = null; } });
-			item.addEventListener('touchmove',   () => { if (pressTimer !== null) { clearTimeout(pressTimer); pressTimer = null; didLongPress = true; } }, { passive: true });
+			item.addEventListener('touchmove', e => {
+				if (pressTimer !== null) {
+					const dx = e.touches[0].clientX - _lpX, dy = e.touches[0].clientY - _lpY;
+					if (Math.abs(dx) > 8 || Math.abs(dy) > 8) { clearTimeout(pressTimer); pressTimer = null; didLongPress = true; }
+				}
+			}, { passive: true });
 		}
 		const color = t.color || 'red';
 		item.querySelector('.m-dot').style.background  = color;
@@ -1735,7 +1765,7 @@ function updateMobileLegend(trackers) {
 		item.querySelector('.m-time').style.color      = color;
 		item.querySelector('.m-id').textContent        = t.id;
 		item.querySelector('.m-name').textContent      = t.name;
-		item.querySelector('.m-time').textContent      = t.time;
+		item.querySelector('.m-time').textContent      = color === 'red' ? 'stale' : t.time;
 		legend.appendChild(item);  // re-insert in sorted position (moves existing elements)
 	});
 
@@ -2652,46 +2682,34 @@ if (isNonDefaultEvent) {
 	if (attrEl) attrEl.insertBefore(note, attrEl.firstChild);
 }
 
-// ── Chrome OS full-screen toggle ─────────────────────────────────────────────
+// ── Full-screen toggle ────────────────────────────────────────────────────────
+const toggleFullScreen = () => {
+	if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
+	else document.exitFullscreen();
+};
+
+// Full Screen button in the mobile drawer — non-iOS mobile only.
+// iOS doesn't support requestFullscreen() in Safari; standalone PWA is already
+// fullscreen. The Add to Home Screen nudge handles the iOS fullscreen path.
+if (isMobile && !_isIos) {
+	const mFsBtn = document.getElementById('m-fs-btn');
+	mFsBtn.style.display = '';
+	mFsBtn.onclick = toggleFullScreen;
+	document.addEventListener('fullscreenchange', () => {
+		mFsBtn.textContent = document.fullscreenElement ? 'Exit Full Screen' : 'Full Screen';
+	});
+}
+
+// CrOS-only: sidebar fs button, auto-overlay on touch, context menu suppression
 if (/CrOS/.test(navigator.userAgent)) {
 	document.getElementById('fs-sidebar-row').style.display = '';
-	document.getElementById('m-fs-btn').style.display = '';
+	const fsSidebarBtn = document.getElementById('fs-btn');
+	fsSidebarBtn.onclick = toggleFullScreen;
+	document.addEventListener('fullscreenchange', () => {
+		fsSidebarBtn.textContent = document.fullscreenElement ? 'Exit Full Screen' : 'Full Screen';
+	});
 
-	function toggleFullScreen() {
-		if (!document.fullscreenElement) {
-			document.documentElement.requestFullscreen();
-		} else {
-			document.exitFullscreen();
-		}
-	}
-
-	function updateFsLabels() {
-		const label = document.fullscreenElement ? 'Exit Full Screen' : 'Full Screen';
-		document.getElementById('fs-btn').textContent = label;
-		document.getElementById('m-fs-btn').textContent = label;
-	}
-
-	document.getElementById('fs-btn').onclick = toggleFullScreen;
-	document.getElementById('m-fs-btn').onclick = toggleFullScreen;
-	document.addEventListener('fullscreenchange', updateFsLabels);
-
-	// Reset Map: sits just below the gear button, same style, only on mobile
-	if (isMobile) {
-		const crosResetBtn = document.createElement('button');
-		crosResetBtn.title = 'Reset Map';
-		crosResetBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>';
-		crosResetBtn.style.cssText = 'position:fixed;top:calc(max(10px,env(safe-area-inset-top)) + 44px);right:max(10px,env(safe-area-inset-right));z-index:1400;width:36px;height:36px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.95);color:#555;border:1px solid #ccc;border-radius:6px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.18);';
-		document.body.appendChild(crosResetBtn);
-		crosResetBtn.addEventListener('touchend', e => { e.stopPropagation(); clearAllSelections(); map.setView([defaultView.lat, defaultView.lon], defaultView.zoom); });
-		crosResetBtn.addEventListener('click',    e => { e.stopPropagation(); clearAllSelections(); map.setView([defaultView.lat, defaultView.lon], defaultView.zoom); });
-	}
-
-	document.addEventListener('contextmenu', e => e.preventDefault());
-	const crosStyle = document.createElement('style');
-	crosStyle.textContent = '#map, #map * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }';
-	document.head.appendChild(crosStyle);
-
-	// Auto full-screen overlay: touch/mobile CrOS only (laptops use the Full Screen button)
+	// Auto full-screen overlay: CrOS touch only (not laptops)
 	if (!document.fullscreenElement && isMobile) {
 		const fsOverlay = document.createElement('div');
 		fsOverlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;cursor:pointer';
@@ -2705,6 +2723,38 @@ if (/CrOS/.test(navigator.userAgent)) {
 		fsOverlay.addEventListener('touchend', enterFs, { once: true, passive: false });
 		fsOverlay.addEventListener('click',    enterFs, { once: true });
 	}
+
+	document.addEventListener('contextmenu', e => e.preventDefault());
+	const crosStyle = document.createElement('style');
+	crosStyle.textContent = '#map, #map * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }';
+	document.head.appendChild(crosStyle);
+}
+
+// Reset Map button — all mobile devices (must live in Leaflet container and be
+// pinned via visualViewport; position:fixed on body anchors to the layout
+// viewport and vanishes behind Safari's toolbars)
+if (isMobile) {
+	const resetBtn = document.createElement('button');
+	resetBtn.title = 'Reset Map';
+	resetBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>';
+	resetBtn.style.cssText = 'position:absolute;right:auto;z-index:1400;width:36px;height:36px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.95);color:#555;border:1px solid #ccc;border-radius:6px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.18);touch-action:manipulation;pointer-events:auto;';
+	map.getContainer().appendChild(resetBtn);
+	const pinReset = () => {
+		const vv = window.visualViewport;
+		if (!vv) return;
+		const w   = resetBtn.offsetWidth || 36;
+		const sat = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--aprs-sat')) || 0;
+		resetBtn.style.left = (vv.offsetLeft + vv.width - w - 10) + 'px';
+		resetBtn.style.top  = Math.max(vv.offsetTop + 54, sat + 54) + 'px';
+	};
+	if (window.visualViewport) {
+		visualViewport.addEventListener('resize', pinReset);
+		visualViewport.addEventListener('scroll', pinReset);
+		pinReset();
+		setTimeout(pinReset, 300);
+	}
+	resetBtn.addEventListener('touchend', e => { e.stopPropagation(); clearAllSelections(); map.setView([defaultView.lat, defaultView.lon], defaultView.zoom); });
+	resetBtn.addEventListener('click',    e => { e.stopPropagation(); clearAllSelections(); map.setView([defaultView.lat, defaultView.lon], defaultView.zoom); });
 }
 
 // Always poll for live tracker data; skip config polling only when previewing a non-default event

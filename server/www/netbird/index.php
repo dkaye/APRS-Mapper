@@ -494,7 +494,7 @@ function copyIP(ip) {
 
 let devices = [];
 let lastSendTs = null, repeatSecs = 60, pollSliderSetAt = 0;
-let lastDynKeysStr = '';
+let lastDynKeysStr = '', lastDynKeys = [];
 let backgroundTimer = null, ageCellTimer = null;
 let bgMs = 8000, lastFetchTime = 0;
 
@@ -609,6 +609,7 @@ function processData(data, wasInit) {
         || incoming.length !== devices.length
         || incoming.some((d, i) => !devices[i] || d.ip !== devices[i].ip);
     lastDynKeysStr = dynStr;
+    lastDynKeys    = dynKeys;
 
     // Patch live fields into existing objects to avoid a full re-render on every poll
     incoming.forEach(ad => {
@@ -629,6 +630,7 @@ function processData(data, wasInit) {
     } else {
         patchAllStatuses();
         updateAgeCells();
+        patchDataCells();
         updateSummary();
     }
 }
@@ -666,7 +668,8 @@ function fullRender() {
             const { parsed } = parseKV(cleaned);
             const dynCells  = dynKeys.map(k => {
                 const v = parsed[k];
-                return v ? `<td class="data-cell">${formatVal(k, v, parsed)}</td>` : `<td class="data-cell empty">—</td>`;
+                return v ? `<td class="data-cell" data-col="${esc(k)}">${formatVal(k, v, parsed)}</td>`
+                         : `<td class="data-cell empty" data-col="${esc(k)}">—</td>`;
             }).join('');
             rows += `<tr class="device-row" data-ip="${esc(d.ip)}">
               <td><div class="device-name" title="${esc(d.name)}">${esc(d.name || d.ip)}</div></td>
@@ -709,6 +712,28 @@ function updateAgeCells() {
         if (!row) return;
         const cell = row.querySelector('.age-cell');
         if (cell) cell.textContent = timeAgo(d.last_response);
+    });
+}
+
+function patchDataCells() {
+    if (!lastDynKeys.length) return;
+    devices.forEach(d => {
+        const row = document.querySelector(`#tbody tr.device-row[data-ip="${d.ip}"]`);
+        if (!row) return;
+        const cleaned = d.response_data ? cleanResponse(d.response_data, d.ip, d.hostname || '') : '';
+        const { parsed } = parseKV(cleaned);
+        lastDynKeys.forEach(k => {
+            const cell = row.querySelector(`[data-col="${k}"]`);
+            if (!cell) return;
+            const v = parsed[k];
+            if (v) {
+                cell.className = 'data-cell';
+                cell.innerHTML = formatVal(k, v, parsed);
+            } else {
+                cell.className = 'data-cell empty';
+                cell.textContent = '—';
+            }
+        });
     });
 }
 

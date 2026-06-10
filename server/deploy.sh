@@ -67,6 +67,9 @@ rsync -a --delete \
     "$MAP_DIR/" "$REMOTE:$STAGING/www/"
 rsync -a "$SERVER_DIR/www/" "$REMOTE:$STAGING/www/"
 
+echo "Installing logrotate config..."
+ssh "$REMOTE" "sudo cp $STAGING/etc/logrotate.d/aprs /etc/logrotate.d/aprs && sudo chmod 644 /etc/logrotate.d/aprs"
+
 echo "Building files.tar.gz on aprs-pi..."
 ssh "$REMOTE" "tar -czf $REMOTE_DIR/files.tar.gz -C $STAGING ."
 

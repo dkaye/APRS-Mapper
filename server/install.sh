@@ -128,8 +128,9 @@ fi
 
 # ── Systemd services ──────────────────────────────────────────────────────────
 msg "Enabling systemd services"
-sudo mkdir -p /var/log/aprs-daemon /run/aprs-daemon
-sudo chown www-data:www-data /var/log/aprs-daemon /run/aprs-daemon
+sudo mkdir -p /var/log/aprs-daemon /var/log/netbird-poller /var/log/aprs-admin /var/log/aprs-backup /run/aprs-daemon
+sudo chown www-data:www-data /var/log/aprs-daemon /var/log/netbird-poller /var/log/aprs-admin /run/aprs-daemon
+sudo chown root:root /var/log/aprs-backup
 sudo systemctl daemon-reload
 sudo systemctl enable aprs-daemon.service
 sudo systemctl enable wifi-watchdog.service
@@ -145,7 +146,7 @@ crontab - << 'EOF'
 # Enable NetBird after any reboot
 @reboot /home/pi/netbird-up.sh
 # Nightly backup at 2:00am
-0 2 * * * /home/pi/aprs-backup.sh >> /var/log/aprs-backup.log 2>&1
+0 2 * * * /home/pi/aprs-backup.sh >> /var/log/aprs-backup/aprs-backup.log 2>&1
 # Nightly WiFi update at 4:00am
 0 4 * * * php /home/pi/update-wifi.php ssids=/var/www/html/wifi/wifi.yaml >> /tmp/server-wifi-update.log 2>&1
 # Nightly reboot at 4:10am (after any updates)
