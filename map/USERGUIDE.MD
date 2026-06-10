@@ -1,6 +1,6 @@
 # APRS Tracker Map — User Guide
 
-**Version 1.12 · June 7, 2026**
+**Version 1.12 · June 10, 2026**
 
 ---
 
@@ -169,6 +169,8 @@ time since its last beacon was received.
 | Blue | Heard within the last 5 minutes |
 | Red | Not heard for more than 5 minutes |
 
+When a tracker has not been heard for more than 5 minutes its sidebar entry shows **stale** in red instead of an elapsed time. Hovering over the marker on the map shows the actual elapsed time (e.g., ">2h 15m ago").
+
 The tracker's marker on the map and sidebar entry both update every 5 seconds.
 
 #### Clicking a tracker (L)
@@ -306,10 +308,7 @@ Click **Clients** in the page footer to open a panel showing:
 
 ## Admin Page (L,S)
 
-Click on the Admin button and enter the password when prompted. After logging in,
-you can edit the configuration for the currently default event. Your session remains active
-for 12 hours; you will not be asked for the password again if you return to the admin page
-within that timeframe. As mentioned earlier, all changes will be strictly local unless and until you use Save as Default Event... to publish them for others to see.
+Click on the Admin button and enter the password when prompted. The login form also has a **Your name for logging** field — enter your name so that admin actions (saving events, NetBird changes, etc.) are attributed to you in the server logs. Your name is saved in your browser and pre-filled on future visits. After logging in, you can edit the configuration for the currently default event. Your session remains active for 12 hours; you will not be asked for the password again if you return to the admin page within that timeframe. As mentioned earlier, all changes will be strictly local unless and until you use Save as Default Event... to publish them for others to see.
 
 The header and footer each contain action buttons:
 
@@ -542,6 +541,8 @@ There are two password-protected pages:
 |------|-----|
 | Status | `/netbird/` |
 | Admin | `/netbird/admin.php` |
+
+Both pages share the same login as the map Admin page. Visiting `/netbird/admin.php` will redirect to the Admin login if you are not already signed in, then return you to the NetBird admin automatically.
 
 ---
 

@@ -192,7 +192,7 @@
 
 <div id="content">
 <h1 id="aprs-tracker-map-user-guide">APRS Tracker Map — User Guide</h1>
-<p><strong>Version 1.12 · June 7, 2026</strong></p>
+<p><strong>Version 1.12 · June 10, 2026</strong></p>
 <hr />
 <p>This document is a guide for users of the MARS APRS system. For technical details on the architecture and software see the <a href="https://marsaprs.org/readme.html?back=/userguide.html">README</a> file.</p>
 <h2 id="contents">Contents</h2>
@@ -382,6 +382,7 @@ time since its last beacon was received.</p>
 </tr>
 </tbody>
 </table>
+<p>When a tracker has not been heard for more than 5 minutes its sidebar entry shows <strong>stale</strong> in red instead of an elapsed time. Hovering over the marker on the map shows the actual elapsed time (e.g., "&gt;2h 15m ago").</p>
 <p>The tracker's marker on the map and sidebar entry both update every 5 seconds.</p>
 <h4 id="clicking-a-tracker-l">Clicking a tracker (L)</h4>
 <ol>
@@ -488,10 +489,7 @@ simplified display layout, which is designed for the publicly viewable display:<
 </ul>
 <hr />
 <h2 id="admin-page-ls">Admin Page (L,S)</h2>
-<p>Click on the Admin button and enter the password when prompted. After logging in,
-you can edit the configuration for the currently default event. Your session remains active
-for 12 hours; you will not be asked for the password again if you return to the admin page
-within that timeframe. As mentioned earlier, all changes will be strictly local unless and until you use Save as Default Event... to publish them for others to see.</p>
+<p>Click on the Admin button and enter the password when prompted. The login form also has a <strong>Your name for logging</strong> field — enter your name so that admin actions (saving events, NetBird changes, etc.) are attributed to you in the server logs. Your name is saved in your browser and pre-filled on future visits. After logging in, you can edit the configuration for the currently default event. Your session remains active for 12 hours; you will not be asked for the password again if you return to the admin page within that timeframe. As mentioned earlier, all changes will be strictly local unless and until you use Save as Default Event... to publish them for others to see.</p>
 <p>The header and footer each contain action buttons:</p>
 <ul>
 <li><strong>Update</strong> — Saves your changes locally to this browser and returns to the map
@@ -765,6 +763,7 @@ In order for NetBird to keep track of devices, those devices must frequently ann
 </tr>
 </tbody>
 </table>
+<p>Both pages share the same login as the map Admin page. Visiting <code>/netbird/admin.php</code> will redirect to the Admin login if you are not already signed in, then return you to the NetBird admin automatically.</p>
 <hr />
 <h3 id="status-page">Status Page</h3>
 <p>The status page polls the server automatically and updates in real time. Two sliders in the header control timing:</p>
