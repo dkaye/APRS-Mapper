@@ -215,6 +215,8 @@ Each course entry in the sidebar is a named route overlay (GPX, KML, or GeoJSON 
 
 Multiple courses can be visible simultaneously. When they overlap, the course listed **first in the sidebar appears on top**; courses lower in the list are drawn underneath. To change the stacking order, reorder the courses in the Admin page.
 
+Each course is displayed in its configured color and line style (solid, dashed, dotted, or dash-dot). These are set in the Admin page.
+
 Courses always appear above iGates but below Aid Stations and Trackers, regardless of background or zoom level.
 
 ---
@@ -439,8 +441,16 @@ active. This is pre-filled automatically when using the provider browser.
 
 #### Courses
 
-Lists the course overlays for this event. Each entry shows the file name and a color
-swatch. To add courses, use **Manage Location Files** (see below).
+Lists the course overlays for this event. Each entry has:
+
+| Field | Description |
+|-------|-------------|
+| Name | Label shown in the sidebar |
+| File | The overlay file (GPX, KML, or GeoJSON) |
+| Color | Color swatch — click to pick a color for the course line and markers |
+| Style | Four visual buttons showing the actual line pattern in the course color: **solid**, **dashed**, **dotted**, or **dash-dot**. Click one to select it. |
+
+To add courses, use **Manage Location Files** (see below).
 
 #### Manage Course Files
 

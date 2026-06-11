@@ -138,11 +138,13 @@ function buildConfigYaml($cfg, $history = []) {
     $L[] = '#   name  : label shown in the sidebar';
     $L[] = '#   file  : filename  (supported extensions: .gpx  .kml  .geojson  .json)';
     $L[] = '#   color : hex color for the course line/markers (e.g. #2196f3)';
+    $L[] = '#   dash  : line style — omit or solid | dashed | dotted | dash-dot';
     $L[] = 'courses:';
     foreach ($cfg['courses'] ?? [] as $c) {
         $L[] = '  - name:  ' . ys($c['name'] ?? '');
         $L[] = '    file:  ' . ys($c['file'] ?? '');
         if (!empty($c['color'])) $L[] = '    color: ' . ys($c['color']);
+        if (!empty($c['dash']))  $L[] = '    dash:  ' . ys($c['dash']);
     }
     $L[] = '';
     $L[] = '# ── Aid Stations ──────────────────────────────────────────────────────────────';

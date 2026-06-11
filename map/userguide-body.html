@@ -230,6 +230,7 @@ one and hides the previous tracker's history.</p>
 <li><strong>Click the ✓</strong> next to the course name to toggle the overlay on or off.</li>
 </ul>
 <p>Multiple courses can be visible simultaneously. When they overlap, the course listed <strong>first in the sidebar appears on top</strong>; courses lower in the list are drawn underneath. To change the stacking order, reorder the courses in the Admin page.</p>
+<p>Each course is displayed in its configured color and line style (solid, dashed, dotted, or dash-dot). These are set in the Admin page.</p>
 <p>Courses always appear above iGates but below Aid Stations and Trackers, regardless of background or zoom level.</p>
 <hr />
 <h3 id="aid-stations-and-igates-l-s">Aid Stations and iGates (L, S)</h3>
@@ -487,8 +488,34 @@ background library). Fields are pre-filled from the saved layer.</p>
 <p>An optional <strong>Max Zoom</strong> field caps how far in the user can zoom when this tile layer is
 active. This is pre-filled automatically when using the provider browser.</p>
 <h4 id="courses">Courses</h4>
-<p>Lists the course overlays for this event. Each entry shows the file name and a color
-swatch. To add courses, use <strong>Manage Location Files</strong> (see below).</p>
+<p>Lists the course overlays for this event. Each entry has:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Name</td>
+<td>Label shown in the sidebar</td>
+</tr>
+<tr>
+<td>File</td>
+<td>The overlay file (GPX, KML, or GeoJSON)</td>
+</tr>
+<tr>
+<td>Color</td>
+<td>Color swatch — click to pick a color for the course line and markers</td>
+</tr>
+<tr>
+<td>Style</td>
+<td>Four visual buttons showing the actual line pattern in the course color: <strong>solid</strong>, <strong>dashed</strong>, <strong>dotted</strong>, or <strong>dash-dot</strong>. Click one to select it.</td>
+</tr>
+</tbody>
+</table>
+<p>To add courses, use <strong>Manage Location Files</strong> (see below).</p>
 <h4 id="manage-course-files">Manage Course Files</h4>
 <p>Click the <strong>Manage Location Files</strong> button to open the course manager panel. This panel shows
 every course file across all events in a sortable table with columns for file name, event,

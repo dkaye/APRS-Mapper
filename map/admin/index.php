@@ -975,6 +975,12 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 .file-status { font-size: 11px; color: #aaa; margin-top: 20px; flex-shrink: 0; white-space: nowrap; }
 .file-status.missing { font-size: 14px; color: #e74c3c; }
 
+/* ── Course line-style picker ── */
+.dash-picker { display: flex; gap: 3px; }
+.dash-opt { padding: 2px 3px; border: 1px solid #ccc; border-radius: 3px; background: #fff; cursor: pointer; line-height: 0; }
+.dash-opt:hover { border-color: #999; background: #f5f5f5; }
+.dash-opt.selected { border-color: #2980b9; background: #e8f4fd; }
+
 /* ── Course file select ── */
 select.f-file-select {
     padding: 5px 7px; border: 1px solid #ccc; border-radius: 3px;
@@ -1977,28 +1983,47 @@ function buildCourseRow(c) {
         localStorage.setItem('aprs_course_colors', JSON.stringify(lsc));
         markDirty(true);
     });
-    const clearColorBtn = document.createElement('button');
-    clearColorBtn.type = 'button';
-    clearColorBtn.textContent = '×';
-    clearColorBtn.title = 'Remove saved color from YAML';
-    clearColorBtn.style.cssText = 'background:none;border:none;color:#888;font-size:14px;cursor:pointer;padding:0 2px;line-height:1';
-    clearColorBtn.style.display = c.color ? '' : 'none';
-    clearColorBtn.addEventListener('click', () => {
-        colorInput.dataset.savedcolor = '';
-        clearColorBtn.style.display = 'none';
-        markDirty(true);
-    });
     colorWrap.appendChild(colorLbl);
     colorWrap.appendChild(colorInput);
-    colorWrap.appendChild(clearColorBtn);
     fields.appendChild(colorWrap);
 
-    const dot = document.createElement('span');
-    dot.className = 'file-status';
-    fields.appendChild(dot);
+    const styleWrap = document.createElement('div');
+    styleWrap.className = 'field-label';
+    styleWrap.style.cssText = 'display:flex;align-items:center;gap:6px';
+    const styleLbl = document.createElement('span');
+    styleLbl.textContent = 'Style';
+    const dashInput = document.createElement('input');
+    dashInput.type = 'hidden'; dashInput.className = 'f-cdash'; dashInput.value = c.dash || '';
+    const dashPicker = document.createElement('div');
+    dashPicker.className = 'dash-picker';
+    const ns = 'http://www.w3.org/2000/svg';
+    const getColor = () => colorInput.value || '#2196f3';
+    [['', null], ['dashed', '10,7'], ['dotted', '2,6'], ['dash-dot', '10,4,2,4']].forEach(([val, da]) => {
+        const btn = document.createElement('button');
+        btn.type = 'button'; btn.className = 'dash-opt' + ((c.dash || '') === val ? ' selected' : '');
+        const svg = document.createElementNS(ns, 'svg');
+        svg.setAttribute('width', '44'); svg.setAttribute('height', '12');
+        const ln = document.createElementNS(ns, 'line');
+        ln.setAttribute('x1', '2'); ln.setAttribute('y1', '6');
+        ln.setAttribute('x2', '42'); ln.setAttribute('y2', '6');
+        ln.setAttribute('stroke', getColor()); ln.setAttribute('stroke-width', '2.5');
+        ln.setAttribute('stroke-linecap', 'round');
+        if (da) ln.setAttribute('stroke-dasharray', da);
+        svg.appendChild(ln); btn.appendChild(svg);
+        btn.addEventListener('click', () => {
+            dashPicker.querySelectorAll('.dash-opt').forEach(b => b.classList.remove('selected'));
+            btn.classList.add('selected'); dashInput.value = val; markDirty(true);
+        });
+        dashPicker.appendChild(btn);
+    });
+    colorInput.addEventListener('input', () => {
+        dashPicker.querySelectorAll('line').forEach(l => l.setAttribute('stroke', colorInput.value));
+    });
+    styleWrap.appendChild(styleLbl); styleWrap.appendChild(dashPicker); styleWrap.appendChild(dashInput);
+    fields.appendChild(styleWrap);
+
     row.appendChild(fields);
     row.appendChild(makeDeleteBtn());
-    updateCourseFileStatus(fileSel);
     return row;
 }
 
@@ -2254,6 +2279,7 @@ async function doManageLocationFiles() {
             const r = await fetch('?alllocationfiles');
             if (r.ok) allFiles = await r.json();
         } catch {}
+        sortCol = 'mtime'; sortAsc = false;  // show newest file at top after upload
         buildTable();
     };
     zone.addEventListener('click', () => fileInput.click());
@@ -2264,8 +2290,9 @@ async function doManageLocationFiles() {
         if (e.dataTransfer.files.length) doUpload(e.dataTransfer.files);
     });
     fileInput.addEventListener('change', () => {
-        if (fileInput.files.length) doUpload(fileInput.files);
+        const snapshot = Array.from(fileInput.files);  // snapshot before clearing — FileList is live
         fileInput.value = '';
+        if (snapshot.length) doUpload(snapshot);
     });
 
     const closeBtn = document.createElement('button');
@@ -2397,11 +2424,13 @@ function collectConfig() {
     const courses = [];
     document.querySelectorAll('#courses-list > .list-row').forEach(row => {
         const colorEl = row.querySelector('.f-ccolor');
+        const dashEl  = row.querySelector('.f-cdash');
         const course  = {
             name: row.querySelector('.f-cname').value.trim(),
             file: row.querySelector('.f-file').value.trim(),
         };
         if (colorEl.dataset.savedcolor) course.color = colorEl.dataset.savedcolor;
+        if (dashEl && dashEl.value)     course.dash  = dashEl.value;
         courses.push(course);
     });
 

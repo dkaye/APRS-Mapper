@@ -1097,6 +1097,7 @@ const markers              = {};
 const trackerPopups        = {};
 let   trackerStyle         = { icon: 'circle', size: 8, labelColor: '#000000' };
 const courseLayers         = {};
+const courseDashes         = {};
 const courseColors         = {};
 let   courseOrder          = [];
 const lastBeacons          = {};
@@ -2062,8 +2063,12 @@ function loadCourseLayer(file) {
 		return false;
 	}
 	layer.on('ready', () => {
-		const c = courseColors[file];
-		if (c) layer.setStyle({ color: c, fillColor: c, weight: 3, opacity: 0.9 });
+		const c  = courseColors[file];
+		const da = dashToArray(courseDashes[file]);
+		const style = { weight: 3, opacity: 0.9 };
+		if (c)  { style.color = c; style.fillColor = c; }
+		style.dashArray = da || null;
+		layer.setStyle(style);
 		if (!sectionVisible.courses) layer.setStyle({ opacity: 0, fillOpacity: 0, weight: 0 });
 		reorderCourseLayers();
 	});
@@ -2072,8 +2077,19 @@ function loadCourseLayer(file) {
 	return true;
 }
 
-function setCourseStyle(file, color) {
-	if (courseLayers[file]) courseLayers[file].setStyle({ color, fillColor: color, weight: 3, opacity: 0.9 });
+function dashToArray(dash) {
+	if (dash === 'dashed')   return '10 7';
+	if (dash === 'dotted')   return '2 6';
+	if (dash === 'dash-dot') return '10 4 2 4';
+	return null;
+}
+
+function setCourseStyle(file, color, dash) {
+	if (!courseLayers[file]) return;
+	const style = { color, fillColor: color, weight: 3, opacity: 0.9 };
+	const da = dashToArray(dash !== undefined ? dash : courseDashes[file]);
+	style.dashArray = da || null;
+	courseLayers[file].setStyle(style);
 }
 
 function reorderCourseLayers() {
@@ -2106,6 +2122,7 @@ function applyCourses(courses) {
 			if (savedColors[course.file]) courseColors[course.file] = savedColors[course.file];
 			else if (course.color) courseColors[course.file] = course.color;
 			else delete courseColors[course.file];
+			courseDashes[course.file] = course.dash || '';
 			if (courseLayers[course.file]) setCourseStyle(course.file, courseColors[course.file] || DEFAULT_COURSE_COLOR);
 			if (!coursesInitialized) loadCourseLayer(course.file);
 			const color  = courseColors[course.file] || DEFAULT_COURSE_COLOR;
@@ -2140,6 +2157,7 @@ function applyCourses(courses) {
 		if (savedColors[course.file]) courseColors[course.file] = savedColors[course.file];
 		else if (course.color) courseColors[course.file] = course.color;
 		else delete courseColors[course.file];
+		courseDashes[course.file] = course.dash || '';
 		if (courseLayers[course.file]) setCourseStyle(course.file, courseColors[course.file] || DEFAULT_COURSE_COLOR);
 		if (!wasInitialized) {
 			const shouldLoad = activeFiles === null || activeFiles.has(course.file);
