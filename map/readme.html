@@ -296,7 +296,7 @@ forwarding or static public IP addresses.</p>
 <tr>
 <td><code>aprsDaemon.php</code></td>
 <td>Server</td>
-<td>Pulls from APRS-IS; writes <code>trackers.json</code></td>
+<td>Pulls from APRS-IS; writes <code>trackers.json</code>, <code>igates.json</code>, <code>aidstations.json</code></td>
 </tr>
 <tr>
 <td><code>index.php</code></td>
@@ -473,7 +473,7 @@ wifi/index.php  (credential editor)
 <tbody>
 <tr>
 <td><code>aprsDaemon.php</code></td>
-<td>Background daemon; APRS-IS connection; writes <code>trackers.json</code></td>
+<td>Background daemon; APRS-IS connection; writes <code>trackers.json</code>, <code>igates.json</code>, <code>aidstations.json</code></td>
 </tr>
 <tr>
 <td><code>config.yaml</code></td>
@@ -482,6 +482,14 @@ wifi/index.php  (credential editor)
 <tr>
 <td><code>trackers.json</code></td>
 <td>Live tracker state (daemon writes, browser reads)</td>
+</tr>
+<tr>
+<td><code>igates.json</code></td>
+<td>iGate last-beacon timestamps (daemon writes, browser reads)</td>
+</tr>
+<tr>
+<td><code>aidstations.json</code></td>
+<td>Aid station last-beacon timestamps (daemon writes, browser reads)</td>
 </tr>
 <tr>
 <td><code>index.php</code></td>
@@ -1585,7 +1593,7 @@ for <code>?json</code>, <code>?config</code>, and <code>?history</code>.</p>
 <tr>
 <td><code>?json</code></td>
 <td>GET</td>
-<td>Current tracker state from <code>trackers.json</code></td>
+<td>Current tracker state from <code>trackers.json</code>, plus iGate and aid station last-beacon timestamps</td>
 </tr>
 <tr>
 <td><code>?config</code></td>
@@ -1718,6 +1726,16 @@ The daemon runs as <code>www-data</code> with <code>UMask=0002</code>; files it 
 <td><code>trackers.json</code></td>
 <td>www-data (daemon)</td>
 <td>daemon on first run</td>
+</tr>
+<tr>
+<td><code>igates.json</code></td>
+<td>www-data (daemon)</td>
+<td>daemon on first iGate activity</td>
+</tr>
+<tr>
+<td><code>aidstations.json</code></td>
+<td>www-data (daemon)</td>
+<td>daemon on first aid station activity</td>
 </tr>
 <tr>
 <td><code>config.yaml</code></td>

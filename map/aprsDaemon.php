@@ -36,6 +36,10 @@ $minSecondsBlue=300;
 $sleepSeconds=5;
 $socket=null;
 $configFileMtime=0;
+$igates=array();			// [{callsign, name, lastBeacon}] — only entries with a callsign
+$igatesStatusFilename='igates.json';
+$aidstations=array();		// [{callsign, name, lastBeacon}] — only entries with a callsign
+$aidstationsStatusFilename='aidstations.json';
 $trackerHistory  = [];		// callsign → [{lat, lon, ts}, ...]  max 10 entries each
 $historyFilePath = null;	// full path to tracker_history.yaml in current event dir
 
@@ -283,11 +287,11 @@ function connectToAprsServer() {
 	if ($bytesWritten===FALSE) fatal("Can't write to socket");
 }
 
-// Read the trackers section from config.yaml and rebuild $trackers,
-// preserving lastUpdate/lat/lon for already-known callsigns.
+// Read the trackers and igates sections from config.yaml, rebuilding both arrays
+// while preserving live state for already-known callsigns.
 // Returns true if the file was reloaded, false if it was unchanged since the last load.
 function loadTrackers() {
-	global $trackers,$configFilename,$configFileMtime;
+	global $trackers,$igates,$aidstations,$configFilename,$configFileMtime;
 	$mtime = filemtime($configFilename);
 	if ($mtime === $configFileMtime) return false;		//unchanged
 	$existing = array();
@@ -307,8 +311,51 @@ function loadTrackers() {
 		}
 	}
 	$trackers = $new;
+
+	// Rebuild igates — only entries with a callsign; preserve lastBeacon across reloads
+	$existingIgates = array();
+	foreach ($igates as $g) $existingIgates[$g["callsign"]] = $g;
+	$newIgates = array();
+	foreach ($cfg['igates'] ?? [] as $entry) {
+		if (empty($entry['callsign'])) continue;
+		$cs = $entry['callsign'];
+		$newIgates[] = array(
+			"callsign"   => $cs,
+			"name"       => $entry['name'] ?? $cs,
+			"lastBeacon" => $existingIgates[$cs]["lastBeacon"] ?? 0,
+		);
+	}
+	$igates = $newIgates;
+
+	// Rebuild aidstations — only entries with a callsign; preserve lastBeacon across reloads
+	$existingAid = array();
+	foreach ($aidstations as $g) $existingAid[$g["callsign"]] = $g;
+	$newAid = array();
+	foreach ($cfg['aidstations'] ?? [] as $entry) {
+		if (empty($entry['callsign'])) continue;
+		$cs = $entry['callsign'];
+		$newAid[] = array(
+			"callsign"   => $cs,
+			"name"       => $entry['name'] ?? $cs,
+			"lastBeacon" => $existingAid[$cs]["lastBeacon"] ?? 0,
+		);
+	}
+	$aidstations = $newAid;
+
 	$configFileMtime = $mtime;
 	return true;
+}
+
+// Write last-beacon timestamps to a JSON file (callsign → unix timestamp map)
+function writeBeaconFile($filename, $entries) {
+	$output = array();
+	foreach ($entries as $g) $output[$g["callsign"]] = $g["lastBeacon"];
+	$fh = fopen($filename, 'w');
+	if (!$fh) return;
+	flock($fh, LOCK_EX);
+	fwrite($fh, json_encode($output) . "\n");
+	flock($fh, LOCK_UN);
+	fclose($fh);
 }
 
 // Read trackers.json and update $trackers with the most recent lastUpdate and last known lat/lon for each callsign
@@ -440,6 +487,42 @@ while (TRUE) {
 							if (count($trackerHistory[$callsign]) > 10) array_pop($trackerHistory[$callsign]);
 							writeTrackerHistoryFile();
 						}
+					}
+				}
+
+				// Detect iGate/aid-station activity: only when a listed tracker's packet was gated
+				// through one of our stations (q-construct in path, e.g. qAR,K6DRK-6).
+				if (!empty($igates) || !empty($aidstations)) {
+					$isOurTracker = false;
+					foreach ($trackers as $tracker) {
+						if ($tracker["callsign"] === $callsign) { $isOurTracker = true; break; }
+					}
+					if ($isOurTracker) {
+						$pathParts = explode(',', $aprsPath);
+						$igateUpdated = false;
+						foreach ($igates as $gkey => $igate) {
+							$gcs = $igate["callsign"];
+							for ($pi = 0; $pi < count($pathParts) - 1; $pi++) {
+								if (preg_match('/^q[A-Z]+$/', $pathParts[$pi]) && rtrim($pathParts[$pi+1], '*') === $gcs) {
+									$igates[$gkey]["lastBeacon"] = time();
+									$igateUpdated = true;
+									break;
+								}
+							}
+						}
+						if ($igateUpdated) writeBeaconFile($igatesStatusFilename, $igates);
+						$aidUpdated = false;
+						foreach ($aidstations as $akey => $aid) {
+							$gcs = $aid["callsign"];
+							for ($pi = 0; $pi < count($pathParts) - 1; $pi++) {
+								if (preg_match('/^q[A-Z]+$/', $pathParts[$pi]) && rtrim($pathParts[$pi+1], '*') === $gcs) {
+									$aidstations[$akey]["lastBeacon"] = time();
+									$aidUpdated = true;
+									break;
+								}
+							}
+						}
+						if ($aidUpdated) writeBeaconFile($aidstationsStatusFilename, $aidstations);
 					}
 				}
 			}

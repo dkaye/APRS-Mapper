@@ -150,7 +150,7 @@ expanding the section.
 | **Trackers** | Colored dot, ID, name, elapsed time. **Short tap** blinks and shows breadcrumb history. **Long press** blinks, shows history, closes the drawer, and zooms to the tracker. |
 | **Courses** | Toggle course overlays on/off. |
 | **Backgrounds** | Switch the base tile layer. |
-| **Aid Stations** | Tap to zoom to an aid station and show its label. Hidden if none are configured. |
+| **Aid Stations** | Tap to zoom to an aid station and show its label. If the station has a callsign configured, its entry blinks green when a tracker beacon is received through it. Hidden if none are configured. |
 | **iGates** | Same as Aid Stations. Hidden if none are configured. |
 | **About** | Version, organization, and map attribution. |
 
@@ -228,6 +228,8 @@ Aid stations and iGates appear as black dots on the map.
 - **Hover over a dot** to see its name (and APRS callsign, if configured) in a white label.
 - **Click an entry in the sidebar** to make the label permanent and zoom the map to that location.
 - **Click it again** to dismiss the label and reset the map.
+
+When an aid station or iGate has a callsign configured, its sidebar entry **blinks green for 5 seconds** each time a listed tracker's beacon is received through it (i.e., the station's callsign appears in the APRS-IS q-construct path of the packet). An iGate and an aid station may share the same callsign; both entries will blink independently.
 
 In kiosk mode, aid station names are shown permanently as floating black labels with transparent backgrounds.
 
@@ -473,7 +475,7 @@ the table and the Courses section.
 
 #### Aid Stations and iGates
 
-Fixed locations shown on the map. Each entry has a name, an optional APRS callsign, a latitude, and a longitude. When a callsign is set it appears alongside the name in the map tooltip (on hover or after clicking the sidebar entry); it is not shown in the sidebar list itself.
+Fixed locations shown on the map. Each entry has a name, an optional APRS callsign, a latitude, and a longitude. When a callsign is set it appears alongside the name in the map tooltip (on hover or after clicking the sidebar entry); it is not shown in the sidebar list itself. The callsign is also used for live activity detection: whenever a listed tracker's APRS packet is received through that station (the callsign appears in the packet's APRS-IS q-construct path), the station's sidebar entry blinks green for 5 seconds.
 
 **Smart coordinate paste** — you can paste a combined latitude/longitude string (such as
 `37.7749, -122.4194` copied from Google Maps) into either the lat or lon field and both

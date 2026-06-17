@@ -18,9 +18,13 @@
 $trackerStatusFilename = 'trackers.json';
 
 if (isset($_GET['json'])) {
-	$trackerMtime = file_exists($trackerStatusFilename) ? filemtime($trackerStatusFilename) : 0;
-	$configMtime  = file_exists('config.yaml') ? filemtime('config.yaml') : 0;
-	$etag = '"' . $trackerMtime . '-' . $configMtime . '"';
+	$igatesStatusFilename     = 'igates.json';
+	$aidstationsStatusFilename = 'aidstations.json';
+	$trackerMtime = file_exists($trackerStatusFilename)      ? filemtime($trackerStatusFilename)      : 0;
+	$configMtime  = file_exists('config.yaml')               ? filemtime('config.yaml')               : 0;
+	$igateMtime   = file_exists($igatesStatusFilename)       ? filemtime($igatesStatusFilename)       : 0;
+	$aidMtime     = file_exists($aidstationsStatusFilename)  ? filemtime($aidstationsStatusFilename)  : 0;
+	$etag = '"' . $trackerMtime . '-' . $configMtime . '-' . $igateMtime . '-' . $aidMtime . '"';
 	header('ETag: ' . $etag);
 	header('Cache-Control: no-cache');
 	if (isset($_SERVER['HTTP_IF_NONE_MATCH']) && $_SERVER['HTTP_IF_NONE_MATCH'] === $etag) {
@@ -37,8 +41,19 @@ if (isset($_GET['json'])) {
 	flock($fh, LOCK_UN);
 	fclose($fh);
 	$trackers = json_decode($contents, true) ?: [];
+	$readBeaconFile = function($path) {
+		if (!file_exists($path)) return [];
+		$fh = fopen($path, 'r'); if (!$fh) return [];
+		flock($fh, LOCK_SH); $c = stream_get_contents($fh); flock($fh, LOCK_UN); fclose($fh);
+		return json_decode($c, true) ?: [];
+	};
 	header('Content-Type: application/json');
-	echo json_encode(['default_event' => $defaultEvent, 'trackers' => $trackers]);
+	echo json_encode([
+		'default_event'  => $defaultEvent,
+		'trackers'       => $trackers,
+		'igate_beacons'  => $readBeaconFile($igatesStatusFilename),
+		'aid_beacons'    => $readBeaconFile($aidstationsStatusFilename),
+	]);
 	exit;
 }
 
@@ -199,6 +214,8 @@ html, body { width: 100%; height: 100%; overflow: hidden;
 
 @keyframes blink-anim { 50% { opacity: 0; } }
 .blinking { animation: blink-anim 0.4s steps(2,end) infinite; }
+.igate-beaconing { animation: blink-anim 0.4s steps(2,end) infinite; }
+.igate-beaconing .legend-name, .igate-beaconing .m-layer-name { color: #2a8a2a; }
 #no-loc-toast {
     display: none; position: fixed; top: 50%; left: 50%;
     transform: translate(-50%, -50%);
@@ -1102,6 +1119,10 @@ const courseColors         = {};
 let   courseOrder          = [];
 const lastBeacons          = {};
 const blinkTimers          = {};
+const lastIgateBeacons     = {};	// callsign → lastBeacon timestamp (from igates.json)
+const igateFlashTimers     = {};	// callsign → setTimeout id for green blink
+const lastAidBeacons       = {};	// callsign → lastBeacon timestamp (from aidstations.json)
+const aidFlashTimers       = {};	// callsign → setTimeout id for green blink
 const historyDots          = {};	// callsign → [L.circleMarker, ...]
 const DEFAULT_COURSE_COLOR = '#2196f3';
 const LS_COURSE_COLORS     = 'aprs_course_colors';
@@ -1530,6 +1551,28 @@ function triggerDotBlink(d) {
 	setTimeout(() => d.el.classList.remove('blinking'), 5000);
 }
 
+function flashIgateBeacon(callsign) {
+	const d = igateMarkers.find(ig => ig.callsign === callsign);
+	if (!d) return;
+	if (igateFlashTimers[callsign]) clearTimeout(igateFlashTimers[callsign]);
+	d.el.classList.add('igate-beaconing');
+	igateFlashTimers[callsign] = setTimeout(() => {
+		d.el.classList.remove('igate-beaconing');
+		delete igateFlashTimers[callsign];
+	}, 5000);
+}
+
+function flashAidBeacon(callsign) {
+	const d = aidMarkers.find(a => a.callsign === callsign);
+	if (!d) return;
+	if (aidFlashTimers[callsign]) clearTimeout(aidFlashTimers[callsign]);
+	d.el.classList.add('igate-beaconing');
+	aidFlashTimers[callsign] = setTimeout(() => {
+		d.el.classList.remove('igate-beaconing');
+		delete aidFlashTimers[callsign];
+	}, 5000);
+}
+
 // ── Clear all selections ──────────────────────────────────────────────────
 function clearAllSelections() {
 	if (selectedIgateIdx >= 0) { setIgateTooltip(selectedIgateIdx, false); igateMarkers[selectedIgateIdx]?.el.classList.remove('selected'); selectedIgateIdx = -1; igateClickCount = 0; }
@@ -1860,6 +1903,19 @@ function updateMap() {
 					markers[t.callsign] = m;
 				}
 			});
+
+			if (data.igate_beacons) {
+				Object.entries(data.igate_beacons).forEach(([cs, ts]) => {
+					if (ts && lastIgateBeacons[cs] !== undefined && ts !== lastIgateBeacons[cs]) flashIgateBeacon(cs);
+					lastIgateBeacons[cs] = ts;
+				});
+			}
+			if (data.aid_beacons) {
+				Object.entries(data.aid_beacons).forEach(([cs, ts]) => {
+					if (ts && lastAidBeacons[cs] !== undefined && ts !== lastAidBeacons[cs]) flashAidBeacon(cs);
+					lastAidBeacons[cs] = ts;
+				});
+			}
 		})
 		.catch(err => console.error('Tracker fetch error:', err));
 }

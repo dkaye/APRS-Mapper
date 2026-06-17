@@ -91,7 +91,7 @@ APRS Radio (144.39 MHz)
 |-----------|---------|---------|
 | `direwolf` | iGate | AX.25 TNC; decodes RF packets; forwards to APRS-IS |
 | `direwatch.py` | iGate | Drives TFT status display |
-| `aprsDaemon.php` | Server | Pulls from APRS-IS; writes `trackers.json` |
+| `aprsDaemon.php` | Server | Pulls from APRS-IS; writes `trackers.json`, `igates.json`, `aidstations.json` |
 | `index.php` | Server | Serves the live map; JSON polling endpoint |
 | `admin/index.php` | Server | Admin UI; event and tracker management |
 | `netbird-poller.py` | Server | Polls all Pi devices over VPN; writes `stats.json` |
@@ -219,9 +219,11 @@ wifi/index.php  (credential editor)
 
 | File | Role |
 |------|------|
-| `aprsDaemon.php` | Background daemon; APRS-IS connection; writes `trackers.json` |
+| `aprsDaemon.php` | Background daemon; APRS-IS connection; writes `trackers.json`, `igates.json`, `aidstations.json` |
 | `config.yaml` | Symlink → active event's `event.yaml` |
 | `trackers.json` | Live tracker state (daemon writes, browser reads) |
+| `igates.json` | iGate last-beacon timestamps (daemon writes, browser reads) |
+| `aidstations.json` | Aid station last-beacon timestamps (daemon writes, browser reads) |
 | `index.php` | Map page + JSON/config/history endpoints |
 | `admin/index.php` | Admin UI; all admin API endpoints |
 | `events/<Name>/event.yaml` | Per-event configuration |
@@ -1087,7 +1089,7 @@ for `?json`, `?config`, and `?history`.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `?json` | GET | Current tracker state from `trackers.json` |
+| `?json` | GET | Current tracker state from `trackers.json`, plus iGate and aid station last-beacon timestamps |
 | `?config` | GET | Parsed active configuration (all sections) |
 | `?history` | GET | Beacon history — 5 most-recent positions per tracker |
 | `?clientstatus` | GET | Apache worker stats and connected client IPs |
@@ -1124,6 +1126,8 @@ The daemon runs as `www-data` with `UMask=0002`; files it creates get mode `664`
 | File | Needs write access | Created by |
 |------|-------------------|------------|
 | `trackers.json` | www-data (daemon) | daemon on first run |
+| `igates.json` | www-data (daemon) | daemon on first iGate activity |
+| `aidstations.json` | www-data (daemon) | daemon on first aid station activity |
 | `config.yaml` | www-data (admin page) | manual / admin Save as Default Event |
 | `events/<E>/event.yaml` | www-data (admin page) | admin Save as Default Event |
 | `events/<E>/tracker_history.yaml` | www-data (daemon) | daemon on first beacon |

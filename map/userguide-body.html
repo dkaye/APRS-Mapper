@@ -150,7 +150,7 @@ expanding the section.</p>
 </tr>
 <tr>
 <td><strong>Aid Stations</strong></td>
-<td>Tap to zoom to an aid station and show its label. Hidden if none are configured.</td>
+<td>Tap to zoom to an aid station and show its label. If the station has a callsign configured, its entry blinks green when a tracker beacon is received through it. Hidden if none are configured.</td>
 </tr>
 <tr>
 <td><strong>iGates</strong></td>
@@ -240,6 +240,7 @@ one and hides the previous tracker's history.</p>
 <li><strong>Click an entry in the sidebar</strong> to make the label permanent and zoom the map to that location.</li>
 <li><strong>Click it again</strong> to dismiss the label and reset the map.</li>
 </ul>
+<p>When an aid station or iGate has a callsign configured, its sidebar entry <strong>blinks green for 5 seconds</strong> each time a listed tracker's beacon is received through it (i.e., the station's callsign appears in the APRS-IS q-construct path of the packet). An iGate and an aid station may share the same callsign; both entries will blink independently.</p>
 <p>In kiosk mode, aid station names are shown permanently as floating black labels with transparent backgrounds.</p>
 <hr />
 <h3 id="backgrounds-ls">Backgrounds (L,S)</h3>
@@ -530,7 +531,7 @@ Supported formats: <code>.gpx</code>, <code>.kml</code>, <code>.geojson</code>, 
 <p>The uploaded file is saved into the default event's directory and appears immediately in
 the table and the Courses section.</p>
 <h4 id="aid-stations-and-igates">Aid Stations and iGates</h4>
-<p>Fixed locations shown on the map. Each entry has a name, an optional APRS callsign, a latitude, and a longitude. When a callsign is set it appears alongside the name in the map tooltip (on hover or after clicking the sidebar entry); it is not shown in the sidebar list itself.</p>
+<p>Fixed locations shown on the map. Each entry has a name, an optional APRS callsign, a latitude, and a longitude. When a callsign is set it appears alongside the name in the map tooltip (on hover or after clicking the sidebar entry); it is not shown in the sidebar list itself. The callsign is also used for live activity detection: whenever a listed tracker's APRS packet is received through that station (the callsign appears in the packet's APRS-IS q-construct path), the station's sidebar entry blinks green for 5 seconds.</p>
 <p><strong>Smart coordinate paste</strong> — you can paste a combined latitude/longitude string (such as
 <code>37.7749, -122.4194</code> copied from Google Maps) into either the lat or lon field and both
 fields will be filled in automatically. Comma, semicolon, slash, and space separators are
