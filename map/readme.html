@@ -193,7 +193,7 @@
 <div id="content">
 <h1 id="mars-aprs-system">MARS APRS System</h1>
 <p><strong>Author:</strong> Doug Kaye (K6DRK) · <strong>Copyright:</strong> 2026 Doug Kaye. All Rights Reserved.</p>
-<p><strong>Version:</strong> Server &amp; Displays (v1.12); iGates (v5.0)</p>
+<p><strong>Version:</strong> Server &amp; Displays (v1.13); iGates (v5.0)</p>
 <hr />
 <h2 id="table-of-contents">Table of Contents</h2>
 <ol>
@@ -201,9 +201,9 @@
 <li><a href="#system-architecture">System Architecture</a></li>
 <li><a href="#netbird-vpn">NetBird VPN</a></li>
 <li><a href="#igates-v50">iGates (v5.0)</a></li>
-<li><a href="#aprs-server-v112">APRS Server (v1.12)</a></li>
+<li><a href="#aprs-server-v112">APRS Server (v1.13)</a></li>
 <li><a href="#cloudflare-tunnel">Cloudflare Tunnel</a></li>
-<li><a href="#display-pis-v112">Display Pis (v1.12)</a></li>
+<li><a href="#display-pis-v112">Display Pis (v1.13)</a></li>
 <li><a href="#user-interfaces">User Interfaces</a></li>
 <li><a href="#backup-recovery-and-updates">Backup, Recovery and Updates</a></li>
 <li><a href="#server-pi">Server Pi</a> · <a href="#display-pis">Display Pis</a> · <a href="#igates">iGates</a></li>
@@ -261,14 +261,14 @@ forwarding or static public IP addresses.</p>
 └────────────────┬─────────────────────┘
                  │ TCP 14580
 ┌────────────────▼─────────────────────┐
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.12
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.13
 │  aprsDaemon.php → trackers.json      │
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.12
+│  Display Pi  (×2)      │  Pi 4 · v1.13
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -437,7 +437,7 @@ igate-watchdog.sh  (cron, every minute)
 </table>
 <p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code></p>
 <hr />
-<h2 id="aprs-server-v112">APRS Server (v1.12)</h2>
+<h2 id="aprs-server-v112">APRS Server (v1.13)</h2>
 <p>The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
 APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
 NetBird monitor and WiFi credential manager. It is reachable at <code>marsaprs.org</code> via a
@@ -530,7 +530,7 @@ sudo systemctl start cloudflared
 <p>The tunnel token is obtained from the <strong>Cloudflare Zero Trust dashboard</strong>:
 <em>Networks → Tunnels → \&lt;tunnel&gt; → Configure → Install and run connector</em></p>
 <hr />
-<h2 id="display-pis-v112">Display Pis (v1.12)</h2>
+<h2 id="display-pis-v112">Display Pis (v1.13)</h2>
 <p>A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
 <code>marsaprs.org</code>. It is a read-only display device — no long-term local configuration or data storage.
 Two display Pis are in use: <strong>NetControl</strong> (operator screen) and <strong>BigTV</strong> (large audience

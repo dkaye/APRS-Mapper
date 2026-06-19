@@ -1,6 +1,6 @@
 # APRS Tracker Map — User Guide
 
-**Version 1.12 · June 10, 2026**
+**Version 1.13 · June 19, 2026**
 
 ---
 
@@ -21,6 +21,7 @@ This document is a guide for users of the MARS APRS system. For technical detail
   - [Courses](#courses)
   - [Aid Stations and iGates](#aid-stations-and-igates)
   - [Backgrounds](#backgrounds)
+  - [Share Location (S)](#share-location-s)
   - [Origin Marker — Distance and Bearing](#origin-marker--distance-and-bearing)
   - [Reset Map](#reset-map)
   - [Save Map](#save-map)
@@ -37,6 +38,7 @@ This document is a guide for users of the MARS APRS system. For technical detail
     - [Courses](#courses-1)
     - [Aid Stations and iGates](#aid-stations-and-igates-1)
     - [Legend](#legend)
+    - [Mobile Tracking](#mobile-tracking)
   - [Event Management](#event-management)
     - [Save](#save)
     - [Save as Default Event](#save-as-default-event)
@@ -152,7 +154,9 @@ expanding the section.
 | **Backgrounds** | Switch the base tile layer. |
 | **Aid Stations** | Tap to zoom to an aid station and show its label. If the station has a callsign configured, its entry blinks green when a tracker beacon is received through it. Hidden if none are configured. |
 | **iGates** | Same as Aid Stations. Hidden if none are configured. |
-| **About** | Version, organization, and map attribution. |
+| **About** | Version, organization, and map attribution. Shows your assigned APRS callsign while you are sharing your location. |
+
+The footer of the drawer contains action buttons: **Reset Map**, **Save Map**, **Admin**, **User Guide**, **Kiosk Mode**, **Clients**, and (when enabled by the administrator) **Share Location** / **Stop Sharing**.
 
 The **Trackers** section is open by default when the drawer is first displayed.
 
@@ -245,6 +249,31 @@ in beyond its maximum, the map automatically zooms out to the highest level that
 
 ---
 
+### Share Location (S)
+
+When the event administrator has enabled mobile location sharing, a **Share Location** button appears in the drawer footer. This lets you broadcast your GPS position to the APRS network so other participants can see you on the map.
+
+**Starting:**
+
+1. Tap **Share Location** at the bottom of the drawer.
+2. Enter your name and the event PIN, then tap **Share Location**.
+3. A confirmation shows your assigned APRS callsign (e.g., `K6DRK-01`). You will appear in the Trackers list under that callsign and be visible on the map. Your callsign is also shown in the **About** section of the drawer while sharing is active.
+
+Your position is transmitted to the APRS network approximately once per minute. It appears on this map and on external APRS sites such as [aprs.fi](https://aprs.fi) and CalTopo.
+
+**Stopping:**
+
+Tap **Stop Sharing** in the drawer footer.
+
+**Notes:**
+
+- The screen stays on while you are sharing (the browser's Wake Lock prevents sleep). The screen dims after 30 seconds of no interaction to save battery; tap anywhere to restore full brightness.
+- If an administrator ends your session remotely, you will see a notification and the button will return to **Share Location**.
+- Starting a new session with the same callsign automatically clears any old breadcrumb dots from your previous session.
+- If the PIN you entered is incorrect, you will see an error — check the PIN with the event administrator.
+
+---
+
 ### Origin Marker — Distance and Bearing (L,S)
 
 Use this to measure distance and direction between two locations.
@@ -263,11 +292,13 @@ The Origin is cleared by **Reset Map**.
 
 ### Reset Map (L,S)
 
-Click **Reset Map** in the sidebar (or press the **Escape** key on large-screen devices) to:
+Click **Reset Map** in the sidebar footer (or press the **Escape** key on large-screen devices) to:
 
 - Return the map to its default position and zoom level.
 - Clear any tracker history dots (breadcrumbs).
 - Clear the Origin marker.
+
+On mobile, the **Reset Map** button in the drawer footer and the circular reset icon (↺) that floats on the map both work the same way. Either one closes the drawer if it is open, recenters the map, and clears history dots and the Origin marker.
 
 ---
 
@@ -490,6 +521,26 @@ Example:
 ```html
 <b>Race Day — June 14</b><br>Start: 7:00 AM at Mill Valley
 ```
+
+#### Mobile Tracking
+
+Controls whether participants can share their GPS position from their phone or tablet.
+
+| Field | Description |
+|-------|-------------|
+| **Enable mobile location sharing** | When checked, the **Share Location** button appears in the mobile drawer for all visitors. |
+| **PIN code** | Participants must enter this code to join. Leave blank to allow anyone to share without a PIN. |
+| **Root callsign** | The base APRS callsign used to assign participant callsigns (e.g., `K6DRK`). Participants are assigned `K6DRK-01`, `K6DRK-02`, etc., in order of joining. |
+
+Below the settings is the **active participant list**, which refreshes automatically. Each row shows the participant's name, assigned callsign, and the time of their last position update. Three actions are available per row:
+
+| Button | Action |
+|--------|--------|
+| **Rename** | Change the participant's displayed name on the map. |
+| **Block** | Prevent the participant from sending further position updates. They remain in the list until removed. |
+| **Remove** | End the session immediately and remove the participant from the list and the map. |
+
+Mobile Tracking settings are saved to the server when you use **Save** or **Save as Default Event**.
 
 ---
 

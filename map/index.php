@@ -301,7 +301,27 @@ if (isset($_GET['mobile'])) {
 			$data[] = $newEntry;
 			return $data;
 		});
-		echo json_encode(['id' => $newEntry['id'], 'token' => $newEntry['token']]);
+		// Clear stale breadcrumbs for this callsign so old history doesn't linger
+		$cfgReal  = realpath('config.yaml');
+		$histPath = $cfgReal ? dirname($cfgReal) . '/tracker_history.yaml' : null;
+		if ($histPath && file_exists($histPath)) {
+			$fh = fopen($histPath, 'c+');
+			if ($fh && flock($fh, LOCK_EX)) {
+				$content = stream_get_contents($fh);
+				$cs = preg_quote($newEntry['callsign'], '/');
+				// Remove the callsign block (key line + all indented lines that follow)
+				$content = preg_replace('/^' . $cs . ':(?:\n[ \t]+.*)*\n?/m', '', $content);
+				ftruncate($fh, 0); rewind($fh);
+				fwrite($fh, $content);
+				flock($fh, LOCK_UN); fclose($fh);
+			}
+		}
+		echo json_encode([
+			'id'       => $newEntry['id'],
+			'token'    => $newEntry['token'],
+			'callsign' => $newEntry['callsign'],
+			'passcode' => aprsPasscode($newEntry['callsign']),
+		]);
 		exit;
 	}
 
@@ -309,7 +329,7 @@ if (isset($_GET['mobile'])) {
 		$token = $input['token'] ?? '';
 		$lat   = isset($input['lat']) ? round((float)$input['lat'], 6) : null;
 		$lon   = isset($input['lon']) ? round((float)$input['lon'], 6) : null;
-		if (!$token || $lat === null || $lon === null) { http_response_code(400); echo json_encode(['error' => 'Missing fields']); exit; }
+		if (!$token) { http_response_code(400); echo json_encode(['error' => 'Missing token']); exit; }
 		// Find session by token (read-only)
 		$found         = false;
 		$foundCallsign = null;
@@ -324,10 +344,11 @@ if (isset($_GET['mobile'])) {
 			}
 		}
 		if (!$found) { http_response_code(404); echo json_encode(['error' => 'Token not found']); exit; }
-		// Blocked clients: still accept and forward to APRS-IS (just not displayed on map)
-		// Forward position to APRS-IS; daemon picks it up and writes trackers.json
-		$root = strtoupper(substr(preg_replace('/[^A-Za-z0-9]/', '', $mobileCfg['root'] ?? ''), 0, 6));
-		if ($root !== '' && $foundCallsign) injectAprsPacket($foundCallsign, $lat, $lon, $root);
+		// Inject to APRS-IS when lat/lon are present (web UI path); Flutter sends direct to APRS-IS
+		if ($lat !== null && $lon !== null) {
+			$root = strtoupper(substr(preg_replace('/[^A-Za-z0-9]/', '', $mobileCfg['root'] ?? ''), 0, 6));
+			if ($root !== '' && $foundCallsign) injectAprsPacket($foundCallsign, $lat, $lon, $root);
+		}
 		// Refresh lastUpdate so the admin "last seen" age stays current
 		modifyMobileTrackers($mobileFile, function($data) use ($token) {
 			foreach ($data as &$t) { if (hash_equals($t['token'], $token)) { $t['lastUpdate'] = time(); break; } }
@@ -964,6 +985,27 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 }
 #malert-ok:hover { background: #1a6fa0; }
 
+#mshare-info-modal {
+    position: fixed; inset: 0; z-index: 10001;
+    display: flex; align-items: center; justify-content: center;
+}
+#mshare-info-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.5); }
+#mshare-info-box {
+    position: relative; background: #fff; border-radius: 8px;
+    padding: 20px 24px; min-width: 240px; max-width: 320px; width: 88%;
+    box-shadow: 0 4px 24px rgba(0,0,0,.35); z-index: 1;
+    font-family: arial, helvetica, sans-serif; font-size: 13px;
+}
+#mshare-info-title { font-size: 14px; font-weight: bold; margin-bottom: 12px; color: #1a6fa0; text-align: center; }
+#mshare-info-body { color: #444; line-height: 1.6; margin-bottom: 16px; }
+#mshare-info-body a { color: #2980b9; }
+#mshare-info-ok {
+    display: block; margin: 0 auto; padding: 8px 28px;
+    background: #2980b9; color: #fff;
+    border: none; border-radius: 5px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+#mshare-info-ok:hover { background: #1a6fa0; }
+
 /* ── APRS Path (inline in tracker popup + breadcrumb tooltip) ─────────────── */
 .popup-path { margin-top: 6px; padding-top: 6px; border-top: 1px solid #e2e2e2; }
 .aprs-path-tip { white-space: normal; max-width: 240px; }
@@ -1160,7 +1202,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 			<span id="mjoin-title">Share My Location</span>
 			<button id="mjoin-close">&times;</button>
 		</div>
-		<label class="mjoin-label" for="mjoin-name">Your name (12 characters max)</label>
+		<label class="mjoin-label" for="mjoin-name">Your first name (12 characters max)</label>
 		<input id="mjoin-name" class="mjoin-input" type="text" maxlength="12" autocomplete="off" autocorrect="off" spellcheck="false">
 		<label class="mjoin-label" for="mjoin-pin">PIN code</label>
 		<input id="mjoin-pin" class="mjoin-input" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off">
@@ -1175,6 +1217,15 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 		<div id="malert-title"></div>
 		<div id="malert-message"></div>
 		<button id="malert-ok">OK</button>
+	</div>
+</div>
+
+<div id="mshare-info-modal" style="display:none">
+	<div id="mshare-info-backdrop"></div>
+	<div id="mshare-info-box">
+		<div id="mshare-info-title">Location Sharing Started</div>
+		<div id="mshare-info-body"></div>
+		<button id="mshare-info-ok">OK</button>
 	</div>
 </div>
 
@@ -1311,7 +1362,7 @@ new (L.Control.extend({
 			L.DomEvent.on(exitBtn, 'click', () => { location.href = location.pathname; });
 			L.DomEvent.disableClickPropagation(exitBtn);
 			const txt = L.DomUtil.create('span', '', d);
-			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.12 &copy; 2026 Doug Kaye (K6DRK)';
+			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.13 &copy; 2026 Doug Kaye (K6DRK)';
 		} else {
 			if (!isMobile) {
 				const exitBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
@@ -1329,8 +1380,8 @@ new (L.Control.extend({
 			}
 			const ftxt = L.DomUtil.create('span', '', d);
 			ftxt.innerHTML = isMobile
-				? 'MARS APRS v1.12 &copy; 2026 Doug Kaye (K6DRK)'
-				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.12 &copy; 2026 Doug Kaye (K6DRK)';
+				? 'MARS APRS v1.13 &copy; 2026 Doug Kaye (K6DRK)'
+				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.13 &copy; 2026 Doug Kaye (K6DRK)';
 			if (isMobile) d.style.fontSize = '10px';
 		}
 		return d;
@@ -1444,6 +1495,16 @@ let jsonEtag           = null;
 let historyEtag        = null;
 let historyCache       = null;	// last full ?history response; reused on 304
 let coursesInitialized = false;
+
+// ── Mobile sharing state — declared here so refreshMobileAbout() (called
+// during drawer setup below) can safely reference mobileCallsign without
+// hitting the temporal dead zone.
+let mobileTrackingInitialized = false;
+let mobileToken    = null;
+let mobileId       = null;
+let mobileCallsign = null;
+let mobileWatcher  = null;
+let mobileWakeLock = null;
 
 // ── Mobile drawer ─────────────────────────────────────────────────────────
 // Always resolve elements by ID — isMobile JS flag can be wrong on iOS Safari
@@ -2222,7 +2283,14 @@ function loadConfig() {
 				configInitialized = true;
 				applyConfig(cfg);
 			} else {
-				// Subsequent polls: update trackers list and mobile button visibility
+				// Subsequent polls (or first poll after admin nav): always refresh sections from
+				// live server so they're never stale from an incomplete locally-stored config.
+				if (cfg.backgrounds) applyBackgrounds(cfg.backgrounds, cfg.background_url || '');
+				if (cfg.courses)     applyCourses(cfg.courses);
+				if (cfg.aidstations) applyAidStations(cfg.aidstations);
+				if (cfg.igates)      applyIgates(cfg.igates);
+				if (cfg.section_visibility) applySectionVisibility(cfg.section_visibility);
+				// Trackers: skip if admin made local edits not yet saved to server
 				if (!storedLocalConfig?._localTrackerEdited && cfg.trackers) applyTrackerConfig(cfg.trackers);
 				if (cfg.mobile_enabled !== undefined) initMobileTracking(cfg.mobile_enabled);
 			}
@@ -2263,7 +2331,8 @@ function refreshMobileAbout() {
 	const rows = [
 		currentEventName ? { label: 'Event',   val: currentEventName } : null,
 		{ label: 'Org',     val: 'Marin Amateur Radio Society' },
-		{ label: 'Version', val: 'APRS Tracker Map · v1.12' },
+		{ label: 'Version', val: 'APRS Tracker Map · v1.13' },
+		mobileCallsign ? { label: 'Callsign', val: mobileCallsign } : null,
 		{ label: 'Map',     val: currentBgAttribution || '' },
 		{ label: 'Credit',  val: '&copy; 2026 Doug Kaye (K6DRK)' },
 	].filter(Boolean);
@@ -2826,8 +2895,9 @@ function openAboutModal() {
 	const attrText = currentBgAttribution || '';
 	const rows = [
 		{ label: 'Organization', val: 'Marin Amateur Radio Society' },
-		{ label: 'Application',  val: 'APRS Tracker Map · v1.12' },
+		{ label: 'Application',  val: 'APRS Tracker Map · v1.13' },
 		currentEventName ? { label: 'Event', val: currentEventName } : null,
+		mobileCallsign ? { label: 'My Callsign', val: mobileCallsign } : null,
 		{ label: 'Map Data',     val: attrText },
 		{ label: 'Copyright',    val: '&copy; 2026 Doug Kaye (K6DRK). All Rights Reserved.' },
 	].filter(Boolean);
@@ -2957,11 +3027,6 @@ function setSectionVisible(section, visible) {
 }
 
 // ── Mobile location sharing ────────────────────────────────────────────────
-let mobileTrackingInitialized = false;
-let mobileToken    = null;
-let mobileId       = null;
-let mobileWatcher  = null;
-let mobileWakeLock = null;
 
 function initMobileTracking(enabled) {
 	const btnDesk = document.getElementById('share-loc-btn');
@@ -2976,7 +3041,7 @@ function initMobileTracking(enabled) {
 	try {
 		const saved = JSON.parse(localStorage.getItem('aprs_mobile_tracker') || 'null');
 		if (saved && saved.token && saved.id) {
-			mobileToken = saved.token; mobileId = saved.id;
+			mobileToken = saved.token; mobileId = saved.id; mobileCallsign = saved.callsign || null;
 			setShareLocBtnState('tracking');
 			startMobileGeolocation();
 			if (isMobile) { acquireWakeLock(); startDimTimer(); }
@@ -3022,6 +3087,24 @@ function closeMobileAlert() {
 	document.getElementById('mobile-alert-modal').style.display = 'none';
 }
 
+function showShareInfoModal(cs) {
+	if (!cs) return;
+	const url = 'https://aprs.fi/#!call=' + encodeURIComponent(cs);
+	document.getElementById('mshare-info-body').innerHTML =
+		'Your location is now shared using callsign <b>' + cs + '</b>.<br><br>' +
+		'In addition to this map, you can track your position on aprs.fi:<br>' +
+		'<a href="' + url + '" target="_blank" rel="noopener">aprs.fi/?call=' + cs + '</a><br><br>' +
+		'The callsign <b>' + cs + '</b> can also be entered in CalTopo.com to show your position there.';
+	document.getElementById('mshare-info-modal').style.display = 'flex';
+}
+
+function closeShareInfoModal() {
+	document.getElementById('mshare-info-modal').style.display = 'none';
+}
+
+document.getElementById('mshare-info-ok').addEventListener('click', closeShareInfoModal);
+document.getElementById('mshare-info-backdrop').addEventListener('click', closeShareInfoModal);
+
 document.getElementById('mjoin-close').addEventListener('click', closeMobileJoinModal);
 document.getElementById('mjoin-backdrop').addEventListener('click', closeMobileJoinModal);
 document.getElementById('malert-ok').addEventListener('click', closeMobileAlert);
@@ -3051,12 +3134,18 @@ function submitMobileJoin() {
 			btn.disabled = false;
 			return;
 		}
-		mobileToken = d.token; mobileId = d.id;
-			try { localStorage.setItem('aprs_mobile_tracker', JSON.stringify({ token: d.token, id: d.id })); } catch {}
+		mobileToken = d.token; mobileId = d.id; mobileCallsign = d.callsign || null;
+			try { localStorage.setItem('aprs_mobile_tracker', JSON.stringify({ token: d.token, id: d.id, callsign: d.callsign || null })); } catch {}
+		// Clear stale breadcrumbs for this callsign so old history doesn't linger
+		if (mobileCallsign && historyDots[mobileCallsign]) {
+			historyDots[mobileCallsign].forEach(dot => dot.remove());
+			delete historyDots[mobileCallsign];
+		}
 		closeMobileJoinModal();
 		setShareLocBtnState('tracking');
 		startMobileGeolocation();
 		if (isMobile) { acquireWakeLock(); startDimTimer(); }
+		showShareInfoModal(d.callsign || '');
 	})
 	.catch(() => { errEl.textContent = 'Network error. Try again.'; btn.disabled = false; });
 }
@@ -3329,8 +3418,8 @@ if (isMobile) {
 		pinReset();
 		setTimeout(pinReset, 300);
 	}
-	resetBtn.addEventListener('touchend', e => { e.stopPropagation(); clearAllSelections(); map.setView([defaultView.lat, defaultView.lon], defaultView.zoom); });
-	resetBtn.addEventListener('click',    e => { e.stopPropagation(); clearAllSelections(); map.setView([defaultView.lat, defaultView.lon], defaultView.zoom); });
+	resetBtn.addEventListener('touchend', e => { e.stopPropagation(); clearAllSelections(); map.setView([defaultView.lat, defaultView.lon], defaultView.zoom); closeMobileDrawer(); });
+	resetBtn.addEventListener('click',    e => { e.stopPropagation(); clearAllSelections(); map.setView([defaultView.lat, defaultView.lon], defaultView.zoom); closeMobileDrawer(); });
 }
 
 // Always poll for live tracker data; skip config polling only when previewing a non-default event
