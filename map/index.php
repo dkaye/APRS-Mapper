@@ -20,11 +20,13 @@ $trackerStatusFilename = 'trackers.json';
 if (isset($_GET['json'])) {
 	$igatesStatusFilename     = 'igates.json';
 	$aidstationsStatusFilename = 'aidstations.json';
-	$trackerMtime = file_exists($trackerStatusFilename)      ? filemtime($trackerStatusFilename)      : 0;
-	$configMtime  = file_exists('config.yaml')               ? filemtime('config.yaml')               : 0;
-	$igateMtime   = file_exists($igatesStatusFilename)       ? filemtime($igatesStatusFilename)       : 0;
-	$aidMtime     = file_exists($aidstationsStatusFilename)  ? filemtime($aidstationsStatusFilename)  : 0;
-	$etag = '"' . $trackerMtime . '-' . $configMtime . '-' . $igateMtime . '-' . $aidMtime . '"';
+	$mobileFile   = __DIR__ . '/mobile_trackers.json';
+	$trackerMtime = file_exists($trackerStatusFilename) ? filemtime($trackerStatusFilename) : 0;
+	$configMtime  = file_exists('config.yaml')          ? filemtime('config.yaml')          : 0;
+	$igateMtime   = file_exists($igatesStatusFilename)  ? filemtime($igatesStatusFilename)  : 0;
+	$aidMtime     = file_exists($aidstationsStatusFilename) ? filemtime($aidstationsStatusFilename) : 0;
+	$mobileMtime  = file_exists($mobileFile)            ? filemtime($mobileFile)            : 0;
+	$etag = '"' . $trackerMtime . '-' . $configMtime . '-' . $igateMtime . '-' . $aidMtime . '-' . $mobileMtime . '"';
 	header('ETag: ' . $etag);
 	header('Cache-Control: no-cache');
 	if (isset($_SERVER['HTTP_IF_NONE_MATCH']) && $_SERVER['HTTP_IF_NONE_MATCH'] === $etag) {
@@ -41,6 +43,33 @@ if (isset($_GET['json'])) {
 	flock($fh, LOCK_UN);
 	fclose($fh);
 	$trackers = json_decode($contents, true) ?: [];
+
+	// Read active mobile sessions for sidebar reconciliation
+	$activeMobile = [];	// callsign → [id, name]
+	$fhm = @fopen($mobileFile, 'r');
+	if ($fhm) {
+		flock($fhm, LOCK_SH); $mc = stream_get_contents($fhm); flock($fhm, LOCK_UN); fclose($fhm);
+		$now = time();
+		foreach (json_decode($mc, true) ?: [] as $t) {
+			$cs = $t['callsign'] ?? null;
+			if (!$cs || !empty($t['blocked']) || ($now - ($t['lastUpdate'] ?? 0)) > 86400) continue;
+			$activeMobile[$cs] = ['id' => $t['id'], 'name' => $t['name']];
+		}
+	}
+	// Remove mobile entries whose session is gone or blocked
+	$trackers = array_values(array_filter($trackers, function($t) use ($activeMobile) {
+		return empty($t['mobile']) || isset($activeMobile[$t['callsign']]);
+	}));
+	// Inject placeholder entries for sessions not yet heard by the daemon
+	$knownCallsigns = array_column($trackers, 'callsign');
+	foreach ($activeMobile as $cs => $ms) {
+		if (!in_array($cs, $knownCallsigns, true)) {
+			$trackers[] = ['callsign' => $cs, 'id' => $ms['id'], 'name' => $ms['name'],
+			               'lastUpdate' => 0, 'timeSinceLastUpdate' => 0, 'time' => '—',
+			               'color' => 'red', 'lat' => null, 'lon' => null, 'path' => '', 'mobile' => true];
+		}
+	}
+
 	$readBeaconFile = function($path) {
 		if (!file_exists($path)) return [];
 		$fh = fopen($path, 'r'); if (!$fh) return [];
@@ -294,8 +323,8 @@ if (isset($_GET['mobile'])) {
 				}
 			}
 		}
-		if ($found === 'blocked') { http_response_code(403); echo json_encode(['error' => 'Blocked']); exit; }
 		if (!$found) { http_response_code(404); echo json_encode(['error' => 'Token not found']); exit; }
+		// Blocked clients: still accept and forward to APRS-IS (just not displayed on map)
 		// Forward position to APRS-IS; daemon picks it up and writes trackers.json
 		$root = strtoupper(substr(preg_replace('/[^A-Za-z0-9]/', '', $mobileCfg['root'] ?? ''), 0, 6));
 		if ($root !== '' && $foundCallsign) injectAprsPacket($foundCallsign, $lat, $lon, $root);
@@ -2006,17 +2035,15 @@ function updateDesktopLegend(trackers) {
 			item.className = 'legend-item' + (hasBeacon ? ' clickable' : '');
 			item.innerHTML = `<span class="legend-dot"></span>`
 			               + `<span class="legend-text"><span class="legend-id">${t.id}</span> <span class="legend-name">${t.name}</span></span>`
-			               + `<span class="legend-time">${t.blocked ? 'blocked' : ((t.color||'red')==='red'?'stale':t.time)}</span>`;
+			               + `<span class="legend-time">${(t.color||'red')==='red'?'stale':t.time}</span>`;
 			if (hasBeacon) item.addEventListener('click', () => onLegendClick(t.callsign));
 		}
 		const color = t.color || 'red';
-		const timeLabel = t.blocked ? 'blocked' : (color === 'red' ? 'stale' : t.time);
-		const timeColor = t.blocked ? '#c0392b' : color;
 		item.querySelector('.legend-dot').style.background  = color;
-		item.querySelector('.legend-time').style.color      = timeColor;
+		item.querySelector('.legend-time').style.color      = color;
 		item.querySelector('.legend-id').textContent        = t.id;
 		item.querySelector('.legend-name').textContent      = t.name;
-		item.querySelector('.legend-time').textContent      = timeLabel;
+		item.querySelector('.legend-time').textContent      = color === 'red' ? 'stale' : t.time;
 		if (hasBeacon && !item.classList.contains('clickable')) {
 			item.classList.add('clickable');
 			item.addEventListener('click', () => onLegendClick(t.callsign));
@@ -2043,7 +2070,7 @@ function updateMobileLegend(trackers) {
 			item.dataset.callsign = t.callsign;
 			item.className = 'm-legend-item';
 			item.innerHTML = `<span class="m-dot"></span><span class="m-id">${t.id}</span>`
-			               + `<span class="m-name">${t.name}</span><span class="m-time">${t.blocked ? 'blocked' : ((t.color||'red')==='red'?'stale':t.time)}</span>`;
+			               + `<span class="m-name">${t.name}</span><span class="m-time">${(t.color||'red')==='red'?'stale':t.time}</span>`;
 			let pressTimer = null, didLongPress = false, _lpX = 0, _lpY = 0;
 			item.addEventListener('touchstart', e => {
 				didLongPress = false;
@@ -2063,14 +2090,12 @@ function updateMobileLegend(trackers) {
 			}, { passive: true });
 		}
 		const color = t.color || 'red';
-		const mTimeLabel = t.blocked ? 'blocked' : (color === 'red' ? 'stale' : t.time);
-		const mTimeColor = t.blocked ? '#c0392b' : color;
 		item.querySelector('.m-dot').style.background  = color;
 		item.querySelector('.m-dot').style.borderColor = color === 'green' ? '#1a7a1a' : (color === 'blue' ? '#0a5a9a' : '#a00');
-		item.querySelector('.m-time').style.color      = mTimeColor;
+		item.querySelector('.m-time').style.color      = color;
 		item.querySelector('.m-id').textContent        = t.id;
 		item.querySelector('.m-name').textContent      = t.name;
-		item.querySelector('.m-time').textContent      = mTimeLabel;
+		item.querySelector('.m-time').textContent      = color === 'red' ? 'stale' : t.time;
 		legend.appendChild(item);  // re-insert in sorted position (moves existing elements)
 	});
 

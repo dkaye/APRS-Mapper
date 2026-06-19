@@ -370,19 +370,22 @@ function loadMobileSessions() {
 	$now = time();
 	$newSessions = [];
 	foreach ($data as $t) {
+		if (!empty($t['blocked'])) continue;			// blocked: ignore in daemon, ?json filters display
 		if (($now - ($t['lastUpdate'] ?? 0)) > 86400) continue;	// expired
 		$cs = $t['callsign'] ?? null;
 		if (!$cs) continue;
-		$newSessions[$cs] = ['id' => $t['id'], 'name' => $t['name'], 'blocked' => !empty($t['blocked'])];
+		$newSessions[$cs] = ['id' => $t['id'], 'name' => $t['name']];
 	}
-	// Remove $trackers entries for mobile sessions that are no longer in the list at all
+	// Remove $trackers entries for sessions that are gone or blocked
 	$trackers = array_values(array_filter($trackers, function($t) use ($newSessions) {
 		return empty($t['mobile']) || isset($newSessions[$t['callsign']]);
 	}));
-	// Sync blocked flag into any existing $trackers entries
-	foreach ($trackers as $key => $t) {
-		if (!empty($t['mobile']) && isset($newSessions[$t['callsign']])) {
-			$trackers[$key]['blocked'] = $newSessions[$t['callsign']]['blocked'];
+	// Pre-add new sessions so they appear in trackers.json before first APRS beacon
+	$knownCallsigns = array_column($trackers, 'callsign');
+	foreach ($newSessions as $cs => $ms) {
+		if (!in_array($cs, $knownCallsigns, true)) {
+			$trackers[] = ['callsign' => $cs, 'id' => $ms['id'], 'name' => $ms['name'],
+			               'lastUpdate' => 0, 'lat' => null, 'lon' => null, 'path' => '', 'mobile' => true];
 		}
 	}
 	$mobileSessions = $newSessions;
@@ -461,8 +464,7 @@ function writeNewTrackerstatusFile($filename) {
 			"lon"=>$tracker["lon"],
 			"path"=>$tracker["path"] ?? ''
 		);
-		if (!empty($tracker["mobile"]))   $entry["mobile"]  = true;
-		if (!empty($tracker["blocked"]))  $entry["blocked"] = true;
+		if (!empty($tracker["mobile"])) $entry["mobile"] = true;
 		$output[]=$entry;
 	}
 	$fh = fopen($filename, 'w');
@@ -545,10 +547,8 @@ while (TRUE) {
 					foreach ($trackers as $key => $t) {
 						if ($t['callsign'] === $callsign) { $foundKey = $key; break; }
 					}
-					if (!empty($ms['blocked'])) {
-						// Blocked: keep entry in sidebar but freeze position — no history written
-					} elseif ($foundKey === null) {
-						// First packet for this session — add to $trackers
+					if ($foundKey === null) {
+						// Session pre-added by loadMobileSessions but no beacon yet — update it
 						$trackers[] = ['callsign' => $callsign, 'id' => $ms['id'], 'name' => $ms['name'],
 						               'lastUpdate' => time(), 'lat' => $lat, 'lon' => $lon,
 						               'path' => $aprsPath, 'mobile' => true];
@@ -556,11 +556,9 @@ while (TRUE) {
 					} else {
 						$trackers[$foundKey]['lastUpdate'] = time();
 						$trackers[$foundKey]['path']       = $aprsPath;
-						$trackers[$foundKey]['name']       = $ms['name'];	// update in case renamed
+						$trackers[$foundKey]['name']       = $ms['name'];
 					}
-					if (!empty($ms['blocked'])) {
-						// no-op: position frozen
-					} elseif ($lat !== null && $foundKey !== null) {
+					if ($lat !== null) {
 						$trackers[$foundKey]['lat'] = $lat;
 						$trackers[$foundKey]['lon'] = $lon;
 						if (!isset($trackerHistory[$callsign])) $trackerHistory[$callsign] = [];

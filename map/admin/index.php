@@ -1340,13 +1340,15 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
                 <label style="display:flex;align-items:center;gap:8px">
                     <input type="checkbox" id="mobile-enabled" onchange="markDirty(false,true)"> Enable mobile location sharing
                 </label>
-                <div style="display:flex;align-items:center;gap:8px">
-                    <label for="mobile-pin" style="white-space:nowrap">PIN code</label>
-                    <input type="text" id="mobile-pin" maxlength="20" style="width:120px;font-family:monospace" autocomplete="off" oninput="markDirty(false,true)" placeholder="e.g. 1234">
-                </div>
-                <div style="display:flex;align-items:center;gap:8px">
-                    <label for="mobile-root" style="white-space:nowrap">Root callsign</label>
-                    <input type="text" id="mobile-root" maxlength="6" style="width:80px;font-family:monospace;text-transform:uppercase" autocomplete="off" oninput="this.value=this.value.toUpperCase();markDirty(false,true)" placeholder="e.g. K6DRK">
+                <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+                    <div style="display:flex;align-items:center;gap:8px">
+                        <label for="mobile-pin" style="white-space:nowrap">PIN code</label>
+                        <input type="text" id="mobile-pin" maxlength="20" style="width:90px;font-family:monospace" autocomplete="off" oninput="markDirty(false,true)" placeholder="e.g. 1234">
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px">
+                        <label for="mobile-root" style="white-space:nowrap">Root callsign</label>
+                        <input type="text" id="mobile-root" maxlength="6" style="width:80px;font-family:monospace;text-transform:uppercase" autocomplete="off" oninput="this.value=this.value.toUpperCase();markDirty(false,true)" placeholder="e.g. K6DRK">
+                    </div>
                 </div>
             </div>
             <div id="mobile-trackers-list" style="margin-top:12px;font-size:13px"></div>
@@ -2479,7 +2481,7 @@ async function loadMobileTrackers() {
             nameInput.type = 'text';
             nameInput.value = t.name;
             nameInput.maxLength = 12;
-            nameInput.style.cssText = 'flex:1;min-width:0;font-size:13px;padding:3px 6px;border:1px solid #ddd;border-radius:4px';
+            nameInput.style.cssText = 'width:110px;font-size:13px;padding:3px 6px;border:1px solid #ddd;border-radius:4px';
             const saveName = async () => {
                 const newName = nameInput.value.trim();
                 if (!newName || newName === t.name) { nameInput.value = t.name; return; }
