@@ -175,5 +175,16 @@ function buildConfigYaml($cfg, $history = []) {
         $L[] = '    lon: '  . (is_numeric($g['lon'] ?? '') ? (float)$g['lon'] : 0);
     }
     $L[] = '';
+    $mob = $cfg['mobile'] ?? [];
+    $mobEnabled = !empty($mob['enabled']) && $mob['enabled'] !== false;
+    $mobPin     = trim((string)($mob['pin'] ?? ''));
+    $mobRoot    = strtoupper(trim((string)($mob['root'] ?? '')));
+    if ($mobEnabled || $mobPin !== '' || $mobRoot !== '') {
+        $L[] = 'mobile:';
+        $L[] = '  enabled: ' . ($mobEnabled ? 'true' : 'false');
+        if ($mobPin  !== '') $L[] = '  pin: '  . ys($mobPin);
+        if ($mobRoot !== '') $L[] = '  root: ' . ys($mobRoot);
+        $L[] = '';
+    }
     return implode("\n", $L);
 }

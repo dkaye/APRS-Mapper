@@ -42,6 +42,11 @@ $aidstations=array();		// [{callsign, name, lastBeacon}] — only entries with a
 $aidstationsStatusFilename='aidstations.json';
 $trackerHistory  = [];		// callsign → [{lat, lon, ts}, ...]  max 10 entries each
 $historyFilePath = null;	// full path to tracker_history.yaml in current event dir
+$mobileRoot      = '';		// root callsign for mobile tracking (from config.yaml mobile.root)
+$mobileEnabled   = false;
+$mobileSessions  = [];		// callsign → ['id' => ..., 'name' => ...]  (active sessions)
+$mobileMtime     = 0;
+$mobileTrackersFile = 'mobile_trackers.json';
 
 function debug($message) {
 	global $debugging;
@@ -267,13 +272,14 @@ function writeTrackerHistoryFile() {
 
 // Close any open socket, rebuild the filter command from current $trackers, and reconnect
 function connectToAprsServer() {
-	global $socket,$trackers,$aprsLoginCommand,$aprsServer,$aprsPort;
+	global $socket,$trackers,$aprsLoginCommand,$aprsServer,$aprsPort,$mobileRoot,$mobileEnabled;
 	if ($socket) {
 		socket_close($socket);
 		$socket=null;
 	}
 	$cmd=$aprsLoginCommand;
 	foreach ($trackers as $tracker) $cmd .= "/" . $tracker["callsign"];
+	if ($mobileEnabled && $mobileRoot !== '') $cmd .= "/" . $mobileRoot;
 	$cmd .= "\r\n";
 	debug("Command=$cmd");
 	$socket=socket_create(AF_INET,SOCK_STREAM,SOL_TCP);
@@ -291,7 +297,7 @@ function connectToAprsServer() {
 // while preserving live state for already-known callsigns.
 // Returns true if the file was reloaded, false if it was unchanged since the last load.
 function loadTrackers() {
-	global $trackers,$igates,$aidstations,$configFilename,$configFileMtime;
+	global $trackers,$igates,$aidstations,$configFilename,$configFileMtime,$mobileRoot,$mobileEnabled;
 	$mtime = filemtime($configFilename);
 	if ($mtime === $configFileMtime) return false;		//unchanged
 	$existing = array();
@@ -342,7 +348,39 @@ function loadTrackers() {
 	}
 	$aidstations = $newAid;
 
+	$mob         = $cfg['mobile'] ?? [];
+	$mobileEnabled = !empty($mob['enabled']) && $mob['enabled'] !== false;
+	$mobileRoot    = strtoupper(trim($mob['root'] ?? ''));
+
 	$configFileMtime = $mtime;
+	return true;
+}
+
+// Load active mobile sessions from mobile_trackers.json.
+// Returns true if reloaded, false if unchanged.
+// Also prunes stale mobile tracker entries from $trackers when sessions are removed.
+function loadMobileSessions() {
+	global $mobileSessions,$mobileMtime,$mobileTrackersFile,$trackers;
+	$mtime = file_exists($mobileTrackersFile) ? filemtime($mobileTrackersFile) : 0;
+	if ($mtime === $mobileMtime) return false;
+	$mobileMtime = $mtime;
+	$fh = @fopen($mobileTrackersFile, 'r');
+	$data = [];
+	if ($fh) { flock($fh, LOCK_SH); $c = stream_get_contents($fh); flock($fh, LOCK_UN); fclose($fh); $data = json_decode($c, true) ?: []; }
+	$now = time();
+	$newSessions = [];
+	foreach ($data as $t) {
+		if (!empty($t['blocked'])) continue;
+		if (($now - ($t['lastUpdate'] ?? 0)) > 86400) continue;
+		$cs = $t['callsign'] ?? null;
+		if (!$cs) continue;
+		$newSessions[$cs] = ['id' => $t['id'], 'name' => $t['name']];
+	}
+	// Remove $trackers entries for mobile sessions that have ended
+	$trackers = array_values(array_filter($trackers, function($t) use ($newSessions) {
+		return empty($t['mobile']) || isset($newSessions[$t['callsign']]);
+	}));
+	$mobileSessions = $newSessions;
 	return true;
 }
 
@@ -406,7 +444,7 @@ function writeNewTrackerstatusFile($filename) {
 		if ($timeSinceLastUpdate<=$minSecondsGreen) {$color="green";}
 		elseif ($timeSinceLastUpdate<=$minSecondsBlue) {$color="blue";}
 		else {$color="red";}
-		$output[]=array(
+		$entry = array(
 			"callsign"=>$tracker["callsign"],
 			"id"=>$tracker["id"],
 			"name"=>$tracker["name"],
@@ -418,6 +456,8 @@ function writeNewTrackerstatusFile($filename) {
 			"lon"=>$tracker["lon"],
 			"path"=>$tracker["path"] ?? ''
 		);
+		if (!empty($tracker["mobile"])) $entry["mobile"] = true;
+		$output[]=$entry;
 	}
 	$fh = fopen($filename, 'w');
 	if (!$fh) fatal("Can't open trackerstatus file for writing");
@@ -438,6 +478,7 @@ if (!is_writable($trackerStatusFilename)) fatal("Can't write to trackerstatus fi
 readTrackerstatusFile($trackerStatusFilename);		//seed lastUpdate history from existing JSON
 resolveHistoryPath();
 readTrackerHistoryFile();
+loadMobileSessions();
 connectToAprsServer();
 
 $prevCallsigns=array_column($trackers,'callsign');
@@ -456,6 +497,7 @@ while (TRUE) {
 		resolveHistoryPath();
 		readTrackerHistoryFile();
 	}
+	loadMobileSessions();								//reload when mobile_trackers.json changes
 	$line=socket_read($socket,1000,PHP_NORMAL_READ);
 	if ($line === false || $line === '') fatal("Socket read failed (connection lost or timed out)");
 	else {
@@ -487,6 +529,34 @@ while (TRUE) {
 							if (count($trackerHistory[$callsign]) > 10) array_pop($trackerHistory[$callsign]);
 							writeTrackerHistoryFile();
 						}
+					}
+				}
+
+				// Handle mobile tracker packets (callsigns assigned via mobile sessions)
+				if ($mobileEnabled && isset($mobileSessions[$callsign])) {
+					$ms = $mobileSessions[$callsign];
+					$foundKey = null;
+					foreach ($trackers as $key => $t) {
+						if ($t['callsign'] === $callsign) { $foundKey = $key; break; }
+					}
+					if ($foundKey === null) {
+						// First packet for this session — add to $trackers
+						$trackers[] = ['callsign' => $callsign, 'id' => $ms['id'], 'name' => $ms['name'],
+						               'lastUpdate' => time(), 'lat' => $lat, 'lon' => $lon,
+						               'path' => $aprsPath, 'mobile' => true];
+						$foundKey = array_key_last($trackers);
+					} else {
+						$trackers[$foundKey]['lastUpdate'] = time();
+						$trackers[$foundKey]['path']       = $aprsPath;
+						$trackers[$foundKey]['name']       = $ms['name'];	// update in case renamed
+					}
+					if ($lat !== null) {
+						$trackers[$foundKey]['lat'] = $lat;
+						$trackers[$foundKey]['lon'] = $lon;
+						if (!isset($trackerHistory[$callsign])) $trackerHistory[$callsign] = [];
+						array_unshift($trackerHistory[$callsign], ['lat'=>$lat,'lon'=>$lon,'path'=>$aprsPath,'ts'=>time()]);
+						if (count($trackerHistory[$callsign]) > 10) array_pop($trackerHistory[$callsign]);
+						writeTrackerHistoryFile();
 					}
 				}
 

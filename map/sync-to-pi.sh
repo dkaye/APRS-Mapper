@@ -19,6 +19,10 @@ rsync -avz --delete --omit-dir-times --no-perms \
   --exclude='*.md' \
   --exclude='*.py' \
   --exclude='trackers.json' \
+  --exclude='igates.json' \
+  --exclude='aidstations.json' \
+  --exclude='mobile_trackers.json' \
+  --exclude='mobile_history.yaml' \
   --exclude='config.yaml' \
   --exclude='aprs-daemon.service' \
   --exclude='aprs-daemon.sh' \
@@ -27,7 +31,7 @@ rsync -avz --delete --omit-dir-times --no-perms \
   --exclude='pi-tools/' \
   --exclude='sync-to-pi.sh' \
   --exclude='netbird/' \
-  --exclude='admin/' \
+  --exclude='admin/password.txt' \
   --exclude='igate/' \
   --exclude='display/' \
   --exclude='server/' \
@@ -35,3 +39,6 @@ rsync -avz --delete --omit-dir-times --no-perms \
   --exclude='tests/' \
   --exclude='vendor/' \
   "$SRC" "$DST"
+
+# Ensure mobile_trackers.json exists and is writable by www-data
+ssh pi@192.168.0.180 "touch /var/www/html/mobile_trackers.json && sudo chown www-data:www-data /var/www/html/mobile_trackers.json && sudo chmod 664 /var/www/html/mobile_trackers.json"

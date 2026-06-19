@@ -58,9 +58,12 @@ if (isset($_GET['json'])) {
 }
 
 if (isset($_GET['history'])) {
-	$cfgReal  = realpath('config.yaml');
-	$histPath = $cfgReal ? dirname($cfgReal) . '/tracker_history.yaml' : null;
-	$etag     = '"' . ($histPath && file_exists($histPath) ? filemtime($histPath) : '0') . '"';
+	$cfgReal      = realpath('config.yaml');
+	$histPath     = $cfgReal ? dirname($cfgReal) . '/tracker_history.yaml' : null;
+	$mobileHist   = __DIR__ . '/mobile_history.yaml';
+	$mtime1       = ($histPath && file_exists($histPath))   ? filemtime($histPath)   : 0;
+	$mtime2       = file_exists($mobileHist)                ? filemtime($mobileHist) : 0;
+	$etag         = '"' . $mtime1 . '-' . $mtime2 . '"';
 	header('ETag: ' . $etag);
 	header('Cache-Control: no-cache');
 	if (isset($_SERVER['HTTP_IF_NONE_MATCH']) && $_SERVER['HTTP_IF_NONE_MATCH'] === $etag) {
@@ -68,35 +71,41 @@ if (isset($_GET['history'])) {
 		exit;
 	}
 	header('Content-Type: application/json');
-	$result   = [];
-	if ($histPath && file_exists($histPath)) {
-		$fh = fopen($histPath, 'r');
-		if ($fh && flock($fh, LOCK_SH)) {
-			$lines = [];
-			while (($line = fgets($fh)) !== false) $lines[] = rtrim($line);
-			flock($fh, LOCK_UN);
-			fclose($fh);
-			$cs = null; $entry = null;
-			foreach ($lines as $line) {
-				if (!$line || $line[0] === '#') continue;
-				if (preg_match('/^([A-Z0-9][\w\-]+):$/', $line, $m)) {
-					$cs = $m[1]; $result[$cs] = [];
-				} elseif (preg_match('/^  - lat:\s*([\-\d.]+)/', $line, $m)) {
-					$entry = ['lat' => (float)$m[1], 'lon' => 0.0, 'ts' => 0];
-				} elseif (preg_match('/^    lon:\s*([\-\d.]+)/', $line, $m) && $entry !== null) {
-					$entry['lon'] = (float)$m[1];
-				} elseif (preg_match('/^    path:\s*(.+)/', $line, $m) && $entry !== null) {
-					$entry['path'] = trim($m[1]);
-				} elseif (preg_match('/^    ts:\s*(\d+)/', $line, $m) && $entry !== null) {
-					$entry['ts'] = (int)$m[1];
-					if (!isset($entry['path'])) $entry['path'] = '';
-					if ($cs !== null) $result[$cs][] = $entry;
-					$entry = null;
-				}
+
+	// Shared YAML history parser
+	$parseHistYaml = function($path) {
+		$out = [];
+		$fh = fopen($path, 'r');
+		if (!$fh || !flock($fh, LOCK_SH)) return $out;
+		$lines = [];
+		while (($line = fgets($fh)) !== false) $lines[] = rtrim($line);
+		flock($fh, LOCK_UN); fclose($fh);
+		$cs = null; $entry = null;
+		foreach ($lines as $line) {
+			if (!$line || $line[0] === '#') continue;
+			if (preg_match('/^([A-Z0-9][\w\-]+):$/', $line, $m)) {
+				$cs = $m[1]; $out[$cs] = [];
+			} elseif (preg_match('/^  - lat:\s*([\-\d.]+)/', $line, $m)) {
+				$entry = ['lat' => (float)$m[1], 'lon' => 0.0, 'ts' => 0];
+			} elseif (preg_match('/^    lon:\s*([\-\d.]+)/', $line, $m) && $entry !== null) {
+				$entry['lon'] = (float)$m[1];
+			} elseif (preg_match('/^    path:\s*(.+)/', $line, $m) && $entry !== null) {
+				$entry['path'] = trim($m[1]);
+			} elseif (preg_match('/^    ts:\s*(\d+)/', $line, $m) && $entry !== null) {
+				$entry['ts'] = (int)$m[1];
+				if (!isset($entry['path'])) $entry['path'] = '';
+				if ($cs !== null) $out[$cs][] = $entry;
+				$entry = null;
 			}
 		}
-		foreach ($result as &$entries) $entries = array_slice($entries, 0, 10);
-		unset($entries);
+		foreach ($out as &$e) $e = array_slice($e, 0, 10);
+		unset($e);
+		return $out;
+	};
+
+	$result = ($histPath && file_exists($histPath)) ? $parseHistYaml($histPath) : [];
+	if (file_exists($mobileHist)) {
+		foreach ($parseHistYaml($mobileHist) as $cs => $entries) $result[$cs] = $entries;
 	}
 	echo json_encode($result);
 	exit;
@@ -121,6 +130,8 @@ if (isset($_GET['config'])) {
 		$sv[$k] = ($v !== false && $v !== 'false' && $v !== 0 && $v !== '0');
 	}
 	header('Content-Type: application/json');
+	$mobileCfgTmp = $cfg['mobile'] ?? [];
+	$mobileEnabled = !empty($mobileCfgTmp['enabled']) && $mobileCfgTmp['enabled'] !== false;
 	echo json_encode([
 		'event'              => $cfg['event'] ?? '',
 		'legend'             => $cfg['legend'] ?? '',
@@ -133,6 +144,7 @@ if (isset($_GET['config'])) {
 		'aidstations'        => $cfg['aidstations'] ?? [],
 		'igates'             => $cfg['igates'] ?? [],
 		'section_visibility' => $sv,
+		'mobile_enabled'     => $mobileEnabled,
 	]);
 	exit;
 }
@@ -167,6 +179,146 @@ if (isset($_GET['clientstatus'])) {
 		'total'   => count($clients),
 	]);
 	exit;
+}
+
+// ── APRS-IS helpers (used by mobile update) ───────────────────────────────────
+
+function aprsPasscode(string $callsign): int {
+	$call = strtoupper(preg_replace('/-.*/', '', $callsign));
+	$hash = 0x73e2;
+	for ($i = 0; $i < strlen($call); $i += 2) {
+		$hash ^= (ord($call[$i]) << 8);
+		if (isset($call[$i + 1])) $hash ^= ord($call[$i + 1]);
+	}
+	return $hash & 0x7fff;
+}
+
+function decToAprsLat(float $lat): string {
+	$d = (int)abs($lat); $m = (abs($lat) - $d) * 60;
+	return sprintf('%02d%05.2f%s', $d, $m, $lat >= 0 ? 'N' : 'S');
+}
+
+function decToAprsLon(float $lon): string {
+	$d = (int)abs($lon); $m = (abs($lon) - $d) * 60;
+	return sprintf('%03d%05.2f%s', $d, $m, $lon >= 0 ? 'E' : 'W');
+}
+
+function injectAprsPacket(string $callsign, float $lat, float $lon, string $root): void {
+	$passcode = aprsPasscode($root);
+	$packet   = "{$callsign}>APRS,TCPIP*:!" . decToAprsLat($lat) . '/' . decToAprsLon($lon) . ">Mobile\r\n";
+	$sock = @fsockopen('noam.aprs2.net', 14580, $errno, $errstr, 5);
+	if (!$sock) return;
+	stream_set_timeout($sock, 5);
+	fgets($sock, 512);		// read server banner
+	fwrite($sock, "user {$root} pass {$passcode} vers AprsTopo 2.0\r\n");
+	fgets($sock, 512);		// read login response
+	fwrite($sock, $packet);
+	fclose($sock);
+}
+
+if (isset($_GET['mobile'])) {
+	header('Content-Type: application/json');
+	$mobileFile = __DIR__ . '/mobile_trackers.json';
+	$input      = json_decode(file_get_contents('php://input'), true) ?: [];
+	$action     = $_GET['mobile'];
+
+	require_once 'config_parse.php';
+	$_mcfg      = parseConfigYaml('config.yaml');
+	$mobileCfg  = $_mcfg['mobile'] ?? [];
+	$mobileOn   = !empty($mobileCfg['enabled']) && $mobileCfg['enabled'] !== false;
+
+	if (!$mobileOn) { http_response_code(403); echo json_encode(['error' => 'Mobile tracking is not enabled']); exit; }
+
+	// Atomic read-modify-write with exclusive lock
+	function modifyMobileTrackers($file, $fn) {
+		$fh = fopen($file, 'c+');
+		if (!$fh) return false;
+		flock($fh, LOCK_EX);
+		$c = stream_get_contents($fh);
+		$data = json_decode($c, true) ?: [];
+		$data = $fn($data);
+		ftruncate($fh, 0); rewind($fh);
+		fwrite($fh, json_encode($data, JSON_PRETTY_PRINT) . "\n");
+		flock($fh, LOCK_UN); fclose($fh);
+		return true;
+	}
+
+	if ($action === 'join') {
+		$name = preg_replace('/[^A-Za-z0-9 \-]/', '', trim($input['name'] ?? ''));
+		$name = substr($name, 0, 12);
+		$pin  = (string)($input['pin'] ?? '');
+		if ($name === '') { http_response_code(400); echo json_encode(['error' => 'Name is required']); exit; }
+		$storedPin = (string)($mobileCfg['pin'] ?? '');
+		if ($storedPin === '' || !hash_equals($storedPin, $pin)) {
+			http_response_code(403); echo json_encode(['error' => 'Incorrect PIN']); exit;
+		}
+		$root = strtoupper(substr(preg_replace('/[^A-Za-z0-9]/', '', $mobileCfg['root'] ?? ''), 0, 6));
+		if ($root === '') { http_response_code(500); echo json_encode(['error' => 'Root callsign not configured']); exit; }
+		$newEntry = null;
+		modifyMobileTrackers($mobileFile, function($data) use ($name, $root, &$newEntry) {
+			$now = time();
+			// Prune entries not updated in 24 h
+			$data = array_values(array_filter($data, fn($t) => ($now - $t['lastUpdate']) < 86400));
+			// Next available number (lowest unused, with leading zeros)
+			$used = [];
+			foreach ($data as $t) {
+				if (preg_match('/^M(\d+)$/', $t['id'], $m)) $used[(int)$m[1]] = true;
+			}
+			for ($n = 1; isset($used[$n]); $n++);
+			$id       = sprintf('M%02d', $n);
+			$callsign = sprintf('%s-%02d', $root, $n);
+			$newEntry = ['id' => $id, 'callsign' => $callsign, 'name' => $name,
+			             'token' => bin2hex(random_bytes(16)), 'lastUpdate' => $now, 'created' => $now];
+			$data[] = $newEntry;
+			return $data;
+		});
+		echo json_encode(['id' => $newEntry['id'], 'token' => $newEntry['token']]);
+		exit;
+	}
+
+	if ($action === 'update') {
+		$token = $input['token'] ?? '';
+		$lat   = isset($input['lat']) ? round((float)$input['lat'], 6) : null;
+		$lon   = isset($input['lon']) ? round((float)$input['lon'], 6) : null;
+		if (!$token || $lat === null || $lon === null) { http_response_code(400); echo json_encode(['error' => 'Missing fields']); exit; }
+		// Find session by token (read-only)
+		$found         = false;
+		$foundCallsign = null;
+		$fh = fopen($mobileFile, 'r');
+		if ($fh) {
+			flock($fh, LOCK_SH); $c = stream_get_contents($fh); flock($fh, LOCK_UN); fclose($fh);
+			foreach (json_decode($c, true) ?: [] as $t) {
+				if (hash_equals($t['token'], $token)) {
+					if (!empty($t['blocked'])) { $found = 'blocked'; break; }
+					$found = true; $foundCallsign = $t['callsign'] ?? null; break;
+				}
+			}
+		}
+		if ($found === 'blocked') { http_response_code(403); echo json_encode(['error' => 'Blocked']); exit; }
+		if (!$found) { http_response_code(404); echo json_encode(['error' => 'Token not found']); exit; }
+		// Forward position to APRS-IS; daemon picks it up and writes trackers.json
+		$root = strtoupper(substr(preg_replace('/[^A-Za-z0-9]/', '', $mobileCfg['root'] ?? ''), 0, 6));
+		if ($root !== '' && $foundCallsign) injectAprsPacket($foundCallsign, $lat, $lon, $root);
+		// Refresh lastUpdate so the admin "last seen" age stays current
+		modifyMobileTrackers($mobileFile, function($data) use ($token) {
+			foreach ($data as &$t) { if (hash_equals($t['token'], $token)) { $t['lastUpdate'] = time(); break; } }
+			return $data;
+		});
+		echo json_encode(['ok' => true]);
+		exit;
+	}
+
+	if ($action === 'leave') {
+		$token = $input['token'] ?? '';
+		if (!$token) { http_response_code(400); echo json_encode(['error' => 'Missing token']); exit; }
+		modifyMobileTrackers($mobileFile, function($data) use ($token) {
+			return array_values(array_filter($data, fn($t) => !hash_equals($t['token'], $token)));
+		});
+		echo json_encode(['ok' => true]);
+		exit;
+	}
+
+	http_response_code(400); echo json_encode(['error' => 'Unknown action']); exit;
 }
 
 // Reached only for the HTML page (every API endpoint above exits). Stop iOS
@@ -658,6 +810,20 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 }
 .clients-none { color: #aaa; font-style: italic; }
 
+/* ── Screen dim overlay (mobile tracking battery saver) ───────────────── */
+#screen-dim {
+    display: none; position: fixed; inset: 0; z-index: 19000;
+    background: rgba(0,0,0,0.88);
+    align-items: center; justify-content: center;
+    cursor: pointer;
+}
+#screen-dim.active { display: flex; }
+#screen-dim span {
+    color: rgba(255,255,255,0.35); font-size: 14px;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    pointer-events: none; user-select: none;
+}
+
 /* ── Connection modal ──────────────────────────────────────────────────── */
 #conn-modal {
     position: fixed; inset: 0; z-index: 10000;
@@ -712,6 +878,62 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 .about-label { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #999; margin-bottom: 2px; }
 .about-val { font-size: 13px; color: #222; line-height: 1.4; }
 .about-val a { color: #2980b9; }
+
+/* ── Mobile join modal ─────────────────────────────────────────────────── */
+#mobile-join-modal {
+    position: fixed; inset: 0; z-index: 10000;
+    display: flex; align-items: center; justify-content: center;
+}
+#mjoin-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+#mjoin-box {
+    position: relative; background: #fff; border-radius: 8px;
+    padding: 18px 22px; min-width: 260px; max-width: 320px; width: 88%;
+    box-shadow: 0 4px 24px rgba(0,0,0,.35); z-index: 1;
+    font-family: arial, helvetica, sans-serif; font-size: 13px;
+}
+#mjoin-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 16px; font-size: 14px; font-weight: bold;
+}
+#mjoin-close {
+    background: none; border: none; font-size: 20px; line-height: 1;
+    cursor: pointer; color: #888; padding: 0 2px;
+}
+#mjoin-close:hover { color: #000; }
+.mjoin-label { display: block; margin-bottom: 4px; color: #555; font-size: 12px; }
+.mjoin-input {
+    display: block; width: 100%; box-sizing: border-box;
+    padding: 7px 10px; border: 1px solid #ccc; border-radius: 5px;
+    font-size: 13px; margin-bottom: 12px;
+}
+.mjoin-input:focus { outline: none; border-color: #2980b9; }
+#mjoin-error { color: #c0392b; font-size: 12px; min-height: 18px; margin-bottom: 8px; }
+#mjoin-submit {
+    width: 100%; padding: 9px; background: #2980b9; color: #fff;
+    border: none; border-radius: 5px; font-size: 13px; font-weight: 600;
+    cursor: pointer;
+}
+#mjoin-submit:hover { background: #1a6fa0; }
+#mjoin-submit:disabled { background: #aaa; cursor: default; }
+
+#mobile-alert-modal {
+    position: fixed; inset: 0; z-index: 10001;
+    display: flex; align-items: center; justify-content: center;
+}
+#malert-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.5); }
+#malert-box {
+    position: relative; background: #fff; border-radius: 8px;
+    padding: 20px 24px; min-width: 220px; max-width: 300px; width: 82%;
+    box-shadow: 0 4px 24px rgba(0,0,0,.35); z-index: 1;
+    font-family: arial, helvetica, sans-serif; font-size: 13px; text-align: center;
+}
+#malert-title { font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #c0392b; }
+#malert-message { margin-bottom: 18px; color: #444; line-height: 1.5; }
+#malert-ok {
+    padding: 8px 28px; background: #2980b9; color: #fff;
+    border: none; border-radius: 5px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+#malert-ok:hover { background: #1a6fa0; }
 
 /* ── APRS Path (inline in tracker popup + breadcrumb tooltip) ─────────────── */
 .popup-path { margin-top: 6px; padding-top: 6px; border-top: 1px solid #e2e2e2; }
@@ -771,6 +993,9 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 		<div class="sidebar-btn-row">
 			<a href="https://marsaprs.org/userguide.html?back=/" id="userguide-btn" class="sidebar-btn" target="_blank">User Guide</a>
 			<button id="about-btn" class="sidebar-btn">About</button>
+		</div>
+		<div class="sidebar-btn-row" id="share-loc-row" style="display:none">
+			<button id="share-loc-btn" class="sidebar-btn">Share Location</button>
 		</div>
 		<div class="sidebar-btn-row" id="fs-sidebar-row" style="display:none">
 			<button id="fs-btn" class="sidebar-btn">Full Screen</button>
@@ -857,6 +1082,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 			<button id="m-save-map-btn" class="m-action-btn">Save Map</button>
 			<a href="admin/" class="m-action-btn">Admin</a>
 			<a href="https://marsaprs.org/userguide.html?back=/" class="m-action-btn" target="_blank">User Guide</a>
+			<button id="m-share-loc-btn" class="m-action-btn" style="display:none">Share Location</button>
 			<button id="m-fs-btn" class="m-action-btn" style="display:none">Full Screen</button>
 		</div>
 	</div>
@@ -893,6 +1119,33 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 		</div>
 		<div class="conn-row"><span class="conn-label">Client</span><span id="conn-client" class="conn-value"></span></div>
 		<div class="conn-row"><span class="conn-label">Server</span><span id="conn-server" class="conn-value"></span></div>
+	</div>
+</div>
+
+<div id="screen-dim"><span>Tap to wake</span></div>
+
+<div id="mobile-join-modal" style="display:none">
+	<div id="mjoin-backdrop"></div>
+	<div id="mjoin-box">
+		<div id="mjoin-header">
+			<span id="mjoin-title">Share My Location</span>
+			<button id="mjoin-close">&times;</button>
+		</div>
+		<label class="mjoin-label" for="mjoin-name">Your name (12 characters max)</label>
+		<input id="mjoin-name" class="mjoin-input" type="text" maxlength="12" autocomplete="off" autocorrect="off" spellcheck="false">
+		<label class="mjoin-label" for="mjoin-pin">PIN code</label>
+		<input id="mjoin-pin" class="mjoin-input" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off">
+		<div id="mjoin-error"></div>
+		<button id="mjoin-submit">Share Location</button>
+	</div>
+</div>
+
+<div id="mobile-alert-modal" style="display:none">
+	<div id="malert-backdrop"></div>
+	<div id="malert-box">
+		<div id="malert-title"></div>
+		<div id="malert-message"></div>
+		<button id="malert-ok">OK</button>
 	</div>
 </div>
 
@@ -1285,10 +1538,10 @@ if (_isIos && !_isStandalone && !localStorage.getItem('a2hs-dismissed')) {
 		: 'tap <b>Share ⬆</b> → <b>Add to Home Screen</b>';
 	const nudge = document.createElement('div');
 	nudge.id = 'a2hs-nudge';
-	nudge.innerHTML = 'For full-screen: ' + _instruction + ' <button id="a2hs-close" aria-label="Dismiss">✕</button>';
+	nudge.innerHTML = 'For full-screen: ' + _instruction + ' <button id="a2hs-close" aria-label="Dismiss">Got it!</button>';
 	nudge.style.cssText = 'position:fixed;bottom:max(12px,env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);z-index:9000;background:rgba(30,30,30,0.92);color:#fff;font-size:13px;padding:9px 14px;border-radius:10px;white-space:nowrap;box-shadow:0 2px 12px rgba(0,0,0,.4);display:flex;align-items:center;gap:10px';
 	document.body.appendChild(nudge);
-	document.getElementById('a2hs-close').style.cssText = 'background:none;border:none;color:#aaa;font-size:16px;line-height:1;cursor:pointer;padding:0 2px;flex-shrink:0';
+	document.getElementById('a2hs-close').style.cssText = 'background:none;border:1px solid rgba(255,255,255,0.4);border-radius:5px;color:#fff;font-size:12px;line-height:1;cursor:pointer;padding:4px 8px;flex-shrink:0';
 	document.getElementById('a2hs-close').addEventListener('click', () => {
 		nudge.remove();
 		localStorage.setItem('a2hs-dismissed', '1');
@@ -1404,7 +1657,11 @@ function makeTrackerIcon(shape, fillColor, size) {
 
 function popupHtml(t) {
 	let html = `<b>${esc(t.name)}</b> (${esc(t.id)})<br>${esc(t.callsign)}<br>Last heard ${esc(t.time)} ago`;
-	if (t.path) html += `<div class="popup-path">${formatAprsPath(t.path)}</div>`;
+	if (t.mobile) {
+		html += `<div class="popup-path" style="color:#555;font-style:italic">Mobile device</div>`;
+	} else if (t.path) {
+		html += `<div class="popup-path">${formatAprsPath(t.path)}</div>`;
+	}
 	return html;
 }
 
@@ -1954,6 +2211,7 @@ function applyConfig(cfg) {
 	if (cfg.aidstations) applyAidStations(cfg.aidstations);
 	if (cfg.igates)      applyIgates(cfg.igates);
 	if (cfg.section_visibility) applySectionVisibility(cfg.section_visibility);
+	if (cfg.mobile_enabled !== undefined) initMobileTracking(cfg.mobile_enabled);
 }
 
 function applyTrackerStyle(style) {
@@ -2666,6 +2924,213 @@ function setSectionVisible(section, visible) {
 		const el = document.getElementById(id);
 		if (el) el.classList.toggle('section-dimmed', !visible);
 	});
+}
+
+// ── Mobile location sharing ────────────────────────────────────────────────
+let mobileToken    = null;
+let mobileId       = null;
+let mobileWatcher  = null;
+let mobileWakeLock = null;
+
+function initMobileTracking(enabled) {
+	const btnDesk  = document.getElementById('share-loc-btn');
+	const btnRow   = document.getElementById('share-loc-row');
+	const btnMob   = document.getElementById('m-share-loc-btn');
+	if (!enabled || !navigator.geolocation) return;
+	if (btnRow)  btnRow.style.display  = '';
+	if (btnMob)  btnMob.style.display  = '';
+	// Resume from previous session
+	try {
+		const saved = JSON.parse(localStorage.getItem('aprs_mobile_tracker') || 'null');
+		if (saved && saved.token && saved.id) { mobileToken = saved.token; mobileId = saved.id; setShareLocBtnState('tracking'); startMobileGeolocation(); acquireWakeLock(); startDimTimer(); }
+	} catch {}
+	if (btnDesk) btnDesk.addEventListener('click', onShareLocClick);
+	if (btnMob)  btnMob.addEventListener('click',  onShareLocClick);
+}
+
+function onShareLocClick() {
+	if (mobileToken) { stopMobileTracking(); } else { openMobileJoinModal(); }
+}
+
+function setShareLocBtnState(state) {
+	const label  = state === 'tracking' ? 'Stop Sharing' : 'Share Location';
+	const btnD   = document.getElementById('share-loc-btn');
+	const btnM   = document.getElementById('m-share-loc-btn');
+	if (btnD) btnD.textContent = label;
+	if (btnM) btnM.textContent = label;
+}
+
+function openMobileJoinModal() {
+	document.getElementById('mjoin-name').value  = '';
+	document.getElementById('mjoin-pin').value   = '';
+	document.getElementById('mjoin-error').textContent = '';
+	document.getElementById('mjoin-submit').disabled    = false;
+	document.getElementById('mjoin-submit').textContent = 'Share Location';
+	document.getElementById('mobile-join-modal').style.display = 'flex';
+	document.getElementById('mjoin-name').focus();
+}
+
+function closeMobileJoinModal() {
+	document.getElementById('mobile-join-modal').style.display = 'none';
+}
+
+function showMobileAlert(title, message) {
+	document.getElementById('malert-title').textContent   = title;
+	document.getElementById('malert-message').textContent = message;
+	document.getElementById('mobile-alert-modal').style.display = 'flex';
+}
+
+function closeMobileAlert() {
+	document.getElementById('mobile-alert-modal').style.display = 'none';
+}
+
+document.getElementById('mjoin-close').addEventListener('click', closeMobileJoinModal);
+document.getElementById('mjoin-backdrop').addEventListener('click', closeMobileJoinModal);
+document.getElementById('malert-ok').addEventListener('click', closeMobileAlert);
+document.getElementById('malert-backdrop').addEventListener('click', closeMobileAlert);
+document.getElementById('mjoin-submit').addEventListener('click', submitMobileJoin);
+document.getElementById('mjoin-name').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('mjoin-pin').focus(); });
+document.getElementById('mjoin-pin').addEventListener('keydown',  e => { if (e.key === 'Enter') submitMobileJoin(); });
+
+function submitMobileJoin() {
+	const name = document.getElementById('mjoin-name').value.trim();
+	const pin  = document.getElementById('mjoin-pin').value;
+	const errEl = document.getElementById('mjoin-error');
+	const btn   = document.getElementById('mjoin-submit');
+	if (!name) { errEl.textContent = 'Please enter your name.'; return; }
+	btn.disabled = true;
+	errEl.textContent = '';
+	fetch('index.php?mobile=join', {
+		method: 'POST', headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ name, pin })
+	})
+	.then(r => r.json().then(d => ({ ok: r.ok, d })))
+	.then(({ ok, d }) => {
+		if (!ok) {
+			errEl.textContent = d.error === 'Incorrect PIN'
+				? 'Incorrect PIN. Please try again.'
+				: (d.error || 'Could not connect. Please try again.');
+			btn.disabled = false;
+			return;
+		}
+		mobileToken = d.token; mobileId = d.id;
+			try { localStorage.setItem('aprs_mobile_tracker', JSON.stringify({ token: d.token, id: d.id })); } catch {}
+		closeMobileJoinModal();
+		setShareLocBtnState('tracking');
+		startMobileGeolocation();
+		acquireWakeLock();
+		startDimTimer();
+	})
+	.catch(() => { errEl.textContent = 'Network error. Try again.'; btn.disabled = false; });
+}
+
+let _mobileLastPos = null;
+let _mobileInterval = null;
+
+async function acquireWakeLock() {
+	if (!('wakeLock' in navigator)) return;
+	try {
+		mobileWakeLock = await navigator.wakeLock.request('screen');
+		// iOS/Android can release it automatically when the tab is hidden; re-acquire on visibility restore
+		mobileWakeLock.addEventListener('release', () => {
+			mobileWakeLock = null;
+			if (mobileToken) acquireWakeLock();
+		});
+	} catch {}
+}
+
+function releaseWakeLock() {
+	if (mobileWakeLock) { mobileWakeLock.release().catch(() => {}); mobileWakeLock = null; }
+}
+
+// ── Screen dim (battery saver while Wake Lock is held) ────────────────────
+const _dimOverlay  = document.getElementById('screen-dim');
+const _DIM_DELAY   = 30000;
+let   _dimTimer    = null;
+let   _dimActive   = false;
+
+function _resetDimTimer() {
+	if (!mobileToken) return;              // only active while sharing
+	clearTimeout(_dimTimer);
+	if (_dimActive) _undim();
+	_dimTimer = setTimeout(_dim, _DIM_DELAY);
+}
+
+function _dim() {
+	_dimActive = true;
+	_dimOverlay.classList.add('active');
+}
+
+function _undim() {
+	_dimActive = false;
+	_dimOverlay.classList.remove('active');
+}
+
+function startDimTimer() {
+	['touchstart','touchmove','mousedown','mousemove','keydown'].forEach(ev =>
+		document.addEventListener(ev, _resetDimTimer, { passive: true }));
+	_dimOverlay.addEventListener('touchstart', e => { e.preventDefault(); _resetDimTimer(); }, { passive: false });
+	_dimOverlay.addEventListener('mousedown',  e => { e.preventDefault(); _resetDimTimer(); });
+	_resetDimTimer();
+}
+
+function stopDimTimer() {
+	clearTimeout(_dimTimer); _dimTimer = null;
+	_undim();
+}
+
+function startMobileGeolocation() {
+	if (mobileWatcher !== null) return;
+	let sentFirst = false;
+	function sendUpdate() {
+		if (!mobileToken || !_mobileLastPos) return;
+		fetch('index.php?mobile=update', {
+			method: 'POST', headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ token: mobileToken, lat: _mobileLastPos.coords.latitude, lon: _mobileLastPos.coords.longitude })
+		}).then(r => r.json().then(d => ({ status: r.status, d })))
+		  .then(({ status, d }) => {
+			if (status === 404) {
+				clearMobileState();
+				showMobileAlert('Session Ended', d.error === 'Token not found'
+					? 'Your location sharing session has ended. Tap Share Location to rejoin.'
+					: (d.error || 'Your session is no longer active.'));
+			} else if (status === 403) {
+				clearMobileState();
+				showMobileAlert('Access Denied', 'Your location sharing session was ended by the administrator.');
+			}
+		  }).catch(() => {});
+	}
+	// watchPosition keeps GPS active; send immediately on first fix, then every 60s
+	mobileWatcher = navigator.geolocation.watchPosition(
+		pos => {
+			_mobileLastPos = pos;
+			if (!sentFirst) { sentFirst = true; sendUpdate(); }
+		},
+		() => {},
+		{ enableHighAccuracy: true, maximumAge: 10000, timeout: 30000 }
+	);
+	_mobileInterval = setInterval(sendUpdate, 60000);
+}
+
+function stopMobileTracking() {
+	if (mobileToken) {
+		fetch('index.php?mobile=leave', {
+			method: 'POST', headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ token: mobileToken })
+		}).catch(() => {});
+	}
+	clearMobileState();
+}
+
+function clearMobileState() {
+	if (mobileWatcher !== null) { navigator.geolocation.clearWatch(mobileWatcher); mobileWatcher = null; }
+	if (_mobileInterval !== null) { clearInterval(_mobileInterval); _mobileInterval = null; }
+	_mobileLastPos = null;
+	mobileToken = null; mobileId = null;
+	releaseWakeLock();
+	stopDimTimer();
+	try { localStorage.removeItem('aprs_mobile_tracker'); } catch {}
+	setShareLocBtnState('idle');
 }
 
 function applySectionVisibility(sv) {

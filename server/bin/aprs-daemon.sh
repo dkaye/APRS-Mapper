@@ -45,9 +45,30 @@ if [ -f "$PIDFILE" ]; then
     rm -f "$PIDFILE"
 fi
 
-# ── Start ─────────────────────────────────────────────────────────────────────
+# ── Wait for DNS ─────────────────────────────────────────────────────────────
+# Retry up to 60 s so a transient DNS outage at boot doesn't kill the daemon.
+
+APRS_HOST="noam.aprs2.net"
+DNS_RETRIES=12
+DNS_WAIT=5
 
 echo $$ > "$PIDFILE"
+
+for i in $(seq 1 $DNS_RETRIES); do
+    if getent hosts "$APRS_HOST" >/dev/null 2>&1; then
+        break
+    fi
+    if [ "$i" -eq "$DNS_RETRIES" ]; then
+        echo "$(ts)  ERROR DNS for $APRS_HOST failed after $((DNS_WAIT * DNS_RETRIES)) s — giving up"
+        rm -f "$PIDFILE"
+        exit 1
+    fi
+    echo "$(ts)  WAIT  DNS not ready (attempt $i/$DNS_RETRIES) — retrying in ${DNS_WAIT}s"
+    sleep "$DNS_WAIT"
+done
+
+# ── Start ─────────────────────────────────────────────────────────────────────
+
 echo "$(ts)  START PID $$ | php $DAEMON"
 
 # ── Run ───────────────────────────────────────────────────────────────────────

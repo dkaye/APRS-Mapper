@@ -113,7 +113,7 @@ $authed = (isset($_SESSION['aprs_admin_authed']) && $_SESSION['aprs_admin_authed
        || (isset($_SESSION['stats_auth'])        && $_SESSION['stats_auth']        === true);
 
 if (!$authed) {
-    if (isset($_GET['load']) || isset($_GET['save']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['alllocationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib']) || isset($_GET['beacondeltas']) || isset($_GET['togglelock'])) {
+    if (isset($_GET['load']) || isset($_GET['save']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['alllocationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib']) || isset($_GET['beacondeltas']) || isset($_GET['togglelock']) || isset($_GET['mobiletrackers']) || isset($_GET['removemobile']) || isset($_GET['blockmobile']) || isset($_GET['renamemobile'])) {
         header('Content-Type: application/json');
         http_response_code(401);
         echo json_encode(['error' => 'Session expired — reload and log in again']);
@@ -742,6 +742,73 @@ if (isset($_GET['bglib'])) {
     respondJson($bgs);
 }
 
+// ── Mobile trackers (admin view / remove) ─────────────────────────────────────
+if (isset($_GET['mobiletrackers'])) {
+    $mf = __DIR__ . '/../mobile_trackers.json';
+    if (!file_exists($mf)) { respondJson([]); exit; }
+    $fh = fopen($mf, 'r'); flock($fh, LOCK_SH); $c = stream_get_contents($fh); flock($fh, LOCK_UN); fclose($fh);
+    $all = json_decode($c, true) ?: [];
+    $now = time();
+    // Return active (within 2 h) + blocked entries; strip token
+    $out = array_values(array_map(function($t) use ($now) {
+        return ['id' => $t['id'], 'callsign' => $t['callsign'] ?? '', 'name' => $t['name'],
+                'lastUpdate' => $t['lastUpdate'], 'age' => $now - $t['lastUpdate'],
+                'blocked' => !empty($t['blocked'])];
+    }, array_filter($all, fn($t) => !empty($t['blocked']) || ($now - $t['lastUpdate']) < 7200)));
+    respondJson($out);
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['removemobile'])) {
+    $input = json_decode(file_get_contents('php://input'), true) ?: [];
+    $id    = trim($input['id'] ?? '');
+    if (!$id) { respondJson(['error' => 'Missing id'], 400); exit; }
+    $mf = __DIR__ . '/../mobile_trackers.json';
+    $fh = fopen($mf, 'c+');
+    if (!$fh) { respondJson(['error' => 'Cannot open file'], 500); exit; }
+    flock($fh, LOCK_EX);
+    $data = json_decode(stream_get_contents($fh), true) ?: [];
+    $data = array_values(array_filter($data, fn($t) => $t['id'] !== $id));
+    ftruncate($fh, 0); rewind($fh);
+    fwrite($fh, json_encode($data, JSON_PRETTY_PRINT) . "\n");
+    flock($fh, LOCK_UN); fclose($fh);
+    respondJson(['ok' => true]);
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['blockmobile'])) {
+    $input = json_decode(file_get_contents('php://input'), true) ?: [];
+    $id    = trim($input['id'] ?? '');
+    $block = !empty($input['block']);
+    if (!$id) { respondJson(['error' => 'Missing id'], 400); exit; }
+    $mf = __DIR__ . '/../mobile_trackers.json';
+    $fh = fopen($mf, 'c+');
+    if (!$fh) { respondJson(['error' => 'Cannot open file'], 500); exit; }
+    flock($fh, LOCK_EX);
+    $data = json_decode(stream_get_contents($fh), true) ?: [];
+    foreach ($data as &$t) { if ($t['id'] === $id) { $t['blocked'] = $block; break; } }
+    ftruncate($fh, 0); rewind($fh);
+    fwrite($fh, json_encode($data, JSON_PRETTY_PRINT) . "\n");
+    flock($fh, LOCK_UN); fclose($fh);
+    respondJson(['ok' => true]);
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['renamemobile'])) {
+    $input = json_decode(file_get_contents('php://input'), true) ?: [];
+    $id    = trim($input['id']   ?? '');
+    $name  = trim($input['name'] ?? '');
+    if (!$id || $name === '') { respondJson(['error' => 'Missing id or name'], 400); exit; }
+    $name = substr($name, 0, 12);
+    $mf = __DIR__ . '/../mobile_trackers.json';
+    $fh = fopen($mf, 'c+');
+    if (!$fh) { respondJson(['error' => 'Cannot open file'], 500); exit; }
+    flock($fh, LOCK_EX);
+    $data = json_decode(stream_get_contents($fh), true) ?: [];
+    $found = false;
+    foreach ($data as &$t) { if ($t['id'] === $id) { $t['name'] = $name; $found = true; break; } }
+    if ($found) { ftruncate($fh, 0); rewind($fh); fwrite($fh, json_encode($data, JSON_PRETTY_PRINT) . "\n"); }
+    flock($fh, LOCK_UN); fclose($fh);
+    respondJson($found ? ['ok' => true] : ['error' => 'Not found'], $found ? 200 : 404);
+}
+
 // ── Login form ────────────────────────────────────────────────────────────────
 
 function renderLogin($error = '', $next = '') { ?>
@@ -1262,6 +1329,27 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
                         oninput="markDirty()">
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- ── Mobile Tracking ── -->
+    <div class="section">
+        <div class="sec-title"><span>Mobile Tracking</span><button type="button" class="io-btn" title="Refresh tracker list" onclick="loadMobileTrackers()" style="margin-left:8px">↻</button></div>
+        <div class="sec-body">
+            <div style="display:flex;flex-direction:column;gap:10px;font-size:13px">
+                <label style="display:flex;align-items:center;gap:8px">
+                    <input type="checkbox" id="mobile-enabled" onchange="markDirty(false,true)"> Enable mobile location sharing
+                </label>
+                <div style="display:flex;align-items:center;gap:8px">
+                    <label for="mobile-pin" style="white-space:nowrap">PIN code</label>
+                    <input type="text" id="mobile-pin" maxlength="20" style="width:120px;font-family:monospace" autocomplete="off" oninput="markDirty(false,true)" placeholder="e.g. 1234">
+                </div>
+                <div style="display:flex;align-items:center;gap:8px">
+                    <label for="mobile-root" style="white-space:nowrap">Root callsign</label>
+                    <input type="text" id="mobile-root" maxlength="6" style="width:80px;font-family:monospace;text-transform:uppercase" autocomplete="off" oninput="this.value=this.value.toUpperCase();markDirty(false,true)" placeholder="e.g. K6DRK">
+                </div>
+            </div>
+            <div id="mobile-trackers-list" style="margin-top:12px;font-size:13px"></div>
         </div>
     </div>
 
@@ -2357,6 +2445,99 @@ function appendIgate(g, attach) {
 
 function addIgate() { appendIgate({}, dragAdder['igates-list']); markDirty(true); }
 
+// ── Mobile Trackers (live read-only section) ──────────────────────────────────
+
+function esc(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+
+async function loadMobileTrackers() {
+    const listEl = document.getElementById('mobile-trackers-list');
+    if (!listEl) return;
+    listEl.innerHTML = '<span style="color:#999;font-style:italic">Loading…</span>';
+    try {
+        const r = await fetch('?mobiletrackers');
+        if (!r.ok) { listEl.innerHTML = '<span style="color:#c0392b">Error loading mobile trackers.</span>'; return; }
+        const trackers = await r.json();
+        if (!trackers.length) {
+            listEl.innerHTML = '<span style="color:#999;font-style:italic">No active mobile trackers.</span>';
+            return;
+        }
+        listEl.innerHTML = '';
+        trackers.forEach(t => {
+            const row = document.createElement('div');
+            row.className = 'list-row';
+            row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid #f0f0f0';
+
+            const idSpan = document.createElement('span');
+            idSpan.textContent = t.id;
+            idSpan.style.cssText = 'font-weight:600;min-width:34px;font-size:13px';
+
+            const csSpan = document.createElement('span');
+            csSpan.textContent = t.callsign || '';
+            csSpan.style.cssText = 'font-family:monospace;font-size:12px;color:#555;white-space:nowrap;min-width:72px';
+
+            const nameInput = document.createElement('input');
+            nameInput.type = 'text';
+            nameInput.value = t.name;
+            nameInput.maxLength = 12;
+            nameInput.style.cssText = 'flex:1;min-width:0;font-size:13px;padding:3px 6px;border:1px solid #ddd;border-radius:4px';
+            const saveName = async () => {
+                const newName = nameInput.value.trim();
+                if (!newName || newName === t.name) { nameInput.value = t.name; return; }
+                const r = await fetch('?renamemobile', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id: t.id, name: newName}) });
+                if (r.ok) { t.name = newName; nameInput.style.borderColor = '#ddd'; }
+                else { nameInput.style.borderColor = '#c0392b'; nameInput.value = t.name; }
+            };
+            nameInput.addEventListener('blur', saveName);
+            nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); nameInput.blur(); } });
+
+            if (t.blocked) {
+                const bl = document.createElement('span');
+                bl.textContent = 'blocked'; bl.style.cssText = 'color:#c0392b;font-size:11px;white-space:nowrap';
+                row.appendChild(idSpan); row.appendChild(csSpan); row.appendChild(nameInput); row.appendChild(bl);
+            } else {
+                row.appendChild(idSpan); row.appendChild(csSpan); row.appendChild(nameInput);
+            }
+
+            const age = t.age < 60 ? t.age + 's ago' : Math.round(t.age / 60) + 'm ago';
+            const ageSpan = document.createElement('span');
+            ageSpan.textContent = age;
+            ageSpan.style.cssText = 'color:#888;font-size:12px;white-space:nowrap';
+
+            const blockBtn = document.createElement('button');
+            blockBtn.textContent = t.blocked ? 'Unblock' : 'Block';
+            blockBtn.className = 'io-btn';
+            blockBtn.addEventListener('click', () => toggleBlockMobileTracker(t.id, !t.blocked, row));
+
+            const rmBtn = document.createElement('button');
+            rmBtn.textContent = 'Remove';
+            rmBtn.className = 'io-btn';
+            rmBtn.addEventListener('click', () => removeMobileTracker(t.id, row));
+
+            row.appendChild(ageSpan);
+            row.appendChild(blockBtn);
+            row.appendChild(rmBtn);
+            listEl.appendChild(row);
+        });
+    } catch (e) { listEl.innerHTML = '<span style="color:#c0392b">Error loading mobile trackers.</span>'; console.error('[mobiletrackers]', e); }
+}
+
+async function toggleBlockMobileTracker(id, block) {
+    try {
+        const r = await fetch('?blockmobile', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id, block}) });
+        if (r.ok) { loadMobileTrackers(); }
+        else { alert('Error updating tracker.'); }
+    } catch { alert('Network error.'); }
+}
+
+async function removeMobileTracker(id, rowEl) {
+    if (!confirm(`Remove mobile tracker ${id}?`)) return;
+    try {
+        const r = await fetch('?removemobile', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id}) });
+        if (r.ok) { rowEl.remove(); const listEl = document.getElementById('mobile-trackers-list'); if (!listEl.children.length) listEl.innerHTML = '<span style="color:#999;font-style:italic">No active mobile trackers.</span>'; }
+        else { alert('Error removing tracker.'); }
+    } catch { alert('Network error.'); }
+}
+
 // ── Aid Station rows ──────────────────────────────────────────────────────────
 
 function buildAidRow(g) {
@@ -2465,7 +2646,12 @@ function collectConfig() {
         igates:      document.getElementById('sv-igates').checked,
         backgrounds: document.getElementById('sv-backgrounds').checked,
     };
-    return { event: document.getElementById('f-event').value.trim(), legend: document.getElementById('f-legend').value, tracker_style, trackers, map, backgrounds, background_url, courses, aidstations, igates, section_visibility };
+    const mobile = {
+        enabled: document.getElementById('mobile-enabled').checked,
+        pin:     document.getElementById('mobile-pin').value.trim(),
+        root:    document.getElementById('mobile-root').value.trim().toUpperCase()
+    };
+    return { event: document.getElementById('f-event').value.trim(), legend: document.getElementById('f-legend').value, tracker_style, trackers, map, backgrounds, background_url, courses, aidstations, igates, section_visibility, mobile };
 }
 
 // ── Populate form from a config object ───────────────────────────────────────
@@ -2504,6 +2690,11 @@ function populateForm(cfg) {
     document.getElementById('courses-list').innerHTML = '';
     (cfg.courses || []).forEach(c => appendCourse(c));
     dragAdder['courses-list'] = initDrag('courses-list');
+
+    const mob = cfg.mobile || {};
+    document.getElementById('mobile-enabled').checked = !!mob.enabled;
+    document.getElementById('mobile-pin').value        = mob.pin  || '';
+    document.getElementById('mobile-root').value       = mob.root || '';
 }
 
 // ── Use Current Map ───────────────────────────────────────────────────────────
@@ -2556,6 +2747,7 @@ async function doLoad() {
         const beaconDeltas = deltasResp.ok ? await deltasResp.json() : {};
 
         populateForm(cfg);
+        loadMobileTrackers();
         applyBeaconDeltas(cfg._beaconDeltas || beaconDeltas);
         setCurrentEvent(filename, cfg.event || '');
         originalConfig   = cfg;
@@ -3629,6 +3821,13 @@ function buildSectionYaml(type, cfg) {
             L.push('    lon: '  + (isNaN(g.lon) ? 0 : g.lon));
         });
         L.push('');
+        const mob = cfg.mobile || {};
+        if (mob.enabled || mob.pin) {
+            L.push('mobile:');
+            L.push('  enabled: ' + (mob.enabled ? 'true' : 'false'));
+            if (mob.pin) L.push('  pin: ' + ys(String(mob.pin)));
+            L.push('');
+        }
     }
     return L.join('\n');
 }
