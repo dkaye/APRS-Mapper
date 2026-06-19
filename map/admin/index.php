@@ -1334,7 +1334,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 
     <!-- ── Mobile Tracking ── -->
     <div class="section">
-        <div class="sec-title">Mobile Tracking</div>
+        <div class="sec-title"><span>Mobile Tracking</span><button type="button" class="io-btn" title="Refresh tracker list" onclick="loadMobileTrackers()" style="margin-left:8px">↻</button></div>
         <div class="sec-body">
             <div style="display:flex;flex-direction:column;gap:10px;font-size:13px">
                 <label style="display:flex;align-items:center;gap:8px">
@@ -1349,6 +1349,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
                     <input type="text" id="mobile-root" maxlength="6" style="width:80px;font-family:monospace;text-transform:uppercase" autocomplete="off" oninput="this.value=this.value.toUpperCase();markDirty(false,true)" placeholder="e.g. K6DRK">
                 </div>
             </div>
+            <div id="mobile-trackers-list" style="margin-top:12px;font-size:13px"></div>
         </div>
     </div>
 
