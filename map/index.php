@@ -2192,9 +2192,10 @@ function loadConfig() {
 				// First load: apply everything (only happens on a fresh page load, not from admin)
 				configInitialized = true;
 				applyConfig(cfg);
-			} else if (!storedLocalConfig?._localTrackerEdited) {
-				// Subsequent polls: only update the trackers list, nothing else
-				if (cfg.trackers) applyTrackerConfig(cfg.trackers);
+			} else {
+				// Subsequent polls: update trackers list and mobile button visibility
+				if (!storedLocalConfig?._localTrackerEdited && cfg.trackers) applyTrackerConfig(cfg.trackers);
+				if (cfg.mobile_enabled !== undefined) initMobileTracking(cfg.mobile_enabled);
 			}
 		})
 		.catch(err => console.error('Config fetch error:', err));
@@ -2927,22 +2928,30 @@ function setSectionVisible(section, visible) {
 }
 
 // ── Mobile location sharing ────────────────────────────────────────────────
+let mobileTrackingInitialized = false;
 let mobileToken    = null;
 let mobileId       = null;
 let mobileWatcher  = null;
 let mobileWakeLock = null;
 
 function initMobileTracking(enabled) {
-	const btnDesk  = document.getElementById('share-loc-btn');
-	const btnRow   = document.getElementById('share-loc-row');
-	const btnMob   = document.getElementById('m-share-loc-btn');
-	if (!enabled || !navigator.geolocation) return;
-	if (btnRow)  btnRow.style.display  = '';
-	if (btnMob)  btnMob.style.display  = '';
+	const btnDesk = document.getElementById('share-loc-btn');
+	const btnRow  = document.getElementById('share-loc-row');
+	const btnMob  = document.getElementById('m-share-loc-btn');
+	const avail   = !!(enabled && navigator.geolocation);
+	if (btnRow)  btnRow.style.display  = avail ? '' : 'none';
+	if (btnMob)  btnMob.style.display  = avail ? '' : 'none';
+	if (!avail || mobileTrackingInitialized) return;
+	mobileTrackingInitialized = true;
 	// Resume from previous session
 	try {
 		const saved = JSON.parse(localStorage.getItem('aprs_mobile_tracker') || 'null');
-		if (saved && saved.token && saved.id) { mobileToken = saved.token; mobileId = saved.id; setShareLocBtnState('tracking'); startMobileGeolocation(); acquireWakeLock(); startDimTimer(); }
+		if (saved && saved.token && saved.id) {
+			mobileToken = saved.token; mobileId = saved.id;
+			setShareLocBtnState('tracking');
+			startMobileGeolocation();
+			if (isMobile) { acquireWakeLock(); startDimTimer(); }
+		}
 	} catch {}
 	if (btnDesk) btnDesk.addEventListener('click', onShareLocClick);
 	if (btnMob)  btnMob.addEventListener('click',  onShareLocClick);
@@ -3018,8 +3027,7 @@ function submitMobileJoin() {
 		closeMobileJoinModal();
 		setShareLocBtnState('tracking');
 		startMobileGeolocation();
-		acquireWakeLock();
-		startDimTimer();
+		if (isMobile) { acquireWakeLock(); startDimTimer(); }
 	})
 	.catch(() => { errEl.textContent = 'Network error. Try again.'; btn.disabled = false; });
 }
