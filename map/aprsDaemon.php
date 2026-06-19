@@ -370,16 +370,21 @@ function loadMobileSessions() {
 	$now = time();
 	$newSessions = [];
 	foreach ($data as $t) {
-		if (!empty($t['blocked'])) continue;
-		if (($now - ($t['lastUpdate'] ?? 0)) > 86400) continue;
+		if (($now - ($t['lastUpdate'] ?? 0)) > 86400) continue;	// expired
 		$cs = $t['callsign'] ?? null;
 		if (!$cs) continue;
-		$newSessions[$cs] = ['id' => $t['id'], 'name' => $t['name']];
+		$newSessions[$cs] = ['id' => $t['id'], 'name' => $t['name'], 'blocked' => !empty($t['blocked'])];
 	}
-	// Remove $trackers entries for mobile sessions that have ended
+	// Remove $trackers entries for mobile sessions that are no longer in the list at all
 	$trackers = array_values(array_filter($trackers, function($t) use ($newSessions) {
 		return empty($t['mobile']) || isset($newSessions[$t['callsign']]);
 	}));
+	// Sync blocked flag into any existing $trackers entries
+	foreach ($trackers as $key => $t) {
+		if (!empty($t['mobile']) && isset($newSessions[$t['callsign']])) {
+			$trackers[$key]['blocked'] = $newSessions[$t['callsign']]['blocked'];
+		}
+	}
 	$mobileSessions = $newSessions;
 	return true;
 }
@@ -456,7 +461,8 @@ function writeNewTrackerstatusFile($filename) {
 			"lon"=>$tracker["lon"],
 			"path"=>$tracker["path"] ?? ''
 		);
-		if (!empty($tracker["mobile"])) $entry["mobile"] = true;
+		if (!empty($tracker["mobile"]))   $entry["mobile"]  = true;
+		if (!empty($tracker["blocked"]))  $entry["blocked"] = true;
 		$output[]=$entry;
 	}
 	$fh = fopen($filename, 'w');
@@ -539,7 +545,9 @@ while (TRUE) {
 					foreach ($trackers as $key => $t) {
 						if ($t['callsign'] === $callsign) { $foundKey = $key; break; }
 					}
-					if ($foundKey === null) {
+					if (!empty($ms['blocked'])) {
+						// Blocked: keep entry in sidebar but freeze position — no history written
+					} elseif ($foundKey === null) {
 						// First packet for this session — add to $trackers
 						$trackers[] = ['callsign' => $callsign, 'id' => $ms['id'], 'name' => $ms['name'],
 						               'lastUpdate' => time(), 'lat' => $lat, 'lon' => $lon,
@@ -550,7 +558,9 @@ while (TRUE) {
 						$trackers[$foundKey]['path']       = $aprsPath;
 						$trackers[$foundKey]['name']       = $ms['name'];	// update in case renamed
 					}
-					if ($lat !== null) {
+					if (!empty($ms['blocked'])) {
+						// no-op: position frozen
+					} elseif ($lat !== null && $foundKey !== null) {
 						$trackers[$foundKey]['lat'] = $lat;
 						$trackers[$foundKey]['lon'] = $lon;
 						if (!isset($trackerHistory[$callsign])) $trackerHistory[$callsign] = [];

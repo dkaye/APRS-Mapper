@@ -2006,15 +2006,17 @@ function updateDesktopLegend(trackers) {
 			item.className = 'legend-item' + (hasBeacon ? ' clickable' : '');
 			item.innerHTML = `<span class="legend-dot"></span>`
 			               + `<span class="legend-text"><span class="legend-id">${t.id}</span> <span class="legend-name">${t.name}</span></span>`
-			               + `<span class="legend-time">${(t.color||'red')==='red'?'stale':t.time}</span>`;
+			               + `<span class="legend-time">${t.blocked ? 'blocked' : ((t.color||'red')==='red'?'stale':t.time)}</span>`;
 			if (hasBeacon) item.addEventListener('click', () => onLegendClick(t.callsign));
 		}
 		const color = t.color || 'red';
+		const timeLabel = t.blocked ? 'blocked' : (color === 'red' ? 'stale' : t.time);
+		const timeColor = t.blocked ? '#c0392b' : color;
 		item.querySelector('.legend-dot').style.background  = color;
-		item.querySelector('.legend-time').style.color      = color;
+		item.querySelector('.legend-time').style.color      = timeColor;
 		item.querySelector('.legend-id').textContent        = t.id;
 		item.querySelector('.legend-name').textContent      = t.name;
-		item.querySelector('.legend-time').textContent      = color === 'red' ? 'stale' : t.time;
+		item.querySelector('.legend-time').textContent      = timeLabel;
 		if (hasBeacon && !item.classList.contains('clickable')) {
 			item.classList.add('clickable');
 			item.addEventListener('click', () => onLegendClick(t.callsign));
@@ -2041,7 +2043,7 @@ function updateMobileLegend(trackers) {
 			item.dataset.callsign = t.callsign;
 			item.className = 'm-legend-item';
 			item.innerHTML = `<span class="m-dot"></span><span class="m-id">${t.id}</span>`
-			               + `<span class="m-name">${t.name}</span><span class="m-time">${(t.color||'red')==='red'?'stale':t.time}</span>`;
+			               + `<span class="m-name">${t.name}</span><span class="m-time">${t.blocked ? 'blocked' : ((t.color||'red')==='red'?'stale':t.time)}</span>`;
 			let pressTimer = null, didLongPress = false, _lpX = 0, _lpY = 0;
 			item.addEventListener('touchstart', e => {
 				didLongPress = false;
@@ -2061,12 +2063,14 @@ function updateMobileLegend(trackers) {
 			}, { passive: true });
 		}
 		const color = t.color || 'red';
+		const mTimeLabel = t.blocked ? 'blocked' : (color === 'red' ? 'stale' : t.time);
+		const mTimeColor = t.blocked ? '#c0392b' : color;
 		item.querySelector('.m-dot').style.background  = color;
 		item.querySelector('.m-dot').style.borderColor = color === 'green' ? '#1a7a1a' : (color === 'blue' ? '#0a5a9a' : '#a00');
-		item.querySelector('.m-time').style.color      = color;
+		item.querySelector('.m-time').style.color      = mTimeColor;
 		item.querySelector('.m-id').textContent        = t.id;
 		item.querySelector('.m-name').textContent      = t.name;
-		item.querySelector('.m-time').textContent      = color === 'red' ? 'stale' : t.time;
+		item.querySelector('.m-time').textContent      = mTimeLabel;
 		legend.appendChild(item);  // re-insert in sorted position (moves existing elements)
 	});
 
