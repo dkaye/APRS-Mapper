@@ -1,8 +1,8 @@
 import 'package:latlong2/latlong.dart';
 
 class MapConfig {
-  // marsaprs map directory — provides ?config, ?json, ?mobile endpoints and course files
-  static const String serverBaseUrl = 'https://marsaprs.org/map';
+  // marsaprs web root — map/ syncs directly to /var/www/html/, so no subdirectory
+  static const String serverBaseUrl = 'https://marsaprs.org';
 
   static const String tileUrl = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 
@@ -19,13 +19,13 @@ class MapConfig {
   static const int downloadMinZoom = 10;
   static const int downloadMaxZoom = 15;
 
-  static const double minZoom = 10.0;
-  static const double maxZoom = 15.0;
+  static const double minZoom = 8.0;
+  static const double maxZoom = 18.0;
   static const double initialZoom = 12.0;
 
   // Tracker polling interval
   static const Duration pollInterval = Duration(seconds: 5);
 
   // Location upload interval when sharing
-  static const Duration uploadInterval = Duration(seconds: 30);
+  static const Duration uploadInterval = Duration(seconds: 60);
 }

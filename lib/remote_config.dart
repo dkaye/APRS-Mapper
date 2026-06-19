@@ -1,5 +1,23 @@
 import 'map_config.dart';
 
+class BackgroundLayer {
+  final String name;
+  final String url;
+
+  const BackgroundLayer({required this.name, required this.url});
+
+  factory BackgroundLayer.fromJson(Map<String, dynamic> j) => BackgroundLayer(
+        name: j['name'] as String? ?? '',
+        url: j['url'] as String? ?? '',
+      );
+
+  List<String> get subdomains =>
+      url.contains('{s}') ? ['a', 'b', 'c'] : const [];
+
+  // flutter_map uses {x}/{y} but ESRI uses {y}/{x} — the URL template handles it directly
+  String get flutterUrl => url.replaceAll('{s}', '{s}');
+}
+
 class CourseConfig {
   final String name;
   final String file;
@@ -21,16 +39,41 @@ class CourseConfig {
       );
 }
 
+class FixedMarker {
+  final String name;
+  final String callsign;
+  final double lat;
+  final double lon;
+
+  const FixedMarker({
+    required this.name,
+    required this.callsign,
+    required this.lat,
+    required this.lon,
+  });
+
+  factory FixedMarker.fromJson(Map<String, dynamic> j) => FixedMarker(
+        name: j['name'] as String? ?? '',
+        callsign: j['callsign'] as String? ?? '',
+        lat: (j['lat'] as num?)?.toDouble() ?? 0.0,
+        lon: (j['lon'] as num?)?.toDouble() ?? 0.0,
+      );
+}
+
 class RemoteConfig {
   final String event;
   final String attribution;
   final String copyright;
   final String helpHtml;
   final List<CourseConfig> courses;
+  final List<BackgroundLayer> backgrounds;
+  final List<FixedMarker> aidStations;
+  final List<FixedMarker> igates;
   final double mapLat;
   final double mapLon;
   final double mapZoom;
   final bool mobileEnabled;
+  final String legend;
 
   const RemoteConfig({
     required this.event,
@@ -38,13 +81,16 @@ class RemoteConfig {
     required this.copyright,
     required this.helpHtml,
     required this.courses,
+    required this.backgrounds,
+    required this.aidStations,
+    required this.igates,
     required this.mapLat,
     required this.mapLon,
     required this.mapZoom,
     required this.mobileEnabled,
+    required this.legend,
   });
 
-  // Parses marsaprs ?config JSON response
   factory RemoteConfig.fromJson(Map<String, dynamic> j) {
     final map = j['map'] as Map<String, dynamic>? ?? {};
     return RemoteConfig(
@@ -52,8 +98,21 @@ class RemoteConfig {
       attribution: j['attribution'] as String? ?? '© OpenStreetMap contributors',
       copyright: j['copyright'] as String? ?? '',
       helpHtml: j['help'] as String? ?? '',
+      legend: j['legend'] as String? ?? '',
       courses: (j['courses'] as List? ?? [])
           .map((c) => CourseConfig.fromJson(c as Map<String, dynamic>))
+          .toList(),
+      backgrounds: (j['backgrounds'] as List? ?? [])
+          .map((b) => BackgroundLayer.fromJson(b as Map<String, dynamic>))
+          .where((b) => b.url.isNotEmpty)
+          .toList(),
+      aidStations: (j['aidstations'] as List? ?? [])
+          .map((a) => FixedMarker.fromJson(a as Map<String, dynamic>))
+          .where((a) => a.lat != 0.0 || a.lon != 0.0)
+          .toList(),
+      igates: (j['igates'] as List? ?? [])
+          .map((g) => FixedMarker.fromJson(g as Map<String, dynamic>))
+          .where((g) => g.lat != 0.0 || g.lon != 0.0)
           .toList(),
       mapLat: (map['lat'] as num?)?.toDouble() ?? MapConfig.center.latitude,
       mapLon: (map['lon'] as num?)?.toDouble() ?? MapConfig.center.longitude,
@@ -67,7 +126,11 @@ class RemoteConfig {
         attribution: '© OpenStreetMap contributors',
         copyright: '',
         helpHtml: '',
+        legend: '',
         courses: const [],
+        backgrounds: const [],
+        aidStations: const [],
+        igates: const [],
         mapLat: MapConfig.center.latitude,
         mapLon: MapConfig.center.longitude,
         mapZoom: MapConfig.initialZoom,

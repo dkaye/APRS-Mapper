@@ -18,6 +18,7 @@ class CourseLayer extends StatefulWidget {
 
 class _CourseLayerState extends State<CourseLayer> {
   List<Polyline> _polylines = [];
+  final _cache = <String, List<LatLng>>{};
 
   @override
   void initState() {
@@ -28,7 +29,15 @@ class _CourseLayerState extends State<CourseLayer> {
   @override
   void didUpdateWidget(CourseLayer old) {
     super.didUpdateWidget(old);
-    if (old.courses != widget.courses) _loadCourses();
+    if (!_courseListEqual(old.courses, widget.courses)) _loadCourses();
+  }
+
+  bool _courseListEqual(List<CourseConfig> a, List<CourseConfig> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].file != b[i].file || a[i].visible != b[i].visible || a[i].color != b[i].color) return false;
+    }
+    return true;
   }
 
   Future<void> _loadCourses() async {
@@ -37,24 +46,24 @@ class _CourseLayerState extends State<CourseLayer> {
       if (!course.visible || course.file.isEmpty) continue;
       try {
         final points = await _fetchCourse(course.file);
-        if (points.isNotEmpty) {
-          polylines.add(Polyline(
-            points: points,
-            color: _parseColor(course.color),
-            strokeWidth: 3.0,
-          ));
-        }
-      } catch (e) {
-        assert(() { debugPrint('CourseLayer: failed to load ${course.file}: $e'); return true; }());
+        if (points.isNotEmpty) _cache[course.file] = points;
+      } catch (_) {}
+      final pts = _cache[course.file];
+      if (pts != null && pts.isNotEmpty) {
+        polylines.add(Polyline(
+          points: pts,
+          color: _parseColor(course.color),
+          strokeWidth: 3.0,
+        ));
       }
     }
     if (mounted) setState(() => _polylines = polylines);
   }
 
   Future<List<LatLng>> _fetchCourse(String file) async {
-    final url = '${MapConfig.serverBaseUrl}/$file';
+    final uri = Uri.parse(Uri.encodeFull('${MapConfig.serverBaseUrl}/$file'));
     final response = await http
-        .get(Uri.parse(url))
+        .get(uri)
         .timeout(const Duration(seconds: 20));
     if (response.statusCode != 200) return [];
     final lower = file.toLowerCase();

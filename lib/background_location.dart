@@ -2,8 +2,11 @@ import 'dart:async';
 import 'dart:io' show Platform;
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
+import 'aprs_client.dart';
 import 'map_config.dart';
 import 'mobile_session.dart';
+
+export 'mobile_session.dart' show JoinResult;
 
 class BackgroundLocationService {
   final MobileSession _session = MobileSession();
@@ -14,16 +17,14 @@ class BackgroundLocationService {
 
   bool get isSharing => _session.active;
   String? get trackerId => _session.trackerId;
+  String? get callsign => _session.callsign;
 
-  // Stream exposed for the UI to consume (optional — CurrentLocationLayer
-  // has its own internal stream; this is available if callers want to share one)
+  /// Called when the server reports the session no longer exists (404 on update).
+  void Function()? onSessionEnded;
+
   final _positionController = StreamController<Position>.broadcast();
   Stream<Position> get positionStream => _positionController.stream;
 
-  /// Start background location tracking.
-  ///
-  /// Returns true if the stream started successfully. Permission must already
-  /// be granted before calling this.
   Future<bool> startTracking() async {
     if (_positionSub != null) return true;
     try {
@@ -58,15 +59,12 @@ class BackgroundLocationService {
     _lastPosition = null;
   }
 
-  /// Join the mobile tracker session with name + PIN. Starts periodic uploads.
-  Future<bool> startSharing({required String name, required String pin}) async {
-    final joined = await _session.join(name: name, pin: pin);
-    if (!joined) return false;
-    _startUploadTimer();
-    return true;
+  Future<JoinResult> startSharing({required String name, required String pin}) async {
+    final result = await _session.join(name: name, pin: pin);
+    if (result == JoinResult.success) _startUploadTimer();
+    return result;
   }
 
-  /// Stop sharing and remove this tracker from the server map.
   Future<void> stopSharing() async {
     _uploadTimer?.cancel();
     _uploadTimer = null;
@@ -75,15 +73,33 @@ class BackgroundLocationService {
 
   void _startUploadTimer() {
     _uploadTimer?.cancel();
-    // Upload immediately, then every uploadInterval
     _uploadNow();
     _uploadTimer = Timer.periodic(MapConfig.uploadInterval, (_) => _uploadNow());
   }
 
   Future<void> _uploadNow() async {
     final pos = _lastPosition;
-    if (pos == null) return;
-    await _session.update(pos.latitude, pos.longitude);
+    final cs = _session.callsign;
+    final pc = _session.passcode;
+
+    // Send position directly to APRS-IS
+    if (pos != null && cs != null && pc != null) {
+      await AprsClient.sendPosition(
+        callsign: cs,
+        passcode: pc,
+        lat: pos.latitude,
+        lon: pos.longitude,
+      );
+    }
+
+    // Heartbeat to server — refreshes session and detects removal (404)
+    final ok = await _session.update();
+    if (!ok) {
+      _uploadTimer?.cancel();
+      _uploadTimer = null;
+      await _session.leave();
+      onSessionEnded?.call();
+    }
   }
 
   void dispose() {
