@@ -277,7 +277,7 @@ class _MenuDrawerState extends State<MenuDrawer> {
           ),
           Builder(builder: (_) {
             final age = DateTime.now().millisecondsSinceEpoch ~/ 1000 - t.lastUpdate;
-            final label = (t.lastUpdate > 0 && age > 300) ? 'stale' : t.time;
+            final label = !t.hasPosition ? '—' : (t.lastUpdate > 0 && age > 300) ? 'stale' : t.time;
             return Text(label, style: TextStyle(fontSize: 11, color: color));
           }),
         ]),
