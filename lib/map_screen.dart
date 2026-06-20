@@ -175,6 +175,17 @@ class _MapScreenState extends State<MapScreen> {
       return;
     }
     if (!mounted) return;
+    if (!_isOnline) {
+      showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('No Connection'),
+          content: const Text('You are offline. Connect to the internet to share your location.'),
+          actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+        ),
+      );
+      return;
+    }
     final permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
       final granted = await Geolocator.requestPermission();
