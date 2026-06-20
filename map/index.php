@@ -1220,6 +1220,14 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 	</div>
 </div>
 
+<div id="noloc-modal" style="display:none">
+  <div id="noloc-box">
+    <div id="noloc-title"></div>
+    <div id="noloc-body">No location data has been received for this tracker yet.</div>
+    <button id="noloc-ok">OK</button>
+  </div>
+</div>
+
 <div id="mobile-alert-modal" style="display:none">
 	<div id="malert-backdrop"></div>
 	<div id="malert-box">
@@ -1768,8 +1776,7 @@ function showNoLocation(name) {
 	document.getElementById('noloc-title').textContent = name;
 	document.getElementById('noloc-modal').style.display = 'flex';
 }
-document.getElementById('noloc-ok').addEventListener('click',     () => { document.getElementById('noloc-modal').style.display = 'none'; });
-document.getElementById('noloc-modal').addEventListener('click',  e  => { if (e.target === document.getElementById('noloc-modal')) document.getElementById('noloc-modal').style.display = 'none'; });
+function closeNoLocation() { document.getElementById('noloc-modal').style.display = 'none'; }
 
 function hideAllHistoryDots() {
 	Object.values(historyDots).forEach(dots => dots.forEach(d => d.remove()));
@@ -3110,6 +3117,9 @@ function closeShareInfoModal() {
 	document.getElementById('mshare-info-modal').style.display = 'none';
 }
 
+document.getElementById('noloc-ok').addEventListener('click', closeNoLocation);
+document.getElementById('noloc-modal').addEventListener('click', e => { if (e.target === document.getElementById('noloc-modal')) closeNoLocation(); });
+
 document.getElementById('mshare-info-ok').addEventListener('click', closeShareInfoModal);
 document.getElementById('mshare-info-backdrop').addEventListener('click', closeShareInfoModal);
 
@@ -3438,12 +3448,5 @@ if (!isNonDefaultEvent) {
 	setInterval(loadConfig, 5000);
 }
 </script>
-<div id="noloc-modal">
-  <div id="noloc-box">
-    <div id="noloc-title"></div>
-    <div id="noloc-body">No location data has been received for this tracker yet.</div>
-    <button id="noloc-ok">OK</button>
-  </div>
-</div>
 </body>
 </html>
