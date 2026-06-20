@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'remote_config.dart';
 import 'tracker_data.dart';
 
@@ -143,18 +143,38 @@ class _MenuDrawerState extends State<MenuDrawer> {
                       children: widget.config.igates.map(_fixedTile).toList(),
                     ),
 
-                  if (widget.config.legend.isNotEmpty)
-                    _section(
-                      key: 'about',
-                      title: 'About',
-                      hasVisToggle: false,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-                          child: HtmlWidget(widget.config.legend),
+                  _section(
+                    key: 'about',
+                    title: 'About',
+                    hasVisToggle: false,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _aboutRow('Organization', 'Marin Amateur Radio Society'),
+                            _aboutRow('Application', 'APRS Tracker Map · v1.13'),
+                            if (widget.config.event.isNotEmpty)
+                              _aboutRow('Event', widget.config.event),
+                            if (widget.sharingCallsign != null && widget.sharingCallsign!.isNotEmpty)
+                              _aboutRow('My Callsign', widget.sharingCallsign!),
+                            _aboutRowWidget('Map Data', GestureDetector(
+                              onTap: () => launchUrl(
+                                Uri.parse('https://www.openstreetmap.org/copyright'),
+                                mode: LaunchMode.externalApplication,
+                              ),
+                              child: const Text(
+                                '© OpenStreetMap contributors',
+                                style: TextStyle(fontSize: 13, color: Colors.blue),
+                              ),
+                            )),
+                            _aboutRow('Copyright', '© 2026 Doug Kaye (K6DRK). All Rights Reserved.'),
+                          ],
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -389,6 +409,23 @@ class _MenuDrawerState extends State<MenuDrawer> {
         child: Text(text, style: const TextStyle(color: Colors.grey, fontSize: 13)),
       );
 
+  Widget _aboutRow(String label, String value) => _aboutRowWidget(
+        label,
+        Text(value, style: const TextStyle(fontSize: 13, color: Color(0xFF222222))),
+      );
+
+  Widget _aboutRowWidget(String label, Widget valueWidget) => Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label.toUpperCase(),
+                style: const TextStyle(fontSize: 10, letterSpacing: 0.6, color: Color(0xFF999999))),
+            const SizedBox(height: 2),
+            valueWidget,
+          ],
+        ),
+      );
 
   Widget _footerBtn(String label, IconData icon, VoidCallback onTap, {Color? color}) {
     return OutlinedButton.icon(
