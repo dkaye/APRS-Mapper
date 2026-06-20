@@ -629,7 +629,7 @@ class _MapScreenState extends State<MapScreen> {
           ),
 
           // Sharing badge — below mode indicator
-          if (_isSharing)
+          if (_isSharing && _isOnline)
             Positioned(
               top: 0,
               right: 0,

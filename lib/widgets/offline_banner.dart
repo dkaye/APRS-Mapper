@@ -1,10 +1,34 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 
-class OfflineBanner extends StatelessWidget {
+class OfflineBanner extends StatefulWidget {
   const OfflineBanner({super.key});
 
   @override
+  State<OfflineBanner> createState() => _OfflineBannerState();
+}
+
+class _OfflineBannerState extends State<OfflineBanner> {
+  bool _visible = true;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer(const Duration(seconds: 5), () {
+      if (mounted) setState(() => _visible = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    if (!_visible) return const SizedBox.shrink();
     return Positioned(
       top: 0,
       left: 0,
@@ -18,12 +42,12 @@ class OfflineBanner extends StatelessWidget {
               color: Colors.black87,
               borderRadius: BorderRadius.circular(20),
             ),
-            child: Row(
+            child: const Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.cloud_off, color: Colors.white70, size: 16),
-                const SizedBox(width: 6),
-                const Text(
+                Icon(Icons.cloud_off, color: Colors.white70, size: 16),
+                SizedBox(width: 6),
+                Text(
                   'Offline — no live tracker data',
                   style: TextStyle(color: Colors.white, fontSize: 13),
                 ),
