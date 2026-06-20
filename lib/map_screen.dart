@@ -96,7 +96,11 @@ class _MapScreenState extends State<MapScreen> {
         if (updated.isNotEmpty) _triggerBlink({..._blinkingIds, ...updated});
       },
       onStateChange: (state) {
-        if (mounted) setState(() => _isOnline = state == PollerState.online);
+        if (!mounted) return;
+        setState(() => _isOnline = state == PollerState.online);
+        if (state == PollerState.online && _bgLocation.isSharing) {
+          _bgLocation.triggerUpload();
+        }
       },
     );
     _poller.start();

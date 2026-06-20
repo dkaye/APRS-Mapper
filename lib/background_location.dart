@@ -37,9 +37,14 @@ class BackgroundLocationService {
               pauseLocationUpdatesAutomatically: false,
               showBackgroundLocationIndicator: true,
             )
-          : const LocationSettings(
+          : AndroidSettings(
               accuracy: LocationAccuracy.best,
               distanceFilter: 5,
+              foregroundNotificationConfig: const ForegroundNotificationConfig(
+                notificationTitle: 'APRS Map',
+                notificationText: 'Sharing your location',
+                enableWakeLock: true,
+              ),
             );
 
       _positionSub = Geolocator.getPositionStream(locationSettings: settings)
@@ -75,6 +80,11 @@ class BackgroundLocationService {
     _uploadTimer?.cancel();
     _uploadNow();
     _uploadTimer = Timer.periodic(MapConfig.uploadInterval, (_) => _uploadNow());
+  }
+
+  /// Call when network connectivity is restored while sharing is active.
+  void triggerUpload() {
+    if (_uploadTimer != null) _uploadNow();
   }
 
   Future<void> _uploadNow() async {
