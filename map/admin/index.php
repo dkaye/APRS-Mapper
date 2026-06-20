@@ -749,12 +749,12 @@ if (isset($_GET['mobiletrackers'])) {
     $fh = fopen($mf, 'r'); flock($fh, LOCK_SH); $c = stream_get_contents($fh); flock($fh, LOCK_UN); fclose($fh);
     $all = json_decode($c, true) ?: [];
     $now = time();
-    // Return active (within 2 h) + blocked entries; strip token
+    // Return all sessions still alive (within 24 h) + blocked entries; strip token
     $out = array_values(array_map(function($t) use ($now) {
         return ['id' => $t['id'], 'callsign' => $t['callsign'] ?? '', 'name' => $t['name'],
                 'lastUpdate' => $t['lastUpdate'], 'age' => $now - $t['lastUpdate'],
                 'blocked' => !empty($t['blocked'])];
-    }, array_filter($all, fn($t) => !empty($t['blocked']) || ($now - $t['lastUpdate']) < 7200)));
+    }, array_filter($all, fn($t) => !empty($t['blocked']) || ($now - $t['lastUpdate']) < 86400)));
     respondJson($out);
 }
 
