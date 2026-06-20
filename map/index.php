@@ -2108,11 +2108,12 @@ function updateDesktopLegend(trackers) {
 			item = document.createElement('div');
 			item.id = 'legend-' + t.callsign;
 			item.dataset.callsign = t.callsign;
-			item.className = 'legend-item' + (hasBeacon ? ' clickable' : '');
+			item.className = 'legend-item clickable';
 			item.innerHTML = `<span class="legend-dot"></span>`
 			               + `<span class="legend-text"><span class="legend-id">${t.id}</span> <span class="legend-name">${t.name}</span></span>`
 			               + `<span class="legend-time">${t.lat===null?'—':(t.color||'red')==='red'?'stale':t.time}</span>`;
 			if (hasBeacon) item.addEventListener('click', () => onLegendClick(t.callsign));
+			else           item.addEventListener('click', () => showNoLocation(t.name || t.id));
 		}
 		const color = t.color || 'red';
 		item.querySelector('.legend-dot').style.background  = color;
