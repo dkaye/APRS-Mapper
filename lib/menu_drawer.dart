@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'remote_config.dart';
 import 'tracker_data.dart';
@@ -56,6 +57,16 @@ class _MenuDrawerState extends State<MenuDrawer> {
     'trackers',
     'courses',
   };
+
+  String _appVersion = '';
+
+  @override
+  void initState() {
+    super.initState();
+    PackageInfo.fromPlatform().then((info) {
+      if (mounted) setState(() => _appVersion = '${info.version}+${info.buildNumber}');
+    });
+  }
 
   void _toggleSection(String key) =>
       setState(() => _expanded.contains(key) ? _expanded.remove(key) : _expanded.add(key));
@@ -154,7 +165,7 @@ class _MenuDrawerState extends State<MenuDrawer> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             _aboutRow('Organization', 'Marin Amateur Radio Society'),
-                            _aboutRow('Application', 'APRS Tracker Map · v1.13'),
+                            _aboutRow('Application', 'APRS Tracker Map${_appVersion.isEmpty ? '' : ' · v$_appVersion'}'),
                             if (widget.config.event.isNotEmpty)
                               _aboutRow('Event', widget.config.event),
                             if (widget.sharingCallsign != null && widget.sharingCallsign!.isNotEmpty)
