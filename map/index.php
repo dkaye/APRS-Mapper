@@ -2111,7 +2111,7 @@ function updateDesktopLegend(trackers) {
 			item.className = 'legend-item' + (hasBeacon ? ' clickable' : '');
 			item.innerHTML = `<span class="legend-dot"></span>`
 			               + `<span class="legend-text"><span class="legend-id">${t.id}</span> <span class="legend-name">${t.name}</span></span>`
-			               + `<span class="legend-time">${(t.color||'red')==='red'?'stale':t.time}</span>`;
+			               + `<span class="legend-time">${t.lat===null?'—':(t.color||'red')==='red'?'stale':t.time}</span>`;
 			if (hasBeacon) item.addEventListener('click', () => onLegendClick(t.callsign));
 		}
 		const color = t.color || 'red';
@@ -2119,7 +2119,7 @@ function updateDesktopLegend(trackers) {
 		item.querySelector('.legend-time').style.color      = color;
 		item.querySelector('.legend-id').textContent        = t.id;
 		item.querySelector('.legend-name').textContent      = t.name;
-		item.querySelector('.legend-time').textContent      = color === 'red' ? 'stale' : t.time;
+		item.querySelector('.legend-time').textContent      = t.lat === null ? '—' : color === 'red' ? 'stale' : t.time;
 		if (hasBeacon && !item.classList.contains('clickable')) {
 			item.classList.add('clickable');
 			item.addEventListener('click', () => onLegendClick(t.callsign));
@@ -2146,7 +2146,7 @@ function updateMobileLegend(trackers) {
 			item.dataset.callsign = t.callsign;
 			item.className = 'm-legend-item';
 			item.innerHTML = `<span class="m-dot"></span><span class="m-id">${t.id}</span>`
-			               + `<span class="m-name">${t.name}</span><span class="m-time">${(t.color||'red')==='red'?'stale':t.time}</span>`;
+			               + `<span class="m-name">${t.name}</span><span class="m-time">${t.lat===null?'—':(t.color||'red')==='red'?'stale':t.time}</span>`;
 			let pressTimer = null, didLongPress = false, _lpX = 0, _lpY = 0;
 			item.addEventListener('touchstart', e => {
 				didLongPress = false;
@@ -2171,7 +2171,7 @@ function updateMobileLegend(trackers) {
 		item.querySelector('.m-time').style.color      = color;
 		item.querySelector('.m-id').textContent        = t.id;
 		item.querySelector('.m-name').textContent      = t.name;
-		item.querySelector('.m-time').textContent      = color === 'red' ? 'stale' : t.time;
+		item.querySelector('.m-time').textContent      = t.lat === null ? '—' : color === 'red' ? 'stale' : t.time;
 		legend.appendChild(item);  // re-insert in sorted position (moves existing elements)
 	});
 
