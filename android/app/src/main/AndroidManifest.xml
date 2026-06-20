@@ -9,6 +9,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
     <!-- Keeps the CPU running while uploading position (geolocator uses this internally) -->
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- Required on Android 13+ to show the foreground service notification -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Allows prompting the user to exempt this app from battery optimization -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
     <application
         android:label="APRS Map"
         android:name="${applicationName}"

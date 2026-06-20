@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:math' show Point;
 import 'package:flutter/gestures.dart' show PointerPanZoomUpdateEvent;
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_map_location_marker/flutter_map_location_marker.dart';
@@ -166,6 +168,32 @@ class _MapScreenState extends State<MapScreen> {
     });
   }
 
+  // ── Background permission setup ───────────────────────────────────────────
+
+  /// Ensures the OS won't kill location tracking when the screen locks.
+  /// Called once when the user first starts sharing.
+  Future<void> _ensureBackgroundPermissions() async {
+    if (Platform.isAndroid) {
+      // Android 13+: must grant notification permission for the foreground
+      // service notification to appear; without it Android kills the service.
+      if (await Permission.notification.isDenied) {
+        await Permission.notification.request();
+      }
+      // Ask the user to exempt this app from battery optimization so the
+      // foreground service isn't throttled or killed while screen is off.
+      if (await Permission.ignoreBatteryOptimizations.isDenied) {
+        await Permission.ignoreBatteryOptimizations.request();
+      }
+    } else if (Platform.isIOS) {
+      // iOS needs "Always" location permission for background updates.
+      // If the user only granted "When In Use", prompt to upgrade.
+      final current = await Geolocator.checkPermission();
+      if (current == LocationPermission.whileInUse) {
+        await Geolocator.requestPermission();
+      }
+    }
+  }
+
   // ── Location sharing ──────────────────────────────────────────────────────
 
   Future<void> _toggleSharing() async {
@@ -221,6 +249,7 @@ class _MapScreenState extends State<MapScreen> {
             final pin = pinCtl.text.trim();
             if (name.isEmpty || pin.isEmpty) return;
             setDialogState(() { loading = true; errorText = null; });
+            await _ensureBackgroundPermissions();
             final joinResult = await _bgLocation.startSharing(name: name, pin: pin);
             if (!ctx.mounted) return;
             if (joinResult == JoinResult.success) {
