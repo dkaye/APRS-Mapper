@@ -139,7 +139,8 @@ class _TrackerMarker extends StatelessWidget {
       height: 18,
       decoration: BoxDecoration(
         color: color,
-        shape: BoxShape.circle,
+        shape: mobile ? BoxShape.rectangle : BoxShape.circle,
+        borderRadius: mobile ? BorderRadius.circular(3) : null,
         border: Border.all(color: Colors.white, width: 2),
         boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 3, offset: Offset(0, 1))],
       ),
