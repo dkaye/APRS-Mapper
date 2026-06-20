@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'remote_config.dart';
 import 'tracker_data.dart';
 
@@ -181,10 +180,6 @@ class _MenuDrawerState extends State<MenuDrawer> {
                   _footerBtn('Reload Tiles', Icons.download_for_offline, () async {
                     Navigator.pop(context);
                     await widget.onRefreshTiles?.call();
-                  }),
-                  _footerBtn('About', Icons.info_outline, () {
-                    Navigator.pop(context);
-                    _showAboutDialog();
                   }),
                 ],
               ),
@@ -394,80 +389,6 @@ class _MenuDrawerState extends State<MenuDrawer> {
         child: Text(text, style: const TextStyle(color: Colors.grey, fontSize: 13)),
       );
 
-  void _showAboutDialog() {
-    final cfg = widget.config;
-    final osmUrl = Uri.parse('https://www.openstreetmap.org/copyright');
-
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        clipBehavior: Clip.hardEdge,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Header
-            Container(
-              color: const Color(0xFF2c3e50),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Row(
-                children: [
-                  const Expanded(
-                    child: Text('About',
-                        style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-                  ),
-                  GestureDetector(
-                    onTap: () => Navigator.pop(ctx),
-                    child: const Icon(Icons.close, color: Colors.white70, size: 20),
-                  ),
-                ],
-              ),
-            ),
-            // Body
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _aboutRow('Organization', 'Marin Amateur Radio Society'),
-                  _aboutRow('Application', 'APRS Tracker Map · v1.13'),
-                  if (cfg.event.isNotEmpty) _aboutRow('Event', cfg.event),
-                  if (widget.sharingCallsign != null && widget.sharingCallsign!.isNotEmpty)
-                    _aboutRow('My Callsign', widget.sharingCallsign!),
-                  _aboutRowWidget('Map Data', GestureDetector(
-                    onTap: () => launchUrl(osmUrl, mode: LaunchMode.externalApplication),
-                    child: const Text(
-                      '© OpenStreetMap contributors',
-                      style: TextStyle(fontSize: 13, color: Colors.blue),
-                    ),
-                  )),
-                  _aboutRow('Copyright', '© 2026 Doug Kaye (K6DRK). All Rights Reserved.'),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _aboutRow(String label, String value) => _aboutRowWidget(
-        label,
-        Text(value, style: const TextStyle(fontSize: 13, color: Color(0xFF222222))),
-      );
-
-  Widget _aboutRowWidget(String label, Widget valueWidget) => Padding(
-        padding: const EdgeInsets.only(bottom: 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(label.toUpperCase(),
-                style: const TextStyle(fontSize: 10, letterSpacing: 0.6, color: Color(0xFF999999))),
-            const SizedBox(height: 2),
-            valueWidget,
-          ],
-        ),
-      );
 
   Widget _footerBtn(String label, IconData icon, VoidCallback onTap, {Color? color}) {
     return OutlinedButton.icon(
