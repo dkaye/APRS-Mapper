@@ -19,7 +19,7 @@ class TrackerLayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MarkerLayer(
-      markers: trackers.map((t) {
+      markers: trackers.where((t) => t.hasPosition).map((t) {
         final color = _markerColor(t.color);
         final selected = t.id == selectedId;
         final blinking = blinkingIds.contains(t.id);
@@ -104,7 +104,10 @@ class TrackerLayer extends StatelessWidget {
               ]),
               const SizedBox(height: 12),
               _row(Icons.access_time, t.time.isNotEmpty ? '${t.time} ago' : 'Unknown'),
-              _row(Icons.location_on, '${t.lat.toStringAsFixed(5)}, ${t.lon.toStringAsFixed(5)}'),
+              if (t.hasPosition)
+                _row(Icons.location_on, '${t.lat!.toStringAsFixed(5)}, ${t.lon!.toStringAsFixed(5)}')
+              else
+                _row(Icons.location_off, 'No position yet'),
               if (t.mobile) _row(Icons.smartphone, 'Mobile tracker'),
             ],
           ),

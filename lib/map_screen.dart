@@ -352,10 +352,12 @@ class _MapScreenState extends State<MapScreen> {
       _selectedId = t.id;
       _trailPoints = [];
     });
-    final newZoom = zoom
-        ? _mapController.camera.zoom.clamp(14.0, MapConfig.maxZoom)
-        : _mapController.camera.zoom;
-    _mapController.move(t.latLng, newZoom);
+    if (t.hasPosition) {
+      final newZoom = zoom
+          ? _mapController.camera.zoom.clamp(14.0, MapConfig.maxZoom)
+          : _mapController.camera.zoom;
+      _mapController.move(t.latLng, newZoom);
+    }
     _triggerBlink({t.id});
     _fetchTrail(t.callsign, _trackerColor(t.color));
   }
