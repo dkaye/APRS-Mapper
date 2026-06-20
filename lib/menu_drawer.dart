@@ -108,7 +108,8 @@ class _MenuDrawerState extends State<MenuDrawer> {
                       hasVisToggle: true,
                       children: widget.trackers.isEmpty
                           ? [_empty('Waiting for tracker data…')]
-                          : widget.trackers.map(_trackerTile).toList(),
+                          : ([...widget.trackers]..sort((a, b) => _naturalCompare(a.id, b.id)))
+                              .map(_trackerTile).toList(),
                     ),
 
                   if (widget.config.courses.isNotEmpty)
@@ -372,6 +373,21 @@ class _MenuDrawerState extends State<MenuDrawer> {
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
+
+  int _naturalCompare(String a, String b) {
+    final re = RegExp(r'(\d+)|(\D+)');
+    final pa = re.allMatches(a).toList();
+    final pb = re.allMatches(b).toList();
+    for (var i = 0; i < pa.length && i < pb.length; i++) {
+      final sa = pa[i].group(0)!;
+      final sb = pb[i].group(0)!;
+      final na = int.tryParse(sa);
+      final nb = int.tryParse(sb);
+      final c = (na != null && nb != null) ? na.compareTo(nb) : sa.compareTo(sb);
+      if (c != 0) return c;
+    }
+    return pa.length.compareTo(pb.length);
+  }
 
   Widget _empty(String text) => Padding(
         padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
