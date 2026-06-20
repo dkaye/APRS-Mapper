@@ -348,16 +348,32 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _selectTracker(TrackerData t, {bool zoom = false}) {
+    if (!t.hasPosition) {
+      showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(t.name.isNotEmpty ? t.name : t.id),
+          content: const Text(
+            'No location data has been received for this tracker yet.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
     setState(() {
       _selectedId = t.id;
       _trailPoints = [];
     });
-    if (t.hasPosition) {
-      final newZoom = zoom
-          ? _mapController.camera.zoom.clamp(14.0, MapConfig.maxZoom)
-          : _mapController.camera.zoom;
-      _mapController.move(t.latLng, newZoom);
-    }
+    final newZoom = zoom
+        ? _mapController.camera.zoom.clamp(14.0, MapConfig.maxZoom)
+        : _mapController.camera.zoom;
+    _mapController.move(t.latLng, newZoom);
     _triggerBlink({t.id});
     _fetchTrail(t.callsign, _trackerColor(t.color));
   }
