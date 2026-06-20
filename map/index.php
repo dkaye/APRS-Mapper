@@ -418,14 +418,23 @@ html, body { width: 100%; height: 100%; overflow: hidden;
 .blinking { animation: blink-anim 0.4s steps(2,end) infinite; }
 .igate-beaconing { animation: blink-anim 0.4s steps(2,end) infinite; }
 .igate-beaconing .legend-name, .igate-beaconing .m-layer-name { color: #2a8a2a; }
-#no-loc-toast {
-    display: none; position: fixed; top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-    background: #444; color: #fff; padding: 10px 20px;
-    border-radius: 8px; font-size: 14px; z-index: 9999;
-    box-shadow: 0 2px 8px rgba(0,0,0,.4); pointer-events: none;
-    white-space: nowrap;
+#noloc-modal {
+    display: none; position: fixed; inset: 0; z-index: 19000;
+    align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.45);
 }
+#noloc-box {
+    background: #fff; border-radius: 10px; padding: 24px 28px;
+    max-width: 320px; width: 90%; box-shadow: 0 6px 24px rgba(0,0,0,.3);
+    text-align: center;
+}
+#noloc-title { font-size: 15px; font-weight: 700; margin-bottom: 8px; color: #222; }
+#noloc-body  { font-size: 13px; color: #555; line-height: 1.5; margin-bottom: 18px; }
+#noloc-ok {
+    background: #2c3e50; color: #fff; border: none; border-radius: 6px;
+    padding: 8px 28px; font-size: 13px; cursor: pointer;
+}
+#noloc-ok:hover { background: #3d5166; }
 
 .tracker-label {
     background: none; border: none; box-shadow: none;
@@ -1756,12 +1765,11 @@ function popupHtml(t) {
 }
 
 function showNoLocation(name) {
-	const el = document.getElementById('no-loc-toast');
-	el.textContent = name + ': No location received';
-	el.style.display = 'block';
-	clearTimeout(showNoLocation._t);
-	showNoLocation._t = setTimeout(() => el.style.display = 'none', 3000);
+	document.getElementById('noloc-title').textContent = name;
+	document.getElementById('noloc-modal').style.display = 'flex';
 }
+document.getElementById('noloc-ok').addEventListener('click',     () => { document.getElementById('noloc-modal').style.display = 'none'; });
+document.getElementById('noloc-modal').addEventListener('click',  e  => { if (e.target === document.getElementById('noloc-modal')) document.getElementById('noloc-modal').style.display = 'none'; });
 
 function hideAllHistoryDots() {
 	Object.values(historyDots).forEach(dots => dots.forEach(d => d.remove()));
@@ -3430,6 +3438,12 @@ if (!isNonDefaultEvent) {
 	setInterval(loadConfig, 5000);
 }
 </script>
-<div id="no-loc-toast"></div>
+<div id="noloc-modal">
+  <div id="noloc-box">
+    <div id="noloc-title"></div>
+    <div id="noloc-body">No location data has been received for this tracker yet.</div>
+    <button id="noloc-ok">OK</button>
+  </div>
+</div>
 </body>
 </html>
