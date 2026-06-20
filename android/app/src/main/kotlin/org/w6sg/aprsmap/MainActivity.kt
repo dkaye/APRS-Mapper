@@ -1,4 +1,4 @@
-package w6sg.org.static_map
+package org.w6sg.aprsmap
 
 import io.flutter.embedding.android.FlutterActivity
 
