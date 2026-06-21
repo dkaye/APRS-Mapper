@@ -491,8 +491,17 @@ connectToAprsServer();
 
 $prevCallsigns=array_column($trackers,'callsign');
 sort($prevCallsigns);
+$lastWriteTime = time();
 
 while (TRUE) {
+	// Watchdog: if APRS-IS hasn't delivered any data for 3 minutes, reconnect.
+	// Prevents a rare stall where the socket stays ESTABLISHED but delivers no packets.
+	if ((time() - $lastWriteTime) > 180) {
+		echo("Watchdog: no data from APRS-IS for 3 minutes — reconnecting\n");
+		connectToAprsServer();
+		$lastWriteTime = time();
+	}
+
 	if (loadTrackers()) {								//only reloaded if mtime changed
 		$currCallsigns=array_column($trackers,'callsign');
 		sort($currCallsigns);
@@ -607,6 +616,7 @@ while (TRUE) {
 		}
 		readTrackerstatusFile($trackerStatusFilename);		//merge any external lastUpdate changes from JSON
 		writeNewTrackerstatusFile($trackerStatusFilename);	//update all any time we receive any line (~20 secs)
+		$lastWriteTime = time();
 		sleep($sleepSeconds);
 	}
 }

@@ -1,6 +1,6 @@
 # APRS Tracker Map — User Guide
 
-**Version 1.13 · June 19, 2026**
+**Version 1.15 · June 21, 2026**
 
 ---
 
@@ -10,6 +10,13 @@ This document is a guide for users of the MARS APRS system. For technical detail
 
 - [The Concept of Events](#the-concept-of-events)
 - [Full-Screen on Mobile Devices](#full-screen-on-mobile-devices-s)
+- [Native App (iOS & Android)](#native-app-ios-android)
+  - [Getting the App](#getting-the-app)
+  - [App Drawer](#app-drawer)
+  - [Tracker Detail](#tracker-detail)
+  - [Reload Tiles](#reload-tiles)
+  - [Share Location in the App](#share-location-in-the-app)
+  - [Limitations](#limitations)
 - [Main Map](#main-map)
   - [Sidebar (L)](#sidebar)
   - [Sidebar (S)](#sidebar-1)
@@ -108,6 +115,87 @@ Chrome on Android automatically hides the address bar as you scroll, so no nudge
 
 ---
 
+## Native App (iOS & Android)
+
+In addition to the web map at [marsaprs.org](https://marsaprs.org), a native app is available for iPhone and Android. It provides the same live tracker map and location sharing as the web map, with one key advantage: **location sharing continues in the background** — your GPS position keeps updating even when the screen is locked or you switch to another app.
+
+### Getting the App
+
+#### iPhone / iPad
+
+1. Install **TestFlight** from the App Store (free, by Apple).
+2. Open the invitation email from the event coordinator and tap **View in TestFlight**.
+3. If you are a new TestFlight user, enter the redeem code from the email when prompted.
+4. Tap **Install** to install the app.
+
+For future updates, open TestFlight and tap **Update** next to APRS Map.
+
+#### Android
+
+1. Open the email from the event coordinator and tap the APK download link.
+2. When prompted, open the file with **Package Installer**.
+3. If Android warns that the app is from an unknown source, tap **More details** → **Install anyway**.
+4. Tap **Open** when installation completes.
+
+The first time you run the app it will ask for location permission — tap **Allow**. When you first tap Share Location the app will also ask for notification and battery permissions; grant both (see [Share Location in the App](#share-location-in-the-app)).
+
+### App Drawer
+
+The app has its own native drawer — separate from the web map's ⚙ gear drawer. Open it by **tapping the ☰ menu icon** in the upper-left corner of the screen, or by **swiping right from the left edge**.
+
+The drawer header shows the app name and the current event. The body has collapsible sections:
+
+| Section | Contents |
+|---------|----------|
+| **Trackers** | Colored dot, ID, name, and elapsed time. **Tap** to close the drawer and center the map on that tracker. **Long-press** to close the drawer and zoom in to the tracker's last position. |
+| **Courses** | Tap the eye icon (👁) to show or hide each course overlay. |
+| **Backgrounds** | Tap an entry to switch the base tile layer. |
+| **Aid Stations** | Tap an entry to close the drawer and zoom to that location. |
+| **iGates** | Tap an entry to close the drawer and zoom to that location. |
+| **About** | Organization, app version and build number, event name, your assigned callsign (while sharing), map attribution, and copyright. |
+
+The drawer footer has two buttons:
+
+| Button | Action |
+|--------|--------|
+| **Share Location** / **Stop Sharing** | Start or stop broadcasting your GPS position. Only shown when the event administrator has enabled mobile tracking. |
+| **Reload Tiles** | Download fresh map tiles for the current view. See [Reload Tiles](#reload-tiles) below. |
+
+### Tracker Detail
+
+Tapping a tracker **marker on the map** (not in the drawer list) opens a detail panel from the bottom of the screen showing the tracker's full name, callsign, time since last beacon, GPS coordinates, and a **Mobile tracker** badge if the tracker is a mobile participant. Tap anywhere outside the panel to dismiss it.
+
+### Reload Tiles
+
+The **Reload Tiles** button in the drawer footer downloads and caches map tiles for the area currently visible on screen. Use this before heading into areas with poor cell coverage to ensure the map background stays visible when you go offline. Cached tiles are used automatically when the network is unavailable.
+
+### Share Location in the App
+
+Share Location works the same way as on the web map — enter your name and the event PIN, and your position is transmitted to the APRS network approximately once per minute. The key difference is that **the app keeps reporting your position even when the screen is locked or you switch to another app**. You do not need to keep the screen on or stay in the app.
+
+**First-time setup — Android:** When you tap Share Location for the first time, the app will prompt for two permissions:
+
+1. **Notifications** — grant this so the foreground service notification can appear. Without it, Android will stop the background location service when the screen locks.
+2. **Battery optimization** — tap **Allow** so Android does not put the app to sleep between GPS updates.
+
+A persistent notification ("APRS Map — Sharing your location") appears in the notification bar while sharing is active. To confirm it is running: wake the screen and swipe down from the top.
+
+**First-time setup — iOS:** When you first tap Share Location, iOS may ask to upgrade your location access from "While Using" to "Always". Tap **Change to Always Allow** — this is required for the app to report your position while the screen is off.
+
+### Limitations
+
+The native app does not include every feature available in the browser. The following are only available on the web map:
+
+| Feature | Where to find it |
+|---------|-----------------|
+| Admin page | `marsaprs.org/admin/` in a browser |
+| Kiosk Mode | Web map footer |
+| Save Map | Web map sidebar footer |
+| Origin marker (distance & bearing) | Right-click on the web map |
+| Clients panel | Web map sidebar footer |
+
+---
+
 ## Main Map
 
 Open the map at [marsaprs.org](https://marsaprs.org). 
@@ -172,6 +260,8 @@ time since its last beacon was received.
 | Green | Heard within the last 2 minutes |
 | Blue | Heard within the last 5 minutes |
 | Red | Not heard for more than 5 minutes |
+
+**Marker shapes:** Regular trackers use the shape configured by the administrator (circle, square, diamond, etc.). Mobile participants sharing their location via the **Share Location** feature appear as a **rounded square** (both on the map and in the sidebar) to distinguish them from fixed APRS trackers.
 
 When a tracker has not been heard for more than 5 minutes its sidebar entry shows **stale** in red instead of an elapsed time. Hovering over the marker on the map shows the actual elapsed time (e.g., ">2h 15m ago").
 
@@ -253,13 +343,21 @@ in beyond its maximum, the map automatically zooms out to the highest level that
 
 When the event administrator has enabled mobile location sharing, a **Share Location** button appears in the drawer footer. This lets you broadcast your GPS position to the APRS network so other participants can see you on the map.
 
+Location sharing is available on:
+- **The web map** (marsaprs.org) — works in any mobile browser
+- **The native iOS/Android app** — provides background location updates (see below)
+
 **Starting:**
 
 1. Tap **Share Location** at the bottom of the drawer.
-2. Enter your name and the event PIN, then tap **Share Location**.
-3. A confirmation shows your assigned APRS callsign (e.g., `K6DRK-01`). You will appear in the Trackers list under that callsign and be visible on the map. Your callsign is also shown in the **About** section of the drawer while sharing is active.
+2. Enter your name and the event PIN.
+3. Select a **beacon interval** — how often your position is transmitted (30, 60, 90, or 120 seconds). 60 seconds is a good default for most uses.
+4. Tap **Join**.
+5. A confirmation shows your assigned APRS callsign (e.g., `K6DRK-01`). You will appear in the Trackers list under that callsign and be visible on the map. Your callsign is also shown in the **About** section of the drawer while sharing is active.
 
-Your position is transmitted to the APRS network approximately once per minute. It appears on this map and on external APRS sites such as [aprs.fi](https://aprs.fi) and CalTopo.
+Your position is transmitted at the chosen interval and appears on this map and on external APRS sites such as [aprs.fi](https://aprs.fi) and CalTopo.
+
+**Callsign persistence:** The app remembers your device across sessions. If you stop sharing and start again — or close and reopen the app — you will be assigned the **same callsign** as before, so your track history is continuous. If you reinstall the app you will be assigned a new callsign.
 
 **Stopping:**
 
@@ -267,10 +365,18 @@ Tap **Stop Sharing** in the drawer footer.
 
 **Notes:**
 
-- The screen stays on while you are sharing (the browser's Wake Lock prevents sleep). The screen dims after 30 seconds of no interaction to save battery; tap anywhere to restore full brightness.
+- If the PIN you entered is incorrect, you will see an error — check the PIN with the event administrator.
 - If an administrator ends your session remotely, you will see a notification and the button will return to **Share Location**.
 - Starting a new session with the same callsign automatically clears any old breadcrumb dots from your previous session.
-- If the PIN you entered is incorrect, you will see an error — check the PIN with the event administrator.
+
+**Web map (browser):**
+- The screen stays on while you are sharing (the browser's Wake Lock prevents sleep). The screen dims after 30 seconds of no interaction to save battery; tap anywhere to restore full brightness.
+- If the browser is sent to the background or the screen locks, position updates will stop.
+
+**Native iOS/Android app:**
+- Location sharing continues in the background while the screen is locked. You do not need to keep the app in the foreground.
+- **Android:** When you first tap Share Location, the app may ask for permission to show notifications and to run without battery restrictions. Grant both — they are required for the app to keep running in the background when the screen is off. A notification ("APRS Map — Sharing your location") will appear in the notification bar while sharing is active; this confirms the background service is running. To confirm the notification is visible, wake the screen and swipe down from the top.
+- **iOS:** When you first tap Share Location, iOS may ask to upgrade your location permission from "While Using" to "Always". Tap **Change to Always Allow** — this is required for the app to send your location while the screen is locked.
 
 ---
 

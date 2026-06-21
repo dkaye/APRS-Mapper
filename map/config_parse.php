@@ -25,7 +25,7 @@
  * Missing sections default to null (map) or [] (lists/maps).
  */
 function parseConfigYaml($filename) {
-	$result = ['event' => '', 'legend' => '', 'tracker_style' => [], 'section_visibility' => [], 'map' => null, 'trackers' => [], 'backgrounds' => [], 'background_url' => '', 'courses' => [], 'aidstations' => [], 'igates' => [], 'mobile' => []];
+	$result = ['event' => '', 'legend' => '', 'tracker_style' => [], 'section_visibility' => [], 'map' => null, 'trackers' => [], 'backgrounds' => [], 'background_url' => '', 'courses' => [], 'aidstations' => [], 'igates' => [], 'mobile' => [], 'offline_map' => []];
 	if (!file_exists($filename)) return $result;
 
 	$lines   = file($filename, FILE_IGNORE_NEW_LINES);
@@ -42,7 +42,7 @@ function parseConfigYaml($filename) {
 			$value = trim($m[2]);
 			if ($value === '') {
 				// Section header
-				if ($item !== null && $section !== null && $section !== 'map' && $section !== 'tracker_style' && $section !== 'section_visibility' && $section !== 'mobile') {
+				if ($item !== null && $section !== null && $section !== 'map' && $section !== 'tracker_style' && $section !== 'section_visibility' && $section !== 'mobile' && $section !== 'offline_map') {
 					$result[$section][] = $item;
 					$item = null;
 				}
@@ -51,6 +51,7 @@ function parseConfigYaml($filename) {
 				elseif ($section === 'tracker_style') $result['tracker_style'] = [];
 				elseif ($section === 'section_visibility') $result['section_visibility'] = [];
 				elseif ($section === 'mobile') $result['mobile'] = [];
+				elseif ($section === 'offline_map') $result['offline_map'] = [];
 			} else {
 				// Top-level scalar (e.g. event: My Race 2026)
 				$result[$m[1]] = yamlScalar($value);
@@ -71,7 +72,7 @@ function parseConfigYaml($filename) {
 		if (preg_match('/^\s+(\w+)\s*:\s*(.*)$/', $line, $m)) {
 			$k = trim($m[1]);
 			$v = yamlScalar(trim($m[2]));
-			if ($section === 'map' || $section === 'tracker_style' || $section === 'section_visibility' || $section === 'mobile') {
+			if ($section === 'map' || $section === 'tracker_style' || $section === 'section_visibility' || $section === 'mobile' || $section === 'offline_map') {
 				$result[$section][$k] = $v;
 			} elseif ($item !== null) {
 				$item[$k] = $v;
@@ -81,7 +82,7 @@ function parseConfigYaml($filename) {
 	}
 
 	// Flush last open list item
-	if ($item !== null && $section !== null && $section !== 'map' && $section !== 'tracker_style' && $section !== 'section_visibility' && $section !== 'mobile') {
+	if ($item !== null && $section !== null && $section !== 'map' && $section !== 'tracker_style' && $section !== 'section_visibility' && $section !== 'mobile' && $section !== 'offline_map') {
 		$result[$section][] = $item;
 	}
 

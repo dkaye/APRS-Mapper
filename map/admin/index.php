@@ -113,7 +113,7 @@ $authed = (isset($_SESSION['aprs_admin_authed']) && $_SESSION['aprs_admin_authed
        || (isset($_SESSION['stats_auth'])        && $_SESSION['stats_auth']        === true);
 
 if (!$authed) {
-    if (isset($_GET['load']) || isset($_GET['save']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['alllocationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib']) || isset($_GET['beacondeltas']) || isset($_GET['togglelock']) || isset($_GET['mobiletrackers']) || isset($_GET['removemobile']) || isset($_GET['blockmobile']) || isset($_GET['renamemobile'])) {
+    if (isset($_GET['load']) || isset($_GET['save']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['alllocationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib']) || isset($_GET['beacondeltas']) || isset($_GET['togglelock']) || isset($_GET['mobiletrackers']) || isset($_GET['removemobile']) || isset($_GET['removemobilebulk']) || isset($_GET['blockmobile']) || isset($_GET['renamemobile'])) {
         header('Content-Type: application/json');
         http_response_code(401);
         echo json_encode(['error' => 'Session expired — reload and log in again']);
@@ -753,6 +753,7 @@ if (isset($_GET['mobiletrackers'])) {
     $out = array_values(array_map(function($t) use ($now) {
         return ['id' => $t['id'], 'callsign' => $t['callsign'] ?? '', 'name' => $t['name'],
                 'lastUpdate' => $t['lastUpdate'], 'age' => $now - $t['lastUpdate'],
+                'active'  => !empty($t['token']),
                 'blocked' => !empty($t['blocked'])];
     }, array_filter($all, fn($t) => !empty($t['blocked']) || ($now - $t['lastUpdate']) < 86400)));
     respondJson($out);
@@ -768,6 +769,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['removemobile'])) {
     flock($fh, LOCK_EX);
     $data = json_decode(stream_get_contents($fh), true) ?: [];
     $data = array_values(array_filter($data, fn($t) => $t['id'] !== $id));
+    ftruncate($fh, 0); rewind($fh);
+    fwrite($fh, json_encode($data, JSON_PRETTY_PRINT) . "\n");
+    flock($fh, LOCK_UN); fclose($fh);
+    respondJson(['ok' => true]);
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['removemobilebulk'])) {
+    $input = json_decode(file_get_contents('php://input'), true) ?: [];
+    $ids   = array_map('strval', $input['ids'] ?? []);
+    if (!$ids) { respondJson(['error' => 'Missing ids'], 400); exit; }
+    $mf = __DIR__ . '/../mobile_trackers.json';
+    $fh = fopen($mf, 'c+');
+    if (!$fh) { respondJson(['error' => 'Cannot open file'], 500); exit; }
+    flock($fh, LOCK_EX);
+    $data = json_decode(stream_get_contents($fh), true) ?: [];
+    $data = array_values(array_filter($data, fn($t) => !in_array($t['id'], $ids, true)));
     ftruncate($fh, 0); rewind($fh);
     fwrite($fh, json_encode($data, JSON_PRETTY_PRINT) . "\n");
     flock($fh, LOCK_UN); fclose($fh);
@@ -1348,6 +1365,27 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
                     <div style="display:flex;align-items:center;gap:8px">
                         <label for="mobile-root" style="white-space:nowrap">Root callsign</label>
                         <input type="text" id="mobile-root" maxlength="6" style="width:80px;font-family:monospace;text-transform:uppercase" autocomplete="off" oninput="this.value=this.value.toUpperCase();markDirty(false,true)" placeholder="e.g. K6DRK">
+                    </div>
+                </div>
+            </div>
+            <div style="margin-top:14px;padding-top:12px;border-top:1px solid #e8e8e8">
+                <div style="font-size:12px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px">
+                    Offline Map Download
+                </div>
+                <div style="display:flex;flex-direction:column;gap:8px;font-size:13px">
+                    <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+                        <div style="display:flex;align-items:center;gap:8px">
+                            <label for="offline-radius" style="white-space:nowrap">Radius (miles)</label>
+                            <input type="number" id="offline-radius" min="1" max="50" style="width:70px" oninput="markDirty(false,true)" placeholder="8">
+                        </div>
+                        <div style="display:flex;align-items:center;gap:8px">
+                            <label for="offline-maxzoom" style="white-space:nowrap">Max zoom</label>
+                            <input type="number" id="offline-maxzoom" min="1" max="19" style="width:60px" oninput="markDirty(false,true)" placeholder="14">
+                        </div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                        <label for="offline-url" style="white-space:nowrap;min-width:90px">Tile URL</label>
+                        <input type="text" id="offline-url" style="flex:1;min-width:260px;font-family:monospace;font-size:12px" autocomplete="off" oninput="markDirty(false,true)" placeholder="https://tile.openstreetmap.org/{z}/{x}/{y}.png">
                     </div>
                 </div>
             </div>
@@ -2464,10 +2502,50 @@ async function loadMobileTrackers() {
             return;
         }
         listEl.innerHTML = '';
+
+        // ── Toolbar: select-all + bulk remove ──────────────────────────────
+        const toolbar = document.createElement('div');
+        toolbar.style.cssText = 'display:flex;align-items:center;gap:10px;padding:4px 4px 6px;border-bottom:2px solid #e0e0e0;margin-bottom:2px';
+
+        const selAll = document.createElement('input');
+        selAll.type = 'checkbox'; selAll.title = 'Select all';
+
+        const selLabel = document.createElement('span');
+        selLabel.textContent = 'Select all';
+        selLabel.style.cssText = 'font-size:12px;color:#666;flex:1';
+
+        const bulkBtn = document.createElement('button');
+        bulkBtn.textContent = 'Remove Selected';
+        bulkBtn.className = 'io-btn';
+        bulkBtn.style.display = 'none';
+
+        toolbar.appendChild(selAll); toolbar.appendChild(selLabel); toolbar.appendChild(bulkBtn);
+        listEl.appendChild(toolbar);
+
+        const updateBulkBtn = () => {
+            const checked = listEl.querySelectorAll('input.mt-cb:checked');
+            bulkBtn.style.display = checked.length ? '' : 'none';
+            bulkBtn.textContent = checked.length === 1 ? 'Remove Selected (1)' : `Remove Selected (${checked.length})`;
+            selAll.indeterminate = checked.length > 0 && checked.length < trackers.length;
+            selAll.checked = checked.length === trackers.length;
+        };
+
+        selAll.addEventListener('change', () => {
+            listEl.querySelectorAll('input.mt-cb').forEach(cb => cb.checked = selAll.checked);
+            updateBulkBtn();
+        });
+
+        bulkBtn.addEventListener('click', () => removeMobileTrackersBulk(listEl, updateBulkBtn));
+
+        // ── Tracker rows ───────────────────────────────────────────────────
         trackers.forEach(t => {
             const row = document.createElement('div');
             row.className = 'list-row';
             row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid #f0f0f0';
+
+            const cb = document.createElement('input');
+            cb.type = 'checkbox'; cb.className = 'mt-cb'; cb.dataset.id = t.id;
+            cb.addEventListener('change', updateBulkBtn);
 
             const idSpan = document.createElement('span');
             idSpan.textContent = t.id;
@@ -2492,32 +2570,30 @@ async function loadMobileTrackers() {
             nameInput.addEventListener('blur', saveName);
             nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); nameInput.blur(); } });
 
+            row.appendChild(cb); row.appendChild(idSpan); row.appendChild(csSpan); row.appendChild(nameInput);
+
             if (t.blocked) {
                 const bl = document.createElement('span');
                 bl.textContent = 'blocked'; bl.style.cssText = 'color:#c0392b;font-size:11px;white-space:nowrap';
-                row.appendChild(idSpan); row.appendChild(csSpan); row.appendChild(nameInput); row.appendChild(bl);
-            } else {
-                row.appendChild(idSpan); row.appendChild(csSpan); row.appendChild(nameInput);
+                row.appendChild(bl);
             }
 
             const age = t.age < 60 ? t.age + 's ago' : Math.round(t.age / 60) + 'm ago';
             const ageSpan = document.createElement('span');
             ageSpan.textContent = age;
-            ageSpan.style.cssText = 'color:#888;font-size:12px;white-space:nowrap';
+            ageSpan.style.cssText = 'color:#888;font-size:12px;white-space:nowrap;margin-left:auto';
 
             const blockBtn = document.createElement('button');
             blockBtn.textContent = t.blocked ? 'Unblock' : 'Block';
             blockBtn.className = 'io-btn';
-            blockBtn.addEventListener('click', () => toggleBlockMobileTracker(t.id, !t.blocked, row));
+            blockBtn.addEventListener('click', () => toggleBlockMobileTracker(t.id, !t.blocked));
 
             const rmBtn = document.createElement('button');
             rmBtn.textContent = 'Remove';
             rmBtn.className = 'io-btn';
-            rmBtn.addEventListener('click', () => removeMobileTracker(t.id, row));
+            rmBtn.addEventListener('click', () => removeMobileTracker(t.id, row, listEl));
 
-            row.appendChild(ageSpan);
-            row.appendChild(blockBtn);
-            row.appendChild(rmBtn);
+            row.appendChild(ageSpan); row.appendChild(blockBtn); row.appendChild(rmBtn);
             listEl.appendChild(row);
         });
     } catch (e) { listEl.innerHTML = '<span style="color:#c0392b">Error loading mobile trackers.</span>'; console.error('[mobiletrackers]', e); }
@@ -2531,12 +2607,25 @@ async function toggleBlockMobileTracker(id, block) {
     } catch { alert('Network error.'); }
 }
 
-async function removeMobileTracker(id, rowEl) {
+async function removeMobileTracker(id, rowEl, listEl) {
     if (!confirm(`Remove mobile tracker ${id}?`)) return;
     try {
         const r = await fetch('?removemobile', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id}) });
-        if (r.ok) { rowEl.remove(); const listEl = document.getElementById('mobile-trackers-list'); if (!listEl.children.length) listEl.innerHTML = '<span style="color:#999;font-style:italic">No active mobile trackers.</span>'; }
+        if (r.ok) { loadMobileTrackers(); }
         else { alert('Error removing tracker.'); }
+    } catch { alert('Network error.'); }
+}
+
+async function removeMobileTrackersBulk(listEl, updateBulkBtn) {
+    const checked = [...listEl.querySelectorAll('input.mt-cb:checked')];
+    if (!checked.length) return;
+    const ids = checked.map(cb => cb.dataset.id);
+    const noun = ids.length === 1 ? `tracker ${ids[0]}` : `${ids.length} trackers`;
+    if (!confirm(`Remove ${noun}?`)) return;
+    try {
+        const r = await fetch('?removemobilebulk', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ids}) });
+        if (r.ok) { loadMobileTrackers(); }
+        else { alert('Error removing trackers.'); }
     } catch { alert('Network error.'); }
 }
 
@@ -2653,7 +2742,12 @@ function collectConfig() {
         pin:     document.getElementById('mobile-pin').value.trim(),
         root:    document.getElementById('mobile-root').value.trim().toUpperCase()
     };
-    return { event: document.getElementById('f-event').value.trim(), legend: document.getElementById('f-legend').value, tracker_style, trackers, map, backgrounds, background_url, courses, aidstations, igates, section_visibility, mobile };
+    const offline_map = {
+        radius:   parseFloat(document.getElementById('offline-radius').value)     || null,
+        max_zoom: parseInt(document.getElementById('offline-maxzoom').value, 10)  || null,
+        url:      document.getElementById('offline-url').value.trim()
+    };
+    return { event: document.getElementById('f-event').value.trim(), legend: document.getElementById('f-legend').value, tracker_style, trackers, map, backgrounds, background_url, courses, aidstations, igates, section_visibility, mobile, offline_map };
 }
 
 // ── Populate form from a config object ───────────────────────────────────────
@@ -2697,6 +2791,10 @@ function populateForm(cfg) {
     document.getElementById('mobile-enabled').checked = !!mob.enabled;
     document.getElementById('mobile-pin').value        = mob.pin  || '';
     document.getElementById('mobile-root').value       = mob.root || '';
+    const om = cfg.offline_map || {};
+    document.getElementById('offline-radius').value  = om.radius   || '';
+    document.getElementById('offline-maxzoom').value = om.max_zoom || '';
+    document.getElementById('offline-url').value     = om.url      || '';
 }
 
 // ── Use Current Map ───────────────────────────────────────────────────────────

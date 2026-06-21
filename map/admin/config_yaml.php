@@ -186,5 +186,16 @@ function buildConfigYaml($cfg, $history = []) {
         if ($mobRoot !== '') $L[] = '  root: ' . ys($mobRoot);
         $L[] = '';
     }
+    $om       = $cfg['offline_map'] ?? [];
+    $omRadius = isset($om['radius'])   && is_numeric($om['radius'])   ? (float)$om['radius']   : null;
+    $omMax    = isset($om['max_zoom']) && is_numeric($om['max_zoom']) ? (int)$om['max_zoom']   : 0;
+    $omUrl    = trim((string)($om['url'] ?? ''));
+    if ($omRadius !== null || $omMax > 0 || $omUrl !== '') {
+        $L[] = 'offline_map:';
+        if ($omRadius !== null) $L[] = '  radius: '   . $omRadius;
+        if ($omMax    >  0)     $L[] = '  max_zoom: ' . $omMax;
+        if ($omUrl   !== '')    $L[] = '  url: '      . ys($omUrl);
+        $L[] = '';
+    }
     return implode("\n", $L);
 }

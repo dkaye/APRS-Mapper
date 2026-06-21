@@ -52,7 +52,7 @@ if (isset($_GET['json'])) {
 		$now = time();
 		foreach (json_decode($mc, true) ?: [] as $t) {
 			$cs = $t['callsign'] ?? null;
-			if (!$cs || !empty($t['blocked']) || ($now - ($t['lastUpdate'] ?? 0)) > 86400) continue;
+			if (!$cs || !empty($t['blocked']) || empty($t['token']) || ($now - ($t['lastUpdate'] ?? 0)) > 86400) continue;
 			$activeMobile[$cs] = ['id' => $t['id'], 'name' => $t['name']];
 		}
 	}
@@ -174,6 +174,7 @@ if (isset($_GET['config'])) {
 		'igates'             => $cfg['igates'] ?? [],
 		'section_visibility' => $sv,
 		'mobile_enabled'     => $mobileEnabled,
+		'offline_map'        => (object)($cfg['offline_map'] ?? []),
 	]);
 	exit;
 }
@@ -276,6 +277,9 @@ if (isset($_GET['mobile'])) {
 		$name = preg_replace('/[^A-Za-z0-9 \-]/', '', trim($input['name'] ?? ''));
 		$name = substr($name, 0, 12);
 		$pin  = (string)($input['pin'] ?? '');
+		// device_id: stable per-installation ID from the mobile client (32-char hex)
+		$deviceId = strtolower(preg_replace('/[^a-fA-F0-9]/', '', (string)($input['device_id'] ?? '')));
+		$deviceId = strlen($deviceId) >= 8 ? substr($deviceId, 0, 64) : '';
 		if ($name === '') { http_response_code(400); echo json_encode(['error' => 'Name is required']); exit; }
 		$storedPin = (string)($mobileCfg['pin'] ?? '');
 		if ($storedPin === '' || !hash_equals($storedPin, $pin)) {
@@ -284,11 +288,44 @@ if (isset($_GET['mobile'])) {
 		$root = strtoupper(substr(preg_replace('/[^A-Za-z0-9]/', '', $mobileCfg['root'] ?? ''), 0, 6));
 		if ($root === '') { http_response_code(500); echo json_encode(['error' => 'Root callsign not configured']); exit; }
 		$newEntry = null;
-		modifyMobileTrackers($mobileFile, function($data) use ($name, $root, &$newEntry) {
+		$isBlocked = false;
+		modifyMobileTrackers($mobileFile, function($data) use ($name, $root, $deviceId, &$newEntry, &$isBlocked) {
 			$now = time();
-			// Prune entries not updated in 24 h
-			$data = array_values(array_filter($data, fn($t) => ($now - $t['lastUpdate']) < 86400));
-			// Next available number (lowest unused, with leading zeros)
+			// If device is known, check blocked status before doing anything else.
+			if ($deviceId !== '') {
+				foreach ($data as $t) {
+					if (($t['device_id'] ?? '') === $deviceId && !empty($t['blocked'])) {
+						$isBlocked = true;
+						return $data; // leave file unchanged
+					}
+				}
+			}
+			// Prune: anonymous entries after 24 h; device-linked entries after 30 days;
+			// blocked entries are never pruned (admin must remove them explicitly).
+			$data = array_values(array_filter($data, function($t) use ($now) {
+				if (!empty($t['blocked'])) return true;
+				$age = $now - ($t['lastUpdate'] ?? 0);
+				return !empty($t['device_id']) ? $age < 2592000 : $age < 86400;
+			}));
+			// Re-use existing entry for this device (keeps same callsign across restarts).
+			if ($deviceId !== '') {
+				foreach ($data as &$t) {
+					if (($t['device_id'] ?? '') === $deviceId) {
+						$t['token']      = bin2hex(random_bytes(16));
+						$t['lastUpdate'] = $now;
+						$t['name']       = $name; // allow name change on rejoin
+						$newEntry = $t;
+						return $data;
+					}
+				}
+				unset($t);
+				// No device_id match — clean up any inactive anonymous entry with the same name
+				// so the slot becomes available (migration from sessions before device_id was added).
+				$data = array_values(array_filter($data, function($t) use ($name) {
+					return !(empty($t['device_id']) && empty($t['token']) && ($t['name'] ?? '') === $name);
+				}));
+			}
+			// No existing entry — allocate the next available slot.
 			$used = [];
 			foreach ($data as $t) {
 				if (preg_match('/^M(\d+)$/', $t['id'], $m)) $used[(int)$m[1]] = true;
@@ -298,9 +335,11 @@ if (isset($_GET['mobile'])) {
 			$callsign = sprintf('%s-%02d', $root, $n);
 			$newEntry = ['id' => $id, 'callsign' => $callsign, 'name' => $name,
 			             'token' => bin2hex(random_bytes(16)), 'lastUpdate' => $now, 'created' => $now];
+			if ($deviceId !== '') $newEntry['device_id'] = $deviceId;
 			$data[] = $newEntry;
 			return $data;
 		});
+		if ($isBlocked) { http_response_code(403); echo json_encode(['error' => 'Incorrect PIN']); exit; }
 		// Clear stale breadcrumbs for this callsign so old history doesn't linger
 		$cfgReal  = realpath('config.yaml');
 		$histPath = $cfgReal ? dirname($cfgReal) . '/tracker_history.yaml' : null;
@@ -337,7 +376,7 @@ if (isset($_GET['mobile'])) {
 		if ($fh) {
 			flock($fh, LOCK_SH); $c = stream_get_contents($fh); flock($fh, LOCK_UN); fclose($fh);
 			foreach (json_decode($c, true) ?: [] as $t) {
-				if (hash_equals($t['token'], $token)) {
+				if (!empty($t['token']) && hash_equals($t['token'], $token)) {
 					if (!empty($t['blocked'])) { $found = 'blocked'; break; }
 					$found = true; $foundCallsign = $t['callsign'] ?? null; break;
 				}
@@ -351,7 +390,7 @@ if (isset($_GET['mobile'])) {
 		}
 		// Refresh lastUpdate so the admin "last seen" age stays current
 		modifyMobileTrackers($mobileFile, function($data) use ($token) {
-			foreach ($data as &$t) { if (hash_equals($t['token'], $token)) { $t['lastUpdate'] = time(); break; } }
+			foreach ($data as &$t) { if (!empty($t['token']) && hash_equals($t['token'], $token)) { $t['lastUpdate'] = time(); break; } }
 			return $data;
 		});
 		echo json_encode(['ok' => true]);
@@ -362,7 +401,19 @@ if (isset($_GET['mobile'])) {
 		$token = $input['token'] ?? '';
 		if (!$token) { http_response_code(400); echo json_encode(['error' => 'Missing token']); exit; }
 		modifyMobileTrackers($mobileFile, function($data) use ($token) {
-			return array_values(array_filter($data, fn($t) => !hash_equals($t['token'], $token)));
+			foreach ($data as &$t) {
+				if (!empty($t['token']) && hash_equals($t['token'], $token)) {
+					if (!empty($t['device_id'])) {
+						// Keep the entry so the device reclaims the same callsign on next join.
+						$t['token'] = null;
+					} else {
+						$t = null; // Anonymous session: remove entirely.
+					}
+					break;
+				}
+			}
+			unset($t);
+			return array_values(array_filter($data, fn($t) => $t !== null));
 		});
 		echo json_encode(['ok' => true]);
 		exit;
@@ -2116,8 +2167,9 @@ function updateDesktopLegend(trackers) {
 			else           item.addEventListener('click', () => showNoLocation(t.name || t.id));
 		}
 		const color = t.color || 'red';
-		item.querySelector('.legend-dot').style.background  = color;
-		item.querySelector('.legend-time').style.color      = color;
+		item.querySelector('.legend-dot').style.background    = color;
+		item.querySelector('.legend-dot').style.borderRadius  = t.mobile ? '3px' : '50%';
+		item.querySelector('.legend-time').style.color        = color;
 		item.querySelector('.legend-id').textContent        = t.id;
 		item.querySelector('.legend-name').textContent      = t.name;
 		item.querySelector('.legend-time').textContent      = t.lat === null ? '—' : color === 'red' ? 'stale' : t.time;
@@ -2167,8 +2219,9 @@ function updateMobileLegend(trackers) {
 			}, { passive: true });
 		}
 		const color = t.color || 'red';
-		item.querySelector('.m-dot').style.background  = color;
-		item.querySelector('.m-dot').style.borderColor = color === 'green' ? '#1a7a1a' : (color === 'blue' ? '#0a5a9a' : '#a00');
+		item.querySelector('.m-dot').style.background    = color;
+		item.querySelector('.m-dot').style.borderColor   = color === 'green' ? '#1a7a1a' : (color === 'blue' ? '#0a5a9a' : '#a00');
+		item.querySelector('.m-dot').style.borderRadius  = t.mobile ? '3px' : '50%';
 		item.querySelector('.m-time').style.color      = color;
 		item.querySelector('.m-id').textContent        = t.id;
 		item.querySelector('.m-name').textContent      = t.name;
@@ -2218,11 +2271,13 @@ function updateMap() {
 				const latlng = [t.lat, t.lon];
 				const color  = t.color || 'red';
 				const sz     = Math.max(4, Math.round(trackerStyle.size * markerScale()));
-				const icon   = makeTrackerIcon(trackerStyle.icon, color, sz);
+				const shape  = t.mobile ? 'square' : trackerStyle.icon;
+				const icon   = makeTrackerIcon(shape, color, sz);
 				if (markers[t.callsign]) {
 					const oldLL = markers[t.callsign].getLatLng();
 					const moved = oldLL.lat !== t.lat || oldLL.lng !== t.lon;
 					markers[t.callsign]._trackerColor = color;
+					markers[t.callsign]._mobile = t.mobile;
 					markers[t.callsign].setLatLng(latlng);
 					markers[t.callsign].setIcon(icon);
 					if (trackerPopups[t.callsign]) trackerPopups[t.callsign].setContent(popupHtml(t));
@@ -2232,6 +2287,7 @@ function updateMap() {
 				} else {
 					const m = L.marker(latlng, { icon, pane: 'trackerPane' }).addTo(map);
 					m._trackerColor = color;
+					m._mobile = t.mobile;
 					const popup = L.popup({ closeButton: true, autoPan: isMobile, autoPanPadding: [16, 16] })
 						.setContent(popupHtml(t));
 					trackerPopups[t.callsign] = popup;
@@ -2777,7 +2833,7 @@ map.on('zoomend', function() {
 	Object.values(markers).forEach(m => {
 		if (m._trackerColor !== undefined) {
 			const sz = Math.max(4, Math.round(trackerStyle.size * markerScale()));
-			m.setIcon(makeTrackerIcon(trackerStyle.icon, m._trackerColor, sz));
+			m.setIcon(makeTrackerIcon(m._mobile ? 'square' : trackerStyle.icon, m._trackerColor, sz));
 		}
 	});
 	// Rescale igate, aid station, course, and history dots

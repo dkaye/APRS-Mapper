@@ -2,7 +2,7 @@
 
 **Author:** Doug Kaye (K6DRK) · **Copyright:** 2026 Doug Kaye. All Rights Reserved.
 
-**Version:** Server & Displays (v1.13); iGates (v5.0)
+**Version:** Server & Displays (v1.14); Mobile App (v1.14); iGates (v5.0)
 
 ---
 
@@ -12,22 +12,24 @@
 2. [System Architecture](#system-architecture)
 3. [NetBird VPN](#netbird-vpn)
 4. [iGates (v5.0)](#igates-v50)
-5. [APRS Server (v1.13)](#aprs-server-v112)
+5. [APRS Server (v1.14)](#aprs-server-v114)
    - [Cloudflare Tunnel](#cloudflare-tunnel)
-6. [Display Pis (v1.13)](#display-pis-v112)
-7. [User Interfaces](#user-interfaces)
-8. [Backup, Recovery and Updates](#backup-recovery-and-updates)
+6. [Display Pis (v1.14)](#display-pis-v114)
+7. [Mobile Apps (v1.14)](#mobile-apps-v114)
+   - [Architecture](#app-architecture) · [Location Sharing Flow](#location-sharing-flow) · [Building & Distributing](#building-distributing) · [Background Location](#background-location)
+8. [User Interfaces](#user-interfaces)
+9. [Backup, Recovery and Updates](#backup-recovery-and-updates)
    - [Server Pi](#server-pi) · [Display Pis](#display-pis) · [iGates](#igates)
-9. [Log Rotation](#log-rotation)
-10. [Building & Deploying Devices](#building-deploying-devices)
+10. [Log Rotation](#log-rotation)
+11. [Building & Deploying Devices](#building-deploying-devices)
     - [NetBird Setup Keys](#netbird-setup-keys) · [APRS Server](#aprs-server) · [Display Pis & iGates](#display-pis-igates)
-11. [Creating New Master Images](#creating-new-master-images)
+12. [Creating New Master Images](#creating-new-master-images)
     - [APRS Server](#aprs-server_1) · [Display Pis](#display-pis_1) · [iGates](#igates_1)
-12. [Supporting Systems](#supporting-systems)
+13. [Supporting Systems](#supporting-systems)
     - [NetBird Status Monitor](#netbird-status-monitor) · [WiFi Manager](#wifi-manager)
-13. [Appendix](#appendix)
+14. [Appendix](#appendix)
     - [File Formats](#file-formats) · [Server](#server) · [Display Pi](#display-pi) · [iGate](#igate) · [Pi-Tools](#pi-tools)
-14. [Testing](#testing)
+15. [Testing](#testing)
 
 ---
 
@@ -67,20 +69,20 @@ APRS Radio (144.39 MHz)
 └──────────┬──────────┘
            │ TCP 14580
            ▼
-┌──────────────────────────────────────┐
-│           APRS-IS Network            │
-│         noam.aprs2.net:14580         │
-└────────────────┬─────────────────────┘
-                 │ TCP 14580
-┌────────────────▼─────────────────────┐
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.13
-│  aprsDaemon.php → trackers.json      │
+┌──────────────────────────────────────┐     ┌──────────────────────────────┐
+│           APRS-IS Network            │◀────│  Mobile App  (iOS/Android)   │
+│         noam.aprs2.net:14580         │     │  Flutter v1.14               │
+└────────────────┬─────────────────────┘     │  TCP 14580 (inject position) │
+                 │ TCP 14580                 └──────────────┬───────────────┘
+┌────────────────▼─────────────────────┐                    │ HTTPS (map + config + session)
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.14      │
+│  aprsDaemon.php → trackers.json      │◀───────────────────┘
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.13
+│  Display Pi  (×2)      │  Pi 4 · v1.14
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -97,6 +99,7 @@ APRS Radio (144.39 MHz)
 | `netbird-poller.py` | Server | Polls all Pi devices over VPN; writes `stats.json` |
 | `wifi/` | Server | Master WiFi credential store; distributes to all Pis |
 | Chromium | Display Pi | Fullscreen kiosk pointing at `marsaprs.org` |
+| Flutter app | iOS / Android | Native map + location sharing client; injects APRS positions directly to APRS-IS |
 
 ---
 
@@ -184,7 +187,7 @@ Log: `/var/log/direwolf/watchdog.log`
 
 ---
 
-## APRS Server (v1.13)
+## APRS Server (v1.14)
 
 The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
 APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
@@ -268,7 +271,7 @@ The tunnel token is obtained from the **Cloudflare Zero Trust dashboard**:
 
 ---
 
-## Display Pis (v1.13)
+## Display Pis (v1.14)
 
 A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
 `marsaprs.org`. It is a read-only display device — no long-term local configuration or data storage.
@@ -298,6 +301,150 @@ wifi-watchdog.sh  (checks WiFi every 30 s;
 **SSH:** `ssh pi@<ip>` · Password: `guacamole` · VNC: `vnc://<ip>:5901`
 
 For details on using the map, see [USERGUIDE.MD](https://marsaprs.org/userguide.html?back=/readme.html).
+
+---
+
+## Mobile Apps (v1.14)
+
+Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.
+
+**Repository:** `/Users/doug/aprs-map` (separate from this marsaprs repo)
+
+### App Architecture
+
+The app is a Flutter application with a hybrid architecture:
+
+```
+┌────────────────────────────────────────────────┐
+│                 Flutter App                    │
+│                                                │
+│  ┌──────────────────────────────────────────┐  │
+│  │  WebView  →  marsaprs.org/index.php      │  │  reads tracker data, config, courses
+│  └──────────────────────────────────────────┘  │
+│                                                │
+│  ┌───────────────────┐  ┌────────────────────┐ │
+│  │  Native Drawer    │  │  BackgroundLocation │ │
+│  │  menu_drawer.dart │  │  Service           │ │
+│  │  tracker_layer    │  │  background_       │ │
+│  │  .dart            │  │  location.dart     │ │
+│  └───────────────────┘  └────────┬───────────┘ │
+└────────────────────────────────  │  ───────────┘
+                                   │
+              ┌────────────────────┼──────────────────────┐
+              │ TCP 14580          │ HTTPS                 │
+              ▼                    ▼                       │
+    APRS-IS (noam)        marsaprs.org                    │
+    inject position       ?mobile=join/update/leave       │
+    packet                heartbeat + session mgmt        │
+```
+
+| File | Purpose |
+|------|---------|
+| `lib/map_screen.dart` | Root widget; hosts the WebView and JS bridge |
+| `lib/menu_drawer.dart` | Native Flutter sidebar drawer (trackers, courses, about, share button) |
+| `lib/tracker_layer.dart` | Native map marker overlay (squares for mobile, circles for fixed) |
+| `lib/background_location.dart` | GPS stream + upload timer; calls `AprsClient` and `MobileSession` |
+| `lib/mobile_session.dart` | HTTP client for `?mobile=join/update/leave` API |
+| `lib/aprs_client.dart` | TCP socket to `noam.aprs2.net:14580`; formats and sends APRS-IS position packets |
+| `lib/remote_config.dart` | Polls `?config` endpoint; parses event configuration |
+| `lib/map_config.dart` | Constants: upload interval (60 s), server URL |
+| `android/app/src/main/AndroidManifest.xml` | Android permissions |
+| `ios/Runner/Info.plist` | iOS background mode declaration |
+
+### Location Sharing Flow
+
+```
+User taps Share Location
+  → _ensureBackgroundPermissions()     (Android: notification + battery opt;
+                                        iOS: upgrade to Always location)
+  → MobileSession.join()               POST ?mobile=join {name, pin}
+      ← {token, callsign, passcode}    e.g. callsign=K6DRK-01
+  → BackgroundLocationService.startTracking()
+      → Geolocator.getPositionStream() (GPS events; stream stays alive in background)
+  → upload timer fires every 60 s (Android) / GPS event triggers upload (iOS):
+      → AprsClient.sendPosition()      TCP noam.aprs2.net:14580
+          → "K6DRK-01>APRS,TCPIP*:!3751.72N/12232.64W>Mobile/Alice\r\n"
+      → MobileSession.update()         POST ?mobile=update {token}
+          ← 200 ok  (or 404 if session removed/blocked → stops sharing)
+  → aprsDaemon receives packet from APRS-IS
+      → writes K6DRK-01 to trackers.json with mobile=true
+  → WebView polls ?json every 5 s → map updates
+```
+
+### Building & Distributing
+
+#### iOS
+
+```bash
+cd /Users/doug/aprs-map
+flutter pub get
+flutter build ios --release --no-codesign
+```
+
+Open `ios/Runner.xcworkspace` in Xcode. To distribute via TestFlight:
+
+1. Bump `version` in `pubspec.yaml` (e.g. `1.14.0+2` — the build number after `+` must increase with each upload).
+2. `flutter build ios --release --no-codesign`
+3. Xcode → Product → Archive → Distribute App → TestFlight (internal).
+4. Wait for the build status in App Store Connect to leave **Processing** before testers can install it. This typically takes 5–15 minutes.
+
+Testers must have TestFlight installed (free, from the App Store). They install the app by opening the invitation email and tapping **View in TestFlight**. New testers may be prompted for a redeem code from the invitation. For updates, testers open TestFlight and tap **Update**.
+
+#### Android
+
+```bash
+cd /Users/doug/aprs-map
+flutter pub get
+flutter build apk --release
+```
+
+The signed APK is at `build/app/outputs/flutter-apk/app-release.apk`.
+
+**Release signing** requires `android/key.properties` (gitignored):
+
+```
+storePassword=<password>
+keyPassword=<password>
+keyAlias=<alias>
+storeFile=<absolute path to .jks or .p12>
+```
+
+`android/app/build.gradle.kts` reads this file automatically. If absent, the release build falls back to debug signing.
+
+**`compileSdk` note:** `objectbox_flutter_libs` in `~/.pub-cache` may hardcode `compileSdkVersion 31`. Patch it to `36` to match `build.gradle.kts`.
+
+To distribute: share the APK via Google Drive or email. Testers tap the download link, open the file with **Package Installer**, and if Android warns about an unknown source, tap **More details** → **Install anyway**.
+
+### Background Location
+
+Background location is implemented differently on each platform because of how each OS handles suspended processes.
+
+#### Android
+
+The `geolocator` package starts a foreground service (`GeolocatorLocationService`) which keeps the Dart isolate running. A persistent notification is required — without it Android 13+ treats the service as having no notification and kills it when the screen locks.
+
+**Required permissions in `AndroidManifest.xml`:**
+
+| Permission | Why |
+|-----------|-----|
+| `INTERNET` | Network access — not injected automatically in release builds |
+| `ACCESS_FINE_LOCATION` | GPS |
+| `ACCESS_BACKGROUND_LOCATION` | Location while screen is locked (Android 10+) |
+| `FOREGROUND_SERVICE` | Run a foreground service |
+| `FOREGROUND_SERVICE_LOCATION` | Foreground service of type `location` (Android 14+) |
+| `WAKE_LOCK` | Keep CPU active between GPS fixes |
+| `POST_NOTIFICATIONS` | Show the foreground service notification (Android 13+); without this the service is killed on screen lock |
+| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Prompt the user to exempt the app from battery killing |
+
+At runtime, `_ensureBackgroundPermissions()` in `map_screen.dart` requests `POST_NOTIFICATIONS` and `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` before starting a sharing session.
+
+Samsung One UI is particularly aggressive — users must also set the app to **Unrestricted** battery mode: Settings → Apps → APRS Map → Battery → Unrestricted.
+
+#### iOS
+
+`Info.plist` declares `UIBackgroundModes: location`. The `CLLocationManager` flag `allowsBackgroundLocationUpdates` is set to `true` via `AppleSettings(allowBackgroundLocationUpdates: true)` in the geolocator stream configuration. "Always" location permission is required — "While Using" is not sufficient.
+
+**Timer workaround:** On iOS, the Dart isolate is suspended when the app loses focus, so `Timer.periodic` does not fire in the background. Instead, uploads are triggered directly from the GPS stream callback (`_maybeUploadFromStream()` in `background_location.dart`), throttled to once per 60 seconds. iOS wakes the app briefly for each GPS event (because of the declared background mode), providing the execution window needed to send the APRS packet.
 
 ---
 
@@ -996,6 +1143,16 @@ systemd restarts the daemon on failure (10 s delay, 5 retries per 5 minutes).
 The daemon maintains a 60-second socket receive timeout; if no data arrives (e.g., network
 change) the socket is closed and a new connection established automatically.
 
+A **watchdog** check runs at the top of every main loop iteration. If no data has been written in more than 3 minutes (i.e., the APRS-IS connection stays `ESTABLISHED` but delivers no packets), the daemon reconnects and resets the timer. This prevents a silent multi-hour freeze that occurs when the APRS-IS server goes quiet without closing the TCP connection.
+
+```php
+// At the top of the while(TRUE) loop:
+if ((time() - $lastWriteTime) > 180) {
+    connectToAprsServer();
+    $lastWriteTime = time();
+}
+```
+
 #### Web Interface
 
 The map is at `https://marsaprs.org/`. Layout adapts automatically:
@@ -1011,6 +1168,8 @@ width is saved in `localStorage`.
 
 **Mobile drawer:** Sections are collapsible accordions. Visibility checkboxes work the same
 as desktop. Footer buttons: Reset Map, Save Map, Admin, User Guide, Kiosk Mode, Clients, and (when `mobile.enabled`) Share Location / Stop Sharing. The **About** section of the drawer shows the user's assigned APRS callsign while sharing is active. The floating reset button (↺) pinned to the map also closes the drawer if it is open before recentering.
+
+**Mobile tracker markers:** Mobile participants (sharing via Share Location) are rendered as **rounded squares** on both the map and in the sidebar, distinguishing them from regular APRS trackers (which use the configured icon shape). The shape is determined by `t.mobile` in the tracker JSON. In `index.php`, the icon is selected as `t.mobile ? 'square' : trackerStyle.icon`; the sidebar dot gets `border-radius: 3px` for mobile and `50%` for others.
 
 **Tracker clicks (desktop — three-click cycle):**
 1. Blink tracker + show beacon history (up to 10 positions as dots + dotted polyline)
