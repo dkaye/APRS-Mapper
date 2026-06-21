@@ -9,6 +9,8 @@ class FixedMarkerLayer extends StatelessWidget {
   final String? selectedId;
   final Set<String> blinkingIds;
   final bool blinkOn;
+  final void Function(FixedMarker)? onTap;
+  final void Function(FixedMarker)? onLongPress;
 
   const FixedMarkerLayer({
     super.key,
@@ -17,6 +19,8 @@ class FixedMarkerLayer extends StatelessWidget {
     this.selectedId,
     this.blinkingIds = const {},
     this.blinkOn = true,
+    this.onTap,
+    this.onLongPress,
   });
 
   @override
@@ -51,7 +55,8 @@ class FixedMarkerLayer extends StatelessWidget {
                     ),
                     child: Text(
                       m.name,
-                      style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: Color(0xFF111111)),
+                      style: const TextStyle(
+                          fontSize: 10, fontWeight: FontWeight.w600, color: Color(0xFF111111)),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
@@ -67,46 +72,13 @@ class FixedMarkerLayer extends StatelessWidget {
           child: Opacity(
             opacity: opacity,
             child: GestureDetector(
-              onTap: () => _showDetail(context, m),
+              onTap: () => onTap?.call(m),
+              onLongPress: () => onLongPress?.call(m),
               child: content,
             ),
           ),
         );
       }).toList(),
-    );
-  }
-
-  void _showDetail(BuildContext context, FixedMarker m) {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (_) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(m.name,
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              if (m.callsign.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(m.callsign, style: const TextStyle(color: Colors.grey)),
-              ],
-              const SizedBox(height: 8),
-              Text(
-                isIgate ? 'iGate receiver' : 'Aid station',
-                style: TextStyle(color: Colors.grey[600]),
-              ),
-              const SizedBox(height: 4),
-              Text('${m.lat.toStringAsFixed(5)}, ${m.lon.toStringAsFixed(5)}',
-                  style: const TextStyle(fontSize: 13)),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

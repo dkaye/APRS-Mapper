@@ -1,4 +1,6 @@
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart';
 import 'config_service.dart';
 import 'download_screen.dart';
@@ -8,6 +10,10 @@ import 'remote_config.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Required for sendDataToTask / addTaskDataCallback communication channel.
+  // iOS has no foreground task; calling this on iOS can enable a wake lock that
+  // prevents auto-lock even when the user isn't sharing.
+  if (Platform.isAndroid) FlutterForegroundTask.initCommunicationPort();
   await FMTCObjectBoxBackend().initialise();
   await FMTCStore(MapConfig.storeName).manage.create();
   final config = await ConfigService().load();

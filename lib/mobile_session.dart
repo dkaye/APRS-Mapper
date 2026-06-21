@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:math';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'map_config.dart';
 
 enum JoinResult { success, wrongPin, failed }
@@ -12,12 +14,29 @@ class MobileSession {
 
   bool get active => token != null;
 
+  static const _deviceIdKey = 'aprs_device_id';
+
+  /// Returns a stable random ID for this installation, creating one on first call.
+  static Future<String> getDeviceId() async {
+    final prefs = await SharedPreferences.getInstance();
+    var id = prefs.getString(_deviceIdKey);
+    if (id == null) {
+      final rng = Random.secure();
+      id = List.generate(16, (_) => rng.nextInt(256))
+          .map((b) => b.toRadixString(16).padLeft(2, '0'))
+          .join();
+      await prefs.setString(_deviceIdKey, id);
+    }
+    return id;
+  }
+
   Future<JoinResult> join({required String name, required String pin}) async {
     try {
+      final deviceId = await getDeviceId();
       final response = await http.post(
         Uri.parse('${MapConfig.serverBaseUrl}/index.php?mobile=join'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'name': name, 'pin': pin}),
+        body: jsonEncode({'name': name, 'pin': pin, 'device_id': deviceId}),
       ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {

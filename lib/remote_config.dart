@@ -74,6 +74,10 @@ class RemoteConfig {
   final double mapZoom;
   final bool mobileEnabled;
   final String legend;
+  // Offline tile download config (falls back to MapConfig constants if absent)
+  final double? offlineRadiusMiles;
+  final int offlineMaxZoom;
+  final String offlineTileUrl;
 
   const RemoteConfig({
     required this.event,
@@ -89,10 +93,16 @@ class RemoteConfig {
     required this.mapZoom,
     required this.mobileEnabled,
     required this.legend,
+    this.offlineRadiusMiles,
+    required this.offlineMaxZoom,
+    required this.offlineTileUrl,
   });
 
   factory RemoteConfig.fromJson(Map<String, dynamic> j) {
     final map = j['map'] as Map<String, dynamic>? ?? {};
+    final omRaw = j['offline_map'];
+    final om = omRaw is Map<String, dynamic> ? omRaw : <String, dynamic>{};
+
     return RemoteConfig(
       event: j['event'] as String? ?? '',
       attribution: j['attribution'] as String? ?? '© OpenStreetMap contributors',
@@ -114,10 +124,15 @@ class RemoteConfig {
           .map((g) => FixedMarker.fromJson(g as Map<String, dynamic>))
           .where((g) => g.lat != 0.0 || g.lon != 0.0)
           .toList(),
-      mapLat: (map['lat'] as num?)?.toDouble() ?? MapConfig.center.latitude,
-      mapLon: (map['lon'] as num?)?.toDouble() ?? MapConfig.center.longitude,
+      mapLat: (map['lat'] as num?)?.toDouble() ?? 37.970,
+      mapLon: (map['lon'] as num?)?.toDouble() ?? -122.620,
       mapZoom: (map['zoom'] as num?)?.toDouble() ?? MapConfig.initialZoom,
       mobileEnabled: j['mobile_enabled'] as bool? ?? false,
+      offlineRadiusMiles: (om['radius'] as num?)?.toDouble(),
+      offlineMaxZoom: (om['max_zoom'] as num?)?.toInt() ?? MapConfig.downloadMaxZoom,
+      offlineTileUrl: (om['url'] as String? ?? '').isNotEmpty
+          ? om['url'] as String
+          : MapConfig.tileUrl,
     );
   }
 
@@ -131,9 +146,11 @@ class RemoteConfig {
         backgrounds: const [],
         aidStations: const [],
         igates: const [],
-        mapLat: MapConfig.center.latitude,
-        mapLon: MapConfig.center.longitude,
+        mapLat: 37.970,
+        mapLon: -122.620,
         mapZoom: MapConfig.initialZoom,
         mobileEnabled: false,
+        offlineMaxZoom: MapConfig.downloadMaxZoom,
+        offlineTileUrl: MapConfig.tileUrl,
       );
 }

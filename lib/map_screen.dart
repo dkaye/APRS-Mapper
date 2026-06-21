@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
-import 'dart:math' show Point;
+import 'dart:math' as math;
 import 'package:flutter/gestures.dart' show PointerPanZoomUpdateEvent;
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -31,8 +32,9 @@ enum _LocationState { checking, granted, denied, permanentlyDenied }
 
 class MapScreen extends StatefulWidget {
   final RemoteConfig config;
+  final LatLng? initialCenter;
 
-  const MapScreen({super.key, required this.config});
+  const MapScreen({super.key, required this.config, this.initialCenter});
 
   @override
   State<MapScreen> createState() => _MapScreenState();
@@ -43,6 +45,7 @@ class _MapScreenState extends State<MapScreen> {
   final _mapController = MapController();
   LatLng? _lastUserLatLng;
   StreamSubscription<Position>? _positionSub;
+  Stream<LocationMarkerPosition?>? _locationMarkerStream;
   late RemoteConfig _config;
 
   // Online tracker state
@@ -53,6 +56,8 @@ class _MapScreenState extends State<MapScreen> {
   // Background / tile layer
   String _tileUrl = MapConfig.tileUrl;
   List<String> _tileSubdomains = const [];
+  // Created once so TileLayer doesn't reset its cache on every poller setState.
+  final _tileProvider = FMTCStore(MapConfig.storeName).getTileProvider();
 
   // Section and course visibility
   Map<String, bool> _sectionVisible = {
@@ -65,9 +70,13 @@ class _MapScreenState extends State<MapScreen> {
 
   // Selection / blink
   String? _selectedId;
+  int _selectionClickCount = 0;
   Set<String> _blinkingIds = {};
   bool _blinkOn = true;
   Timer? _blinkTimer;
+
+  // Origin marker (long-press to set; tap elsewhere to measure distance)
+  LatLng? _originPoint;
 
   // Breadcrumb trail for selected tracker
   List<LatLng> _trailPoints = [];
@@ -148,8 +157,7 @@ class _MapScreenState extends State<MapScreen> {
       if (permission == LocationPermission.always ||
           permission == LocationPermission.whileInUse) {
         setState(() => _locationState = _LocationState.granted);
-        _startPositionStream();
-        await _bgLocation.startTracking();
+        _startPositionStream(); // blue dot only — background tracking starts at share time
       } else if (permission == LocationPermission.deniedForever) {
         setState(() => _locationState = _LocationState.permanentlyDenied);
       } else {
@@ -161,11 +169,22 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _startPositionStream() {
-    _positionSub = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(accuracy: LocationAccuracy.best, distanceFilter: 2),
-    ).listen((pos) {
+    // distanceFilter: 5 — controls how often CurrentLocationLayer redraws.
+    // Without an explicit stream, CurrentLocationLayer creates its own with
+    // distanceFilter: 0, which keeps the Flutter display link active at 1 Hz
+    // when the beaconing GPS stream puts iOS into navigation mode, preventing
+    // auto-lock. Sharing the same stream here avoids a second CLLocationManager.
+    final gpsStream = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.best,
+        distanceFilter: 5,
+      ),
+    );
+    _positionSub = gpsStream.listen((pos) {
       _lastUserLatLng = LatLng(pos.latitude, pos.longitude);
     });
+    _locationMarkerStream = const LocationMarkerDataStreamFactory()
+        .fromGeolocatorPositionStream(stream: gpsStream);
   }
 
   // ── Background permission setup ───────────────────────────────────────────
@@ -224,7 +243,6 @@ class _MapScreenState extends State<MapScreen> {
         return;
       }
     }
-    if (!_bgLocation.isSharing) await _bgLocation.startTracking();
     if (mounted) await _showShareDialog();
   }
 
@@ -238,6 +256,7 @@ class _MapScreenState extends State<MapScreen> {
     final pinFocus = FocusNode();
     String? errorText;
     bool loading = false;
+    int beaconSeconds = 60;
 
     await showDialog<void>(
       context: context,
@@ -250,7 +269,12 @@ class _MapScreenState extends State<MapScreen> {
             if (name.isEmpty || pin.isEmpty) return;
             setDialogState(() { loading = true; errorText = null; });
             await _ensureBackgroundPermissions();
-            final joinResult = await _bgLocation.startSharing(name: name, pin: pin);
+            await _bgLocation.startTracking(); // starts GPS + foreground service
+            final joinResult = await _bgLocation.startSharing(
+              name: name,
+              pin: pin,
+              interval: Duration(seconds: beaconSeconds),
+            );
             if (!ctx.mounted) return;
             if (joinResult == JoinResult.success) {
               Navigator.pop(ctx);
@@ -276,7 +300,8 @@ class _MapScreenState extends State<MapScreen> {
 
           return AlertDialog(
             title: const Text('Share Location'),
-            content: Column(
+            content: SingleChildScrollView(
+              child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
@@ -294,6 +319,18 @@ class _MapScreenState extends State<MapScreen> {
                   obscureText: true,
                   onSubmitted: (_) => submit(),
                 ),
+                const SizedBox(height: 12),
+                const Text('Beacon interval',
+                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  children: [30, 60, 90, 120].map((s) => ChoiceChip(
+                    label: Text('${s}s'),
+                    selected: beaconSeconds == s,
+                    onSelected: (_) => setDialogState(() => beaconSeconds = s),
+                  )).toList(),
+                ),
                 if (errorText != null) ...[
                   const SizedBox(height: 10),
                   Text(
@@ -302,6 +339,7 @@ class _MapScreenState extends State<MapScreen> {
                   ),
                 ],
               ],
+            ),
             ),
             actions: [
               TextButton(onPressed: loading ? null : () => Navigator.pop(ctx), child: const Text('Cancel')),
@@ -371,7 +409,10 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _handleReset() {
-    _mapController.move(LatLng(_config.mapLat, _config.mapLon), _config.mapZoom);
+    _mapController.move(
+      widget.initialCenter ?? LatLng(_config.mapLat, _config.mapLon),
+      _config.mapZoom,
+    );
     _mapController.rotate(0);
   }
 
@@ -414,6 +455,7 @@ class _MapScreenState extends State<MapScreen> {
       _selectedId = t.id;
       _trailPoints = [];
     });
+    _selectionClickCount = 1;
     final newZoom = zoom
         ? _mapController.camera.zoom.clamp(14.0, MapConfig.maxZoom)
         : _mapController.camera.zoom;
@@ -427,8 +469,88 @@ class _MapScreenState extends State<MapScreen> {
       _selectedId = m.name;
       _trailPoints = [];
     });
+    _selectionClickCount = 1;
     _mapController.move(LatLng(m.lat, m.lon), _mapController.camera.zoom);
     _triggerBlink({m.name});
+  }
+
+  // ── Fixed marker tap cycle (matches web 3-tap cycle) ─────────────────────
+
+  void _onFixedTap(FixedMarker m) {
+    if (_selectedId == m.name && _selectionClickCount == 1) {
+      _selectionClickCount = 2;
+      _mapController.move(LatLng(m.lat, m.lon), 15.0);
+    } else if (_selectedId == m.name && _selectionClickCount >= 2) {
+      _selectionClickCount = 0;
+      setState(() { _selectedId = null; _trailPoints = []; });
+      _handleReset();
+    } else {
+      _selectFixed(m);
+    }
+  }
+
+  void _onFixedLongPress(FixedMarker m) {
+    _selectFixed(m);
+    _selectionClickCount = 2;
+    _mapController.move(LatLng(m.lat, m.lon), 15.0);
+  }
+
+  // ── Origin feature ────────────────────────────────────────────────────────
+
+  void _onMapLongPress(TapPosition _, LatLng latLng) {
+    setState(() => _originPoint = latLng);
+    HapticFeedback.mediumImpact();
+  }
+
+  void _onMapTap(TapPosition tapPos, LatLng latLng) {
+    if (_originPoint == null) return;
+    final rel = tapPos.relative;
+    if (rel != null) {
+      final os = _mapController.camera.latLngToScreenPoint(_originPoint!);
+      final dx = os.x - rel.dx;
+      final dy = os.y - rel.dy;
+      if (dx * dx + dy * dy < 28 * 28) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+            '${_originPoint!.latitude.toStringAsFixed(5)}, '
+            '${_originPoint!.longitude.toStringAsFixed(5)}',
+          ),
+          duration: const Duration(seconds: 3),
+        ));
+        return;
+      }
+    }
+    final dist = _haversineDistance(_originPoint!, latLng);
+    final bearing = _bearingTo(_originPoint!, latLng);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('${dist.toStringAsFixed(1)} mi · ${bearing.round()}° ${_compassDir(bearing)}'),
+      duration: const Duration(seconds: 4),
+    ));
+  }
+
+  double _haversineDistance(LatLng a, LatLng b) {
+    const r = 3958.8;
+    final lat1 = a.latitude * math.pi / 180;
+    final lat2 = b.latitude * math.pi / 180;
+    final dLat = (b.latitude - a.latitude) * math.pi / 180;
+    final dLon = (b.longitude - a.longitude) * math.pi / 180;
+    final x = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(lat1) * math.cos(lat2) * math.sin(dLon / 2) * math.sin(dLon / 2);
+    return r * 2 * math.atan2(math.sqrt(x), math.sqrt(1 - x));
+  }
+
+  double _bearingTo(LatLng a, LatLng b) {
+    final lat1 = a.latitude * math.pi / 180;
+    final lat2 = b.latitude * math.pi / 180;
+    final dLon = (b.longitude - a.longitude) * math.pi / 180;
+    final y = math.sin(dLon) * math.cos(lat2);
+    final x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dLon);
+    return (math.atan2(y, x) * 180 / math.pi + 360) % 360;
+  }
+
+  String _compassDir(double bearing) {
+    const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+    return dirs[(bearing / 45).round() % 8];
   }
 
   Color _trackerColor(String color) {
@@ -478,8 +600,14 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _refreshTiles() async {
-    Navigator.push(context,
-        MaterialPageRoute(builder: (_) => DownloadScreen(config: _config, forceRefresh: true)));
+    final fresh = await ConfigService().load();
+    if (!mounted) return;
+    setState(() {
+      _config = fresh;
+      _initCourseVisibility();
+    });
+    Navigator.pushReplacement(context,
+        MaterialPageRoute(builder: (_) => DownloadScreen(config: fresh, forceRefresh: true)));
   }
 
   void _handleTrackpadZoom(PointerPanZoomUpdateEvent event) {
@@ -488,7 +616,7 @@ class _MapScreenState extends State<MapScreen> {
         .clamp(MapConfig.minZoom, MapConfig.maxZoom);
     if ((newZoom - camera.zoom).abs() < 0.001) return;
     final newCenter = camera.focusedZoomCenter(
-      Point(event.localPosition.dx, event.localPosition.dy),
+      math.Point(event.localPosition.dx, event.localPosition.dy),
       newZoom,
     );
     _mapController.move(newCenter, newZoom);
@@ -524,6 +652,7 @@ class _MapScreenState extends State<MapScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      drawerScrimColor: Colors.transparent,
       drawer: MenuDrawer(
         config: _config,
         trackers: _trackers,
@@ -569,25 +698,24 @@ class _MapScreenState extends State<MapScreen> {
             child: FlutterMap(
               mapController: _mapController,
               options: MapOptions(
-                initialCenter: LatLng(_config.mapLat, _config.mapLon),
+                initialCenter: widget.initialCenter ?? LatLng(_config.mapLat, _config.mapLon),
                 initialZoom: _config.mapZoom,
                 minZoom: MapConfig.minZoom,
                 maxZoom: MapConfig.maxZoom,
-                backgroundColor: Colors.black,
-                interactionOptions: InteractionOptions(
+                backgroundColor: Colors.grey[900]!,
+                interactionOptions: const InteractionOptions(
                   flags: InteractiveFlag.all & ~InteractiveFlag.pinchMove,
                 ),
-                cameraConstraint: CameraConstraint.containCenter(
-                  bounds: LatLngBounds(MapConfig.downloadSW, MapConfig.downloadNE),
-                ),
                 onMapEvent: (_) {},
+                onLongPress: _onMapLongPress,
+                onTap: _onMapTap,
               ),
               children: [
                 TileLayer(
                   urlTemplate: _tileUrl,
                   subdomains: _tileSubdomains,
                   userAgentPackageName: 'org.marsaprs.aprs_map',
-                  tileProvider: FMTCStore(MapConfig.storeName).getTileProvider(),
+                  tileProvider: _tileProvider,
                 ),
                 CourseLayer(courses: _visibleCourses),
                 if (_trailPoints.length > 1)
@@ -607,6 +735,16 @@ class _MapScreenState extends State<MapScreen> {
                     borderStrokeWidth: 1.5,
                     borderColor: _trailColor,
                   )).toList()),
+                if (_originPoint != null)
+                  CircleLayer(circles: [
+                    CircleMarker(
+                      point: _originPoint!,
+                      radius: 9,
+                      color: const Color(0x40E74C3C),
+                      borderStrokeWidth: 2.5,
+                      borderColor: const Color(0xFFC0392B),
+                    ),
+                  ]),
                 if (showIgates && _config.igates.isNotEmpty)
                   FixedMarkerLayer(
                     markers: _config.igates,
@@ -614,6 +752,8 @@ class _MapScreenState extends State<MapScreen> {
                     selectedId: _selectedId,
                     blinkingIds: _blinkingIds,
                     blinkOn: _blinkOn,
+                    onTap: _onFixedTap,
+                    onLongPress: _onFixedLongPress,
                   ),
                 if (showAid && _config.aidStations.isNotEmpty)
                   FixedMarkerLayer(
@@ -621,6 +761,8 @@ class _MapScreenState extends State<MapScreen> {
                     selectedId: _selectedId,
                     blinkingIds: _blinkingIds,
                     blinkOn: _blinkOn,
+                    onTap: _onFixedTap,
+                    onLongPress: _onFixedLongPress,
                   ),
                 if (showTrackers && _isOnline)
                   TrackerLayer(
@@ -631,11 +773,16 @@ class _MapScreenState extends State<MapScreen> {
                   ),
                 if (_locationState == _LocationState.granted)
                   CurrentLocationLayer(
+                    positionStream: _locationMarkerStream,
+                    // Passing an empty heading stream stops flutter_compass from
+                    // firing continuous compass updates that drive a 60 fps
+                    // AnimationController and prevent iOS auto-lock.
+                    headingStream: const Stream.empty(),
                     style: const LocationMarkerStyle(
                       marker: DefaultLocationMarker(),
                       markerSize: Size(20, 20),
                       accuracyCircleColor: Color(0x1A2196F3),
-                      headingSectorColor: Color(0x802196F3),
+                      headingSectorColor: Colors.transparent,
                     ),
                   ),
               ],
