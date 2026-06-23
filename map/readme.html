@@ -201,10 +201,10 @@
 <li><a href="#system-architecture">System Architecture</a></li>
 <li><a href="#netbird-vpn">NetBird VPN</a></li>
 <li><a href="#igates-v50">iGates (v5.0)</a></li>
-<li><a href="#aprs-server-v115">APRS Server (v1.16)</a></li>
+<li><a href="#aprs-server-v116">APRS Server (v1.16)</a></li>
 <li><a href="#cloudflare-tunnel">Cloudflare Tunnel</a></li>
-<li><a href="#display-pis-v115">Display Pis (v1.16)</a></li>
-<li><a href="#mobile-apps-v115">Mobile Apps (v1.16)</a></li>
+<li><a href="#display-pis-v116">Display Pis (v1.16)</a></li>
+<li><a href="#mobile-apps-v116">Mobile Apps (v1.16)</a></li>
 <li><a href="#app-architecture">Architecture</a> · <a href="#location-sharing-flow">Location Sharing Flow</a> · <a href="#building-distributing">Building &amp; Distributing</a> · <a href="#background-location">Background Location</a></li>
 <li><a href="#user-interfaces">User Interfaces</a></li>
 <li><a href="#backup-recovery-and-updates">Backup, Recovery and Updates</a></li>
@@ -444,7 +444,7 @@ igate-watchdog.sh  (cron, every minute)
 </table>
 <p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code></p>
 <hr />
-<h2 id="aprs-server-v115">APRS Server (v1.16)</h2>
+<h2 id="aprs-server-v116">APRS Server (v1.16)</h2>
 <p>The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
 APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
 NetBird monitor and WiFi credential manager. It is reachable at <code>marsaprs.org</code> via a
@@ -541,7 +541,7 @@ sudo systemctl start cloudflared
 <p>The tunnel token is obtained from the <strong>Cloudflare Zero Trust dashboard</strong>:
 <em>Networks → Tunnels → \&lt;tunnel&gt; → Configure → Install and run connector</em></p>
 <hr />
-<h2 id="display-pis-v115">Display Pis (v1.16)</h2>
+<h2 id="display-pis-v116">Display Pis (v1.16)</h2>
 <p>A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
 <code>marsaprs.org</code>. It is a read-only display device — no long-term local configuration or data storage.
 Two display Pis are in use: <strong>NetControl</strong> (operator screen) and <strong>BigTV</strong> (large audience
@@ -565,7 +565,7 @@ wifi-watchdog.sh  (checks WiFi every 30 s;
 <p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code> · VNC: <code>vnc://&lt;ip&gt;:5901</code></p>
 <p>For details on using the map, see <a href="https://marsaprs.org/userguide.html?back=/readme.html">USERGUIDE.MD</a>.</p>
 <hr />
-<h2 id="mobile-apps-v115">Mobile Apps (v1.16)</h2>
+<h2 id="mobile-apps-v116">Mobile Apps (v1.16)</h2>
 <p>Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.</p>
 <p><strong>Repository:</strong> <code>/Users/doug/aprs-map</code> (separate from this marsaprs repo)</p>
 <h3 id="app-architecture">App Architecture</h3>
@@ -658,8 +658,9 @@ wifi-watchdog.sh  (checks WiFi every 30 s;
 <pre><code>User taps Share Location
   → _ensureBackgroundPermissions()     (Android: notification + battery opt;
                                         iOS: upgrade to Always location)
-  → MobileSession.join()               POST ?mobile=join {name, pin}
-      ← {token, callsign, passcode}    e.g. callsign=K6DRK-01
+  → User selects activity: Walk/Run (60 s interval) or Ride/Drive (15 s interval)
+  → MobileSession.join()               POST ?mobile=join {name, pin, device_id}
+      ← {token, callsign, passcode}    e.g. callsign=K6DRK-01 (same slot reused per device)
   → BackgroundLocationService.startTracking()
       → Geolocator.getPositionStream() (GPS events; stream stays alive in background)
   → upload triggered by timer OR distance (≥ 0.1 mi since last upload):
@@ -676,6 +677,11 @@ wifi-watchdog.sh  (checks WiFi every 30 s;
       → distance filter: skip if new position &lt; 100 ft from last breadcrumb
       → writes K6DRK-01 to trackers.json with mobile=true
   → WebView polls ?json every 5 s → map updates
+
+App restart while sharing was active:
+  → resumeSharing() reads SharedPreferences (token, callsign, interval)
+  → Attempts token reuse via MobileSession.update(); if stale, re-joins silently
+  → Sharing resumes with same callsign; snackbar notifies user
 </code></pre>
 <h3 id="building-distributing">Building &amp; Distributing</h3>
 <h4 id="ios">iOS</h4>
@@ -685,12 +691,13 @@ flutter build ios --release --no-codesign
 </code></pre>
 <p>Open <code>ios/Runner.xcworkspace</code> in Xcode. To distribute via TestFlight:</p>
 <ol>
-<li>Bump <code>version</code> in <code>pubspec.yaml</code> (e.g. <code>1.14.0+2</code> — the build number after <code>+</code> must increase with each upload).</li>
-<li><code>flutter build ios --release --no-codesign</code></li>
-<li>Xcode → Product → Archive → Distribute App → TestFlight (internal).</li>
-<li>Wait for the build status in App Store Connect to leave <strong>Processing</strong> before testers can install it. This typically takes 5–15 minutes.</li>
+<li>Bump <code>version</code> in <code>pubspec.yaml</code> (e.g. <code>1.16.0+2</code> — the build number after <code>+</code> must increase with each upload).</li>
+<li>Build and export: <code>flutter build ipa --release --export-options-plist=ios/ExportOptions.plist</code></li>
+<li>Drag <code>build/ios/ipa/*.ipa</code> into <strong>Transporter</strong> (free Mac app by Apple) and click Deliver.</li>
+<li>In App Store Connect → TestFlight → External Testing group → add the build → Submit for Beta Review.</li>
+<li>Once approved (usually same day), testers receive an email invitation.</li>
 </ol>
-<p>Testers must have TestFlight installed (free, from the App Store). They install the app by opening the invitation email and tapping <strong>View in TestFlight</strong>. New testers may be prompted for a redeem code from the invitation. For updates, testers open TestFlight and tap <strong>Update</strong>.</p>
+<p>See <code>TESTFLIGHT.md</code> in the aprs-map repo for full prerequisites and troubleshooting. Testers must have TestFlight installed (free, from the App Store).</p>
 <h4 id="android">Android</h4>
 <pre><code class="language-bash">cd /Users/doug/aprs-map
 flutter pub get
