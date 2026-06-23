@@ -18,6 +18,7 @@ import 'background_location.dart';
 import 'config_service.dart';
 import 'course_layer.dart';
 import 'download_screen.dart';
+import 'help_screen.dart';
 import 'fixed_marker_layer.dart';
 import 'map_config.dart';
 import 'menu_drawer.dart';
@@ -138,6 +139,7 @@ class _MapScreenState extends State<MapScreen> {
     );
     _poller.start();
     _loadSavedMap();
+    _showHelpIfFirstLaunch();
     _bgLocation.onSessionEnded = () {
       if (!mounted) return;
       setState(() => _isSharing = false);
@@ -503,6 +505,15 @@ class _MapScreenState extends State<MapScreen> {
       _savedZoom = zoom;
       _savedRotation = rot;
     });
+  }
+
+  Future<void> _showHelpIfFirstLaunch() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('help_seen') == true) return;
+    if (!mounted) return;
+    await Navigator.push(context, MaterialPageRoute(
+      builder: (_) => HelpScreen(isOnline: _isOnline, isFirstLaunch: true),
+    ));
   }
 
   void _triggerBlink(Set<String> ids) {

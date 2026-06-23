@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'help_screen.dart';
 import 'remote_config.dart';
 import 'tracker_data.dart';
 
@@ -218,6 +219,12 @@ class _MenuDrawerState extends State<MenuDrawer> {
                   _footerBtn('Reload Tiles', Icons.download_for_offline, () async {
                     Navigator.pop(context);
                     await widget.onRefreshTiles?.call();
+                  }),
+                  _footerBtn('Help', Icons.help_outline, () {
+                    Navigator.pop(context);
+                    Navigator.push(context, MaterialPageRoute(
+                      builder: (_) => HelpScreen(isOnline: widget.isOnline),
+                    ));
                   }),
                   if (Platform.isIOS || Platform.isAndroid)
                     _footerBtn('Exit', Icons.exit_to_app, () => exit(0)),

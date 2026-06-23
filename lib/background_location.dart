@@ -28,10 +28,9 @@ class BackgroundLocationService {
   final MobileSession _session = MobileSession();
 
   StreamSubscription<Position>? _positionSub;
-  Timer? _heartbeatTimer; // main-isolate timer: session heartbeat on Android
+  Timer? _heartbeatTimer;
   LatLng? _lastPosition;
   LatLng? _lastUploadPosition; // position at the time of last beacon
-  DateTime? _lastStreamUpload; // iOS: throttle for stream-based uploads
   bool _sharingActive = false;
 
   Duration _uploadInterval = MapConfig.uploadInterval;
@@ -94,25 +93,20 @@ class BackgroundLocationService {
     _positionSub = null;
     _lastPosition = null;
     _lastUploadPosition = null;
-    _lastStreamUpload = null;
   }
 
-  // iOS only: called on every GPS event. Uploads when the timer interval has
-  // elapsed OR the device has moved >= 0.1 miles since the last beacon.
+  // iOS only: called on every GPS event. Uploads immediately when the device
+  // has moved >= 0.1 miles since the last beacon. The 60-second keepalive is
+  // handled by _heartbeatTimer, which calls _uploadNow() unconditionally.
   Future<void> _maybeUploadFromStream() async {
     if (!_sharingActive) return;
-    final now = DateTime.now();
     final pos = _lastPosition;
     if (pos == null) return;
-
-    final timerElapsed = _lastStreamUpload == null ||
-        now.difference(_lastStreamUpload!) >= _uploadInterval;
 
     final lp = _lastUploadPosition;
     final movedEnough = lp == null || _metersFrom(lp, pos) >= _kDistanceTriggerM;
 
-    if (!timerElapsed && !movedEnough) return;
-    _lastStreamUpload = now;
+    if (!movedEnough) return;
     await _uploadNow();
   }
 
@@ -191,9 +185,11 @@ class BackgroundLocationService {
       await _startAndroidForegroundTask();
     } else {
       unawaited(_uploadImmediately());
+      // Guaranteed 60-second keepalive: sends an APRS beacon unconditionally
+      // so the tracker never goes stale when the device is stationary.
       _heartbeatTimer = Timer.periodic(
-        _uploadInterval,
-        (_) => unawaited(_maybeUploadFromStream()),
+        const Duration(seconds: 60),
+        (_) async { if (_sharingActive) await _uploadNow(); },
       );
     }
   }

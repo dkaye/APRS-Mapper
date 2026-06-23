@@ -14,9 +14,10 @@ void backgroundTaskEntryPoint() {
 /// APRS-IS position packet on every [onRepeatEvent] tick OR immediately
 /// when a 'force_upload' (distance-triggered) message arrives.
 ///
-/// To simulate timer reset after a distance-triggered beacon, [onRepeatEvent]
-/// skips the upload if a beacon was sent within [_intervalMs] — this prevents
-/// a double-beacon when the OS timer fires shortly after a force_upload.
+/// [onRepeatEvent] skips the upload if a beacon was sent within 60 seconds —
+/// this prevents a double-beacon when the OS timer fires shortly after a
+/// force_upload, and ensures at most one timer beacon per 60 seconds regardless
+/// of the activity interval (_intervalMs may be shorter, e.g. 15 s for Ride/Drive).
 class LocationTaskHandler extends TaskHandler {
   String? _callsign;
   int? _passcode;
@@ -30,11 +31,8 @@ class LocationTaskHandler extends TaskHandler {
 
   @override
   void onRepeatEvent(DateTime timestamp) {
-    // Skip this tick if a distance-triggered beacon fired recently enough
-    // that we're still inside the configured interval window. This simulates
-    // resetting the timer after a force_upload.
     final lb = _lastBeacon;
-    if (lb != null && timestamp.difference(lb).inMilliseconds < _intervalMs) return;
+    if (lb != null && timestamp.difference(lb).inMilliseconds < 60000) return;
     _sendBeacon();
   }
 
