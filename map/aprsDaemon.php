@@ -18,8 +18,7 @@
  *     up the new tracker list without waiting for the next APRS packet
  *   - Merges external lastUpdate edits from trackers.json on each packet cycle
  *
- * Usage: php aprsDaemon.php [config=<file>] [server=<host>] [trackerstatus=<file>]
- *                           [sleep=<seconds>] [debug]
+ * Usage: php aprsDaemon.php [config=<file>] [server=<host>] [trackerstatus=<file>] [debug]
  */
 
 require_once 'config_parse.php';
@@ -33,7 +32,6 @@ $aprsServer="noam.aprs2.net";
 $aprsPort=14580;
 $minSecondsGreen=120;
 $minSecondsBlue=300;
-$sleepSeconds=5;
 $socket=null;
 $configFileMtime=0;
 $igates=array();			// [{callsign, name, lastBeacon}] — only entries with a callsign
@@ -73,9 +71,6 @@ if(!defined('APRS_DAEMON_INCLUDE_ONLY') && isset($argc) && $argc>1) {
 			case "trackerstatus":
 				$trackerStatusFilename=$value;
 				break;
-			case "sleep":
-				$sleepSeconds=(int)$value;
-				break;
 			case "debug":
 				$debugging=true;
 				break;
@@ -86,15 +81,14 @@ if(!defined('APRS_DAEMON_INCLUDE_ONLY') && isset($argc) && $argc>1) {
 }
 
 function commandLine ($message) {
-	global $aprsServer,$configFilename,$trackerStatusFilename,$sleepSeconds;
+	global $aprsServer,$configFilename,$trackerStatusFilename;
 	echo($message);
 	echo("Command line syntax:\n");
-	echo("  php aprsDaemon.php [server=<aprs_server>] [config=<config file>] [trackerstatus=<status file>] [sleep=<seconds>] [debug]\n");
+	echo("  php aprsDaemon.php [server=<aprs_server>] [config=<config file>] [trackerstatus=<status file>] [debug]\n");
 	echo("Defaults\n");
 	echo("  server=$aprsServer\n");
 	echo("  config=$configFilename\n");
 	echo("  trackerstatus=$trackerStatusFilename\n");
-	echo("  sleep=$sleepSeconds\n");
 	echo("config.yaml trackers section syntax:\n");
 	echo('  - callsign: <callsign>  (e.g. W6SG-4)' . PHP_EOL);
 	echo('    id: <shortId>         (e.g. S4)' . PHP_EOL);
@@ -318,7 +312,7 @@ function loadTrackers() {
 	foreach ($trackers as $t) $existing[$t["callsign"]] = $t;
 	$cfg = parseConfigYaml($configFilename);
 	$new = array();
-	foreach ($cfg['trackers'] as $entry) {
+	foreach ($cfg['trackers'] ?? [] as $entry) {
 		if (!isset($entry['callsign'])) continue;
 		$callsign = $entry['callsign'];
 		if (isset($existing[$callsign])) {
@@ -374,7 +368,7 @@ function loadTrackers() {
 // Returns true if reloaded, false if unchanged.
 // Also prunes stale mobile tracker entries from $trackers when sessions are removed.
 function loadMobileSessions() {
-	global $mobileSessions,$mobileMtime,$mobileTrackersFile,$trackers;
+	global $mobileSessions,$mobileMtime,$mobileTrackersFile,$trackers,$trackerHistory;
 	$mtime = file_exists($mobileTrackersFile) ? filemtime($mobileTrackersFile) : 0;
 	if ($mtime === $mobileMtime) return false;
 	$mobileMtime = $mtime;
@@ -394,12 +388,26 @@ function loadMobileSessions() {
 	$trackers = array_values(array_filter($trackers, function($t) use ($newSessions) {
 		return empty($t['mobile']) || isset($newSessions[$t['callsign']]);
 	}));
-	// Pre-add new sessions so they appear in trackers.json before first APRS beacon
-	$knownCallsigns = array_column($trackers, 'callsign');
+	// Pre-add new sessions so they appear in trackers.json before first APRS beacon.
+	// Also update name/id and clear stale data when a slot is reassigned to a new person.
 	foreach ($newSessions as $cs => $ms) {
-		if (!in_array($cs, $knownCallsigns, true)) {
+		$idx = null;
+		foreach ($trackers as $i => $t) {
+			if ($t['callsign'] === $cs) { $idx = $i; break; }
+		}
+		if ($idx === null) {
 			$trackers[] = ['callsign' => $cs, 'id' => $ms['id'], 'name' => $ms['name'],
 			               'lastUpdate' => 0, 'lat' => null, 'lon' => null, 'path' => '', 'mobile' => true];
+			// Clear any in-memory history so the join handler's disk clear isn't overwritten.
+			unset($trackerHistory[$cs]);
+		} elseif (($trackers[$idx]['name'] ?? '') !== $ms['name']) {
+			// Slot reassigned to a different person — update name, clear stale position and history.
+			$trackers[$idx]['name']       = $ms['name'];
+			$trackers[$idx]['id']         = $ms['id'];
+			$trackers[$idx]['lat']        = null;
+			$trackers[$idx]['lon']        = null;
+			$trackers[$idx]['lastUpdate'] = 0;
+			unset($trackerHistory[$cs]);
 		}
 	}
 	$mobileSessions = $newSessions;
@@ -438,10 +446,13 @@ function readTrackerstatusFile($filename) {
 		$callsign = $tracker["callsign"];
 		if (!isset($byCallsign[$callsign])) continue;
 		$saved = $byCallsign[$callsign];
-		if ($saved["lastUpdate"] > $tracker["lastUpdate"]) {
+		// For mobile trackers, only restore data when the slot is owned by the same person.
+		// This prevents a new occupant from inheriting a previous occupant's stale position/time.
+		$sameOwner = empty($tracker["mobile"]) || ($saved["name"] ?? '') === ($tracker["name"] ?? '');
+		if ($sameOwner && $saved["lastUpdate"] > $tracker["lastUpdate"]) {
 			$trackers[$key]["lastUpdate"] = $saved["lastUpdate"];
 		}
-		if ($tracker["lat"] === null && isset($saved["lat"])) {
+		if ($sameOwner && $tracker["lat"] === null && isset($saved["lat"])) {
 			$trackers[$key]["lat"] = $saved["lat"];
 			$trackers[$key]["lon"] = $saved["lon"];
 		}
@@ -493,14 +504,14 @@ if (!defined('APRS_DAEMON_INCLUDE_ONLY')) {
 
 $trackers=array();
 loadTrackers();
-if (empty($trackers)) fatal("No trackers loaded from $configFilename");
+if (empty($trackers) && !$mobileEnabled) fatal("No trackers loaded from $configFilename");
 
 if (!is_writable($trackerStatusFilename)) fatal("Can't write to trackerstatus file");
 
 readTrackerstatusFile($trackerStatusFilename);		//seed lastUpdate history from existing JSON
 resolveHistoryPath();
+loadMobileSessions();		// must run before readTrackerHistoryFile so startup unset() calls are harmless
 readTrackerHistoryFile();
-loadMobileSessions();
 connectToAprsServer();
 
 $prevCallsigns=array_column($trackers,'callsign');
@@ -528,7 +539,8 @@ while (TRUE) {
 		resolveHistoryPath();
 		readTrackerHistoryFile();
 	}
-	loadMobileSessions();								//reload when mobile_trackers.json changes
+	if (loadMobileSessions())							//reload when mobile_trackers.json changes
+		writeNewTrackerstatusFile($trackerStatusFilename);	//push mobile session changes to browser immediately
 	$line=socket_read($socket,1000,PHP_NORMAL_READ);
 	if ($line === false || $line === '') fatal("Socket read failed (connection lost or timed out)");
 	else {
@@ -635,9 +647,8 @@ while (TRUE) {
 			}
 		}
 		readTrackerstatusFile($trackerStatusFilename);		//merge any external lastUpdate changes from JSON
-		writeNewTrackerstatusFile($trackerStatusFilename);	//update all any time we receive any line (~20 secs)
+		writeNewTrackerstatusFile($trackerStatusFilename);
 		$lastWriteTime = time();
-		sleep($sleepSeconds);
 	}
 }
 

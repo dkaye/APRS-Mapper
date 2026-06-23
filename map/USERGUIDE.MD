@@ -1,6 +1,6 @@
 # APRS Tracker Map — User Guide
 
-**Version 1.16 · June 22, 2026**
+**Version 1.16.1 · June 23, 2026**
 
 ---
 
@@ -139,6 +139,8 @@ For future updates, open TestFlight and tap **Update** next to APRS Map.
 
 The first time you run the app it will ask for location permission — tap **Allow**. When you first tap Share Location the app will also ask for notification and battery permissions; grant both (see [Share Location in the App](#share-location-in-the-app)).
 
+**First launch:** The first time the app opens it displays a Help page with a quick overview of the main features. The page also suggests using the web version at [marsaprs.org](https://marsaprs.org) if you do not need background location sharing or offline map tiles — the web map has all the same features and requires no installation. You can return to the Help page at any time via the **Help** button in the drawer footer.
+
 ### App Drawer
 
 The app has its own native drawer — separate from the web map's ⚙ gear drawer. Open it by **tapping the ☰ menu icon** in the upper-left corner of the screen, or by **swiping right from the left edge**.
@@ -161,6 +163,7 @@ The drawer footer has buttons:
 | **Share Location** / **Stop Sharing** | Start or stop broadcasting your GPS position. Only shown when the event administrator has enabled mobile tracking. |
 | **Save Map** | Save the current map position and zoom as your personal default. |
 | **Reload Tiles** | Download fresh map tiles for the current view. See [Reload Tiles](#reload-tiles) below. |
+| **Help** | Open the built-in Help page. Works offline. |
 | **Exit** | Close the app. |
 
 ### Tracker Detail
@@ -178,6 +181,8 @@ The **Reload Tiles** button in the drawer footer downloads and caches map tiles 
 Share Location works the same way as on the web map — enter your name and the event PIN, choose your activity type, and your position is transmitted to the APRS network at the corresponding interval. The key difference is that **the app keeps reporting your position even when the screen is locked or you switch to another app**. You do not need to keep the screen on or stay in the app.
 
 **Auto-resume:** If you close and reopen the app while sharing was active, sharing resumes automatically with the same callsign. A brief notification confirms it.
+
+**Guaranteed 60-second keepalive:** Regardless of which activity mode you choose, the app sends a beacon at least every 60 seconds — even if you have not moved. This ensures your tracker never appears stale on the map while you are stationary.
 
 **Distance-triggered upload:** In addition to the timed interval, the app sends an immediate beacon whenever you move ≥ 0.1 miles (about 530 feet) since your last upload — even if the timer has not yet expired. After a distance-triggered upload the timer resets, so you will not receive a redundant beacon moments later.
 

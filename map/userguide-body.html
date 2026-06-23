@@ -1,5 +1,5 @@
 <h1 id="aprs-tracker-map-user-guide">APRS Tracker Map — User Guide</h1>
-<p><strong>Version 1.16 · June 22, 2026</strong></p>
+<p><strong>Version 1.16.1 · June 23, 2026</strong></p>
 <hr />
 <p>This document is a guide for users of the MARS APRS system. For technical details on the architecture and software see the <a href="https://marsaprs.org/readme.html?back=/userguide.html">README</a> file.</p>
 <h2 id="contents">Contents</h2>
@@ -126,6 +126,7 @@ A user with admin privileges can switch to a different default event, which all 
 <li>Tap <strong>Open</strong> when installation completes.</li>
 </ol>
 <p>The first time you run the app it will ask for location permission — tap <strong>Allow</strong>. When you first tap Share Location the app will also ask for notification and battery permissions; grant both (see <a href="#share-location-in-the-app">Share Location in the App</a>).</p>
+<p><strong>First launch:</strong> The first time the app opens it displays a Help page with a quick overview of the main features. The page also suggests using the web version at <a href="https://marsaprs.org">marsaprs.org</a> if you do not need background location sharing or offline map tiles — the web map has all the same features and requires no installation. You can return to the Help page at any time via the <strong>Help</strong> button in the drawer footer.</p>
 <h3 id="app-drawer">App Drawer</h3>
 <p>The app has its own native drawer — separate from the web map's ⚙ gear drawer. Open it by <strong>tapping the ☰ menu icon</strong> in the upper-left corner of the screen, or by <strong>swiping right from the left edge</strong>.</p>
 <p>The drawer header shows the app name and the current event. The body has collapsible sections:</p>
@@ -185,6 +186,10 @@ A user with admin privileges can switch to a different default event, which all 
 <td>Download fresh map tiles for the current view. See <a href="#reload-tiles">Reload Tiles</a> below.</td>
 </tr>
 <tr>
+<td><strong>Help</strong></td>
+<td>Open the built-in Help page. Works offline.</td>
+</tr>
+<tr>
 <td><strong>Exit</strong></td>
 <td>Close the app.</td>
 </tr>
@@ -198,6 +203,7 @@ A user with admin privileges can switch to a different default event, which all 
 <h3 id="share-location-in-the-app">Share Location in the App</h3>
 <p>Share Location works the same way as on the web map — enter your name and the event PIN, choose your activity type, and your position is transmitted to the APRS network at the corresponding interval. The key difference is that <strong>the app keeps reporting your position even when the screen is locked or you switch to another app</strong>. You do not need to keep the screen on or stay in the app.</p>
 <p><strong>Auto-resume:</strong> If you close and reopen the app while sharing was active, sharing resumes automatically with the same callsign. A brief notification confirms it.</p>
+<p><strong>Guaranteed 60-second keepalive:</strong> Regardless of which activity mode you choose, the app sends a beacon at least every 60 seconds — even if you have not moved. This ensures your tracker never appears stale on the map while you are stationary.</p>
 <p><strong>Distance-triggered upload:</strong> In addition to the timed interval, the app sends an immediate beacon whenever you move ≥ 0.1 miles (about 530 feet) since your last upload — even if the timer has not yet expired. After a distance-triggered upload the timer resets, so you will not receive a redundant beacon moments later.</p>
 <p><strong>First-time setup — Android:</strong> When you tap Share Location for the first time, the app will prompt for two permissions:</p>
 <ol>

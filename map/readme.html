@@ -193,7 +193,7 @@
 <div id="content">
 <h1 id="mars-aprs-system">MARS APRS System</h1>
 <p><strong>Author:</strong> Doug Kaye (K6DRK) · <strong>Copyright:</strong> 2026 Doug Kaye. All Rights Reserved.</p>
-<p><strong>Version:</strong> Server &amp; Displays (v1.16); Mobile App (v1.16); iGates (v5.0)</p>
+<p><strong>Version:</strong> Server &amp; Displays (v1.16.1); Mobile App (v1.16.1); iGates (v5.0)</p>
 <hr />
 <h2 id="table-of-contents">Table of Contents</h2>
 <ol>
@@ -201,10 +201,10 @@
 <li><a href="#system-architecture">System Architecture</a></li>
 <li><a href="#netbird-vpn">NetBird VPN</a></li>
 <li><a href="#igates-v50">iGates (v5.0)</a></li>
-<li><a href="#aprs-server-v116">APRS Server (v1.16)</a></li>
+<li><a href="#aprs-server-v1161">APRS Server (v1.16.1)</a></li>
 <li><a href="#cloudflare-tunnel">Cloudflare Tunnel</a></li>
-<li><a href="#display-pis-v116">Display Pis (v1.16)</a></li>
-<li><a href="#mobile-apps-v116">Mobile Apps (v1.16)</a></li>
+<li><a href="#display-pis-v1161">Display Pis (v1.16.1)</a></li>
+<li><a href="#mobile-apps-v1161">Mobile Apps (v1.16.1)</a></li>
 <li><a href="#app-architecture">Architecture</a> · <a href="#location-sharing-flow">Location Sharing Flow</a> · <a href="#building-distributing">Building &amp; Distributing</a> · <a href="#background-location">Background Location</a></li>
 <li><a href="#user-interfaces">User Interfaces</a></li>
 <li><a href="#backup-recovery-and-updates">Backup, Recovery and Updates</a></li>
@@ -259,18 +259,18 @@ forwarding or static public IP addresses.</p>
            ▼
 ┌──────────────────────────────────────┐     ┌──────────────────────────────┐
 │           APRS-IS Network            │◀────│  Mobile App  (iOS/Android)   │
-│         noam.aprs2.net:14580         │     │  Flutter v1.16               │
+│         noam.aprs2.net:14580         │     │  Flutter v1.16.1               │
 └────────────────┬─────────────────────┘     │  TCP 14580 (inject position) │
                  │ TCP 14580                 └──────────────┬───────────────┘
 ┌────────────────▼─────────────────────┐                    │ HTTPS (map + config + session)
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.16      │
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.16.1      │
 │  aprsDaemon.php → trackers.json      │◀───────────────────┘
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.16
+│  Display Pi  (×2)      │  Pi 4 · v1.16.1
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -444,7 +444,7 @@ igate-watchdog.sh  (cron, every minute)
 </table>
 <p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code></p>
 <hr />
-<h2 id="aprs-server-v116">APRS Server (v1.16)</h2>
+<h2 id="aprs-server-v1161">APRS Server (v1.16.1)</h2>
 <p>The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
 APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
 NetBird monitor and WiFi credential manager. It is reachable at <code>marsaprs.org</code> via a
@@ -541,7 +541,7 @@ sudo systemctl start cloudflared
 <p>The tunnel token is obtained from the <strong>Cloudflare Zero Trust dashboard</strong>:
 <em>Networks → Tunnels → \&lt;tunnel&gt; → Configure → Install and run connector</em></p>
 <hr />
-<h2 id="display-pis-v116">Display Pis (v1.16)</h2>
+<h2 id="display-pis-v1161">Display Pis (v1.16.1)</h2>
 <p>A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
 <code>marsaprs.org</code>. It is a read-only display device — no long-term local configuration or data storage.
 Two display Pis are in use: <strong>NetControl</strong> (operator screen) and <strong>BigTV</strong> (large audience
@@ -565,7 +565,7 @@ wifi-watchdog.sh  (checks WiFi every 30 s;
 <p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code> · VNC: <code>vnc://&lt;ip&gt;:5901</code></p>
 <p>For details on using the map, see <a href="https://marsaprs.org/userguide.html?back=/readme.html">USERGUIDE.MD</a>.</p>
 <hr />
-<h2 id="mobile-apps-v116">Mobile Apps (v1.16)</h2>
+<h2 id="mobile-apps-v1161">Mobile Apps (v1.16.1)</h2>
 <p>Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.</p>
 <p><strong>Repository:</strong> <code>/Users/doug/aprs-map</code> (separate from this marsaprs repo)</p>
 <h3 id="app-architecture">App Architecture</h3>
@@ -605,8 +605,12 @@ wifi-watchdog.sh  (checks WiFi every 30 s;
 <td>Root widget; hosts the WebView, JS bridge, native tracker/breadcrumb overlay</td>
 </tr>
 <tr>
+<td><code>lib/help_screen.dart</code></td>
+<td>Built-in Help page; displayed on first launch and accessible from the drawer footer</td>
+</tr>
+<tr>
 <td><code>lib/menu_drawer.dart</code></td>
-<td>Native Flutter sidebar drawer; Save Map + Exit buttons</td>
+<td>Native Flutter sidebar drawer (trackers, courses, about, share, save, help, exit)</td>
 </tr>
 <tr>
 <td><code>lib/tracker_layer.dart</code></td>
@@ -664,10 +668,11 @@ wifi-watchdog.sh  (checks WiFi every 30 s;
   → BackgroundLocationService.startTracking()
       → Geolocator.getPositionStream() (GPS events; stream stays alive in background)
   → upload triggered by timer OR distance (≥ 0.1 mi since last upload):
-      iOS:  _maybeUploadFromStream() — called on every GPS event; uploads if timer
-            elapsed OR distance ≥ 0.1 mi; updates _lastStreamUpload + _lastUploadPosition
+      iOS:  _heartbeatTimer fires every 60 s → _uploadNow() unconditionally (keepalive)
+            _maybeUploadFromStream() called on every GPS event → uploads only if
+            device moved ≥ 0.1 mi since last upload (distance trigger)
       Android: onRepeatEvent() fires on configured interval; skips if _lastBeacon is
-            within intervalMs (guards against double-fire after distance upload);
+            within 60 s (guards against double-fire after distance upload);
             GPS listener sends 'force_upload' IPC if distance ≥ 0.1 mi
       → AprsClient.sendPosition()      TCP noam.aprs2.net:14580
           → &quot;K6DRK-01&gt;APRS,TCPIP*:!3751.72N/12232.64W&gt;Mobile/Alice\r\n&quot;
@@ -764,7 +769,7 @@ storeFile=&lt;absolute path to .jks or .p12&gt;
 <p>Samsung One UI is particularly aggressive — users must also set the app to <strong>Unrestricted</strong> battery mode: Settings → Apps → APRS Map → Battery → Unrestricted.</p>
 <h4 id="ios_1">iOS</h4>
 <p><code>Info.plist</code> declares <code>UIBackgroundModes: location</code>. The <code>CLLocationManager</code> flag <code>allowsBackgroundLocationUpdates</code> is set to <code>true</code> via <code>AppleSettings(allowBackgroundLocationUpdates: true)</code> in the geolocator stream configuration. "Always" location permission is required — "While Using" is not sufficient.</p>
-<p><strong>Timer workaround:</strong> On iOS, the Dart isolate is suspended when the app loses focus, so <code>Timer.periodic</code> does not fire in the background. Instead, uploads are triggered directly from the GPS stream callback (<code>_maybeUploadFromStream()</code> in <code>background_location.dart</code>). On each GPS event the callback checks two conditions: whether the configured interval has elapsed since the last upload, or whether the device has moved ≥ 0.1 miles since the last upload position. Either condition triggers an immediate upload and resets both the timestamp and the reference position. iOS wakes the app briefly for each GPS event (because of the declared background mode), providing the execution window needed to send the APRS packet.</p>
+<p><strong>Timer workaround:</strong> On iOS, <code>Timer.periodic</code> fires reliably in the background because the declared <code>location</code> background mode keeps the Dart isolate alive. A 60-second <code>_heartbeatTimer</code> calls <code>_uploadNow()</code> unconditionally on every tick, guaranteeing a beacon at least every 60 seconds regardless of movement. A separate GPS stream callback (<code>_maybeUploadFromStream()</code>) triggers an additional immediate upload whenever the device moves ≥ 0.1 miles since the last beacon. The two mechanisms are independent: the heartbeat handles the keepalive; the stream handler handles the distance trigger.</p>
 <hr />
 <h2 id="user-interfaces">User Interfaces</h2>
 <p>Five browser-based interfaces run on <code>marsaprs.org</code>. All are served by Apache on the server
@@ -1543,6 +1548,7 @@ config.yaml → events/Dipsea 2026/event.yaml   (symlink)
 </code></pre>
 <p><code>tracker_history.yaml</code> — auto-generated by <code>aprsDaemon.php</code>. Stores the 10 most-recent
 beacon positions per tracker. Pruned when a tracker is removed from the config. Also pruned for a mobile participant's callsign when they start a new session (<code>?mobile=join</code>), so stale breadcrumbs from a prior session never appear.</p>
+<p><strong>Startup ordering note:</strong> <code>loadMobileSessions()</code> must run before <code>readTrackerHistoryFile()</code> at daemon startup. <code>loadMobileSessions()</code> calls <code>unset($trackerHistory[$cs])</code> for any callsign not yet in <code>$trackers</code>; if history were loaded first, all mobile callsigns would be cleared (they are absent from <code>$trackers</code> until <code>loadMobileSessions()</code> adds them). Running sessions load first makes the <code>unset()</code> calls harmless (the array is still empty).</p>
 <p><strong>Minimum-distance filter:</strong> Before appending a new breadcrumb, the daemon computes the haversine distance from the previous breadcrumb. If the new position is within 30.48 m (100 feet), it is discarded — <code>lastUpdate</code> is still updated (so the tracker doesn't appear stale), but no new breadcrumb is added and <code>trackers.json</code> position fields are not changed. This filter applies to both regular and mobile trackers and covers both web and native-app clients, since both read the same server-side files.</p>
 <h4 id="running-the-daemon">Running the Daemon</h4>
 <p><strong>Direct (foreground):</strong></p>
@@ -1571,11 +1577,6 @@ beacon positions per tracker. Pruned when a tracker is removed from the config. 
 <td><code>trackerstatus=&lt;file&gt;</code></td>
 <td><code>trackers.json</code></td>
 <td>Path to tracker status output file</td>
-</tr>
-<tr>
-<td><code>sleep=&lt;seconds&gt;</code></td>
-<td><code>5</code></td>
-<td>Seconds between packet reads</td>
 </tr>
 <tr>
 <td><code>debug</code></td>
