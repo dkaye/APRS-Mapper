@@ -1,6 +1,6 @@
 # APRS Tracker Map — User Guide
 
-**Version 1.15 · June 21, 2026**
+**Version 1.16 · June 22, 2026**
 
 ---
 
@@ -147,23 +147,27 @@ The drawer header shows the app name and the current event. The body has collaps
 
 | Section | Contents |
 |---------|----------|
-| **Trackers** | Colored dot, ID, name, and elapsed time. **Tap** to close the drawer and center the map on that tracker. **Long-press** to close the drawer and zoom in to the tracker's last position. |
+| **Trackers** | Colored dot, ID, name, and elapsed time. **Tap** to close the drawer and center the map on that tracker; the tracker's breadcrumb trail (up to 10 positions) appears on the map with directional arrows. **Long-press** to close the drawer and zoom in to the tracker's last position. |
 | **Courses** | Tap the eye icon (👁) to show or hide each course overlay. |
 | **Backgrounds** | Tap an entry to switch the base tile layer. |
 | **Aid Stations** | Tap an entry to close the drawer and zoom to that location. |
 | **iGates** | Tap an entry to close the drawer and zoom to that location. |
 | **About** | Organization, app version and build number, event name, your assigned callsign (while sharing), map attribution, and copyright. |
 
-The drawer footer has two buttons:
+The drawer footer has buttons:
 
 | Button | Action |
 |--------|--------|
 | **Share Location** / **Stop Sharing** | Start or stop broadcasting your GPS position. Only shown when the event administrator has enabled mobile tracking. |
+| **Save Map** | Save the current map position and zoom as your personal default. |
 | **Reload Tiles** | Download fresh map tiles for the current view. See [Reload Tiles](#reload-tiles) below. |
+| **Exit** | Close the app. |
 
 ### Tracker Detail
 
 Tapping a tracker **marker on the map** (not in the drawer list) opens a detail panel from the bottom of the screen showing the tracker's full name, callsign, time since last beacon, GPS coordinates, and a **Mobile tracker** badge if the tracker is a mobile participant. Tap anywhere outside the panel to dismiss it.
+
+Each tracker's map marker shows the **tracker ID** (such as "H1") as a label next to the dot, so you can identify trackers at a glance without opening the drawer.
 
 ### Reload Tiles
 
@@ -171,7 +175,11 @@ The **Reload Tiles** button in the drawer footer downloads and caches map tiles 
 
 ### Share Location in the App
 
-Share Location works the same way as on the web map — enter your name and the event PIN, and your position is transmitted to the APRS network approximately once per minute. The key difference is that **the app keeps reporting your position even when the screen is locked or you switch to another app**. You do not need to keep the screen on or stay in the app.
+Share Location works the same way as on the web map — enter your name and the event PIN, choose your activity type, and your position is transmitted to the APRS network at the corresponding interval. The key difference is that **the app keeps reporting your position even when the screen is locked or you switch to another app**. You do not need to keep the screen on or stay in the app.
+
+**Auto-resume:** If you close and reopen the app while sharing was active, sharing resumes automatically with the same callsign. A brief notification confirms it.
+
+**Distance-triggered upload:** In addition to the timed interval, the app sends an immediate beacon whenever you move ≥ 0.1 miles (about 530 feet) since your last upload — even if the timer has not yet expired. After a distance-triggered upload the timer resets, so you will not receive a redundant beacon moments later.
 
 **First-time setup — Android:** When you tap Share Location for the first time, the app will prompt for two permissions:
 
@@ -190,7 +198,6 @@ The native app does not include every feature available in the browser. The foll
 |---------|-----------------|
 | Admin page | `marsaprs.org/admin/` in a browser |
 | Kiosk Mode | Web map footer |
-| Save Map | Web map sidebar footer |
 | Origin marker (distance & bearing) | Right-click on the web map |
 | Clients panel | Web map sidebar footer |
 
@@ -270,11 +277,13 @@ The tracker's marker on the map and sidebar entry both update every 5 seconds.
 #### Clicking a tracker (L)
 
 1. **First click** — The tracker's map marker and sidebar entry blink for 5 seconds.
-   Up to 10 recent beacon positions appear as "breadcrumbs" on the map as small dots connected by a dotted
+   Up to 10 recent beacon positions appear as "breadcrumbs" on the map as small dots connected by a dashed
    line with directional arrows. The dots blink in sync with the tracker marker. Hover
    over any dot to see when that position was received and, if available, the APRS path
    it traveled (iGates and digipeaters it passed through). Consecutive duplicate beacons
-   (the same position reported twice in a row) are collapsed into a single breadcrumb.
+   (the same position reported twice in a row) are collapsed into a single breadcrumb. Positions
+   that are less than 100 feet from the previous breadcrumb are also suppressed — only meaningful
+   movement creates a new dot. The breadcrumb trail updates automatically as the tracker moves. The trail color matches the tracker's current staleness color (green/blue/red) and updates in real time.
 
 2. **Second click** — The map zooms to the tracker's last known position.
 
@@ -290,12 +299,8 @@ If a tracker has not yet reported a position, a notification appears instead of 
 
 On phones and tablets the tracker list uses touch gestures instead of a click cycle:
 
-- **Short tap** — The tracker blinks and its breadcrumb history appears on the map. The
-  drawer stays open. Tap any breadcrumb dot to see when that position was received and
-  its APRS path. Tapping the same tracker again repeats the blink; there is no
-  second- or third-tap action.
-- **Long press (hold ~½ second)** — Same as a short tap, and additionally closes the
-  drawer and zooms the map to the tracker's last known position.
+- **Short tap** — The tracker blinks and its breadcrumb history appears on the map as dots connected by a dashed line with directional arrows, in the same color as the tracker's dot (green/blue/red). The trail color updates in real time as the tracker's staleness changes. The trail updates automatically as the tracker moves. The drawer stays open. Tap any breadcrumb dot to see when that position was received and its APRS path. Tapping the same tracker again repeats the blink; there is no second- or third-tap action.
+- **Long press (hold ~½ second)** — Same as a short tap, and additionally closes the drawer and zooms the map to the tracker's last known position.
 
 Tapping a different tracker switches focus to that tracker.
 
@@ -351,13 +356,15 @@ Location sharing is available on:
 
 1. Tap **Share Location** at the bottom of the drawer.
 2. Enter your name and the event PIN.
-3. Select a **beacon interval** — how often your position is transmitted (30, 60, 90, or 120 seconds). 60 seconds is a good default for most uses.
-4. Tap **Join**.
+3. Select your **activity type**: **Walk / Run** (transmits every 60 seconds) or **Ride / Drive** (transmits every 15 seconds).
+4. Tap **Share**.
 5. A confirmation shows your assigned APRS callsign (e.g., `K6DRK-01`). You will appear in the Trackers list under that callsign and be visible on the map. Your callsign is also shown in the **About** section of the drawer while sharing is active.
 
 Your position is transmitted at the chosen interval and appears on this map and on external APRS sites such as [aprs.fi](https://aprs.fi) and CalTopo.
 
 **Callsign persistence:** The app remembers your device across sessions. If you stop sharing and start again — or close and reopen the app — you will be assigned the **same callsign** as before, so your track history is continuous. If you reinstall the app you will be assigned a new callsign.
+
+**Auto-resume (native app only):** If the app is closed or restarted while sharing was active, sharing resumes automatically when the app reopens — no need to re-enter your name and PIN. A brief notification confirms the resume.
 
 **Stopping:**
 

@@ -2,7 +2,7 @@
 
 **Author:** Doug Kaye (K6DRK) · **Copyright:** 2026 Doug Kaye. All Rights Reserved.
 
-**Version:** Server & Displays (v1.14); Mobile App (v1.14); iGates (v5.0)
+**Version:** Server & Displays (v1.16); Mobile App (v1.16); iGates (v5.0)
 
 ---
 
@@ -12,10 +12,10 @@
 2. [System Architecture](#system-architecture)
 3. [NetBird VPN](#netbird-vpn)
 4. [iGates (v5.0)](#igates-v50)
-5. [APRS Server (v1.14)](#aprs-server-v114)
+5. [APRS Server (v1.16)](#aprs-server-v116)
    - [Cloudflare Tunnel](#cloudflare-tunnel)
-6. [Display Pis (v1.14)](#display-pis-v114)
-7. [Mobile Apps (v1.14)](#mobile-apps-v114)
+6. [Display Pis (v1.16)](#display-pis-v116)
+7. [Mobile Apps (v1.16)](#mobile-apps-v116)
    - [Architecture](#app-architecture) · [Location Sharing Flow](#location-sharing-flow) · [Building & Distributing](#building-distributing) · [Background Location](#background-location)
 8. [User Interfaces](#user-interfaces)
 9. [Backup, Recovery and Updates](#backup-recovery-and-updates)
@@ -71,18 +71,18 @@ APRS Radio (144.39 MHz)
            ▼
 ┌──────────────────────────────────────┐     ┌──────────────────────────────┐
 │           APRS-IS Network            │◀────│  Mobile App  (iOS/Android)   │
-│         noam.aprs2.net:14580         │     │  Flutter v1.14               │
+│         noam.aprs2.net:14580         │     │  Flutter v1.16               │
 └────────────────┬─────────────────────┘     │  TCP 14580 (inject position) │
                  │ TCP 14580                 └──────────────┬───────────────┘
 ┌────────────────▼─────────────────────┐                    │ HTTPS (map + config + session)
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.14      │
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.16      │
 │  aprsDaemon.php → trackers.json      │◀───────────────────┘
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.14
+│  Display Pi  (×2)      │  Pi 4 · v1.16
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -187,7 +187,7 @@ Log: `/var/log/direwolf/watchdog.log`
 
 ---
 
-## APRS Server (v1.14)
+## APRS Server (v1.16)
 
 The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
 APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
@@ -271,7 +271,7 @@ The tunnel token is obtained from the **Cloudflare Zero Trust dashboard**:
 
 ---
 
-## Display Pis (v1.14)
+## Display Pis (v1.16)
 
 A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
 `marsaprs.org`. It is a read-only display device — no long-term local configuration or data storage.
@@ -304,7 +304,7 @@ For details on using the map, see [USERGUIDE.MD](https://marsaprs.org/userguide.
 
 ---
 
-## Mobile Apps (v1.14)
+## Mobile Apps (v1.16)
 
 Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.
 
@@ -340,14 +340,17 @@ The app is a Flutter application with a hybrid architecture:
 
 | File | Purpose |
 |------|---------|
-| `lib/map_screen.dart` | Root widget; hosts the WebView and JS bridge |
-| `lib/menu_drawer.dart` | Native Flutter sidebar drawer (trackers, courses, about, share button) |
-| `lib/tracker_layer.dart` | Native map marker overlay (squares for mobile, circles for fixed) |
-| `lib/background_location.dart` | GPS stream + upload timer; calls `AprsClient` and `MobileSession` |
+| `lib/map_screen.dart` | Root widget; hosts the WebView, JS bridge, native tracker/breadcrumb overlay |
+| `lib/menu_drawer.dart` | Native Flutter sidebar drawer (trackers, courses, about, share, save, exit) |
+| `lib/tracker_layer.dart` | Native map marker overlay; squares for mobile, circles for fixed; ID label next to each dot |
+| `lib/arrow_painter.dart` | CustomPainter for breadcrumb directional arrows; isolated to avoid `Path<LatLng>` collision |
+| `lib/course_layer.dart` | Course polyline overlay; fetches all courses in parallel |
+| `lib/background_location.dart` | GPS stream + upload timer; distance-triggered upload (≥ 0.1 mi); calls `AprsClient` and `MobileSession` |
+| `lib/background_task_handler.dart` | Android foreground task handler; manages timer skipping after distance-triggered beacons |
 | `lib/mobile_session.dart` | HTTP client for `?mobile=join/update/leave` API |
 | `lib/aprs_client.dart` | TCP socket to `noam.aprs2.net:14580`; formats and sends APRS-IS position packets |
 | `lib/remote_config.dart` | Polls `?config` endpoint; parses event configuration |
-| `lib/map_config.dart` | Constants: upload interval (60 s), server URL |
+| `lib/map_config.dart` | Constants: server URL |
 | `android/app/src/main/AndroidManifest.xml` | Android permissions |
 | `ios/Runner/Info.plist` | iOS background mode declaration |
 
@@ -361,12 +364,18 @@ User taps Share Location
       ← {token, callsign, passcode}    e.g. callsign=K6DRK-01
   → BackgroundLocationService.startTracking()
       → Geolocator.getPositionStream() (GPS events; stream stays alive in background)
-  → upload timer fires every 60 s (Android) / GPS event triggers upload (iOS):
+  → upload triggered by timer OR distance (≥ 0.1 mi since last upload):
+      iOS:  _maybeUploadFromStream() — called on every GPS event; uploads if timer
+            elapsed OR distance ≥ 0.1 mi; updates _lastStreamUpload + _lastUploadPosition
+      Android: onRepeatEvent() fires on configured interval; skips if _lastBeacon is
+            within intervalMs (guards against double-fire after distance upload);
+            GPS listener sends 'force_upload' IPC if distance ≥ 0.1 mi
       → AprsClient.sendPosition()      TCP noam.aprs2.net:14580
           → "K6DRK-01>APRS,TCPIP*:!3751.72N/12232.64W>Mobile/Alice\r\n"
       → MobileSession.update()         POST ?mobile=update {token}
           ← 200 ok  (or 404 if session removed/blocked → stops sharing)
   → aprsDaemon receives packet from APRS-IS
+      → distance filter: skip if new position < 100 ft from last breadcrumb
       → writes K6DRK-01 to trackers.json with mobile=true
   → WebView polls ?json every 5 s → map updates
 ```
@@ -444,7 +453,7 @@ Samsung One UI is particularly aggressive — users must also set the app to **U
 
 `Info.plist` declares `UIBackgroundModes: location`. The `CLLocationManager` flag `allowsBackgroundLocationUpdates` is set to `true` via `AppleSettings(allowBackgroundLocationUpdates: true)` in the geolocator stream configuration. "Always" location permission is required — "While Using" is not sufficient.
 
-**Timer workaround:** On iOS, the Dart isolate is suspended when the app loses focus, so `Timer.periodic` does not fire in the background. Instead, uploads are triggered directly from the GPS stream callback (`_maybeUploadFromStream()` in `background_location.dart`), throttled to once per 60 seconds. iOS wakes the app briefly for each GPS event (because of the declared background mode), providing the execution window needed to send the APRS packet.
+**Timer workaround:** On iOS, the Dart isolate is suspended when the app loses focus, so `Timer.periodic` does not fire in the background. Instead, uploads are triggered directly from the GPS stream callback (`_maybeUploadFromStream()` in `background_location.dart`). On each GPS event the callback checks two conditions: whether the configured interval has elapsed since the last upload, or whether the device has moved ≥ 0.1 miles since the last upload position. Either condition triggers an immediate upload and resets both the timestamp and the reference position. iOS wakes the app briefly for each GPS event (because of the declared background mode), providing the execution window needed to send the APRS packet.
 
 ---
 
@@ -464,10 +473,12 @@ Pi, accessible at `https://marsaprs.org/<path>`.
 **Map** — Shows tracker positions updated every 5 seconds. Sidebar lists trackers (with
 elapsed time and breadcrumb history), courses, aid stations, iGates, and map backgrounds.
 Hovering a tracker or breadcrumb dot shows its APRS path (iGates/digipeaters the packet
-traveled); consecutive duplicate beacons are collapsed into one breadcrumb. Aid station and
-iGate tooltips include an optional callsign. A scale bar in the lower-right corner toggles
-between miles/feet and kilometers/meters when clicked. Kiosk mode removes controls for
-unattended display use.
+traveled). Breadcrumbs are filtered: consecutive duplicate positions and positions within
+100 feet of the previous breadcrumb are suppressed. The breadcrumb trail shows up to 10
+positions as dots on a dashed line with directional arrows; the trail updates automatically
+as the selected tracker moves. Aid station and iGate tooltips include an optional callsign.
+A scale bar in the lower-right corner toggles between miles/feet and kilometers/meters when
+clicked. Kiosk mode removes controls for unattended display use.
 
 **Map Admin** — Password-protected. Manages all event configuration: tracker callsigns and
 IDs, GPX/KML/GeoJSON course overlays, aid station and iGate locations (with optional APRS
@@ -1095,6 +1106,8 @@ config.yaml → events/Dipsea 2026/event.yaml   (symlink)
 `tracker_history.yaml` — auto-generated by `aprsDaemon.php`. Stores the 10 most-recent
 beacon positions per tracker. Pruned when a tracker is removed from the config. Also pruned for a mobile participant's callsign when they start a new session (`?mobile=join`), so stale breadcrumbs from a prior session never appear.
 
+**Minimum-distance filter:** Before appending a new breadcrumb, the daemon computes the haversine distance from the previous breadcrumb. If the new position is within 30.48 m (100 feet), it is discarded — `lastUpdate` is still updated (so the tracker doesn't appear stale), but no new breadcrumb is added and `trackers.json` position fields are not changed. This filter applies to both regular and mobile trackers and covers both web and native-app clients, since both read the same server-side files.
+
 #### Running the Daemon
 
 **Direct (foreground):**
@@ -1169,10 +1182,10 @@ width is saved in `localStorage`.
 **Mobile drawer:** Sections are collapsible accordions. Visibility checkboxes work the same
 as desktop. Footer buttons: Reset Map, Save Map, Admin, User Guide, Kiosk Mode, Clients, and (when `mobile.enabled`) Share Location / Stop Sharing. The **About** section of the drawer shows the user's assigned APRS callsign while sharing is active. The floating reset button (↺) pinned to the map also closes the drawer if it is open before recentering.
 
-**Mobile tracker markers:** Mobile participants (sharing via Share Location) are rendered as **rounded squares** on both the map and in the sidebar, distinguishing them from regular APRS trackers (which use the configured icon shape). The shape is determined by `t.mobile` in the tracker JSON. In `index.php`, the icon is selected as `t.mobile ? 'square' : trackerStyle.icon`; the sidebar dot gets `border-radius: 3px` for mobile and `50%` for others.
+**Mobile tracker markers:** Mobile participants (sharing via Share Location) are rendered as **rounded squares** on both the map and in the sidebar, distinguishing them from regular APRS trackers (which use the configured icon shape). The shape is determined by `t.mobile` in the tracker JSON. In `index.php`, the icon is selected as `t.mobile ? 'square' : trackerStyle.icon`; the sidebar dot gets `border-radius: 3px` for mobile and `50%` for others. In the native Flutter app, each marker also shows the **tracker ID** as a text label directly next to the dot on the map.
 
 **Tracker clicks (desktop — three-click cycle):**
-1. Blink tracker + show beacon history (up to 10 positions as dots + dotted polyline)
+1. Blink tracker + show beacon history (up to 10 positions as dots + dashed polyline with directional arrows; trail auto-refreshes as tracker moves)
 2. Zoom to tracker's last position (zoom 15)
 3. Reset map to default view
 

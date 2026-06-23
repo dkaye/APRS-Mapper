@@ -1430,7 +1430,7 @@ new (L.Control.extend({
 			L.DomEvent.on(exitBtn, 'click', () => { location.href = location.pathname; });
 			L.DomEvent.disableClickPropagation(exitBtn);
 			const txt = L.DomUtil.create('span', '', d);
-			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.13 &copy; 2026 Doug Kaye (K6DRK)';
+			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.16 &copy; 2026 Doug Kaye (K6DRK)';
 		} else {
 			if (!isMobile) {
 				const exitBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
@@ -1448,8 +1448,8 @@ new (L.Control.extend({
 			}
 			const ftxt = L.DomUtil.create('span', '', d);
 			ftxt.innerHTML = isMobile
-				? 'MARS APRS v1.13 &copy; 2026 Doug Kaye (K6DRK)'
-				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.13 &copy; 2026 Doug Kaye (K6DRK)';
+				? 'MARS APRS v1.16 &copy; 2026 Doug Kaye (K6DRK)'
+				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.16 &copy; 2026 Doug Kaye (K6DRK)';
 			if (isMobile) d.style.fontSize = '10px';
 		}
 		return d;
@@ -1894,7 +1894,7 @@ function showTrackerHistory(callsign, color) {
 			if (allPts.length > 1) {
 				// Dotted connecting line
 				const line = L.polyline(allPts, {
-					color, weight: 2, dashArray: '4 7', opacity: 0.65, pane: 'trackerPane'
+					color, weight: 3, dashArray: '4 7', opacity: 0.80, pane: 'trackerPane'
 				}).addTo(map);
 				layers.push(line);
 
@@ -2276,14 +2276,15 @@ function updateMap() {
 				if (markers[t.callsign]) {
 					const oldLL = markers[t.callsign].getLatLng();
 					const moved = oldLL.lat !== t.lat || oldLL.lng !== t.lon;
+					const prevColor = markers[t.callsign]._trackerColor;
 					markers[t.callsign]._trackerColor = color;
 					markers[t.callsign]._mobile = t.mobile;
 					markers[t.callsign].setLatLng(latlng);
 					markers[t.callsign].setIcon(icon);
 					if (trackerPopups[t.callsign]) trackerPopups[t.callsign].setContent(popupHtml(t));
 					markers[t.callsign].setTooltipContent(kiosk ? (t.name || t.id) : t.id);
-					// Selected tracker moved → redraw its breadcrumb trail and arrows
-					if (moved && t.callsign === selectedCallsign) showTrackerHistory(t.callsign, color);
+					// Redraw breadcrumb trail whenever the selected tracker moves or changes staleness color.
+					if ((moved || color !== prevColor) && t.callsign === selectedCallsign) showTrackerHistory(t.callsign, color);
 				} else {
 					const m = L.marker(latlng, { icon, pane: 'trackerPane' }).addTo(map);
 					m._trackerColor = color;
@@ -2403,7 +2404,7 @@ function refreshMobileAbout() {
 	const rows = [
 		currentEventName ? { label: 'Event',   val: currentEventName } : null,
 		{ label: 'Org',     val: 'Marin Amateur Radio Society' },
-		{ label: 'Version', val: 'APRS Tracker Map · v1.13' },
+		{ label: 'Version', val: 'APRS Tracker Map · v1.16' },
 		mobileCallsign ? { label: 'Callsign', val: mobileCallsign } : null,
 		{ label: 'Map',     val: currentBgAttribution || '' },
 		{ label: 'Credit',  val: '&copy; 2026 Doug Kaye (K6DRK)' },
@@ -2967,7 +2968,7 @@ function openAboutModal() {
 	const attrText = currentBgAttribution || '';
 	const rows = [
 		{ label: 'Organization', val: 'Marin Amateur Radio Society' },
-		{ label: 'Application',  val: 'APRS Tracker Map · v1.13' },
+		{ label: 'Application',  val: 'APRS Tracker Map · v1.16' },
 		currentEventName ? { label: 'Event', val: currentEventName } : null,
 		mobileCallsign ? { label: 'My Callsign', val: mobileCallsign } : null,
 		{ label: 'Map Data',     val: attrText },

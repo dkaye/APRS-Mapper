@@ -250,6 +250,20 @@ function readTrackerHistoryFile() {
 	unset($entries);
 }
 
+// Minimum movement (100 ft) required before recording a new breadcrumb or
+// updating the displayed position. Filters GPS noise and timer-only beacons.
+const MIN_MOVE_METRES = 30.48;
+
+// Returns distance in metres between two WGS-84 lat/lon points (Haversine).
+function haversineMeters(float $lat1, float $lon1, float $lat2, float $lon2): float {
+	$R    = 6371000.0;
+	$dLat = deg2rad($lat2 - $lat1);
+	$dLon = deg2rad($lon2 - $lon1);
+	$a    = sin($dLat / 2) ** 2
+	      + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLon / 2) ** 2;
+	return $R * 2 * atan2(sqrt($a), sqrt(1 - $a));
+}
+
 // Write $trackerHistory to tracker_history.yaml
 function writeTrackerHistoryFile() {
 	global $trackerHistory, $historyFilePath;
@@ -539,12 +553,15 @@ while (TRUE) {
 						$trackers[$key]["lastUpdate"]=time();	//update time last seen for that callsign
 						$trackers[$key]["path"]=$aprsPath;
 						if ($lat !== null) {
-							$trackers[$key]["lat"]=$lat;
-							$trackers[$key]["lon"]=$lon;
-							if (!isset($trackerHistory[$callsign])) $trackerHistory[$callsign] = [];
-							array_unshift($trackerHistory[$callsign], ['lat'=>$lat,'lon'=>$lon,'path'=>$aprsPath,'ts'=>time()]);
-							if (count($trackerHistory[$callsign]) > 10) array_pop($trackerHistory[$callsign]);
-							writeTrackerHistoryFile();
+							$lastCrumb = $trackerHistory[$callsign][0] ?? null;
+							if ($lastCrumb === null || haversineMeters($lastCrumb['lat'], $lastCrumb['lon'], $lat, $lon) >= MIN_MOVE_METRES) {
+								$trackers[$key]["lat"]=$lat;
+								$trackers[$key]["lon"]=$lon;
+								if (!isset($trackerHistory[$callsign])) $trackerHistory[$callsign] = [];
+								array_unshift($trackerHistory[$callsign], ['lat'=>$lat,'lon'=>$lon,'path'=>$aprsPath,'ts'=>time()]);
+								if (count($trackerHistory[$callsign]) > 10) array_pop($trackerHistory[$callsign]);
+								writeTrackerHistoryFile();
+							}
 						}
 					}
 				}
@@ -568,12 +585,15 @@ while (TRUE) {
 						$trackers[$foundKey]['name']       = $ms['name'];
 					}
 					if ($lat !== null) {
-						$trackers[$foundKey]['lat'] = $lat;
-						$trackers[$foundKey]['lon'] = $lon;
-						if (!isset($trackerHistory[$callsign])) $trackerHistory[$callsign] = [];
-						array_unshift($trackerHistory[$callsign], ['lat'=>$lat,'lon'=>$lon,'path'=>$aprsPath,'ts'=>time()]);
-						if (count($trackerHistory[$callsign]) > 10) array_pop($trackerHistory[$callsign]);
-						writeTrackerHistoryFile();
+						$lastCrumb = $trackerHistory[$callsign][0] ?? null;
+						if ($lastCrumb === null || haversineMeters($lastCrumb['lat'], $lastCrumb['lon'], $lat, $lon) >= MIN_MOVE_METRES) {
+							$trackers[$foundKey]['lat'] = $lat;
+							$trackers[$foundKey]['lon'] = $lon;
+							if (!isset($trackerHistory[$callsign])) $trackerHistory[$callsign] = [];
+							array_unshift($trackerHistory[$callsign], ['lat'=>$lat,'lon'=>$lon,'path'=>$aprsPath,'ts'=>time()]);
+							if (count($trackerHistory[$callsign]) > 10) array_pop($trackerHistory[$callsign]);
+							writeTrackerHistoryFile();
+						}
 					}
 				}
 
