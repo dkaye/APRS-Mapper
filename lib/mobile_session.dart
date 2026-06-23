@@ -67,6 +67,27 @@ class MobileSession {
     return true;
   }
 
+  /// Restores an in-memory session from previously saved credentials.
+  /// Does NOT verify the token — call update() after this to check liveness.
+  void restoreToken({
+    required String token,
+    required String callsign,
+    required int passcode,
+    String? trackerId,
+  }) {
+    this.token = token;
+    this.callsign = callsign;
+    this.passcode = passcode;
+    this.trackerId = trackerId;
+  }
+
+  void clearToken() {
+    token = null;
+    callsign = null;
+    passcode = null;
+    trackerId = null;
+  }
+
   Future<void> leave() async {
     final t = token;
     token = null;

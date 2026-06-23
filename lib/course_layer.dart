@@ -41,23 +41,36 @@ class _CourseLayerState extends State<CourseLayer> {
   }
 
   Future<void> _loadCourses() async {
-    final polylines = <Polyline>[];
-    for (final course in widget.courses) {
-      if (!course.visible || course.file.isEmpty) continue;
+    // Show any already-cached courses immediately.
+    if (mounted) setState(_rebuildPolylines);
+
+    // Fetch all uncached courses in parallel; update the map as each arrives.
+    final pending = widget.courses
+        .where((c) => c.visible && c.file.isNotEmpty && !_cache.containsKey(c.file))
+        .toList();
+
+    await Future.wait(pending.map((course) async {
       try {
-        final points = await _fetchCourse(course.file);
-        if (points.isNotEmpty) _cache[course.file] = points;
+        final pts = await _fetchCourse(course.file);
+        if (pts.isNotEmpty) {
+          _cache[course.file] = pts;
+          if (mounted) setState(_rebuildPolylines);
+        }
       } catch (_) {}
-      final pts = _cache[course.file];
-      if (pts != null && pts.isNotEmpty) {
-        polylines.add(Polyline(
-          points: pts,
-          color: _parseColor(course.color),
-          strokeWidth: 3.0,
-        ));
-      }
-    }
-    if (mounted) setState(() => _polylines = polylines);
+    }));
+  }
+
+  void _rebuildPolylines() {
+    _polylines = [
+      for (final c in widget.courses)
+        if (c.visible && c.file.isNotEmpty)
+          if (_cache[c.file]?.isNotEmpty ?? false)
+            Polyline(
+              points: _cache[c.file]!,
+              color: _parseColor(c.color),
+              strokeWidth: 3.0,
+            ),
+    ];
   }
 
   Future<List<LatLng>> _fetchCourse(String file) async {

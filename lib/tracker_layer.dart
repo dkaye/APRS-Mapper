@@ -2,6 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'tracker_data.dart';
 
+// Marker geometry constants — dot must be centered on the lat/lng point.
+// With Alignment.center, the marker center = lat/lng pixel.
+// Leading SizedBox offsets the dot so its center lands at the marker center.
+const _markerW  = 200.0;
+const _markerH  = 22.0;
+const _dotW     = 18.0;
+const _dotH     = 18.0;
+const _labelGap = 4.0;
+const _leftPad  = (_markerW - _dotW) / 2; // dot center x = _markerW/2 ✓
+
 class TrackerLayer extends StatelessWidget {
   final List<TrackerData> trackers;
   final String? selectedId;
@@ -25,40 +35,53 @@ class TrackerLayer extends StatelessWidget {
         final blinking = blinkingIds.contains(t.id);
         final opacity = blinking ? (blinkOn ? 1.0 : 0.15) : 1.0;
 
-        Widget dot = _TrackerMarker(color: color, mobile: t.mobile);
+        final dot = _TrackerMarker(color: color, mobile: t.mobile);
+        final labelText = selected && t.name.isNotEmpty ? t.name : t.id;
 
-        Widget content = selected
-            ? Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  dot,
-                  const SizedBox(height: 2),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.92),
-                      borderRadius: BorderRadius.circular(3),
-                    ),
-                    child: Text(
-                      t.name.isNotEmpty ? t.name : t.id,
-                      style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: color),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
+        final labelWidget = selected
+            ? Container(
+                padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                decoration: BoxDecoration(
+                  color: const Color(0xEBFFFFFF),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: Text(
+                  labelText,
+                  style: TextStyle(
+                      fontSize: 10, fontWeight: FontWeight.w600, color: color),
+                  overflow: TextOverflow.fade,
+                  softWrap: false,
+                ),
               )
-            : dot;
+            : Text(
+                labelText,
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF111111),
+                  shadows: [Shadow(color: Colors.white, blurRadius: 4)],
+                ),
+                overflow: TextOverflow.fade,
+                softWrap: false,
+              );
 
         return Marker(
           point: t.latLng,
-          width: selected ? 80 : 20,
-          height: selected ? 36 : 20,
-          alignment: selected ? Alignment.bottomCenter : Alignment.center,
+          width: _markerW,
+          height: _markerH,
+          alignment: Alignment.center, // marker center = lat/lng
           child: Opacity(
             opacity: opacity,
             child: GestureDetector(
               onTap: () => _showDetail(context, t),
-              child: content,
+              child: Row(
+                children: [
+                  const SizedBox(width: _leftPad), // shifts dot to center
+                  dot,
+                  const SizedBox(width: _labelGap),
+                  Expanded(child: labelWidget),
+                ],
+              ),
             ),
           ),
         );
@@ -95,17 +118,21 @@ class TrackerLayer extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(t.name.isNotEmpty ? t.name : t.id,
-                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                          style: const TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.bold)),
                       if (t.name.isNotEmpty)
-                        Text(t.id, style: const TextStyle(color: Colors.grey)),
+                        Text(t.id,
+                            style: const TextStyle(color: Colors.grey)),
                     ],
                   ),
                 ),
               ]),
               const SizedBox(height: 12),
-              _row(Icons.access_time, t.time.isNotEmpty ? '${t.time} ago' : 'Unknown'),
+              _row(Icons.access_time,
+                  t.time.isNotEmpty ? '${t.time} ago' : 'Unknown'),
               if (t.hasPosition)
-                _row(Icons.location_on, '${t.lat!.toStringAsFixed(5)}, ${t.lon!.toStringAsFixed(5)}')
+                _row(Icons.location_on,
+                    '${t.lat!.toStringAsFixed(5)}, ${t.lon!.toStringAsFixed(5)}')
               else
                 _row(Icons.location_off, 'No position yet'),
               if (t.mobile) _row(Icons.smartphone, 'Mobile tracker'),
@@ -135,14 +162,16 @@ class _TrackerMarker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 18,
-      height: 18,
+      width: _dotW,
+      height: _dotH,
       decoration: BoxDecoration(
         color: color,
         shape: mobile ? BoxShape.rectangle : BoxShape.circle,
         borderRadius: mobile ? BorderRadius.circular(3) : null,
         border: Border.all(color: Colors.white, width: 2),
-        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 3, offset: Offset(0, 1))],
+        boxShadow: const [
+          BoxShadow(color: Colors.black26, blurRadius: 3, offset: Offset(0, 1))
+        ],
       ),
     );
   }

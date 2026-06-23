@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -22,6 +23,7 @@ class MenuDrawer extends StatefulWidget {
   final Future<void> Function()? onReload;
   final Future<void> Function()? onShareToggle;
   final VoidCallback? onResetMap;
+  final Future<void> Function()? onSaveMap;
   final Future<void> Function()? onRefreshTiles;
   final String? sharingCallsign;
 
@@ -44,6 +46,7 @@ class MenuDrawer extends StatefulWidget {
     this.onReload,
     this.onShareToggle,
     this.onResetMap,
+    this.onSaveMap,
     this.onRefreshTiles,
     this.sharingCallsign,
   });
@@ -208,10 +211,16 @@ class _MenuDrawerState extends State<MenuDrawer> {
                       },
                       color: widget.isSharing ? Colors.red[700] : null,
                     ),
+                  _footerBtn('Save Map', Icons.push_pin, () async {
+                    Navigator.pop(context);
+                    await widget.onSaveMap?.call();
+                  }),
                   _footerBtn('Reload Tiles', Icons.download_for_offline, () async {
                     Navigator.pop(context);
                     await widget.onRefreshTiles?.call();
                   }),
+                  if (Platform.isIOS || Platform.isAndroid)
+                    _footerBtn('Exit', Icons.exit_to_app, () => exit(0)),
                 ],
               ),
             ),

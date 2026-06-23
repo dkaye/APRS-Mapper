@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io' show Platform;
 import 'dart:math' as math;
 import 'package:flutter/gestures.dart' show PointerPanZoomUpdateEvent;
-import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -13,6 +12,8 @@ import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'arrow_painter.dart';
 import 'background_location.dart';
 import 'config_service.dart';
 import 'course_layer.dart';
@@ -75,8 +76,14 @@ class _MapScreenState extends State<MapScreen> {
   bool _blinkOn = true;
   Timer? _blinkTimer;
 
-  // Origin marker (long-press to set; tap elsewhere to measure distance)
-  LatLng? _originPoint;
+  // Saved map position (restored when reset button tapped)
+  LatLng? _savedCenter;
+  double? _savedZoom;
+  double? _savedRotation;
+
+  // Scale bar
+  bool _scaleImperial = true;
+  double _scaleZoom = 0;
 
   // Breadcrumb trail for selected tracker
   List<LatLng> _trailPoints = [];
@@ -103,8 +110,23 @@ class _MapScreenState extends State<MapScreen> {
             })
             .map((t) => t.id)
             .toSet();
-        setState(() => _trackers = data.trackers);
+        // Compute updated trail color before setState so it lands in one frame.
+        Color? newTrailColor;
+        String? refetchCallsign;
+        if (_selectedId != null) {
+          final sel = data.trackers.where((t) => t.id == _selectedId).firstOrNull;
+          if (sel != null) {
+            final c = _trackerColor(sel.color);
+            if (c != _trailColor) newTrailColor = c;
+            if (updated.contains(_selectedId)) refetchCallsign = sel.callsign;
+          }
+        }
+        setState(() {
+          _trackers = data.trackers;
+          if (newTrailColor != null) _trailColor = newTrailColor;
+        });
         if (updated.isNotEmpty) _triggerBlink({..._blinkingIds, ...updated});
+        if (refetchCallsign != null) _fetchTrail(refetchCallsign);
       },
       onStateChange: (state) {
         if (!mounted) return;
@@ -115,6 +137,7 @@ class _MapScreenState extends State<MapScreen> {
       },
     );
     _poller.start();
+    _loadSavedMap();
     _bgLocation.onSessionEnded = () {
       if (!mounted) return;
       setState(() => _isSharing = false);
@@ -158,6 +181,7 @@ class _MapScreenState extends State<MapScreen> {
           permission == LocationPermission.whileInUse) {
         setState(() => _locationState = _LocationState.granted);
         _startPositionStream(); // blue dot only — background tracking starts at share time
+        unawaited(_maybeResumeSharing());
       } else if (permission == LocationPermission.deniedForever) {
         setState(() => _locationState = _LocationState.permanentlyDenied);
       } else {
@@ -215,6 +239,23 @@ class _MapScreenState extends State<MapScreen> {
 
   // ── Location sharing ──────────────────────────────────────────────────────
 
+  /// Auto-resumes sharing on app startup if the user was sharing when the app
+  /// was last closed. Silently reuses the saved token (or re-joins if expired).
+  Future<void> _maybeResumeSharing() async {
+    if (!mounted) return;
+    await _ensureBackgroundPermissions();
+    await _bgLocation.startTracking();
+    final resumed = await _bgLocation.resumeSharing();
+    if (!mounted) return;
+    if (resumed) {
+      setState(() => _isSharing = true);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Location sharing resumed'),
+        duration: Duration(seconds: 3),
+      ));
+    }
+  }
+
   Future<void> _toggleSharing() async {
     if (_isSharing) {
       await _bgLocation.stopSharing();
@@ -256,7 +297,7 @@ class _MapScreenState extends State<MapScreen> {
     final pinFocus = FocusNode();
     String? errorText;
     bool loading = false;
-    int beaconSeconds = 60;
+    bool ridingMode = false; // false = Walk/Run (60 s), true = Ride/Drive (15 s)
 
     await showDialog<void>(
       context: context,
@@ -266,14 +307,18 @@ class _MapScreenState extends State<MapScreen> {
           Future<void> submit() async {
             final name = nameCtl.text.trim();
             final pin = pinCtl.text.trim();
-            if (name.isEmpty || pin.isEmpty) return;
+            if (name.isEmpty) {
+              setDialogState(() => errorText = 'Please enter your first name.');
+              return;
+            }
+            if (pin.isEmpty) return;
             setDialogState(() { loading = true; errorText = null; });
             await _ensureBackgroundPermissions();
             await _bgLocation.startTracking(); // starts GPS + foreground service
             final joinResult = await _bgLocation.startSharing(
               name: name,
               pin: pin,
-              interval: Duration(seconds: beaconSeconds),
+              interval: Duration(seconds: ridingMode ? 15 : 60),
             );
             if (!ctx.mounted) return;
             if (joinResult == JoinResult.success) {
@@ -320,16 +365,23 @@ class _MapScreenState extends State<MapScreen> {
                   onSubmitted: (_) => submit(),
                 ),
                 const SizedBox(height: 12),
-                const Text('Beacon interval',
+                const Text('Activity',
                     style: TextStyle(fontSize: 12, color: Colors.grey)),
                 const SizedBox(height: 6),
                 Wrap(
                   spacing: 6,
-                  children: [30, 60, 90, 120].map((s) => ChoiceChip(
-                    label: Text('${s}s'),
-                    selected: beaconSeconds == s,
-                    onSelected: (_) => setDialogState(() => beaconSeconds = s),
-                  )).toList(),
+                  children: [
+                    ChoiceChip(
+                      label: const Text('Walk / Run'),
+                      selected: !ridingMode,
+                      onSelected: (_) => setDialogState(() => ridingMode = false),
+                    ),
+                    ChoiceChip(
+                      label: const Text('Ride / Drive'),
+                      selected: ridingMode,
+                      onSelected: (_) => setDialogState(() => ridingMode = true),
+                    ),
+                  ],
                 ),
                 if (errorText != null) ...[
                   const SizedBox(height: 10),
@@ -347,7 +399,7 @@ class _MapScreenState extends State<MapScreen> {
                 onPressed: loading ? null : submit,
                 child: loading
                     ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Text('Join'),
+                    : const Text('Share'),
               ),
             ],
           );
@@ -409,11 +461,48 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _handleReset() {
-    _mapController.move(
-      widget.initialCenter ?? LatLng(_config.mapLat, _config.mapLon),
-      _config.mapZoom,
+    if (_savedCenter != null) {
+      _mapController.move(_savedCenter!, _savedZoom ?? _config.mapZoom);
+      _mapController.rotate(_savedRotation ?? 0);
+    } else {
+      _mapController.move(
+        widget.initialCenter ?? LatLng(_config.mapLat, _config.mapLon),
+        _config.mapZoom,
+      );
+      _mapController.rotate(0);
+    }
+  }
+
+  Future<void> _handleSaveMap() async {
+    final camera = _mapController.camera;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('map_saved_lat', camera.center.latitude);
+    await prefs.setDouble('map_saved_lon', camera.center.longitude);
+    await prefs.setDouble('map_saved_zoom', camera.zoom);
+    await prefs.setDouble('map_saved_rotation', camera.rotation);
+    if (!mounted) return;
+    setState(() {
+      _savedCenter = camera.center;
+      _savedZoom = camera.zoom;
+      _savedRotation = camera.rotation;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Map position saved'), duration: Duration(seconds: 2)),
     );
-    _mapController.rotate(0);
+  }
+
+  Future<void> _loadSavedMap() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lat = prefs.getDouble('map_saved_lat');
+    final lon = prefs.getDouble('map_saved_lon');
+    final zoom = prefs.getDouble('map_saved_zoom');
+    final rot = prefs.getDouble('map_saved_rotation');
+    if (!mounted || lat == null || lon == null) return;
+    setState(() {
+      _savedCenter = LatLng(lat, lon);
+      _savedZoom = zoom;
+      _savedRotation = rot;
+    });
   }
 
   void _triggerBlink(Set<String> ids) {
@@ -454,6 +543,7 @@ class _MapScreenState extends State<MapScreen> {
     setState(() {
       _selectedId = t.id;
       _trailPoints = [];
+      _trailColor = _trackerColor(t.color);
     });
     _selectionClickCount = 1;
     final newZoom = zoom
@@ -461,7 +551,7 @@ class _MapScreenState extends State<MapScreen> {
         : _mapController.camera.zoom;
     _mapController.move(t.latLng, newZoom);
     _triggerBlink({t.id});
-    _fetchTrail(t.callsign, _trackerColor(t.color));
+    _fetchTrail(t.callsign);
   }
 
   void _selectFixed(FixedMarker m) {
@@ -495,64 +585,6 @@ class _MapScreenState extends State<MapScreen> {
     _mapController.move(LatLng(m.lat, m.lon), 15.0);
   }
 
-  // ── Origin feature ────────────────────────────────────────────────────────
-
-  void _onMapLongPress(TapPosition _, LatLng latLng) {
-    setState(() => _originPoint = latLng);
-    HapticFeedback.mediumImpact();
-  }
-
-  void _onMapTap(TapPosition tapPos, LatLng latLng) {
-    if (_originPoint == null) return;
-    final rel = tapPos.relative;
-    if (rel != null) {
-      final os = _mapController.camera.latLngToScreenPoint(_originPoint!);
-      final dx = os.x - rel.dx;
-      final dy = os.y - rel.dy;
-      if (dx * dx + dy * dy < 28 * 28) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(
-            '${_originPoint!.latitude.toStringAsFixed(5)}, '
-            '${_originPoint!.longitude.toStringAsFixed(5)}',
-          ),
-          duration: const Duration(seconds: 3),
-        ));
-        return;
-      }
-    }
-    final dist = _haversineDistance(_originPoint!, latLng);
-    final bearing = _bearingTo(_originPoint!, latLng);
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text('${dist.toStringAsFixed(1)} mi · ${bearing.round()}° ${_compassDir(bearing)}'),
-      duration: const Duration(seconds: 4),
-    ));
-  }
-
-  double _haversineDistance(LatLng a, LatLng b) {
-    const r = 3958.8;
-    final lat1 = a.latitude * math.pi / 180;
-    final lat2 = b.latitude * math.pi / 180;
-    final dLat = (b.latitude - a.latitude) * math.pi / 180;
-    final dLon = (b.longitude - a.longitude) * math.pi / 180;
-    final x = math.sin(dLat / 2) * math.sin(dLat / 2) +
-        math.cos(lat1) * math.cos(lat2) * math.sin(dLon / 2) * math.sin(dLon / 2);
-    return r * 2 * math.atan2(math.sqrt(x), math.sqrt(1 - x));
-  }
-
-  double _bearingTo(LatLng a, LatLng b) {
-    final lat1 = a.latitude * math.pi / 180;
-    final lat2 = b.latitude * math.pi / 180;
-    final dLon = (b.longitude - a.longitude) * math.pi / 180;
-    final y = math.sin(dLon) * math.cos(lat2);
-    final x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dLon);
-    return (math.atan2(y, x) * 180 / math.pi + 360) % 360;
-  }
-
-  String _compassDir(double bearing) {
-    const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-    return dirs[(bearing / 45).round() % 8];
-  }
-
   Color _trackerColor(String color) {
     switch (color) {
       case 'green': return const Color(0xFF43A047);
@@ -561,7 +593,18 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
-  Future<void> _fetchTrail(String callsign, Color color) async {
+  // Bearing in radians from p1 to p2, clockwise from north.
+  double _bearingRad(LatLng p1, LatLng p2) {
+    final lat1 = p1.latitude * math.pi / 180;
+    final lat2 = p2.latitude * math.pi / 180;
+    final dLon = (p2.longitude - p1.longitude) * math.pi / 180;
+    final y = math.sin(dLon) * math.cos(lat2);
+    final x = math.cos(lat1) * math.sin(lat2) -
+        math.sin(lat1) * math.cos(lat2) * math.cos(dLon);
+    return math.atan2(y, x);
+  }
+
+  Future<void> _fetchTrail(String callsign) async {
     if (!_isOnline || callsign.isEmpty) return;
     try {
       final resp = await http.get(Uri.parse('${MapConfig.serverBaseUrl}/index.php?history'));
@@ -580,10 +623,7 @@ class _MapScreenState extends State<MapScreen> {
             (e['lat'] as num).toDouble(),
             (e['lon'] as num).toDouble(),
           )).toList();
-      if (mounted) setState(() {
-        _trailPoints = points;
-        _trailColor = color;
-      });
+      if (mounted) setState(() => _trailPoints = points);
     } catch (_) {}
   }
 
@@ -647,6 +687,85 @@ class _MapScreenState extends State<MapScreen> {
         .toList();
   }
 
+  // ── Scale bar ─────────────────────────────────────────────────────────────
+
+  double _roundScaleNum(double n) {
+    if (n <= 0) return 1;
+    final pow10 = math.pow(10, (math.log(n) / math.ln10).floor()).toDouble();
+    final d = n / pow10;
+    if (d >= 10) return 10 * pow10;
+    if (d >= 5)  return 5  * pow10;
+    if (d >= 3)  return 3  * pow10;
+    if (d >= 2)  return 2  * pow10;
+    return pow10;
+  }
+
+  Widget _buildScaleBar() {
+    try {
+      const maxW = 100.0;
+      final cam = _mapController.camera;
+      final mpp = 156543.03392 *
+          math.cos(cam.center.latitude * math.pi / 180) /
+          math.pow(2, cam.zoom);
+      final maxMeters = maxW * mpp;
+
+      String label;
+      double ratio;
+      if (_scaleImperial) {
+        final maxFeet = maxMeters * 3.28084;
+        if (maxFeet > 5280) {
+          final miles = _roundScaleNum(maxFeet / 5280);
+          label = '${miles < 1 ? miles.toStringAsFixed(1) : miles.toInt()} mi';
+          ratio = miles / (maxFeet / 5280);
+        } else {
+          final feet = _roundScaleNum(maxFeet);
+          label = '${feet.toInt()} ft';
+          ratio = feet / maxFeet;
+        }
+      } else {
+        if (maxMeters >= 1000) {
+          final km = _roundScaleNum(maxMeters / 1000);
+          label = '${km < 1 ? km.toStringAsFixed(1) : km.toInt()} km';
+          ratio = km * 1000 / maxMeters;
+        } else {
+          final m = _roundScaleNum(maxMeters);
+          label = '${m.toInt()} m';
+          ratio = m / maxMeters;
+        }
+      }
+
+      final barW = (maxW * ratio).clamp(24.0, maxW);
+      return GestureDetector(
+        onTap: () => setState(() => _scaleImperial = !_scaleImperial),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(7, 3, 7, 4),
+          decoration: BoxDecoration(
+            color: const Color(0xEBFFFFFF),
+            border: Border.all(color: const Color(0xFFBBBBBB)),
+            borderRadius: BorderRadius.circular(4),
+            boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 3, offset: Offset(0, 1))],
+          ),
+          child: Container(
+            width: barW,
+            padding: const EdgeInsets.symmetric(vertical: 1),
+            decoration: const BoxDecoration(
+              border: Border(
+                left:   BorderSide(color: Color(0xFF555555), width: 2),
+                right:  BorderSide(color: Color(0xFF555555), width: 2),
+                bottom: BorderSide(color: Color(0xFF555555), width: 2),
+              ),
+            ),
+            alignment: Alignment.center,
+            child: Text(label,
+                style: const TextStyle(fontSize: 10, color: Color(0xFF333333), height: 1.1)),
+          ),
+        ),
+      );
+    } catch (_) {
+      return const SizedBox.shrink();
+    }
+  }
+
   // ── Build ─────────────────────────────────────────────────────────────────
 
   @override
@@ -672,6 +791,7 @@ class _MapScreenState extends State<MapScreen> {
         onReload: _reloadConfig,
         onShareToggle: _toggleSharing,
         onResetMap: _handleReset,
+        onSaveMap: _handleSaveMap,
         onRefreshTiles: _refreshTiles,
       ),
       body: _buildBody(),
@@ -706,9 +826,12 @@ class _MapScreenState extends State<MapScreen> {
                 interactionOptions: const InteractionOptions(
                   flags: InteractiveFlag.all & ~InteractiveFlag.pinchMove,
                 ),
-                onMapEvent: (_) {},
-                onLongPress: _onMapLongPress,
-                onTap: _onMapTap,
+                onMapEvent: (event) {
+                  final z = _mapController.camera.zoom;
+                  if ((z - _scaleZoom).abs() > 0.05) {
+                    setState(() => _scaleZoom = z);
+                  }
+                },
               ),
               children: [
                 TileLayer(
@@ -722,9 +845,9 @@ class _MapScreenState extends State<MapScreen> {
                   PolylineLayer(polylines: [
                     Polyline(
                       points: _trailPoints,
-                      color: _trailColor.withOpacity(0.65),
-                      strokeWidth: 2.0,
-                      pattern: const StrokePattern.dotted(),
+                      color: _trailColor.withOpacity(0.80),
+                      strokeWidth: 3.0,
+                      pattern: StrokePattern.dashed(segments: [4, 7]),
                     ),
                   ]),
                 if (_trailPoints.isNotEmpty)
@@ -735,15 +858,25 @@ class _MapScreenState extends State<MapScreen> {
                     borderStrokeWidth: 1.5,
                     borderColor: _trailColor,
                   )).toList()),
-                if (_originPoint != null)
-                  CircleLayer(circles: [
-                    CircleMarker(
-                      point: _originPoint!,
-                      radius: 9,
-                      color: const Color(0x40E74C3C),
-                      borderStrokeWidth: 2.5,
-                      borderColor: const Color(0xFFC0392B),
-                    ),
+                if (_trailPoints.length > 1)
+                  MarkerLayer(markers: [
+                    for (var i = 0; i < _trailPoints.length - 1; i++)
+                      Marker(
+                        point: LatLng(
+                          (_trailPoints[i].latitude + _trailPoints[i + 1].latitude) / 2,
+                          (_trailPoints[i].longitude + _trailPoints[i + 1].longitude) / 2,
+                        ),
+                        width: 20,
+                        height: 20,
+                        alignment: Alignment.center,
+                        child: Transform.rotate(
+                          angle: _bearingRad(_trailPoints[i], _trailPoints[i + 1]),
+                          child: CustomPaint(
+                            size: const Size(20, 20),
+                            painter: ArrowPainter(color: _trailColor),
+                          ),
+                        ),
+                      ),
                   ]),
                 if (showIgates && _config.igates.isNotEmpty)
                   FixedMarkerLayer(
@@ -790,6 +923,13 @@ class _MapScreenState extends State<MapScreen> {
           ),
 
           if (!_isOnline) const OfflineBanner(),
+
+          // Scale bar — bottom left
+          Positioned(
+            bottom: 24,
+            left: 16,
+            child: SafeArea(child: _buildScaleBar()),
+          ),
 
           // Menu button — top left
           SafeArea(
@@ -914,3 +1054,4 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 }
+
