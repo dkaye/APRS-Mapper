@@ -193,7 +193,7 @@
 <div id="content">
 <h1 id="mars-aprs-system">MARS APRS System</h1>
 <p><strong>Author:</strong> Doug Kaye (K6DRK) · <strong>Copyright:</strong> 2026 Doug Kaye. All Rights Reserved.</p>
-<p><strong>Version:</strong> Server &amp; Displays (v1.16.1); Mobile App (v1.16.1); iGates (v5.0)</p>
+<p><strong>Version:</strong> Server &amp; Displays (v1.16.3); Mobile App (v1.16.3); iGates (v5.0)</p>
 <hr />
 <h2 id="table-of-contents">Table of Contents</h2>
 <ol>
@@ -201,10 +201,10 @@
 <li><a href="#system-architecture">System Architecture</a></li>
 <li><a href="#netbird-vpn">NetBird VPN</a></li>
 <li><a href="#igates-v50">iGates (v5.0)</a></li>
-<li><a href="#aprs-server-v1161">APRS Server (v1.16.1)</a></li>
+<li><a href="#aprs-server-v1163">APRS Server (v1.16.3)</a></li>
 <li><a href="#cloudflare-tunnel">Cloudflare Tunnel</a></li>
-<li><a href="#display-pis-v1161">Display Pis (v1.16.1)</a></li>
-<li><a href="#mobile-apps-v1161">Mobile Apps (v1.16.1)</a></li>
+<li><a href="#display-pis-v1163">Display Pis (v1.16.3)</a></li>
+<li><a href="#mobile-apps-v1163">Mobile Apps (v1.16.3)</a></li>
 <li><a href="#app-architecture">Architecture</a> · <a href="#location-sharing-flow">Location Sharing Flow</a> · <a href="#building-distributing">Building &amp; Distributing</a> · <a href="#background-location">Background Location</a></li>
 <li><a href="#user-interfaces">User Interfaces</a></li>
 <li><a href="#backup-recovery-and-updates">Backup, Recovery and Updates</a></li>
@@ -259,18 +259,18 @@ forwarding or static public IP addresses.</p>
            ▼
 ┌──────────────────────────────────────┐     ┌──────────────────────────────┐
 │           APRS-IS Network            │◀────│  Mobile App  (iOS/Android)   │
-│         noam.aprs2.net:14580         │     │  Flutter v1.16.1               │
+│         noam.aprs2.net:14580         │     │  Flutter v1.16.3               │
 └────────────────┬─────────────────────┘     │  TCP 14580 (inject position) │
                  │ TCP 14580                 └──────────────┬───────────────┘
 ┌────────────────▼─────────────────────┐                    │ HTTPS (map + config + session)
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.16.1      │
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.16.3      │
 │  aprsDaemon.php → trackers.json      │◀───────────────────┘
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.16.1
+│  Display Pi  (×2)      │  Pi 4 · v1.16.3
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -444,7 +444,7 @@ igate-watchdog.sh  (cron, every minute)
 </table>
 <p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code></p>
 <hr />
-<h2 id="aprs-server-v1161">APRS Server (v1.16.1)</h2>
+<h2 id="aprs-server-v1163">APRS Server (v1.16.3)</h2>
 <p>The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
 APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
 NetBird monitor and WiFi credential manager. It is reachable at <code>marsaprs.org</code> via a
@@ -541,7 +541,7 @@ sudo systemctl start cloudflared
 <p>The tunnel token is obtained from the <strong>Cloudflare Zero Trust dashboard</strong>:
 <em>Networks → Tunnels → \&lt;tunnel&gt; → Configure → Install and run connector</em></p>
 <hr />
-<h2 id="display-pis-v1161">Display Pis (v1.16.1)</h2>
+<h2 id="display-pis-v1163">Display Pis (v1.16.3)</h2>
 <p>A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
 <code>marsaprs.org</code>. It is a read-only display device — no long-term local configuration or data storage.
 Two display Pis are in use: <strong>NetControl</strong> (operator screen) and <strong>BigTV</strong> (large audience
@@ -565,7 +565,7 @@ wifi-watchdog.sh  (checks WiFi every 30 s;
 <p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code> · VNC: <code>vnc://&lt;ip&gt;:5901</code></p>
 <p>For details on using the map, see <a href="https://marsaprs.org/userguide.html?back=/readme.html">USERGUIDE.MD</a>.</p>
 <hr />
-<h2 id="mobile-apps-v1161">Mobile Apps (v1.16.1)</h2>
+<h2 id="mobile-apps-v1163">Mobile Apps (v1.16.3)</h2>
 <p>Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.</p>
 <p><strong>Repository:</strong> <code>/Users/doug/aprs-map</code> (separate from this marsaprs repo)</p>
 <h3 id="app-architecture">App Architecture</h3>
@@ -614,7 +614,7 @@ wifi-watchdog.sh  (checks WiFi every 30 s;
 </tr>
 <tr>
 <td><code>lib/tracker_layer.dart</code></td>
-<td>Native map marker overlay with ID labels (squares for mobile, circles for fixed)</td>
+<td>Native map marker overlay; squares for mobile, circles for fixed; ID label next to each dot</td>
 </tr>
 <tr>
 <td><code>lib/arrow_painter.dart</code></td>
@@ -626,11 +626,11 @@ wifi-watchdog.sh  (checks WiFi every 30 s;
 </tr>
 <tr>
 <td><code>lib/background_location.dart</code></td>
-<td>GPS stream; timer + distance-triggered uploads (≥ 0.1 mi); calls <code>AprsClient</code> and <code>MobileSession</code></td>
+<td>GPS stream + upload timer; distance-triggered upload (≥ 0.1 mi); calls <code>AprsClient</code> and <code>MobileSession</code></td>
 </tr>
 <tr>
 <td><code>lib/background_task_handler.dart</code></td>
-<td>Android foreground task handler; timer-skip guard after distance-triggered beacons</td>
+<td>Android foreground task handler; manages timer skipping after distance-triggered beacons</td>
 </tr>
 <tr>
 <td><code>lib/mobile_session.dart</code></td>
@@ -659,34 +659,38 @@ wifi-watchdog.sh  (checks WiFi every 30 s;
 </tbody>
 </table>
 <h3 id="location-sharing-flow">Location Sharing Flow</h3>
+<p>Android and iOS use different paths to inject APRS packets — see <a href="#background-location">Background Location</a> for why.</p>
 <pre><code>User taps Share Location
   → _ensureBackgroundPermissions()     (Android: notification + battery opt;
-                                        iOS: upgrade to Always location)
-  → User selects activity: Walk/Run (60 s interval) or Ride/Drive (15 s interval)
-  → MobileSession.join()               POST ?mobile=join {name, pin, device_id}
-      ← {token, callsign, passcode}    e.g. callsign=K6DRK-01 (same slot reused per device)
+                                        iOS: verify Always location permission)
+  → MobileSession.join()               POST ?mobile=join {name, pin}
+      ← {token, callsign, passcode}    e.g. callsign=K6DRK-01
   → BackgroundLocationService.startTracking()
-      → Geolocator.getPositionStream() (GPS events; stream stays alive in background)
-  → upload triggered by timer OR distance (≥ 0.1 mi since last upload):
-      iOS:  _heartbeatTimer fires every 60 s → _uploadNow() unconditionally (keepalive)
-            _maybeUploadFromStream() called on every GPS event → uploads only if
-            device moved ≥ 0.1 mi since last upload (distance trigger)
-      Android: onRepeatEvent() fires on configured interval; skips if _lastBeacon is
-            within 60 s (guards against double-fire after distance upload);
+      → Geolocator.getPositionStream() (single stream; AppleSettings on iOS with
+                                        allowBackgroundLocationUpdates: true)
+  → upload triggered on GPS event if moved ≥ 0.1 mi OR ≥ 60 s since last upload:
+
+      Android:
+        onRepeatEvent() fires on configured interval; skips if _lastBeacon within
+            60 s (guards against double-fire after distance upload);
             GPS listener sends 'force_upload' IPC if distance ≥ 0.1 mi
-      → AprsClient.sendPosition()      TCP noam.aprs2.net:14580
-          → &quot;K6DRK-01&gt;APRS,TCPIP*:!3751.72N/12232.64W&gt;Mobile/Alice\r\n&quot;
-      → MobileSession.update()         POST ?mobile=update {token}
-          ← 200 ok  (or 404 if session removed/blocked → stops sharing)
+        → AprsClient.sendPosition()    TCP noam.aprs2.net:14580
+              → &quot;K6DRK-01&gt;APRS,TCPIP*:!3751.72N/12232.64W&gt;Mobile/Alice\r\n&quot;
+        → MobileSession.update()       POST ?mobile=update {token}
+              ← 200 ok  (or 404 → stops sharing)
+
+      iOS:
+        _maybeUploadFromStream() called on every GPS event; uploads if
+            moved ≥ 0.1 mi OR ≥ 60 s since last upload
+        → MobileSession.update()       POST ?mobile=update {token, lat, lon}
+              ← 200 ok  (or 404 → stops sharing)
+              → server injectAprsPacket() injects packet via local TCP 14580
+                    → &quot;K6DRK-01&gt;APRS,TCPIP*:!3751.72N/12232.64W&gt;Mobile/Alice\r\n&quot;
+
   → aprsDaemon receives packet from APRS-IS
       → distance filter: skip if new position &lt; 100 ft from last breadcrumb
       → writes K6DRK-01 to trackers.json with mobile=true
   → WebView polls ?json every 5 s → map updates
-
-App restart while sharing was active:
-  → resumeSharing() reads SharedPreferences (token, callsign, interval)
-  → Attempts token reuse via MobileSession.update(); if stale, re-joins silently
-  → Sharing resumes with same callsign; snackbar notifies user
 </code></pre>
 <h3 id="building-distributing">Building &amp; Distributing</h3>
 <h4 id="ios">iOS</h4>
@@ -696,13 +700,12 @@ flutter build ios --release --no-codesign
 </code></pre>
 <p>Open <code>ios/Runner.xcworkspace</code> in Xcode. To distribute via TestFlight:</p>
 <ol>
-<li>Bump <code>version</code> in <code>pubspec.yaml</code> (e.g. <code>1.16.0+2</code> — the build number after <code>+</code> must increase with each upload).</li>
-<li>Build and export: <code>flutter build ipa --release --export-options-plist=ios/ExportOptions.plist</code></li>
-<li>Drag <code>build/ios/ipa/*.ipa</code> into <strong>Transporter</strong> (free Mac app by Apple) and click Deliver.</li>
-<li>In App Store Connect → TestFlight → External Testing group → add the build → Submit for Beta Review.</li>
-<li>Once approved (usually same day), testers receive an email invitation.</li>
+<li>Bump <code>version</code> in <code>pubspec.yaml</code> (e.g. <code>1.14.0+2</code> — the build number after <code>+</code> must increase with each upload).</li>
+<li><code>flutter build ios --release --no-codesign</code></li>
+<li>Xcode → Product → Archive → Distribute App → TestFlight (internal).</li>
+<li>Wait for the build status in App Store Connect to leave <strong>Processing</strong> before testers can install it. This typically takes 5–15 minutes.</li>
 </ol>
-<p>See <code>TESTFLIGHT.md</code> in the aprs-map repo for full prerequisites and troubleshooting. Testers must have TestFlight installed (free, from the App Store).</p>
+<p>Testers must have TestFlight installed (free, from the App Store). They install the app by opening the invitation email and tapping <strong>View in TestFlight</strong>. New testers may be prompted for a redeem code from the invitation. For updates, testers open TestFlight and tap <strong>Update</strong>.</p>
 <h4 id="android">Android</h4>
 <pre><code class="language-bash">cd /Users/doug/aprs-map
 flutter pub get
@@ -768,8 +771,10 @@ storeFile=&lt;absolute path to .jks or .p12&gt;
 <p>At runtime, <code>_ensureBackgroundPermissions()</code> in <code>map_screen.dart</code> requests <code>POST_NOTIFICATIONS</code> and <code>REQUEST_IGNORE_BATTERY_OPTIMIZATIONS</code> before starting a sharing session.</p>
 <p>Samsung One UI is particularly aggressive — users must also set the app to <strong>Unrestricted</strong> battery mode: Settings → Apps → APRS Map → Battery → Unrestricted.</p>
 <h4 id="ios_1">iOS</h4>
-<p><code>Info.plist</code> declares <code>UIBackgroundModes: location</code>. The <code>CLLocationManager</code> flag <code>allowsBackgroundLocationUpdates</code> is set to <code>true</code> via <code>AppleSettings(allowBackgroundLocationUpdates: true)</code> in the geolocator stream configuration. "Always" location permission is required — "While Using" is not sufficient.</p>
-<p><strong>Timer workaround:</strong> On iOS, <code>Timer.periodic</code> fires reliably in the background because the declared <code>location</code> background mode keeps the Dart isolate alive. A 60-second <code>_heartbeatTimer</code> calls <code>_uploadNow()</code> unconditionally on every tick, guaranteeing a beacon at least every 60 seconds regardless of movement. A separate GPS stream callback (<code>_maybeUploadFromStream()</code>) triggers an additional immediate upload whenever the device moves ≥ 0.1 miles since the last beacon. The two mechanisms are independent: the heartbeat handles the keepalive; the stream handler handles the distance trigger.</p>
+<p><code>Info.plist</code> declares <code>UIBackgroundModes: location</code>. The <code>CLLocationManager</code> flag <code>allowsBackgroundLocationUpdates</code> is set to <code>true</code> via <code>AppleSettings(allowBackgroundLocationUpdates: true)</code> in the geolocator stream configuration. "Always" location permission is required — "While Using" is not sufficient. When active, a white location arrow appears in the iOS status bar.</p>
+<p><strong>Single GPS stream — critical constraint:</strong> <code>geolocator_apple</code> only supports one active event-channel listener at a time. If a second <code>Geolocator.getPositionStream()</code> call is made while one is already active, <code>PositionStreamHandler.onListenWithArguments</code> returns an error and the second call silently fails — <code>allowsBackgroundLocationUpdates</code> is never set to <code>true</code> on the underlying <code>CLLocationManager</code>, and the background location indicator never appears. The fix: <code>startTracking()</code> in <code>BackgroundLocationService</code> owns the single Geolocator stream (with <code>AppleSettings</code>), and the map's blue-dot layer subscribes to <code>_bgLocation.positionStream</code> (a Dart broadcast stream fed by that same stream) rather than opening its own.</p>
+<p><strong>GPS-event-driven keepalive:</strong> On iOS, <code>Timer.periodic</code> does not fire when the Dart isolate is suspended between GPS wakeups. The keepalive is instead driven by GPS events: <code>_maybeUploadFromStream()</code> is called on every GPS position event and uploads if the device has moved ≥ 0.1 miles OR ≥ 60 seconds have elapsed since the last upload. A <code>_heartbeatTimer</code> also exists as a belt-and-suspenders fallback for when iOS keeps the isolate continuously alive, but it is not the primary mechanism.</p>
+<p><strong>Why iOS uses server-side APRS injection instead of direct TCP:</strong> Android uses a foreground service that keeps the Dart isolate permanently alive, so it can open and maintain a raw TCP connection to APRS-IS (port 14580) reliably. On iOS, the background location mode wakes the Dart isolate briefly on each GPS event rather than keeping it continuously alive. During these brief wakeups, <code>NSURLSession</code>-based HTTP (what the <code>http</code> package uses) is explicitly supported by iOS for background network tasks; raw <code>dart:io Socket</code> TCP connections are not guaranteed to complete and are routinely blocked. Attempting to send directly to APRS-IS via TCP from iOS background would require opening a connection, logging in, sending a packet, and closing — at least two network round trips under a narrow time budget. The HTTP approach sends a single POST to our server, which injects the packet via its own persistent TCP connection to APRS-IS. The platform divergence is intentional and reflects what each OS actually supports reliably in background.</p>
 <hr />
 <h2 id="user-interfaces">User Interfaces</h2>
 <p>Five browser-based interfaces run on <code>marsaprs.org</code>. All are served by Apache on the server
