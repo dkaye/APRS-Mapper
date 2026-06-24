@@ -2,7 +2,7 @@
 
 **Author:** Doug Kaye (K6DRK) · **Copyright:** 2026 Doug Kaye. All Rights Reserved.
 
-**Version:** 1.16.1+2
+**Version:** 1.16.3+1
 
 A Flutter iOS and Android application for the MARS APRS system. Displays live tracker positions from the marsaprs.org server and supports mobile location sharing over APRS-IS.
 
@@ -11,7 +11,7 @@ A Flutter iOS and Android application for the MARS APRS system. Displays live tr
 - Live tracker map polling `marsaprs.org` every 5 seconds
 - Native sidebar drawer with collapsible sections: Trackers, Courses, Aid Stations, iGates, Backgrounds, About
 - **About section** — shows Organization, Application version (loaded at runtime from `package_info_plus`), Event, assigned Callsign, Map Data link, and Copyright
-- **Share Location** — broadcasts GPS position to the APRS network via APRS-IS; activity type (Walk/Run = 60 s, Ride/Drive = 15 s) sets the upload interval
+- **Share Location** — broadcasts GPS position to the APRS network via APRS-IS; activity type (Walk/Run = 60 s, Drive/Cycle = 15 s) sets the upload interval
 - **Auto-resume sharing** — if the app is closed and reopened while sharing was active, sharing resumes automatically with the same callsign
 - **Distance-triggered beaconing** — sends an immediate beacon when the device moves ≥ 0.1 miles (resets the upload timer); in addition to the normal timed interval
 - **Background location** — continues reporting when the screen locks (foreground service on Android; Always permission on iOS)
@@ -44,7 +44,7 @@ A Flutter iOS and Android application for the MARS APRS system. Displays live tr
 User taps Share Location
   → _ensureBackgroundPermissions()  (requests notification + battery opt. on Android;
                                      upgrades to Always location on iOS)
-  → User selects activity: Walk/Run (60 s interval) or Ride/Drive (15 s interval)
+  → User selects activity: Walk/Run (60 s interval) or Drive/Cycle (15 s interval)
   → MobileSession.join()  (POST ?mobile=join with device_id)
       ← token + callsign (e.g. K6DRK-01) — same callsign reused for this device
   → BackgroundLocationService.startTracking()  (geolocator stream)

@@ -84,7 +84,7 @@ class HelpScreen extends StatelessWidget {
           ]))),
             _tip('Enter your first name and the event PIN, then choose your activity:'),
             _indent('Walk / Run — sends your position every 60 seconds.'),
-            _indent('Ride / Drive — sends your position every 15 seconds, or immediately when you move ≥ 0.1 mile.'),
+            _indent('Drive / Cycle — sends your position every 15 seconds, or immediately when you move ≥ 0.1 mile.'),
             _tip('Your position keeps updating even with the screen locked or the app in the background so long as you don\'t stop the app.'),
             _tip('iOS only: if asked, tap "Change to Always Allow" to enable background tracking.'),
             _tip('Android only: grant Notifications and allow battery optimization when prompted the first time.'),

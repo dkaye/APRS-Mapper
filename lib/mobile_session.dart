@@ -52,15 +52,19 @@ class MobileSession {
     return JoinResult.failed;
   }
 
-  /// Heartbeat-only update — no lat/lon. Returns false if session is gone (404).
-  Future<bool> update() async {
+  /// Heartbeat update. On iOS, include lat/lon so the server injects to APRS-IS
+  /// (raw TCP sockets are blocked in iOS background; HTTP is not).
+  /// Returns false if session is gone (404).
+  Future<bool> update({double? lat, double? lon}) async {
     final t = token;
     if (t == null) return false;
     try {
+      final body = <String, dynamic>{'token': t};
+      if (lat != null && lon != null) { body['lat'] = lat; body['lon'] = lon; }
       final response = await http.post(
         Uri.parse('${MapConfig.serverBaseUrl}/index.php?mobile=update'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'token': t}),
+        body: jsonEncode(body),
       ).timeout(const Duration(seconds: 8));
       if (response.statusCode == 404) return false;
     } catch (_) {}

@@ -30,7 +30,8 @@ class BackgroundLocationService {
   StreamSubscription<Position>? _positionSub;
   Timer? _heartbeatTimer;
   LatLng? _lastPosition;
-  LatLng? _lastUploadPosition; // position at the time of last beacon
+  LatLng? _lastUploadPosition;
+  DateTime? _lastUploadTime;
   bool _sharingActive = false;
 
   Duration _uploadInterval = MapConfig.uploadInterval;
@@ -51,7 +52,7 @@ class BackgroundLocationService {
           ? AppleSettings(
               accuracy: LocationAccuracy.best,
               distanceFilter: 0,
-              activityType: ActivityType.other,
+              activityType: ActivityType.fitness,
               allowBackgroundLocationUpdates: true,
               pauseLocationUpdatesAutomatically: false,
               showBackgroundLocationIndicator: true,
@@ -93,20 +94,25 @@ class BackgroundLocationService {
     _positionSub = null;
     _lastPosition = null;
     _lastUploadPosition = null;
+    _lastUploadTime = null;
   }
 
-  // iOS only: called on every GPS event. Uploads immediately when the device
-  // has moved >= 0.1 miles since the last beacon. The 60-second keepalive is
-  // handled by _heartbeatTimer, which calls _uploadNow() unconditionally.
+  // iOS only: called on every GPS event. Uploads when moved >= 0.1 miles OR
+  // >= 60 seconds have passed since the last beacon. This is the primary
+  // keepalive mechanism on iOS — Timer.periodic is unreliable when the Dart
+  // isolate is suspended, but GPS events wake the isolate.
   Future<void> _maybeUploadFromStream() async {
     if (!_sharingActive) return;
     final pos = _lastPosition;
     if (pos == null) return;
 
     final lp = _lastUploadPosition;
+    final lu = _lastUploadTime;
     final movedEnough = lp == null || _metersFrom(lp, pos) >= _kDistanceTriggerM;
+    final timeElapsed = lu == null ||
+        DateTime.now().difference(lu).inSeconds >= 60;
 
-    if (!movedEnough) return;
+    if (!movedEnough && !timeElapsed) return;
     await _uploadNow();
   }
 
@@ -219,8 +225,9 @@ class BackgroundLocationService {
       await FlutterForegroundTask.stopService();
     }
     await _session.leave();
-    stopTracking();
     unawaited(_clearSession());
+    // GPS stream stays alive so the map's blue dot keeps working.
+    // Actual stream teardown happens in dispose().
   }
 
   // ── Android: foreground task + main-isolate heartbeat ────────────────────
@@ -318,33 +325,43 @@ class BackgroundLocationService {
   Future<void> _uploadNow() async {
     final pos = _lastPosition;
     if (pos != null) _lastUploadPosition = pos;
+    _lastUploadTime = DateTime.now();
     final cs = _session.callsign;
     final pc = _session.passcode;
 
     if (pos != null && cs != null && pc != null) {
-      await AprsClient.sendPosition(
-        callsign: cs,
-        passcode: pc,
-        lat: pos.latitude,
-        lon: pos.longitude,
-      );
+      if (Platform.isAndroid) {
+        // Android: direct TCP to APRS-IS works fine in foreground service.
+        await AprsClient.sendPosition(
+          callsign: cs,
+          passcode: pc,
+          lat: pos.latitude,
+          lon: pos.longitude,
+        );
+      }
+      // iOS: raw TCP sockets are blocked in background; lat/lon is passed
+      // in the session update below so the server injects to APRS-IS.
     }
 
     // Session heartbeat — also detects removal (404).
-    final ok = await _session.update();
+    // On iOS, include position so the server can inject to APRS-IS.
+    final ok = await _session.update(
+      lat: Platform.isIOS ? pos?.latitude : null,
+      lon: Platform.isIOS ? pos?.longitude : null,
+    );
     if (!ok && _sharingActive) {
       _sharingActive = false;
       _heartbeatTimer?.cancel();
       _heartbeatTimer = null;
       if (Platform.isAndroid) await FlutterForegroundTask.stopService();
       await _session.leave();
-      stopTracking();
       onSessionEnded?.call();
     }
   }
 
   void dispose() {
     stopSharing();
+    stopTracking();
     _positionController.close();
   }
 }

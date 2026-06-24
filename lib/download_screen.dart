@@ -1,9 +1,10 @@
 import 'dart:async';
-import 'dart:math' show cos, pi;
+import 'dart:math' show cos, pi, pow;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'map_config.dart';
 import 'map_screen.dart';
 import 'remote_config.dart';
@@ -19,6 +20,11 @@ class DownloadScreen extends StatefulWidget {
 }
 
 class _DownloadScreenState extends State<DownloadScreen> {
+  // True once the user has confirmed (or we've verified tiles already exist).
+  // Starts false; _init() resolves it after checking the cache.
+  bool _confirmed = false;
+  bool _checkingCache = true;
+
   DownloadProgress? _progress;
   DownloadProgress? _finalProgress;
   StreamSubscription<DownloadProgress>? _sub;
@@ -29,10 +35,30 @@ class _DownloadScreenState extends State<DownloadScreen> {
   static int _nextId = 1;
   late final int _instanceId = _nextId++;
 
+  // Estimated tile count for the configured region, computed once.
+  late final int _estimatedTiles = _calcEstimatedTiles();
+
   @override
   void initState() {
     super.initState();
-    _startDownload();
+    _init();
+  }
+
+  // Show the prompt only when the user hasn't explicitly consented to
+  // downloading tiles.  We track consent in SharedPreferences rather than
+  // infer it from tile count — the cache persists across updates so tile
+  // count alone can't tell us whether the user has actively agreed.
+  static const _consentKey = 'tiles_download_consented';
+
+  Future<void> _init() async {
+    final prefs = await SharedPreferences.getInstance();
+    final hasConsented = prefs.getBool(_consentKey) ?? false;
+    if (!mounted) return;
+    setState(() {
+      _checkingCache = false;
+      _confirmed = hasConsented;
+    });
+    if (_confirmed) _startDownload();
   }
 
   @override
@@ -44,6 +70,38 @@ class _DownloadScreenState extends State<DownloadScreen> {
     }
     super.dispose();
   }
+
+  // ── Tile-count estimator ───────────────────────────────────────────────────
+  // Sums tiles across all zoom levels for the configured bounding box using
+  // standard Web-Mercator tile math. Intentionally over-estimates slightly
+  // (skip-sea-tiles optimisation will reduce the actual download).
+  int _calcEstimatedTiles() {
+    final radius = widget.config.offlineRadiusMiles ?? MapConfig.downloadRadiusMiles;
+    final center = LatLng(widget.config.mapLat, widget.config.mapLon);
+    final latDelta = radius / 69.0;
+    final lonDelta = radius / (69.0 * cos(center.latitude * pi / 180));
+    int total = 0;
+    final maxZoom = widget.config.offlineMaxZoom;
+    for (int z = MapConfig.downloadMinZoom; z <= maxZoom; z++) {
+      final tilesPerDeg = pow(2, z) / 360.0;
+      final nx = (2 * lonDelta * tilesPerDeg).ceil() + 1;
+      final ny = (2 * latDelta * tilesPerDeg).ceil() + 1;
+      total += nx * ny;
+    }
+    return total;
+  }
+
+  // Converts tile count to a human-readable size string.
+  // Assumes ~18 KB per tile (typical outdoor raster tile average).
+  String get _estimatedSizeLabel {
+    final kb = _estimatedTiles * 18;
+    final mb = kb ~/ 1024;
+    if (mb < 2) return 'a few MB';
+    if (mb < 20) return 'about $mb MB';
+    return 'up to $mb MB';
+  }
+
+  // ── Download ───────────────────────────────────────────────────────────────
 
   Future<void> _startDownload() async {
     _sub?.cancel();
@@ -72,7 +130,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
       options: TileLayer(urlTemplate: widget.config.offlineTileUrl),
     );
 
-    final stream = FMTCStore(MapConfig.storeName).download.startForeground(
+    final streams = FMTCStore(MapConfig.storeName).download.startForeground(
       region: downloadable,
       instanceId: _instanceId,
       disableRecovery: true,
@@ -82,13 +140,15 @@ class _DownloadScreenState extends State<DownloadScreen> {
       skipSeaTiles: true,
     );
 
-    _sub = stream.listen(
+    _sub = streams.downloadProgress.listen(
       (progress) {
         setState(() => _progress = progress);
-        if (progress.isComplete) {
+      },
+      onDone: () {
+        final p = _progress;
+        if (p != null && !_downloadComplete) {
           _downloadComplete = true;
-          _sub?.cancel();
-          setState(() => _finalProgress = progress);
+          setState(() => _finalProgress = p);
           _completionTimer = Timer(const Duration(seconds: 2), _goToMap);
         }
       },
@@ -108,8 +168,15 @@ class _DownloadScreenState extends State<DownloadScreen> {
     }
   }
 
+  // ── Build ──────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
+    if (_checkingCache) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (!_confirmed) return _buildPrompt();
+
     final progress = _progress;
     final final_ = _finalProgress;
 
@@ -185,7 +252,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  '${progress.successfulTiles} / ${progress.maxTiles} tiles'
+                  '${progress.successfulTilesCount} / ${progress.maxTilesCount} tiles'
                   '  •  ${progress.percentageProgress.toStringAsFixed(0)}%',
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 15),
@@ -206,9 +273,68 @@ class _DownloadScreenState extends State<DownloadScreen> {
     );
   }
 
+  // Shown on first launch before any download begins.
+  Widget _buildPrompt() {
+    final radius = (widget.config.offlineRadiusMiles ?? MapConfig.downloadRadiusMiles)
+        .toStringAsFixed(0);
+    final minZ = MapConfig.downloadMinZoom;
+    final maxZ = widget.config.offlineMaxZoom;
+
+    return Scaffold(
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Icon(Icons.download_for_offline_outlined,
+                  size: 64, color: Colors.blue),
+              const SizedBox(height: 24),
+              const Text(
+                'Download Offline Map?',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'Map tiles for a $radius-mile radius around the event will be '
+                'saved to your device (zoom levels $minZ–$maxZ).\n\n'
+                'Estimated download size: $_estimatedSizeLabel.\n\n'
+                'Once downloaded, the map works without an internet connection.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 15, height: 1.55),
+              ),
+              const SizedBox(height: 40),
+              FilledButton.icon(
+                icon: const Icon(Icons.download_rounded),
+                label: const Text('Download Map'),
+                onPressed: () async {
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.setBool(_consentKey, true);
+                  setState(() => _confirmed = true);
+                  _startDownload();
+                },
+              ),
+              const SizedBox(height: 14),
+              TextButton(
+                onPressed: () async {
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.setBool(_consentKey, false);
+                  _goToMap();
+                },
+                child: const Text('Skip — use online map only'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   String _completionSummary(DownloadProgress p) {
-    final downloaded = p.successfulTiles;
-    final skipped = p.skippedTiles;
+    final downloaded = p.successfulTilesCount;
+    final skipped = p.skippedTilesCount;
     if (downloaded == 0 && skipped > 0) {
       return '$skipped tile${skipped == 1 ? '' : 's'} already up to date';
     }

@@ -17,7 +17,7 @@ void backgroundTaskEntryPoint() {
 /// [onRepeatEvent] skips the upload if a beacon was sent within 60 seconds —
 /// this prevents a double-beacon when the OS timer fires shortly after a
 /// force_upload, and ensures at most one timer beacon per 60 seconds regardless
-/// of the activity interval (_intervalMs may be shorter, e.g. 15 s for Ride/Drive).
+/// of the activity interval (_intervalMs may be shorter, e.g. 15 s for Drive/Cycle).
 class LocationTaskHandler extends TaskHandler {
   String? _callsign;
   int? _passcode;

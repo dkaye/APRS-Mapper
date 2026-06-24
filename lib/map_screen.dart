@@ -182,7 +182,8 @@ class _MapScreenState extends State<MapScreen> {
       if (permission == LocationPermission.always ||
           permission == LocationPermission.whileInUse) {
         setState(() => _locationState = _LocationState.granted);
-        _startPositionStream(); // blue dot only — background tracking starts at share time
+        unawaited(_bgLocation.startTracking()); // must start GPS before subscribing via positionStream
+        _startPositionStream();
         unawaited(_maybeResumeSharing());
       } else if (permission == LocationPermission.deniedForever) {
         setState(() => _locationState = _LocationState.permanentlyDenied);
@@ -195,22 +196,18 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _startPositionStream() {
-    // distanceFilter: 5 — controls how often CurrentLocationLayer redraws.
-    // Without an explicit stream, CurrentLocationLayer creates its own with
-    // distanceFilter: 0, which keeps the Flutter display link active at 1 Hz
-    // when the beaconing GPS stream puts iOS into navigation mode, preventing
-    // auto-lock. Sharing the same stream here avoids a second CLLocationManager.
-    final gpsStream = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.best,
-        distanceFilter: 5,
-      ),
-    );
-    _positionSub = gpsStream.listen((pos) {
+    // Use bgLocation.positionStream (a Dart broadcast stream) rather than a
+    // second Geolocator.getPositionStream() call. geolocator_apple only
+    // supports ONE active event-channel listener; a second call silently fails
+    // and leaves allowsBackgroundLocationUpdates = false (no blue arrow, no
+    // background location). startTracking() owns the single GPS stream and
+    // feeds all position events through positionStream.
+    final posStream = _bgLocation.positionStream;
+    _positionSub = posStream.listen((pos) {
       _lastUserLatLng = LatLng(pos.latitude, pos.longitude);
     });
     _locationMarkerStream = const LocationMarkerDataStreamFactory()
-        .fromGeolocatorPositionStream(stream: gpsStream);
+        .fromGeolocatorPositionStream(stream: posStream);
   }
 
   // ── Background permission setup ───────────────────────────────────────────
@@ -246,7 +243,6 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _maybeResumeSharing() async {
     if (!mounted) return;
     await _ensureBackgroundPermissions();
-    await _bgLocation.startTracking();
     final resumed = await _bgLocation.resumeSharing();
     if (!mounted) return;
     if (resumed) {
@@ -299,7 +295,7 @@ class _MapScreenState extends State<MapScreen> {
     final pinFocus = FocusNode();
     String? errorText;
     bool loading = false;
-    bool ridingMode = false; // false = Walk/Run (60 s), true = Ride/Drive (15 s)
+    bool ridingMode = false; // false = Walk/Run (60 s), true = Drive/Cycle (15 s)
 
     await showDialog<void>(
       context: context,
@@ -316,7 +312,6 @@ class _MapScreenState extends State<MapScreen> {
             if (pin.isEmpty) return;
             setDialogState(() { loading = true; errorText = null; });
             await _ensureBackgroundPermissions();
-            await _bgLocation.startTracking(); // starts GPS + foreground service
             final joinResult = await _bgLocation.startSharing(
               name: name,
               pin: pin,
@@ -374,13 +369,27 @@ class _MapScreenState extends State<MapScreen> {
                   spacing: 6,
                   children: [
                     ChoiceChip(
-                      label: const Text('Walk / Run'),
+                      label: Text('Walk / Run',
+                          style: TextStyle(
+                            color: !ridingMode ? Colors.white : Colors.black54,
+                            fontWeight: !ridingMode ? FontWeight.w600 : FontWeight.normal,
+                          )),
                       selected: !ridingMode,
+                      selectedColor: Colors.blueGrey.shade700,
+                      backgroundColor: Colors.grey.shade200,
+                      showCheckmark: false,
                       onSelected: (_) => setDialogState(() => ridingMode = false),
                     ),
                     ChoiceChip(
-                      label: const Text('Ride / Drive'),
+                      label: Text('Drive / Cycle',
+                          style: TextStyle(
+                            color: ridingMode ? Colors.white : Colors.black54,
+                            fontWeight: ridingMode ? FontWeight.w600 : FontWeight.normal,
+                          )),
                       selected: ridingMode,
+                      selectedColor: Colors.blueGrey.shade700,
+                      backgroundColor: Colors.grey.shade200,
+                      showCheckmark: false,
                       onSelected: (_) => setDialogState(() => ridingMode = true),
                     ),
                   ],
@@ -667,7 +676,7 @@ class _MapScreenState extends State<MapScreen> {
         .clamp(MapConfig.minZoom, MapConfig.maxZoom);
     if ((newZoom - camera.zoom).abs() < 0.001) return;
     final newCenter = camera.focusedZoomCenter(
-      math.Point(event.localPosition.dx, event.localPosition.dy),
+      event.localPosition,
       newZoom,
     );
     _mapController.move(newCenter, newZoom);
