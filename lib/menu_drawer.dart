@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'help_screen.dart';
+import 'map_config.dart';
 import 'remote_config.dart';
 import 'tracker_data.dart';
 
@@ -15,9 +16,12 @@ class MenuDrawer extends StatefulWidget {
   final String selectedBgUrl;
   final Map<String, bool> sectionVisible;
   final Map<String, bool> courseVisible;
+  final Set<String> blinkingIds;
+  final bool blinkOn;
   final void Function(TrackerData)? onTrackerTap;
   final void Function(TrackerData)? onTrackerLongPress;
   final void Function(FixedMarker)? onFixedTap;
+  final void Function(FixedMarker)? onFixedLongPress;
   final void Function(BackgroundLayer)? onBackgroundChange;
   final void Function(String section, bool visible)? onSectionVisibility;
   final void Function(String courseFile, bool visible)? onCourseVisibility;
@@ -27,6 +31,9 @@ class MenuDrawer extends StatefulWidget {
   final Future<void> Function()? onSaveMap;
   final Future<void> Function()? onRefreshTiles;
   final String? sharingCallsign;
+  final String? sharingName;
+  final int sharingActivityMode;
+  final VoidCallback? onSendMessage;
 
   const MenuDrawer({
     super.key,
@@ -38,9 +45,12 @@ class MenuDrawer extends StatefulWidget {
     this.isSharing = false,
     this.isOnline = true,
     this.selectedId,
+    this.blinkingIds = const {},
+    this.blinkOn = true,
     this.onTrackerTap,
     this.onTrackerLongPress,
     this.onFixedTap,
+    this.onFixedLongPress,
     this.onBackgroundChange,
     this.onSectionVisibility,
     this.onCourseVisibility,
@@ -50,6 +60,9 @@ class MenuDrawer extends StatefulWidget {
     this.onSaveMap,
     this.onRefreshTiles,
     this.sharingCallsign,
+    this.sharingName,
+    this.sharingActivityMode = -1,
+    this.onSendMessage,
   });
 
   @override
@@ -134,18 +147,10 @@ class _MenuDrawerState extends State<MenuDrawer> {
                       children: widget.config.courses.map(_courseTile).toList(),
                     ),
 
-                  if (widget.config.backgrounds.isNotEmpty)
-                    _section(
-                      key: 'backgrounds',
-                      title: 'Backgrounds',
-                      hasVisToggle: false,
-                      children: widget.config.backgrounds.map(_bgTile).toList(),
-                    ),
-
                   if (widget.config.aidStations.isNotEmpty)
                     _section(
                       key: 'aidstations',
-                      title: 'Aid Stations',
+                      title: 'Aid/Rest Stops',
                       hasVisToggle: true,
                       children: widget.config.aidStations.map(_fixedTile).toList(),
                     ),
@@ -158,38 +163,6 @@ class _MenuDrawerState extends State<MenuDrawer> {
                       children: widget.config.igates.map(_fixedTile).toList(),
                     ),
 
-                  _section(
-                    key: 'about',
-                    title: 'About',
-                    hasVisToggle: false,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _aboutRow('Organization', 'Marin Amateur Radio Society'),
-                            _aboutRow('Application', 'APRS Tracker Map${_appVersion.isEmpty ? '' : ' · v$_appVersion'}'),
-                            if (widget.config.event.isNotEmpty)
-                              _aboutRow('Event', widget.config.event),
-                            if (widget.sharingCallsign != null && widget.sharingCallsign!.isNotEmpty)
-                              _aboutRow('My Callsign', widget.sharingCallsign!),
-                            _aboutRowWidget('Map Data', GestureDetector(
-                              onTap: () => launchUrl(
-                                Uri.parse('https://www.openstreetmap.org/copyright'),
-                                mode: LaunchMode.externalApplication,
-                              ),
-                              child: const Text(
-                                '© OpenStreetMap contributors',
-                                style: TextStyle(fontSize: 13, color: Colors.blue),
-                              ),
-                            )),
-                            _aboutRow('Copyright', '© 2026 Doug Kaye (K6DRK). All Rights Reserved.'),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
                 ],
               ),
             ),
@@ -212,6 +185,11 @@ class _MenuDrawerState extends State<MenuDrawer> {
                       },
                       color: widget.isSharing ? Colors.red[700] : null,
                     ),
+                  if (widget.isSharing && widget.onSendMessage != null)
+                    _footerBtn('Message', Icons.chat_bubble_outline, () {
+                      Navigator.pop(context);
+                      widget.onSendMessage?.call();
+                    }),
                   _footerBtn('Save Map', Icons.push_pin, () async {
                     Navigator.pop(context);
                     await widget.onSaveMap?.call();
@@ -221,10 +199,97 @@ class _MenuDrawerState extends State<MenuDrawer> {
                     await widget.onRefreshTiles?.call();
                   }),
                   _footerBtn('Help', Icons.help_outline, () {
-                    Navigator.pop(context);
-                    Navigator.push(context, MaterialPageRoute(
-                      builder: (_) => HelpScreen(isOnline: widget.isOnline),
-                    ));
+                    showModalBottomSheet<void>(
+                      context: context,
+                      isScrollControlled: true,
+                      useSafeArea: true,
+                      shape: const RoundedRectangleBorder(
+                        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                      ),
+                      builder: (ctx) => SingleChildScrollView(
+                        padding: EdgeInsets.fromLTRB(20, 20, 20, 24 + MediaQuery.of(ctx).padding.bottom),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Row(children: [
+                              const Text('Help', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                              const Spacer(),
+                              IconButton(
+                                icon: const Icon(Icons.close, size: 20),
+                                onPressed: () => Navigator.pop(ctx),
+                                padding: EdgeInsets.zero,
+                                visualDensity: VisualDensity.compact,
+                              ),
+                            ]),
+                            const SizedBox(height: 12),
+                            _aboutRow('Organization', 'Marin Amateur Radio Society'),
+                            _aboutRow('Application', 'APRS Tracker Map${_appVersion.isEmpty ? '' : ' · v$_appVersion'}'),
+                            if (widget.config.event.isNotEmpty)
+                              _aboutRow('Event', widget.config.event),
+                            if (widget.sharingCallsign != null && widget.sharingCallsign!.isNotEmpty)
+                              _aboutRow('My Callsign', widget.sharingName != null && widget.sharingName!.isNotEmpty
+                                  ? '${widget.sharingName} (${widget.sharingCallsign})'
+                                  : widget.sharingCallsign!),
+                            if (widget.isSharing && widget.sharingActivityMode >= 0)
+                              _aboutRow('Activity', const ['Walk / Run', 'Cycle', 'Drive', 'Stationary'][widget.sharingActivityMode]),
+                            _aboutRowWidget('Map Data', GestureDetector(
+                              onTap: () => launchUrl(
+                                Uri.parse('https://www.openstreetmap.org/copyright'),
+                                mode: LaunchMode.externalApplication,
+                              ),
+                              child: const Text('© OpenStreetMap contributors',
+                                  style: TextStyle(fontSize: 13, color: Colors.blue)),
+                            )),
+                            _aboutRow('Copyright', '© 2026 Doug Kaye (K6DRK). All Rights Reserved.'),
+                            const SizedBox(height: 16),
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton(
+                                onPressed: () => Navigator.push(ctx, MaterialPageRoute(
+                                  builder: (_) => HelpScreen(isOnline: widget.isOnline),
+                                )),
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(vertical: 10),
+                                  textStyle: const TextStyle(fontSize: 13),
+                                ),
+                                child: const Text('Quick Start'),
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton(
+                                onPressed: () => launchUrl(
+                                  Uri.parse('${MapConfig.serverBaseUrl}/userguide.html'),
+                                  mode: LaunchMode.externalApplication,
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(vertical: 10),
+                                  textStyle: const TextStyle(fontSize: 13),
+                                ),
+                                child: const Text('User Guide'),
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton(
+                                onPressed: () => launchUrl(
+                                  Uri.parse('${MapConfig.serverBaseUrl}/tickets/'),
+                                  mode: LaunchMode.externalApplication,
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(vertical: 10),
+                                  textStyle: const TextStyle(fontSize: 13),
+                                ),
+                                child: const Text('Submit a Bug or Suggestion'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
                   }),
                   if (Platform.isIOS || Platform.isAndroid)
                     _footerBtn('Exit', Icons.exit_to_app, () => exit(0)),
@@ -286,8 +351,11 @@ class _MenuDrawerState extends State<MenuDrawer> {
   // ── Tracker tile ───────────────────────────────────────────────────────────
 
   Widget _trackerTile(TrackerData t) {
-    final color = _trackerColor(t.color);
+    final baseColor = _trackerColor(t.color);
     final isSelected = t.id == widget.selectedId;
+    final isBlinking = widget.blinkingIds.contains(t.id);
+    final opacity = (isBlinking && !widget.blinkOn) ? 0.15 : 1.0;
+    final color = baseColor.withOpacity(opacity);
     return InkWell(
       onTap: () {
         Navigator.pop(context);
@@ -301,15 +369,18 @@ class _MenuDrawerState extends State<MenuDrawer> {
         color: isSelected ? Colors.blue.withOpacity(0.08) : null,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         child: Row(children: [
-          Container(
-            width: 10,
-            height: 10,
-            margin: const EdgeInsets.only(right: 8),
-            decoration: BoxDecoration(
-              color: color,
-              shape: t.mobile ? BoxShape.rectangle : BoxShape.circle,
-              borderRadius: t.mobile ? BorderRadius.circular(2) : null,
-              border: Border.all(color: Colors.white, width: 1.5),
+          Opacity(
+            opacity: opacity,
+            child: Container(
+              width: 10,
+              height: 10,
+              margin: const EdgeInsets.only(right: 8),
+              decoration: BoxDecoration(
+                color: baseColor,
+                shape: t.mobile ? BoxShape.rectangle : BoxShape.circle,
+                borderRadius: t.mobile ? BorderRadius.circular(2) : null,
+                border: Border.all(color: Colors.white, width: 1.5),
+              ),
             ),
           ),
           Text(t.id,
@@ -321,7 +392,19 @@ class _MenuDrawerState extends State<MenuDrawer> {
           Builder(builder: (_) {
             final age = DateTime.now().millisecondsSinceEpoch ~/ 1000 - t.lastUpdate;
             final label = !t.hasPosition ? '—' : (t.lastUpdate > 0 && age > 300) ? 'stale' : t.time;
-            return Text(label, style: TextStyle(fontSize: 11, color: color));
+            final modeIcon = switch (t.sharingMode) {
+              'drive_cycle'  => Icons.directions_car,
+              'walk_run'     => Icons.directions_run,
+              'stationary'   => Icons.location_on,
+              _              => null,
+            };
+            return Row(mainAxisSize: MainAxisSize.min, children: [
+              if (modeIcon != null) ...[
+                Icon(modeIcon, size: 11, color: color),
+                const SizedBox(width: 3),
+              ],
+              Text(label, style: TextStyle(fontSize: 11, color: color)),
+            ]);
           }),
         ]),
       ),
@@ -392,6 +475,10 @@ class _MenuDrawerState extends State<MenuDrawer> {
       onTap: () {
         Navigator.pop(context);
         widget.onFixedTap?.call(m);
+      },
+      onLongPress: () {
+        Navigator.pop(context);
+        widget.onFixedLongPress?.call(m);
       },
       child: Container(
         color: isSelected ? Colors.blue.withOpacity(0.08) : null,

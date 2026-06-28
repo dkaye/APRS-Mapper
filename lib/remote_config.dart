@@ -74,6 +74,9 @@ class RemoteConfig {
   final double mapZoom;
   final bool mobileEnabled;
   final String legend;
+  // Beacon settings per activity mode [walk, drive, stationary]
+  final List<int> beaconIntervalsSec;
+  final List<double> beaconDistancesMi;
   // Offline tile download config (falls back to MapConfig constants if absent)
   final double? offlineRadiusMiles;
   final int offlineMaxZoom;
@@ -93,6 +96,8 @@ class RemoteConfig {
     required this.mapZoom,
     required this.mobileEnabled,
     required this.legend,
+    required this.beaconIntervalsSec,
+    required this.beaconDistancesMi,
     this.offlineRadiusMiles,
     required this.offlineMaxZoom,
     required this.offlineTileUrl,
@@ -128,6 +133,8 @@ class RemoteConfig {
       mapLon: (map['lon'] as num?)?.toDouble() ?? -122.620,
       mapZoom: (map['zoom'] as num?)?.toDouble() ?? MapConfig.initialZoom,
       mobileEnabled: j['mobile_enabled'] as bool? ?? false,
+      beaconIntervalsSec: _parseBeaconIntervals(j['mobile_beacons']),
+      beaconDistancesMi:  _parseBeaconDistances(j['mobile_beacons']),
       offlineRadiusMiles: (om['radius'] as num?)?.toDouble(),
       offlineMaxZoom: (om['max_zoom'] as num?)?.toInt() ?? MapConfig.downloadMaxZoom,
       offlineTileUrl: (om['url'] as String? ?? '').isNotEmpty
@@ -150,7 +157,29 @@ class RemoteConfig {
         mapLon: -122.620,
         mapZoom: MapConfig.initialZoom,
         mobileEnabled: false,
+        beaconIntervalsSec: const [60, 30, 15, 120],
+        beaconDistancesMi:  const [0.2, 0.2, 0.2, 1.0],
         offlineMaxZoom: MapConfig.downloadMaxZoom,
         offlineTileUrl: MapConfig.tileUrl,
       );
+}
+
+List<int> _parseBeaconIntervals(dynamic bc) {
+  if (bc is! Map) return const [60, 30, 15, 120];
+  return [
+    (bc['walk_interval']  as num?)?.toInt() ?? 60,
+    (bc['cycle_interval'] as num?)?.toInt() ?? 30,
+    (bc['drive_interval'] as num?)?.toInt() ?? 15,
+    (bc['stat_interval']  as num?)?.toInt() ?? 120,
+  ];
+}
+
+List<double> _parseBeaconDistances(dynamic bc) {
+  if (bc is! Map) return const [0.2, 0.2, 0.2, 1.0];
+  return [
+    (bc['walk_distance']  as num?)?.toDouble() ?? 0.2,
+    (bc['cycle_distance'] as num?)?.toDouble() ?? 0.2,
+    (bc['drive_distance'] as num?)?.toDouble() ?? 0.2,
+    (bc['stat_distance']  as num?)?.toDouble() ?? 1.0,
+  ];
 }

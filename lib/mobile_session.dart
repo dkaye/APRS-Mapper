@@ -1,10 +1,27 @@
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:math';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:http/http.dart' as http;
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'map_config.dart';
 
 enum JoinResult { success, wrongPin, failed }
+
+class InboundMessage {
+  final int id;
+  final String fromLabel;
+  final String text;
+  final int ts;
+  const InboundMessage({required this.id, required this.fromLabel, required this.text, required this.ts});
+  factory InboundMessage.fromJson(Map<String, dynamic> j) => InboundMessage(
+    id: (j['id'] as num?)?.toInt() ?? 0,
+    fromLabel: j['from_label'] as String? ?? '',
+    text: j['text'] as String? ?? '',
+    ts: (j['ts'] as num?)?.toInt() ?? 0,
+  );
+}
 
 class MobileSession {
   String? token;
@@ -30,13 +47,37 @@ class MobileSession {
     return id;
   }
 
-  Future<JoinResult> join({required String name, required String pin}) async {
+  static Future<Map<String, String>> _collectDeviceInfo() async {
+    final info = <String, String>{};
+    try {
+      final pkg = await PackageInfo.fromPlatform();
+      info['app'] = '${pkg.version}+${pkg.buildNumber}';
+    } catch (_) {}
+    try {
+      if (Platform.isIOS) {
+        final d = await DeviceInfoPlugin().iosInfo;
+        info['os'] = 'iOS ${d.systemVersion}';
+        info['model'] = d.utsname.machine;
+      } else if (Platform.isAndroid) {
+        final d = await DeviceInfoPlugin().androidInfo;
+        info['os'] = 'Android ${d.version.release}';
+        info['model'] = d.model;
+        info['manufacturer'] = d.manufacturer;
+      }
+    } catch (_) {}
+    return info;
+  }
+
+  Future<JoinResult> join({required String name, required String pin, String sharingMode = ''}) async {
     try {
       final deviceId = await getDeviceId();
+      final deviceInfo = await _collectDeviceInfo();
+      final body = <String, dynamic>{'name': name, 'pin': pin, 'device_id': deviceId, 'device_info': deviceInfo};
+      if (sharingMode.isNotEmpty) body['sharing_mode'] = sharingMode;
       final response = await http.post(
         Uri.parse('${MapConfig.serverBaseUrl}/index.php?mobile=join'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'name': name, 'pin': pin, 'device_id': deviceId}),
+        body: jsonEncode(body),
       ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
@@ -54,21 +95,99 @@ class MobileSession {
 
   /// Heartbeat update. On iOS, include lat/lon so the server injects to APRS-IS
   /// (raw TCP sockets are blocked in iOS background; HTTP is not).
-  /// Returns false if session is gone (404).
-  Future<bool> update({double? lat, double? lon}) async {
+  /// Returns null if session is gone (404), otherwise list of pending messages.
+  Future<List<InboundMessage>?> update({double? lat, double? lon, List<int> ackIds = const []}) async {
     final t = token;
-    if (t == null) return false;
+    if (t == null) return null;
     try {
       final body = <String, dynamic>{'token': t};
       if (lat != null && lon != null) { body['lat'] = lat; body['lon'] = lon; }
+      if (ackIds.isNotEmpty) body['ack_ids'] = ackIds;
       final response = await http.post(
         Uri.parse('${MapConfig.serverBaseUrl}/index.php?mobile=update'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(body),
       ).timeout(const Duration(seconds: 8));
-      if (response.statusCode == 404) return false;
+      if (response.statusCode == 404) return null;
+      try {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final msgs = (data['messages'] as List<dynamic>? ?? [])
+            .map((m) => InboundMessage.fromJson(m as Map<String, dynamic>))
+            .toList();
+        return msgs;
+      } catch (_) { return []; }
     } catch (_) {}
-    return true;
+    return [];
+  }
+
+  /// Fetches the full message history for this callsign from the server.
+  /// Returns list of messages (oldest first), or empty list on error.
+  Future<List<InboundMessage>> fetchHistory() async {
+    final t = token;
+    if (t == null) return [];
+    try {
+      final response = await http.post(
+        Uri.parse('${MapConfig.serverBaseUrl}/index.php?mobile=msghistory'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'token': t}),
+      ).timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) return [];
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return (data['messages'] as List<dynamic>? ?? [])
+          .map((m) => InboundMessage.fromJson(m as Map<String, dynamic>))
+          .toList();
+    } catch (_) {}
+    return [];
+  }
+
+  /// Lightweight poll — checks for pending messages without updating position.
+  /// Returns new messages (may be empty), or null on session-not-found.
+  Future<List<InboundMessage>?> pollMessages({List<int> ackIds = const []}) async {
+    final t = token;
+    if (t == null) return null;
+    try {
+      final body = <String, dynamic>{'token': t};
+      if (ackIds.isNotEmpty) body['ack_ids'] = ackIds;
+      final response = await http.post(
+        Uri.parse('${MapConfig.serverBaseUrl}/index.php?mobile=poll'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(body),
+      ).timeout(const Duration(seconds: 8));
+      if (response.statusCode == 404) return null;
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      return (data['messages'] as List<dynamic>? ?? [])
+          .map((m) => InboundMessage.fromJson(m as Map<String, dynamic>))
+          .toList();
+    } catch (_) {}
+    return [];
+  }
+
+  Future<bool> sendMessage(String text) async {
+    final t = token;
+    if (t == null) return false;
+    try {
+      final response = await http.post(
+        Uri.parse('${MapConfig.serverBaseUrl}/index.php?mobile=message'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'token': t, 'text': text}),
+      ).timeout(const Duration(seconds: 8));
+      return response.statusCode == 200;
+    } catch (_) {}
+    return false;
+  }
+
+  /// Validates the event password with the server.
+  /// Returns true if accepted (or no password is required), false if wrong.
+  static Future<bool> authEventPassword(String password) async {
+    try {
+      final response = await http.post(
+        Uri.parse('${MapConfig.serverBaseUrl}/index.php?mobile=auth'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'password': password}),
+      ).timeout(const Duration(seconds: 8));
+      return response.statusCode == 200;
+    } catch (_) {}
+    return false;
   }
 
   /// Restores an in-memory session from previously saved credentials.

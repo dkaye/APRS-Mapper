@@ -17,6 +17,7 @@ class TrackerLayer extends StatelessWidget {
   final String? selectedId;
   final Set<String> blinkingIds;
   final bool blinkOn;
+  final void Function(TrackerData)? onLongPress;
 
   const TrackerLayer({
     super.key,
@@ -24,6 +25,7 @@ class TrackerLayer extends StatelessWidget {
     this.selectedId,
     this.blinkingIds = const {},
     this.blinkOn = true,
+    this.onLongPress,
   });
 
   @override
@@ -74,6 +76,7 @@ class TrackerLayer extends StatelessWidget {
             opacity: opacity,
             child: GestureDetector(
               onTap: () => _showDetail(context, t),
+              onLongPress: () => onLongPress?.call(t),
               child: Row(
                 children: [
                   const SizedBox(width: _leftPad), // shifts dot to center

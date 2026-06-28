@@ -6,7 +6,7 @@ import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'map_config.dart';
-import 'map_screen.dart';
+import 'password_gate_screen.dart';
 import 'remote_config.dart';
 
 class DownloadScreen extends StatefulWidget {
@@ -163,7 +163,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
     if (mounted) {
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (_) => MapScreen(config: widget.config)),
+        MaterialPageRoute(builder: (_) => PasswordGateScreen(config: widget.config)),
       );
     }
   }

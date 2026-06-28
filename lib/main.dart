@@ -5,7 +5,7 @@ import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart';
 import 'config_service.dart';
 import 'download_screen.dart';
 import 'map_config.dart';
-import 'map_screen.dart';
+import 'password_gate_screen.dart';
 import 'remote_config.dart';
 
 void main() async {
@@ -62,7 +62,7 @@ class _StartupRouterState extends State<StartupRouter> {
       context,
       MaterialPageRoute(
         builder: (_) => length > 0
-            ? MapScreen(config: widget.config)
+            ? PasswordGateScreen(config: widget.config)
             : DownloadScreen(config: widget.config),
       ),
     );

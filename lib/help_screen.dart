@@ -14,12 +14,12 @@ class HelpScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Help'),
+        title: const Text('Quick Start'),
         backgroundColor: const Color(0xFF2C3E50),
         foregroundColor: Colors.white,
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
+        padding: EdgeInsets.fromLTRB(16, 20, 16, 32 + MediaQuery.of(context).padding.bottom),
         children: [
 
            if (isFirstLaunch)
@@ -32,7 +32,7 @@ class HelpScreen extends StatelessWidget {
                 border: Border.all(color: const Color(0xFF90CAF9)),
               ),
               child: const Text(
-                'You can always view this page by tapping Help in the sidebar menu.',
+                'You can always view this page by tapping Help → Quick Start in the sidebar menu.',
                 style: TextStyle(fontSize: 13, color: Color(0xFF1565C0), height: 1.4),
               ),
             ),
@@ -59,8 +59,9 @@ class HelpScreen extends StatelessWidget {
                 _colorTip(const Color(0xFFE53935), 'Red', 'No report for more than 5 minutes.'),
               ]),
             ),
-            _tip('Tap any Tracker, Aid Station or iGate to close the menu and center the map on it.'),
-            _tip('Long-press a Tracker, Aid Station or iGate to zoom to it.'),
+            _tip('In the sidebar: tap any Tracker, Aid/Rest Stop, or iGate to close the menu, center the map on it, and blink its marker.'),
+            _tip('In the sidebar: long-press any Tracker, Aid/Rest Stop, or iGate to do the same and also zoom in.'),
+            _tip('On the map: tap a marker to see its details. Long-press any marker to open Google Maps centered on that location.'),
             _tipWidget(Text.rich(TextSpan(children: [
               const TextSpan(text: 'Hide/show sections of the sidebar or individual Courses by tapping the ', 
 			  style: TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4)),
@@ -84,10 +85,25 @@ class HelpScreen extends StatelessWidget {
           ]))),
             _tip('Enter your first name and the event PIN, then choose your activity:'),
             _indent('Walk / Run — sends your position every 60 seconds.'),
-            _indent('Drive / Cycle — sends your position every 15 seconds, or immediately when you move ≥ 0.1 mile.'),
+            _indent('Cycle — sends your position every 30 seconds, or immediately when you move ≥ 0.2 mile.'),
+            _indent('Drive — sends your position every 15 seconds, or immediately when you move ≥ 0.2 mile.'),
+            _indent('Stationary — sends your position every 2 minutes.'),
             _tip('Your position keeps updating even with the screen locked or the app in the background so long as you don\'t stop the app.'),
             _tip('iOS only: if asked, tap "Change to Always Allow" to enable background tracking.'),
             _tip('Android only: grant Notifications and allow battery optimization when prompted the first time.'),
+          ]),
+
+          _section('Messaging  (while sharing)', Icons.chat_bubble_outline, [
+            _tip('While sharing your location, net control can send you text messages.'),
+            _tip('An incoming message plays a three-repeat tone and shows a pop-up dialog with the sender\'s name and text.'),
+            _tip('If the app is in the background, a notification appears. Tap it to open the app — the message dialog opens automatically.'),
+            _tipWidget(Text.rich(TextSpan(children: [
+              const TextSpan(text: 'Tap ', style: TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4)),
+              const TextSpan(text: 'Reply', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF333333), height: 1.4)),
+              const TextSpan(text: ' to respond, or tap ', style: TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4)),
+              WidgetSpan(child: Icon(Icons.chat_bubble_outline, size: 16, color: Color(0xFF333333)), alignment: PlaceholderAlignment.middle),
+              const TextSpan(text: ' Message in the drawer footer to send a new message.', style: TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4)),
+            ]))),
           ]),
 
           _section('Offline Use', Icons.download_for_offline_outlined, [

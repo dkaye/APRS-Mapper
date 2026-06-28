@@ -13,6 +13,11 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- Allows prompting the user to exempt this app from battery optimization -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+    <!-- Allows full-screen notifications that bring the app to foreground on incoming messages -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
+    <uses-permission android:name="android.permission.VIBRATE"/>
+    <!-- Allows bringing the app to the foreground from the background when a message arrives -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
     <application
         android:label="APRS Map"
         android:name="${applicationName}"

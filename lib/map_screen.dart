@@ -1,6 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
+import 'dart:typed_data';
+import 'package:audio_session/audio_session.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart'
+    show FlutterForegroundTask;
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:just_audio/just_audio.dart';
 import 'dart:math' as math;
 import 'package:flutter/gestures.dart' show PointerPanZoomUpdateEvent;
 import 'package:flutter/material.dart';
@@ -42,7 +48,7 @@ class MapScreen extends StatefulWidget {
   State<MapScreen> createState() => _MapScreenState();
 }
 
-class _MapScreenState extends State<MapScreen> {
+class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   _LocationState _locationState = _LocationState.checking;
   final _mapController = MapController();
   LatLng? _lastUserLatLng;
@@ -70,12 +76,19 @@ class _MapScreenState extends State<MapScreen> {
   };
   Map<String, bool> _courseVisible = {};
 
+  // Beacon settings (updated live from ?json poll)
+  List<int>    _beaconIntervalsSec = [60, 30, 15, 120];  // Walk, Cycle, Drive, Stationary
+  List<double> _beaconDistancesMi  = [0.2, 0.2, 0.2, 1.0];
+  int _sharingActivityMode = -1; // mode index active during current share session; -1 if not sharing
+  bool _shareBadgeOn = true;
+
   // Selection / blink
   String? _selectedId;
   int _selectionClickCount = 0;
   Set<String> _blinkingIds = {};
   bool _blinkOn = true;
   Timer? _blinkTimer;
+  int _blinkDurationSec = 5;
 
   // Saved map position (restored when reset button tapped)
   LatLng? _savedCenter;
@@ -87,17 +100,70 @@ class _MapScreenState extends State<MapScreen> {
   double _scaleZoom = 0;
 
   // Breadcrumb trail for selected tracker
-  List<LatLng> _trailPoints = [];
+  List<Map<String, dynamic>> _trailEntries = [];
   Color _trailColor = Colors.grey;
 
   // Background location / sharing
   final _bgLocation = BackgroundLocationService();
   bool _isSharing = false;
+  final _audioPlayer = AudioPlayer();
+  final _notifPlugin = FlutterLocalNotificationsPlugin();
+  final _msgLog = <({String label, String text, bool isMe, DateTime time})>[];
+  final _pendingMessages = <InboundMessage>[];
+  AppLifecycleState _appLifecycleState = AppLifecycleState.resumed;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appLifecycleState = state;
+    if (state == AppLifecycleState.resumed && _pendingMessages.isNotEmpty) {
+      final queued = List<InboundMessage>.of(_pendingMessages);
+      _pendingMessages.clear();
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        for (final msg in queued) {
+          if (!mounted) return;
+          await _showInboundDialog(msg);
+        }
+      });
+    }
+  }
+
+  Future<void> _initNotifications() async {
+    await _notifPlugin.initialize(
+      settings: const InitializationSettings(
+        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        iOS: DarwinInitializationSettings(
+          requestAlertPermission: true,
+          requestSoundPermission: true,
+          requestBadgePermission: true,
+        ),
+      ),
+    );
+    if (Platform.isAndroid) {
+      final android = _notifPlugin
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+      await android?.createNotificationChannel(const AndroidNotificationChannel(
+        'aprs_msg',
+        'APRS Messages',
+        importance: Importance.max,
+      ));
+      await android?.requestFullScreenIntentPermission();
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        await Future.delayed(const Duration(milliseconds: 500));
+        if (!await FlutterForegroundTask.canDrawOverlays) {
+          await FlutterForegroundTask.openSystemAlertWindowSettings();
+        }
+      });
+    }
+  }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _initNotifications();
     _config = widget.config;
+    _beaconIntervalsSec = List.of(_config.beaconIntervalsSec);
+    _beaconDistancesMi  = List.of(_config.beaconDistancesMi);
     _initCourseVisibility();
     _requestPermission();
     _poller = OnlinePoller(
@@ -122,10 +188,40 @@ class _MapScreenState extends State<MapScreen> {
             if (updated.contains(_selectedId)) refetchCallsign = sel.callsign;
           }
         }
+        final newIntervals  = data.beaconIntervalsSec;
+        final newDistances  = data.beaconDistancesMi;
         setState(() {
           _trackers = data.trackers;
           if (newTrailColor != null) _trailColor = newTrailColor;
+          _blinkDurationSec = data.blinkDuration;
+          if (newIntervals != null) _beaconIntervalsSec = newIntervals;
+          if (newDistances != null) _beaconDistancesMi  = newDistances;
         });
+        // If a resumed session doesn't know its mode yet, infer it from the
+        // server tracker's sharing_mode field (e.g. 'stationary').
+        if (_isSharing && _sharingActivityMode < 0) {
+          final myCs = _bgLocation.callsign;
+          if (myCs != null) {
+            const modeMap = {'walk_run': 0, 'cycle': 1, 'drive': 2, 'stationary': 3, 'drive_cycle': 2};
+            final found = data.trackers.where((t) => t.callsign == myCs).toList();
+            if (found.isNotEmpty) {
+              final inferred = modeMap[found.first.sharingMode] ?? -1;
+              if (inferred >= 0) {
+                _sharingActivityMode = inferred;
+                _bgLocation.saveActivityMode(inferred);
+                _bgLocation.updateInterval(Duration(seconds: _beaconIntervalsSec[inferred]));
+                _bgLocation.updateDistanceThreshold(_beaconDistancesMi[inferred]);
+              }
+            }
+          }
+        }
+        // Push updated settings to a running share session.
+        if (_isSharing && _sharingActivityMode >= 0) {
+          if (newIntervals != null)
+            _bgLocation.updateInterval(Duration(seconds: newIntervals[_sharingActivityMode]));
+          if (newDistances != null)
+            _bgLocation.updateDistanceThreshold(newDistances[_sharingActivityMode]);
+        }
         if (updated.isNotEmpty) _triggerBlink({..._blinkingIds, ...updated});
         if (refetchCallsign != null) _fetchTrail(refetchCallsign);
       },
@@ -140,9 +236,17 @@ class _MapScreenState extends State<MapScreen> {
     _poller.start();
     _loadSavedMap();
     _showHelpIfFirstLaunch();
+    _bgLocation.onBeaconSent = () {
+      if (!mounted) return;
+      setState(() => _shareBadgeOn = false);
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) setState(() => _shareBadgeOn = true);
+      });
+    };
+
     _bgLocation.onSessionEnded = () {
       if (!mounted) return;
-      setState(() => _isSharing = false);
+      setState(() { _isSharing = false; _sharingActivityMode = -1; });
       showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -152,6 +256,340 @@ class _MapScreenState extends State<MapScreen> {
         ),
       );
     };
+
+    _bgLocation.onHistoryLoaded = (msgs) {
+      if (!mounted) return;
+      setState(() {
+        for (final m in msgs) {
+          _msgLog.add((
+            label: m.fromLabel.isNotEmpty ? m.fromLabel : 'Unknown',
+            text: m.text,
+            isMe: false,
+            time: DateTime.fromMillisecondsSinceEpoch(m.ts * 1000),
+          ));
+        }
+        if (_msgLog.length > 50) _msgLog.removeRange(0, _msgLog.length - 50);
+      });
+    };
+    _bgLocation.onMessageReceived = (msg) {
+      if (!mounted) return;
+      _handleInboundMessage(msg);
+    };
+  }
+
+  void _showSendMessageDialog({String? prefill}) {
+    final controller = TextEditingController(text: prefill ?? '');
+    final scrollController = ScrollController();
+    bool didScroll = false;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+      ),
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setDlgState) {
+        final recent = _msgLog.length > 10 ? _msgLog.sublist(_msgLog.length - 10) : List.of(_msgLog);
+        if (!didScroll && recent.isNotEmpty) {
+          didScroll = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (scrollController.hasClients) {
+              scrollController.jumpTo(scrollController.position.maxScrollExtent);
+            }
+          });
+        }
+        return Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 4, 0),
+              child: Row(children: [
+                const Expanded(child: Text('Send Message',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 20),
+                  onPressed: () => Navigator.pop(ctx),
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                ),
+              ]),
+            ),
+            if (recent.isNotEmpty) ...[
+              Container(
+                constraints: const BoxConstraints(maxHeight: 200),
+                margin: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF5F5F5),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: const Color(0xFFE0E0E0)),
+                ),
+                child: ListView(
+                  controller: scrollController,
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.all(8),
+                  children: recent.map((m) {
+                    final t = '${m.time.hour.toString().padLeft(2,'0')}:${m.time.minute.toString().padLeft(2,'0')}';
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: RichText(text: TextSpan(style: const TextStyle(fontSize: 12, color: Colors.black87), children: [
+                        TextSpan(text: m.label, style: TextStyle(fontWeight: FontWeight.bold, color: m.isMe ? const Color(0xFF1A5276) : Colors.black87)),
+                        TextSpan(text: '  $t\n', style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                        TextSpan(text: m.text),
+                      ])),
+                    );
+                  }).toList(),
+                ),
+              ),
+              const Divider(height: 1, thickness: 1, color: Color(0xFFBDBDBD), indent: 16, endIndent: 16),
+            ],
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+              child: TextField(
+                controller: controller,
+                maxLength: 280,
+                maxLines: 4,
+                decoration: const InputDecoration(hintText: 'Type your message…', border: OutlineInputBorder()),
+                autofocus: true,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(0, 0, 8, 12),
+              child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                TextButton(
+                  onPressed: () async {
+                    final text = controller.text.trim();
+                    if (text.isEmpty) return;
+                    Navigator.pop(ctx);
+                    setState(() {
+                      _msgLog.add((label: 'Me', text: text, isMe: true, time: DateTime.now()));
+                      if (_msgLog.length > 30) _msgLog.removeAt(0);
+                    });
+                    await _bgLocation.session.sendMessage(text);
+                  },
+                  child: const Text('Send'),
+                ),
+              ]),
+            ),
+          ]),
+        );
+      }),
+    );
+  }
+
+  Widget _buildMsgThread() {
+    final recent = _msgLog.length > 10 ? _msgLog.sublist(_msgLog.length - 10) : _msgLog;
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 160),
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5F5F5),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFFE0E0E0)),
+      ),
+      child: ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.all(8),
+        children: recent.map((m) {
+          final t = '${m.time.hour.toString().padLeft(2,'0')}:${m.time.minute.toString().padLeft(2,'0')}';
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: RichText(text: TextSpan(style: const TextStyle(fontSize: 12, color: Colors.black87), children: [
+              TextSpan(text: m.label, style: TextStyle(fontWeight: FontWeight.bold, color: m.isMe ? const Color(0xFF1A5276) : Colors.black87)),
+              TextSpan(text: '  $t\n', style: const TextStyle(fontSize: 10, color: Colors.grey)),
+              TextSpan(text: m.text),
+            ])),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  // Configures and activates the audio session while in the foreground so iOS
+  // allows audio playback to continue after the app is backgrounded.
+  Future<void> _primeAudioSession() async {
+    if (!Platform.isIOS) return;
+    try {
+      final session = await AudioSession.instance;
+      await session.configure(const AudioSessionConfiguration(
+        avAudioSessionCategory: AVAudioSessionCategory.playback,
+        avAudioSessionMode: AVAudioSessionMode.defaultMode,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.duckOthers,
+      ));
+      await session.setActive(true);
+    } catch (_) {}
+  }
+
+  Future<void> _handleInboundMessage(InboundMessage msg) async {
+    setState(() {
+      _msgLog.add((label: msg.fromLabel, text: msg.text, isMe: false, time: DateTime.fromMillisecondsSinceEpoch(msg.ts * 1000)));
+      if (_msgLog.length > 30) _msgLog.removeAt(0);
+    });
+    try {
+      final session = await AudioSession.instance;
+      await session.configure(const AudioSessionConfiguration(
+        androidAudioAttributes: AndroidAudioAttributes(
+          contentType: AndroidAudioContentType.sonification,
+          usage: AndroidAudioUsage.alarm,
+        ),
+        avAudioSessionCategory: AVAudioSessionCategory.playback,
+        avAudioSessionMode: AVAudioSessionMode.defaultMode,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.duckOthers,
+      ));
+      await session.setActive(true);
+      await _audioPlayer.setAudioSource(ConcatenatingAudioSource(children: [
+        AudioSource.asset('assets/sounds/message.wav'),
+        AudioSource.asset('assets/sounds/message.wav'),
+        AudioSource.asset('assets/sounds/message.wav'),
+      ]));
+      unawaited(_audioPlayer.play());
+    } catch (_) {}
+    if (_appLifecycleState != AppLifecycleState.resumed) {
+      _pendingMessages.add(msg);
+      if (Platform.isAndroid) {
+        if (await FlutterForegroundTask.canDrawOverlays) {
+          FlutterForegroundTask.launchApp();
+        }
+        unawaited(_notifPlugin.show(
+          id: msg.id & 0x7FFFFFFF,
+          title: '📨 ${msg.fromLabel}',
+          body: msg.text,
+          notificationDetails: NotificationDetails(
+            android: AndroidNotificationDetails(
+              'aprs_msg',
+              'APRS Messages',
+              importance: Importance.max,
+              priority: Priority.max,
+              fullScreenIntent: true,
+              playSound: false,
+              enableVibration: true,
+              vibrationPattern: Int64List.fromList([0, 400, 200, 400, 200, 400]),
+              autoCancel: true,
+            ),
+          ),
+        ));
+      } else if (Platform.isIOS) {
+        unawaited(_notifPlugin.show(
+          id: msg.id & 0x7FFFFFFF,
+          title: '📨 ${msg.fromLabel}',
+          body: msg.text,
+          notificationDetails: const NotificationDetails(
+            iOS: DarwinNotificationDetails(
+              presentAlert: true,
+              presentSound: false,
+              presentBadge: true,
+              interruptionLevel: InterruptionLevel.timeSensitive,
+            ),
+          ),
+        ));
+      }
+      return;
+    }
+    await _showInboundDialog(msg);
+  }
+
+  Future<void> _showInboundDialog(InboundMessage msg) async {
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        bool showReply = false;
+        final replyController = TextEditingController();
+        final scrollController = ScrollController();
+        bool didScroll = false;
+        return StatefulBuilder(builder: (ctx, setDlgState) {
+          // Prior messages = everything except the just-arrived one (last in _msgLog)
+          final prior = _msgLog.length > 1
+              ? _msgLog.sublist(0, _msgLog.length - 1)
+              : <({String label, String text, bool isMe, DateTime time})>[];
+          final recentPrior = prior.length > 10 ? prior.sublist(prior.length - 10) : prior;
+          final newTime = DateTime.fromMillisecondsSinceEpoch(msg.ts * 1000);
+          final newT = '${newTime.hour.toString().padLeft(2,'0')}:${newTime.minute.toString().padLeft(2,'0')}';
+          // Scroll to bottom (new message) on first render
+          if (!didScroll) {
+            didScroll = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (scrollController.hasClients) {
+                scrollController.jumpTo(scrollController.position.maxScrollExtent);
+              }
+            });
+          }
+          return AlertDialog(
+            title: Row(children: [
+              const Icon(Icons.message, size: 20),
+              const SizedBox(width: 8),
+              Text(msg.fromLabel),
+            ]),
+            content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Container(
+                constraints: const BoxConstraints(maxHeight: 300),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF5F5F5),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: const Color(0xFFE0E0E0)),
+                ),
+                child: ListView(
+                  controller: scrollController,
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.all(8),
+                  children: [
+                    ...recentPrior.map((m) {
+                      final t = '${m.time.hour.toString().padLeft(2,'0')}:${m.time.minute.toString().padLeft(2,'0')}';
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: RichText(text: TextSpan(style: const TextStyle(fontSize: 12, color: Colors.black87), children: [
+                          TextSpan(text: m.label, style: TextStyle(fontWeight: FontWeight.bold, color: m.isMe ? const Color(0xFF1A5276) : Colors.black87)),
+                          TextSpan(text: '  $t\n', style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                          TextSpan(text: m.text),
+                        ])),
+                      );
+                    }),
+                    if (recentPrior.isNotEmpty)
+                      const Divider(height: 16, thickness: 1, color: Color(0xFFBDBDBD)),
+                    RichText(text: TextSpan(style: const TextStyle(fontSize: 13, color: Colors.black87), children: [
+                      TextSpan(text: msg.fromLabel, style: const TextStyle(fontWeight: FontWeight.bold)),
+                      TextSpan(text: '  $newT\n', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                      TextSpan(text: msg.text, style: const TextStyle(fontSize: 15)),
+                    ])),
+                  ],
+                ),
+              ),
+              if (showReply) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: replyController,
+                  maxLength: 280,
+                  maxLines: 4,
+                  decoration: const InputDecoration(hintText: 'Type your reply…', border: OutlineInputBorder()),
+                  autofocus: true,
+                ),
+              ],
+            ]),
+            actions: [
+              if (!showReply) TextButton(
+                onPressed: () => setDlgState(() => showReply = true),
+                child: const Text('Reply'),
+              ),
+              if (showReply) TextButton(
+                onPressed: () async {
+                  final text = replyController.text.trim();
+                  if (text.isEmpty) return;
+                  Navigator.pop(ctx);
+                  setState(() {
+                    _msgLog.add((label: 'Me', text: text, isMe: true, time: DateTime.now()));
+                    if (_msgLog.length > 30) _msgLog.removeAt(0);
+                  });
+                  await _bgLocation.session.sendMessage(text);
+                },
+                child: const Text('Send'),
+              ),
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+            ],
+          );
+        });
+      },
+    );
   }
 
   void _initCourseVisibility() {
@@ -162,10 +600,12 @@ class _MapScreenState extends State<MapScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _poller.stop();
     _positionSub?.cancel();
     _blinkTimer?.cancel();
     _bgLocation.dispose();
+    _audioPlayer.dispose();
     _mapController.dispose();
     super.dispose();
   }
@@ -246,7 +686,8 @@ class _MapScreenState extends State<MapScreen> {
     final resumed = await _bgLocation.resumeSharing();
     if (!mounted) return;
     if (resumed) {
-      setState(() => _isSharing = true);
+      setState(() { _isSharing = true; _sharingActivityMode = _bgLocation.activityMode; });
+      unawaited(_primeAudioSession());
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Location sharing resumed'),
         duration: Duration(seconds: 3),
@@ -295,7 +736,7 @@ class _MapScreenState extends State<MapScreen> {
     final pinFocus = FocusNode();
     String? errorText;
     bool loading = false;
-    bool ridingMode = false; // false = Walk/Run (60 s), true = Drive/Cycle (15 s)
+    int activityMode = 0; // 0=Walk/Run, 1=Cycle, 2=Drive, 3=Stationary
 
     await showDialog<void>(
       context: context,
@@ -312,15 +753,21 @@ class _MapScreenState extends State<MapScreen> {
             if (pin.isEmpty) return;
             setDialogState(() { loading = true; errorText = null; });
             await _ensureBackgroundPermissions();
+            final intervals = _beaconIntervalsSec.map((s) => Duration(seconds: s)).toList();
+            const modeKeys = ['walk_run', 'cycle', 'drive', 'stationary'];
             final joinResult = await _bgLocation.startSharing(
               name: name,
               pin: pin,
-              interval: Duration(seconds: ridingMode ? 15 : 60),
+              interval: intervals[activityMode],
+              distanceThresholdMiles: _beaconDistancesMi[activityMode],
+              sharingMode: modeKeys[activityMode],
+              activityModeIndex: activityMode,
             );
             if (!ctx.mounted) return;
             if (joinResult == JoinResult.success) {
               Navigator.pop(ctx);
-              if (mounted) setState(() => _isSharing = true);
+              if (mounted) setState(() { _isSharing = true; _sharingActivityMode = activityMode; });
+              unawaited(_primeAudioSession());
               await _showSharingStartedDialog(_bgLocation.callsign ?? '');
             } else if (joinResult == JoinResult.wrongPin) {
               setDialogState(() {
@@ -367,31 +814,26 @@ class _MapScreenState extends State<MapScreen> {
                 const SizedBox(height: 6),
                 Wrap(
                   spacing: 6,
+                  runSpacing: 6,
                   children: [
-                    ChoiceChip(
-                      label: Text('Walk / Run',
-                          style: TextStyle(
-                            color: !ridingMode ? Colors.white : Colors.black54,
-                            fontWeight: !ridingMode ? FontWeight.w600 : FontWeight.normal,
-                          )),
-                      selected: !ridingMode,
-                      selectedColor: Colors.blueGrey.shade700,
-                      backgroundColor: Colors.grey.shade200,
-                      showCheckmark: false,
-                      onSelected: (_) => setDialogState(() => ridingMode = false),
-                    ),
-                    ChoiceChip(
-                      label: Text('Drive / Cycle',
-                          style: TextStyle(
-                            color: ridingMode ? Colors.white : Colors.black54,
-                            fontWeight: ridingMode ? FontWeight.w600 : FontWeight.normal,
-                          )),
-                      selected: ridingMode,
-                      selectedColor: Colors.blueGrey.shade700,
-                      backgroundColor: Colors.grey.shade200,
-                      showCheckmark: false,
-                      onSelected: (_) => setDialogState(() => ridingMode = true),
-                    ),
+                    for (final entry in const [
+                      (0, 'Walk / Run'),
+                      (1, 'Cycle'),
+                      (2, 'Drive'),
+                      (3, 'Stationary'),
+                    ])
+                      ChoiceChip(
+                        label: Text(entry.$2,
+                            style: TextStyle(
+                              color: activityMode == entry.$1 ? Colors.white : Colors.black54,
+                              fontWeight: activityMode == entry.$1 ? FontWeight.w600 : FontWeight.normal,
+                            )),
+                        selected: activityMode == entry.$1,
+                        selectedColor: Colors.blueGrey.shade700,
+                        backgroundColor: Colors.grey.shade200,
+                        showCheckmark: false,
+                        onSelected: (_) => setDialogState(() => activityMode = entry.$1),
+                      ),
                   ],
                 ),
                 if (errorText != null) ...[
@@ -527,12 +969,14 @@ class _MapScreenState extends State<MapScreen> {
 
   void _triggerBlink(Set<String> ids) {
     _blinkTimer?.cancel();
+    if (_blinkDurationSec <= 0) return;
     setState(() { _blinkingIds = ids; _blinkOn = true; });
     int count = 0;
+    final ticks = (_blinkDurationSec * 2).clamp(1, 200); // 500ms ticks
     _blinkTimer = Timer.periodic(const Duration(milliseconds: 500), (t) {
       if (!mounted) { t.cancel(); return; }
       count++;
-      if (count >= 10) {
+      if (count >= ticks) {
         t.cancel();
         setState(() { _blinkOn = true; _blinkingIds = {}; });
         return;
@@ -562,7 +1006,7 @@ class _MapScreenState extends State<MapScreen> {
     }
     setState(() {
       _selectedId = t.id;
-      _trailPoints = [];
+      _trailEntries = [];
       _trailColor = _trackerColor(t.color);
     });
     _selectionClickCount = 1;
@@ -574,13 +1018,16 @@ class _MapScreenState extends State<MapScreen> {
     _fetchTrail(t.callsign);
   }
 
-  void _selectFixed(FixedMarker m) {
+  void _selectFixed(FixedMarker m, {bool zoom = false}) {
     setState(() {
       _selectedId = m.name;
-      _trailPoints = [];
+      _trailEntries = [];
     });
     _selectionClickCount = 1;
-    _mapController.move(LatLng(m.lat, m.lon), _mapController.camera.zoom);
+    final newZoom = zoom
+        ? _mapController.camera.zoom.clamp(14.0, MapConfig.maxZoom)
+        : _mapController.camera.zoom;
+    _mapController.move(LatLng(m.lat, m.lon), newZoom);
     _triggerBlink({m.name});
   }
 
@@ -592,17 +1039,23 @@ class _MapScreenState extends State<MapScreen> {
       _mapController.move(LatLng(m.lat, m.lon), 15.0);
     } else if (_selectedId == m.name && _selectionClickCount >= 2) {
       _selectionClickCount = 0;
-      setState(() { _selectedId = null; _trailPoints = []; });
+      setState(() { _selectedId = null; _trailEntries = []; });
       _handleReset();
     } else {
       _selectFixed(m);
     }
   }
 
+  void _openGoogleMaps(double lat, double lon) {
+    if (!_isOnline) return;
+    launchUrl(
+      Uri.parse('https://www.google.com/maps?q=${lat.toStringAsFixed(6)},${lon.toStringAsFixed(6)}'),
+      mode: LaunchMode.externalApplication,
+    );
+  }
+
   void _onFixedLongPress(FixedMarker m) {
-    _selectFixed(m);
-    _selectionClickCount = 2;
-    _mapController.move(LatLng(m.lat, m.lon), 15.0);
+    _openGoogleMaps(m.lat, m.lon);
   }
 
   Color _trackerColor(String color) {
@@ -639,12 +1092,52 @@ class _MapScreenState extends State<MapScreen> {
         }
       }
       // Reverse from newest-first to oldest-first
-      final points = deduped.reversed.map((e) => LatLng(
-            (e['lat'] as num).toDouble(),
-            (e['lon'] as num).toDouble(),
-          )).toList();
-      if (mounted) setState(() => _trailPoints = points);
+      final entries = deduped.reversed.toList();
+      if (mounted) setState(() => _trailEntries = entries);
     } catch (_) {}
+  }
+
+  List<LatLng> get _trailPoints =>
+      _trailEntries.map((e) => LatLng((e['lat'] as num).toDouble(), (e['lon'] as num).toDouble())).toList();
+
+  String _relativeTime(int ts) {
+    final s = (DateTime.now().millisecondsSinceEpoch ~/ 1000) - ts;
+    if (s < 10) return 'just now';
+    if (s < 60) return '${s}s ago';
+    final m = s ~/ 60, r = s % 60;
+    if (m < 60) return '${m}m ${r}s ago';
+    final h = m ~/ 60;
+    return '${h}h ${m % 60}m ago';
+  }
+
+  void _showTrailEntryInfo(Map<String, dynamic> entry) {
+    final ts = entry['ts'] as int? ?? 0;
+    final path = (entry['path'] as String? ?? '').trim();
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        margin: const EdgeInsets.all(12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: Theme.of(ctx).colorScheme.surface,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 8)],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(_relativeTime(ts),
+                style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+            if (path.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(path, style: const TextStyle(fontSize: 13, fontFamily: 'monospace')),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _reloadConfig() async {
@@ -797,14 +1290,19 @@ class _MapScreenState extends State<MapScreen> {
         trackers: _trackers,
         isSharing: _isSharing,
         sharingCallsign: _isSharing ? _bgLocation.callsign : null,
+        sharingName: _isSharing ? _bgLocation.trackerName : null,
+        sharingActivityMode: _isSharing ? _sharingActivityMode : -1,
         isOnline: _isOnline,
         selectedId: _selectedId,
+        blinkingIds: _blinkingIds,
+        blinkOn: _blinkOn,
         selectedBgUrl: _tileUrl,
         sectionVisible: _sectionVisible,
         courseVisible: _courseVisible,
         onTrackerTap: (t) => _selectTracker(t),
         onTrackerLongPress: (t) => _selectTracker(t, zoom: true),
         onFixedTap: (m) => _selectFixed(m),
+        onFixedLongPress: (m) => _selectFixed(m, zoom: true),
         onBackgroundChange: _changeBackground,
         onSectionVisibility: _setSectionVisible,
         onCourseVisibility: _setCourseVisible,
@@ -813,6 +1311,7 @@ class _MapScreenState extends State<MapScreen> {
         onResetMap: _handleReset,
         onSaveMap: _handleSaveMap,
         onRefreshTiles: _refreshTiles,
+        onSendMessage: _isSharing ? _showSendMessageDialog : null,
       ),
       body: _buildBody(),
     );
@@ -870,14 +1369,25 @@ class _MapScreenState extends State<MapScreen> {
                       pattern: StrokePattern.dashed(segments: [4, 7]),
                     ),
                   ]),
-                if (_trailPoints.isNotEmpty)
-                  CircleLayer(circles: _trailPoints.map((pt) => CircleMarker(
-                    point: pt,
-                    radius: 5,
-                    color: _trailColor.withOpacity(0.5),
-                    borderStrokeWidth: 1.5,
-                    borderColor: _trailColor,
-                  )).toList()),
+                if (_trailEntries.isNotEmpty)
+                  MarkerLayer(markers: _trailEntries.map((e) {
+                    final pt = LatLng((e['lat'] as num).toDouble(), (e['lon'] as num).toDouble());
+                    return Marker(
+                      point: pt,
+                      width: 28,
+                      height: 28,
+                      child: GestureDetector(
+                        onTap: () => _showTrailEntryInfo(e),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _trailColor.withOpacity(0.5),
+                            border: Border.all(color: _trailColor, width: 1.5),
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList()),
                 if (_trailPoints.length > 1)
                   MarkerLayer(markers: [
                     for (var i = 0; i < _trailPoints.length - 1; i++)
@@ -923,6 +1433,7 @@ class _MapScreenState extends State<MapScreen> {
                     selectedId: _selectedId,
                     blinkingIds: _blinkingIds,
                     blinkOn: _blinkOn,
+                    onLongPress: (t) { if (t.lat != null && t.lon != null) _openGoogleMaps(t.lat!, t.lon!); },
                   ),
                 if (_locationState == _LocationState.granted)
                   CurrentLocationLayer(
@@ -987,14 +1498,18 @@ class _MapScreenState extends State<MapScreen> {
               child: SafeArea(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(0, 36, 12, 0),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: Colors.red[700],
-                      borderRadius: BorderRadius.circular(10),
+                  child: AnimatedOpacity(
+                    opacity: _shareBadgeOn ? 1.0 : 0.15,
+                    duration: const Duration(milliseconds: 150),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.red[700],
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Text('Sharing',
+                          style: TextStyle(color: Colors.white, fontSize: 11)),
                     ),
-                    child: const Text('Sharing',
-                        style: TextStyle(color: Colors.white, fontSize: 11)),
                   ),
                 ),
               ),

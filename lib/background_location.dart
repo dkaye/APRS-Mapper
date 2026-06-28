@@ -4,16 +4,14 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'aprs_client.dart';
 import 'background_task_handler.dart';
 import 'map_config.dart';
 import 'mobile_session.dart';
 
-export 'mobile_session.dart' show JoinResult;
+export 'mobile_session.dart' show JoinResult, InboundMessage;
 
 class BackgroundLocationService {
-  // 0.1 miles in metres — triggers an immediate beacon when exceeded.
-  static const _kDistanceTriggerM = 160.934;
+  static const _kMiToM = 1609.344;
 
   // SharedPreferences keys for session persistence across app restarts.
   static const _kPrefActive = 'sharing_active';
@@ -22,25 +20,42 @@ class BackgroundLocationService {
   static const _kPrefToken = 'sharing_token';
   static const _kPrefTrackerId = 'sharing_tracker_id';
   static const _kPrefIntervalMs = 'sharing_interval_ms';
+  static const _kPrefDistThreshold = 'sharing_dist_threshold_mi';
   static const _kPrefName = 'sharing_name';
   static const _kPrefPin = 'sharing_pin';
+  static const _kPrefActivityMode = 'sharing_activity_mode';
 
   final MobileSession _session = MobileSession();
 
   StreamSubscription<Position>? _positionSub;
   Timer? _heartbeatTimer;
+  Timer? _msgPollTimer;
   LatLng? _lastPosition;
   LatLng? _lastUploadPosition;
   DateTime? _lastUploadTime;
   bool _sharingActive = false;
 
   Duration _uploadInterval = MapConfig.uploadInterval;
+  double _distanceThresholdM = 321.869; // 0.2 miles default
+
+  int _activityMode = -1;
+  int get activityMode => _activityMode;
+
+  String? _trackerName;
 
   bool get isSharing => _session.active;
   String? get trackerId => _session.trackerId;
   String? get callsign => _session.callsign;
+  String? get trackerName => _trackerName;
+  MobileSession get session => _session;
 
   void Function()? onSessionEnded;
+  void Function()? onBeaconSent;
+  void Function(InboundMessage)? onMessageReceived;
+  void Function(List<InboundMessage>)? onHistoryLoaded;
+
+  final List<int> _pendingAckIds = [];
+  final Set<int> _deliveredMsgIds = {}; // dedup across poll + update paths
 
   final _positionController = StreamController<Position>.broadcast();
   Stream<Position> get positionStream => _positionController.stream;
@@ -66,21 +81,8 @@ class BackgroundLocationService {
           .listen((pos) {
         _lastPosition = LatLng(pos.latitude, pos.longitude);
         _positionController.add(pos);
-        if (Platform.isIOS) {
+        if (_sharingActive) {
           unawaited(_maybeUploadFromStream());
-        } else if (_sharingActive) {
-          final cur = LatLng(pos.latitude, pos.longitude);
-          FlutterForegroundTask.sendDataToTask({
-            'type': 'position',
-            'lat': pos.latitude,
-            'lon': pos.longitude,
-          });
-          // Distance-triggered immediate beacon: moved >= 0.1 miles since last upload.
-          final lp = _lastUploadPosition;
-          if (lp == null || _metersFrom(lp, cur) >= _kDistanceTriggerM) {
-            _lastUploadPosition = cur;
-            FlutterForegroundTask.sendDataToTask({'type': 'force_upload'});
-          }
         }
       });
       return true;
@@ -97,10 +99,8 @@ class BackgroundLocationService {
     _lastUploadTime = null;
   }
 
-  // iOS only: called on every GPS event. Uploads when moved >= 0.1 miles OR
-  // >= 60 seconds have passed since the last beacon. This is the primary
-  // keepalive mechanism on iOS — Timer.periodic is unreliable when the Dart
-  // isolate is suspended, but GPS events wake the isolate.
+  // Called on every GPS event. Uploads when moved >= distance threshold OR
+  // enough time has elapsed since the last beacon.
   Future<void> _maybeUploadFromStream() async {
     if (!_sharingActive) return;
     final pos = _lastPosition;
@@ -108,9 +108,9 @@ class BackgroundLocationService {
 
     final lp = _lastUploadPosition;
     final lu = _lastUploadTime;
-    final movedEnough = lp == null || _metersFrom(lp, pos) >= _kDistanceTriggerM;
+    final movedEnough = lp == null || _metersFrom(lp, pos) >= _distanceThresholdM;
     final timeElapsed = lu == null ||
-        DateTime.now().difference(lu).inSeconds >= 60;
+        DateTime.now().difference(lu) >= _uploadInterval;
 
     if (!movedEnough && !timeElapsed) return;
     await _uploadNow();
@@ -123,10 +123,16 @@ class BackgroundLocationService {
     required String name,
     required String pin,
     Duration interval = MapConfig.uploadInterval,
+    double distanceThresholdMiles = 0.2,
+    String sharingMode = '',
+    int activityModeIndex = -1,
   }) async {
     _uploadInterval = interval;
-    final result = await _session.join(name: name, pin: pin);
+    _distanceThresholdM = distanceThresholdMiles * _kMiToM;
+    _activityMode = activityModeIndex;
+    final result = await _session.join(name: name, pin: pin, sharingMode: sharingMode);
     if (result == JoinResult.success) {
+      _trackerName = name;
       unawaited(_saveSession(name, pin));
       await _activateSharing();
     }
@@ -146,8 +152,10 @@ class BackgroundLocationService {
     final token     = prefs.getString(_kPrefToken) ?? '';
     final trackerId = prefs.getString(_kPrefTrackerId);
     final intervalMs = prefs.getInt(_kPrefIntervalMs) ?? MapConfig.uploadInterval.inMilliseconds;
+    final distMi = prefs.getDouble(_kPrefDistThreshold) ?? 0.2;
     final name = prefs.getString(_kPrefName) ?? '';
     final pin  = prefs.getString(_kPrefPin) ?? '';
+    _activityMode = prefs.getInt(_kPrefActivityMode) ?? -1;
 
     if (callsign.isEmpty || passcode == 0) {
       unawaited(_clearSession());
@@ -155,6 +163,8 @@ class BackgroundLocationService {
     }
 
     _uploadInterval = Duration(milliseconds: intervalMs);
+    _distanceThresholdM = distMi * _kMiToM;
+    _trackerName = name.isNotEmpty ? name : null;
 
     // Try the saved token first — cheapest path, no re-auth needed.
     if (token.isNotEmpty) {
@@ -162,7 +172,7 @@ class BackgroundLocationService {
         token: token, callsign: callsign, passcode: passcode, trackerId: trackerId,
       );
       final ok = await _session.update();
-      if (ok) {
+      if (ok != null) {
         await _activateSharing();
         return true;
       }
@@ -189,15 +199,44 @@ class BackgroundLocationService {
     _sharingActive = true;
     if (Platform.isAndroid) {
       await _startAndroidForegroundTask();
-    } else {
-      unawaited(_uploadImmediately());
-      // Guaranteed 60-second keepalive: sends an APRS beacon unconditionally
-      // so the tracker never goes stale when the device is stationary.
-      _heartbeatTimer = Timer.periodic(
-        const Duration(seconds: 60),
-        (_) async { if (_sharingActive) await _uploadNow(); },
-      );
     }
+    unawaited(_uploadImmediately());
+    unawaited(_loadHistory());
+    _heartbeatTimer = Timer.periodic(
+      _uploadInterval,
+      (_) async { if (_sharingActive) await _uploadNow(); },
+    );
+    _msgPollTimer = Timer.periodic(
+      const Duration(seconds: 10),
+      (_) async { if (_sharingActive) await _pollMessages(); },
+    );
+  }
+
+  Future<void> _loadHistory() async {
+    final msgs = await _session.fetchHistory();
+    if (msgs.isNotEmpty) onHistoryLoaded?.call(msgs);
+  }
+
+  /// Updates the beacon interval on a running session (no-op if unchanged).
+  void updateInterval(Duration newInterval) {
+    if (newInterval == _uploadInterval) return;
+    _uploadInterval = newInterval;
+    if (!_sharingActive) return;
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(
+      _uploadInterval,
+      (_) async { if (_sharingActive) await _uploadNow(); },
+    );
+  }
+
+  void updateDistanceThreshold(double miles) {
+    _distanceThresholdM = miles * _kMiToM;
+  }
+
+  Future<void> saveActivityMode(int mode) async {
+    _activityMode = mode;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kPrefActivityMode, mode);
   }
 
   Future<void> _saveSession(String name, String pin) async {
@@ -208,8 +247,10 @@ class BackgroundLocationService {
     await prefs.setString(_kPrefToken, _session.token ?? '');
     await prefs.setString(_kPrefTrackerId, _session.trackerId ?? '');
     await prefs.setInt(_kPrefIntervalMs, _uploadInterval.inMilliseconds);
+    await prefs.setDouble(_kPrefDistThreshold, _distanceThresholdM / _kMiToM);
     await prefs.setString(_kPrefName, name);
     await prefs.setString(_kPrefPin, pin);
+    await prefs.setInt(_kPrefActivityMode, _activityMode);
   }
 
   Future<void> _clearSession() async {
@@ -217,10 +258,29 @@ class BackgroundLocationService {
     await prefs.setBool(_kPrefActive, false);
   }
 
+  Future<void> _pollMessages() async {
+    final ackIds = List<int>.from(_pendingAckIds);
+    _pendingAckIds.clear();
+    final msgs = await _session.pollMessages(ackIds: ackIds);
+    if (msgs == null && _sharingActive) {
+      // Session ended — let the next _uploadNow() handle the cleanup
+      _pendingAckIds.addAll(ackIds); // restore so update() can also try
+      return;
+    }
+    if (msgs != null) {
+      for (final m in msgs) {
+        _pendingAckIds.add(m.id);
+        if (_deliveredMsgIds.add(m.id)) onMessageReceived?.call(m);
+      }
+    }
+  }
+
   Future<void> stopSharing() async {
     _sharingActive = false;
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
+    _msgPollTimer?.cancel();
+    _msgPollTimer = null;
     if (Platform.isAndroid) {
       await FlutterForegroundTask.stopService();
     }
@@ -259,42 +319,6 @@ class BackgroundLocationService {
       notificationText: 'Sharing your location',
       callback: backgroundTaskEntryPoint,
     );
-
-    // Pass session credentials and upload interval to background isolate.
-    FlutterForegroundTask.sendDataToTask({
-      'type': 'session',
-      'callsign': _session.callsign ?? '',
-      'passcode': _session.passcode,
-      'intervalMs': _uploadInterval.inMilliseconds,
-    });
-
-    // Pass current position if already known.
-    final pos = _lastPosition;
-    if (pos != null) {
-      FlutterForegroundTask.sendDataToTask({
-        'type': 'position',
-        'lat': pos.latitude,
-        'lon': pos.longitude,
-      });
-    }
-
-    // Send one immediate beacon from main isolate too (fast first report).
-    unawaited(_uploadImmediately());
-
-    // Periodic heartbeat so the server knows the session is alive.
-    // flutter_foreground_task keeps the main Dart isolate running on Android.
-    _heartbeatTimer = Timer.periodic(_uploadInterval, (_) async {
-      final ok = await _session.update();
-      if (!ok && _sharingActive) {
-        _sharingActive = false;
-        _heartbeatTimer?.cancel();
-        _heartbeatTimer = null;
-        await FlutterForegroundTask.stopService();
-        await _session.leave();
-        stopTracking();
-        onSessionEnded?.call();
-      }
-    });
   }
 
   // ── Shared upload helpers ─────────────────────────────────────────────────
@@ -329,33 +353,28 @@ class BackgroundLocationService {
     final cs = _session.callsign;
     final pc = _session.passcode;
 
-    if (pos != null && cs != null && pc != null) {
-      if (Platform.isAndroid) {
-        // Android: direct TCP to APRS-IS works fine in foreground service.
-        await AprsClient.sendPosition(
-          callsign: cs,
-          passcode: pc,
-          lat: pos.latitude,
-          lon: pos.longitude,
-        );
-      }
-      // iOS: raw TCP sockets are blocked in background; lat/lon is passed
-      // in the session update below so the server injects to APRS-IS.
-    }
-
     // Session heartbeat — also detects removal (404).
-    // On iOS, include position so the server can inject to APRS-IS.
-    final ok = await _session.update(
-      lat: Platform.isIOS ? pos?.latitude : null,
-      lon: Platform.isIOS ? pos?.longitude : null,
+    // Position is passed to the server on all platforms; server injects to APRS-IS.
+    final ackIds = List<int>.from(_pendingAckIds);
+    _pendingAckIds.clear();
+    final msgs = await _session.update(
+      lat: pos?.latitude,
+      lon: pos?.longitude,
+      ackIds: ackIds,
     );
-    if (!ok && _sharingActive) {
+    if (msgs == null && _sharingActive) {
       _sharingActive = false;
       _heartbeatTimer?.cancel();
       _heartbeatTimer = null;
       if (Platform.isAndroid) await FlutterForegroundTask.stopService();
       await _session.leave();
       onSessionEnded?.call();
+    } else if (msgs != null) {
+      onBeaconSent?.call();
+      for (final m in msgs) {
+        _pendingAckIds.add(m.id);
+        if (_deliveredMsgIds.add(m.id)) onMessageReceived?.call(m);
+      }
     }
   }
 

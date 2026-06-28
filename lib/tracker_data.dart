@@ -10,6 +10,7 @@ class TrackerData {
   final String time;
   final int lastUpdate;
   final bool mobile;
+  final String sharingMode; // 'walk_run' | 'cycle' | 'drive' | 'stationary' | ''
 
   const TrackerData({
     required this.id,
@@ -21,6 +22,7 @@ class TrackerData {
     required this.time,
     required this.lastUpdate,
     required this.mobile,
+    this.sharingMode = '',
   });
 
   bool get hasPosition => lat != null && lon != null;
@@ -36,19 +38,44 @@ class TrackerData {
         time: j['time'] as String? ?? '',
         lastUpdate: (j['lastUpdate'] as num?)?.toInt() ?? 0,
         mobile: j['mobile'] as bool? ?? false,
+        sharingMode: j['sharing_mode'] as String? ?? '',
       );
 }
 
 class APRSData {
   final List<TrackerData> trackers;
+  final int blinkDuration; // seconds
+  final List<int>?    beaconIntervalsSec; // [walk, drive, stat]; null = unchanged
+  final List<double>? beaconDistancesMi;
 
-  const APRSData({required this.trackers});
+  const APRSData({
+    required this.trackers,
+    this.blinkDuration = 5,
+    this.beaconIntervalsSec,
+    this.beaconDistancesMi,
+  });
 
-  factory APRSData.fromJson(Map<String, dynamic> j) => APRSData(
-        trackers: (j['trackers'] as List? ?? [])
-            .map((t) => TrackerData.fromJson(t as Map<String, dynamic>))
-            .toList(),
-      );
+  factory APRSData.fromJson(Map<String, dynamic> j) {
+    final bc = j['mobile_beacons'];
+    return APRSData(
+      trackers: (j['trackers'] as List? ?? [])
+          .map((t) => TrackerData.fromJson(t as Map<String, dynamic>))
+          .toList(),
+      blinkDuration: (j['blink_duration'] as num?)?.toInt() ?? 5,
+      beaconIntervalsSec: bc is Map ? [
+        (bc['walk_interval']  as num?)?.toInt() ?? 60,
+        (bc['cycle_interval'] as num?)?.toInt() ?? 30,
+        (bc['drive_interval'] as num?)?.toInt() ?? 15,
+        (bc['stat_interval']  as num?)?.toInt() ?? 120,
+      ] : null,
+      beaconDistancesMi: bc is Map ? [
+        (bc['walk_distance']  as num?)?.toDouble() ?? 0.2,
+        (bc['cycle_distance'] as num?)?.toDouble() ?? 0.2,
+        (bc['drive_distance'] as num?)?.toDouble() ?? 0.2,
+        (bc['stat_distance']  as num?)?.toDouble() ?? 1.0,
+      ] : null,
+    );
+  }
 
   static APRSData get empty => const APRSData(trackers: []);
 }
