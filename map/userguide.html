@@ -192,7 +192,7 @@
 
 <div id="content">
 <h1 id="aprs-tracker-map-user-guide">APRS Tracker Map — User Guide</h1>
-<p><strong>Version 1.16.3 · June 24, 2026</strong></p>
+<p><strong>Version 1.17.0 · June 28, 2026</strong></p>
 <hr />
 <p>This document is a guide for users of the MARS APRS system. For technical details on the architecture and software see the <a href="https://marsaprs.org/readme.html?back=/userguide.html">README</a> file.</p>
 <h2 id="contents">Contents</h2>
@@ -222,6 +222,7 @@
 <li><a href="#aid-stations-and-igates">Aid Stations and iGates</a></li>
 <li><a href="#backgrounds">Backgrounds</a></li>
 <li><a href="#share-location-s">Share Location (S)</a></li>
+<li><a href="#messaging-ls">Messaging (L,S)</a></li>
 <li><a href="#origin-marker--distance-and-bearing">Origin Marker — Distance and Bearing</a></li>
 <li><a href="#reset-map">Reset Map</a></li>
 <li><a href="#save-map">Save Map</a></li>
@@ -334,7 +335,7 @@ A user with admin privileges can switch to a different default event, which all 
 <tbody>
 <tr>
 <td><strong>Trackers</strong></td>
-<td>Colored dot, ID, name, and elapsed time. <strong>Tap</strong> to close the drawer and center the map on that tracker; the tracker's breadcrumb trail (up to 10 positions) appears on the map with directional arrows. <strong>Long-press</strong> to close the drawer and zoom in to the tracker's last position.</td>
+<td>Colored dot, ID, name, and elapsed time. <strong>Tap</strong> to close the drawer, center the map, and blink the marker; the breadcrumb trail appears on the map. <strong>Long-press</strong> to do the same and also zoom in.</td>
 </tr>
 <tr>
 <td><strong>Courses</strong></td>
@@ -346,11 +347,11 @@ A user with admin privileges can switch to a different default event, which all 
 </tr>
 <tr>
 <td><strong>Aid Stations</strong></td>
-<td>Tap an entry to close the drawer and zoom to that location.</td>
+<td><strong>Tap</strong> to close the drawer, center the map, and blink the marker. <strong>Long-press</strong> to do the same and also zoom in.</td>
 </tr>
 <tr>
 <td><strong>iGates</strong></td>
-<td>Tap an entry to close the drawer and zoom to that location.</td>
+<td><strong>Tap</strong> to close the drawer, center the map, and blink the marker. <strong>Long-press</strong> to do the same and also zoom in.</td>
 </tr>
 <tr>
 <td><strong>About</strong></td>
@@ -389,16 +390,22 @@ A user with admin privileges can switch to a different default event, which all 
 </tr>
 </tbody>
 </table>
-<h3 id="tracker-detail">Tracker Detail</h3>
-<p>Tapping a tracker <strong>marker on the map</strong> (not in the drawer list) opens a detail panel from the bottom of the screen showing the tracker's full name, callsign, time since last beacon, GPS coordinates, and a <strong>Mobile tracker</strong> badge if the tracker is a mobile participant. Tap anywhere outside the panel to dismiss it.</p>
+<h3 id="tapping-markers-on-the-map">Tapping markers on the map</h3>
+<p><strong>Short tap</strong> on any tracker, igate, or aid station marker opens a detail panel from the bottom of the screen showing the name, callsign, time since last beacon, and GPS coordinates. Tap anywhere outside the panel to dismiss it.</p>
+<p><strong>Long-press</strong> any marker (tracker, igate, or aid station) to open Google Maps in the browser, centered on that location.</p>
 <p>Each tracker's map marker shows the <strong>tracker ID</strong> (such as "H1") as a label next to the dot, so you can identify trackers at a glance without opening the drawer.</p>
 <h3 id="reload-tiles">Reload Tiles</h3>
 <p>The <strong>Reload Tiles</strong> button in the drawer footer downloads and caches map tiles for the area currently visible on screen. Use this before heading into areas with poor cell coverage to ensure the map background stays visible when you go offline. Cached tiles are used automatically when the network is unavailable.</p>
 <h3 id="share-location-in-the-app">Share Location in the App</h3>
 <p>Share Location works the same way as on the web map — enter your name and the event PIN, choose your activity type, and your position is transmitted to the APRS network at the corresponding interval. The key difference is that <strong>the app keeps reporting your position even when the screen is locked or you switch to another app</strong>. You do not need to keep the screen on or stay in the app.</p>
-<p><strong>Auto-resume:</strong> If you close and reopen the app while sharing was active, sharing resumes automatically with the same callsign. A brief notification confirms it.</p>
-<p><strong>Guaranteed 60-second keepalive:</strong> Regardless of which activity mode you choose, the app sends a beacon at least every 60 seconds — even if you have not moved. This ensures your tracker never appears stale on the map while you are stationary.</p>
-<p><strong>Distance-triggered upload:</strong> In addition to the timed interval, the app sends an immediate beacon whenever you move ≥ 0.1 miles (about 530 feet) since your last upload — even if the timer has not yet expired. After a distance-triggered upload the timer resets, so you will not receive a redundant beacon moments later.</p>
+<p><strong>Auto-resume:</strong> If you close and reopen the app while sharing was active, sharing resumes automatically with the same callsign and activity mode. A brief notification confirms it.</p>
+<p><strong>Activity modes:</strong> Choose the mode that matches your situation:
+- <strong>Walk / Run</strong> — transmits every 60 seconds.
+- <strong>Cycle</strong> — transmits every 30 seconds, or immediately when you move ≥ 0.2 miles.
+- <strong>Drive</strong> — transmits every 15 seconds, or immediately when you move ≥ 0.2 miles.
+- <strong>Stationary</strong> — transmits every 2 minutes. Use this when you are at a fixed post and do not need frequent updates.</p>
+<p>Beacon intervals and distance thresholds are configured by the event administrator and may differ from the defaults above.</p>
+<p><strong>Distance-triggered upload:</strong> In addition to the timed interval, the app sends an immediate beacon whenever you move past the configured distance threshold since your last upload. After a distance-triggered upload the timer resets, so you will not receive a redundant beacon moments later.</p>
 <p><strong>First-time setup — Android:</strong> When you tap Share Location for the first time, the app will prompt for two permissions:</p>
 <ol>
 <li><strong>Notifications</strong> — grant this so the foreground service notification can appear. Without it, Android will stop the background location service when the screen locks.</li>
@@ -555,9 +562,11 @@ one and hides the previous tracker's history.</p>
 <h4 id="tapping-a-tracker-s">Tapping a tracker (S)</h4>
 <p>On phones and tablets the tracker list uses touch gestures instead of a click cycle:</p>
 <ul>
-<li><strong>Short tap</strong> — The tracker blinks and its breadcrumb history appears on the map as dots connected by a dashed line with directional arrows, in the same color as the tracker's dot (green/blue/red). The trail color updates in real time as the tracker's staleness changes. The trail updates automatically as the tracker moves. The drawer stays open. Tap any breadcrumb dot to see when that position was received and its APRS path. Tapping the same tracker again repeats the blink; there is no second- or third-tap action.</li>
-<li><strong>Long press (hold ~½ second)</strong> — Same as a short tap, and additionally closes the drawer and zooms the map to the tracker's last known position.</li>
+<li><strong>Short tap</strong> — Closes the drawer, centers the map on the tracker, and blinks its marker. The breadcrumb trail (up to 10 positions) appears as dots with directional arrows. Tap any breadcrumb dot to see when that position was received and its APRS path.</li>
+<li><strong>Long press (hold ~½ second)</strong> — Same as a short tap, and also zooms the map in to the tracker's last known position.</li>
 </ul>
+<p>The same tap / long-press behavior applies to <strong>Aid Stations</strong> and <strong>iGates</strong> in the drawer.</p>
+<p>To open <strong>Google Maps</strong> centered on any tracker, igate, or aid station, <strong>long-press its marker on the map</strong> (not in the drawer).</p>
 <p>Tapping a different tracker switches focus to that tracker.</p>
 <hr />
 <h3 id="courses-ls">Courses (L,S)</h3>
@@ -594,7 +603,7 @@ in beyond its maximum, the map automatically zooms out to the highest level that
 <ol>
 <li>Tap <strong>Share Location</strong> at the bottom of the drawer.</li>
 <li>Enter your name and the event PIN.</li>
-<li>Select your <strong>activity type</strong>: <strong>Walk / Run</strong> (transmits every 60 seconds) or <strong>Ride / Drive</strong> (transmits every 15 seconds).</li>
+<li>Select your <strong>activity type</strong>: <strong>Walk / Run</strong> (every 60 s), <strong>Cycle</strong> (every 30 s), <strong>Drive</strong> (every 15 s), or <strong>Stationary</strong> (every 2 min — use when you are at a fixed post).</li>
 <li>Tap <strong>Share</strong>.</li>
 <li>A confirmation shows your assigned APRS callsign (e.g., <code>K6DRK-01</code>). You will appear in the Trackers list under that callsign and be visible on the map. Your callsign is also shown in the <strong>About</strong> section of the drawer while sharing is active.</li>
 </ol>
@@ -610,12 +619,38 @@ in beyond its maximum, the map automatically zooms out to the highest level that
 <li>Starting a new session with the same callsign automatically clears any old breadcrumb dots from your previous session.</li>
 </ul>
 <p><strong>Web map (browser):</strong>
+- A red <strong>Sharing</strong> badge appears in the upper-right corner of the map while you are sharing, and blinks briefly each time a beacon is sent.
 - The screen stays on while you are sharing (the browser's Wake Lock prevents sleep). The screen dims after 30 seconds of no interaction to save battery; tap anywhere to restore full brightness.
 - If the browser is sent to the background or the screen locks, position updates will stop.</p>
 <p><strong>Native iOS/Android app:</strong>
 - Location sharing continues in the background while the screen is locked. You do not need to keep the app in the foreground.
 - <strong>Android:</strong> When you first tap Share Location, the app may ask for permission to show notifications and to run without battery restrictions. Grant both — they are required for the app to keep running in the background when the screen is off. A notification ("APRS Map — Sharing your location") will appear in the notification bar while sharing is active; this confirms the background service is running. To confirm the notification is visible, wake the screen and swipe down from the top.
 - <strong>iOS:</strong> When you first tap Share Location, iOS may ask to upgrade your location permission from "While Using" to "Always". Tap <strong>Change to Always Allow</strong> — this is required for the app to send your location while the screen is locked.</p>
+<hr />
+<h3 id="messaging-ls">Messaging (L, S)</h3>
+<p>When the event administrator has enabled messaging, net control operators can exchange real-time text messages with active mobile tracker participants.</p>
+<h4 id="for-operators-web-map">For Operators (web map)</h4>
+<p>An <strong>Operator</strong> is any web user who has subscribed to the messaging channel for the current event.</p>
+<p><strong>Subscribing:</strong></p>
+<ol>
+<li>Click the <strong>Messages</strong> (💬) button in the map toolbar. The button only appears when messaging is enabled for the current event.</li>
+<li>Enter your <strong>name</strong> (shown to mobile participants) and the <strong>messaging password</strong> (provided by the event administrator).</li>
+<li>Click <strong>Subscribe</strong>. The button becomes active and you will start receiving messages.</li>
+</ol>
+<p>Your subscription is remembered in the browser. On future visits you will be re-subscribed automatically without re-entering the password.</p>
+<p><strong>Sending a message to a mobile tracker:</strong></p>
+<p>Right-click (or Ctrl+click) a tracker entry in the sidebar. A compose window opens pre-addressed to that participant, showing the recent conversation thread above the text field. Type up to 280 characters and click <strong>Send</strong>.</p>
+<p><strong>Receiving messages:</strong></p>
+<p>When a mobile tracker sends a message, a notification window appears showing the sender's name and message text. The recent conversation thread is shown in smaller text above the new message (which appears slightly larger for easy spotting). Click <strong>Reply</strong> to compose a response, or <strong>Close</strong> to dismiss.</p>
+<p><strong>Operator auto-login (Display Pis without keyboards):</strong></p>
+<p>Operators using a Display Pi such as NetControl can be subscribed automatically at boot — no keyboard needed. The system administrator configures this via <code>~/autologin.txt</code> on the Pi; see your administrator for setup details.</p>
+<hr />
+<h4 id="for-mobile-tracker-participants-native-app">For Mobile Tracker Participants (native app)</h4>
+<p>While sharing your location, messaging is available from the drawer.</p>
+<p><strong>Receiving messages:</strong></p>
+<p>Incoming messages play a sound and show a pop-up dialog with the sender's name and text. Tap <strong>Reply</strong> to respond directly from the notification, or <strong>Close</strong> to dismiss.</p>
+<p><strong>Sending messages:</strong></p>
+<p>Tap the <strong>Message</strong> (💬) button in the drawer footer (visible while sharing). A compose window opens showing the recent conversation thread, scrolled to the most recent message. Type up to 280 characters and tap <strong>Send</strong>.</p>
 <hr />
 <h3 id="origin-marker-distance-and-bearing-ls">Origin Marker — Distance and Bearing (L,S)</h3>
 <p>Use this to measure distance and direction between two locations.</p>
@@ -932,6 +967,10 @@ recognized, as are N/S/E/W direction letters.</p>
 <td><strong>Root callsign</strong></td>
 <td>The base APRS callsign used to assign participant callsigns (e.g., <code>K6DRK</code>). Participants are assigned <code>K6DRK-01</code>, <code>K6DRK-02</code>, etc., in order of joining.</td>
 </tr>
+<tr>
+<td><strong>Messaging password</strong></td>
+<td>When set, enables real-time messaging between web operators and mobile participants. The Messages (💬) button appears in the map toolbar for web users. Operators subscribe with this password and a display name of their choosing. Leave blank to disable messaging entirely.</td>
+</tr>
 </tbody>
 </table>
 <p>Below the settings is the <strong>active participant list</strong>, which refreshes automatically. Each row shows the participant's name, assigned callsign, and the time of their last position update. Three actions are available per row:</p>
@@ -957,6 +996,40 @@ recognized, as are N/S/E/W direction letters.</p>
 </tr>
 </tbody>
 </table>
+<h4 id="beacon-settings">Beacon Settings</h4>
+<p>Sets the upload interval and distance threshold for each activity mode. These values apply to both the native app and the web map.</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Default interval</th>
+<th>Default distance</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Walk / Run</td>
+<td>60 s</td>
+<td>0.2 mi</td>
+</tr>
+<tr>
+<td>Cycle</td>
+<td>30 s</td>
+<td>0.2 mi</td>
+</tr>
+<tr>
+<td>Drive</td>
+<td>15 s</td>
+<td>0.2 mi</td>
+</tr>
+<tr>
+<td>Stationary</td>
+<td>2 min</td>
+<td>1.0 mi</td>
+</tr>
+</tbody>
+</table>
+<p>Use the <strong>Default</strong> button on each row to restore factory defaults. Changes take effect for active sessions within 5 seconds (the server pushes updated settings on the next map poll).</p>
 <p>Mobile Tracking settings are saved to the server when you use <strong>Save</strong> or <strong>Save as Default Event</strong>.</p>
 <hr />
 <h3 id="event-management">Event Management</h3>

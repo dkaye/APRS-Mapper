@@ -324,6 +324,11 @@ function loadTrackers() {
 			$new[] = array("callsign"=>$callsign, "id"=>$entry['id'] ?? '', "name"=>$entry['name'] ?? '', "lastUpdate"=>0, "lat"=>null, "lon"=>null, "path"=>'');
 		}
 	}
+	// Re-add mobile tracker entries — managed by loadMobileSessions(), not by config.yaml.
+	// They must survive a config reload so they don't vanish from trackers.json temporarily.
+	foreach ($existing as $cs => $e) {
+		if (!empty($e['mobile'])) $new[] = $e;
+	}
 	$trackers = $new;
 
 	// Rebuild igates — only entries with a callsign; preserve lastBeacon across reloads
@@ -400,14 +405,10 @@ function loadMobileSessions() {
 			               'lastUpdate' => 0, 'lat' => null, 'lon' => null, 'path' => '', 'mobile' => true];
 			// Clear any in-memory history so the join handler's disk clear isn't overwritten.
 			unset($trackerHistory[$cs]);
-		} elseif (($trackers[$idx]['name'] ?? '') !== $ms['name']) {
-			// Slot reassigned to a different person — update name, clear stale position and history.
-			$trackers[$idx]['name']       = $ms['name'];
-			$trackers[$idx]['id']         = $ms['id'];
-			$trackers[$idx]['lat']        = null;
-			$trackers[$idx]['lon']        = null;
-			$trackers[$idx]['lastUpdate'] = 0;
-			unset($trackerHistory[$cs]);
+		} else {
+			// Name or id changed (admin rename) — update display fields, preserve live position.
+			$trackers[$idx]['name'] = $ms['name'];
+			$trackers[$idx]['id']   = $ms['id'];
 		}
 	}
 	$mobileSessions = $newSessions;

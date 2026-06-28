@@ -65,6 +65,12 @@ function buildConfigYaml($cfg, $history = []) {
         $L[] = '# Name displayed in the lower-left corner of the map.';
         $L[] = 'event: ' . ys($event);
         if (!empty($cfg['locked'])) $L[] = 'locked: true';
+        $evPw = trim($cfg['event_password'] ?? '');
+        if ($evPw !== '') $L[] = 'event_password: ' . ys($evPw);
+        $msgPw = trim($cfg['messaging_password'] ?? '');
+        if ($msgPw !== '') $L[] = 'messaging_password: ' . ys($msgPw);
+        $blinkDur = isset($cfg['blink_duration']) ? (int)$cfg['blink_duration'] : 5;
+        if ($blinkDur !== 5) $L[] = 'blink_duration: ' . $blinkDur;
         $L[] = '';
     }
     $legend = trim($cfg['legend'] ?? '');
@@ -179,11 +185,24 @@ function buildConfigYaml($cfg, $history = []) {
     $mobEnabled = !empty($mob['enabled']) && $mob['enabled'] !== false;
     $mobPin     = trim((string)($mob['pin'] ?? ''));
     $mobRoot    = strtoupper(trim((string)($mob['root'] ?? '')));
-    if ($mobEnabled || $mobPin !== '' || $mobRoot !== '') {
+    $beaconDefs = ['beacon_walk_interval' => 60, 'beacon_walk_distance' => 0.2,
+                   'beacon_drive_interval' => 15, 'beacon_drive_distance' => 0.2,
+                   'beacon_stat_interval' => 120, 'beacon_stat_distance' => 1.0];
+    $hasBeacon = false;
+    foreach ($beaconDefs as $k => $default) {
+        if (isset($mob[$k]) && (float)$mob[$k] !== (float)$default) { $hasBeacon = true; break; }
+    }
+    if ($mobEnabled || $mobPin !== '' || $mobRoot !== '' || $hasBeacon) {
         $L[] = 'mobile:';
         $L[] = '  enabled: ' . ($mobEnabled ? 'true' : 'false');
         if ($mobPin  !== '') $L[] = '  pin: '  . ys($mobPin);
         if ($mobRoot !== '') $L[] = '  root: ' . ys($mobRoot);
+        foreach ($beaconDefs as $k => $default) {
+            $v = isset($mob[$k]) ? $mob[$k] : $default;
+            if ((float)$v !== (float)$default) {
+                $L[] = '  ' . $k . ': ' . (strpos($k, 'distance') !== false ? number_format((float)$v, 1) : (int)$v);
+            }
+        }
         $L[] = '';
     }
     $om       = $cfg['offline_map'] ?? [];

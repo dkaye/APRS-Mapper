@@ -512,7 +512,15 @@ wifi/index.php  (credential editor)
 </tr>
 <tr>
 <td><code>mobile_trackers.json</code></td>
-<td>Active mobile participant sessions (token, callsign, last update)</td>
+<td>Active mobile participant sessions (token, callsign, last update, <code>pending_msgs</code> queue)</td>
+</tr>
+<tr>
+<td><code>events/&lt;E&gt;/messages.json</code></td>
+<td>Persistent message log (both directions); appended by <code>?messaging=send</code> and <code>?mobile=message</code></td>
+</tr>
+<tr>
+<td><code>/run/aprs/web_sessions.json</code></td>
+<td>Active web operator tokens (RAM disk; cleared on reboot)</td>
 </tr>
 </tbody>
 </table>
@@ -560,12 +568,14 @@ aprs-monitor.sh   (polls marsaprs.org every 30 s;
 wifi-watchdog.sh  (checks WiFi every 30 s;
                    calls wifi-restored.sh on reconnect)
 </code></pre>
-<p><strong>Autostart:</strong> Chromium launches automatically at boot via LXDE autostart
-(<code>~/.config/lxsession/rpd-x/autostart</code>).</p>
+<p><strong>Autostart:</strong> Chromium launches at boot via <code>~/start-kiosk.sh</code>, called from the LXDE autostart file (<code>~/.config/lxsession/rpd-x/autostart</code>). The wrapper reads <code>~/autologin.txt</code>, sets cursor size via <code>XCURSOR_SIZE=48</code>, and passes <code>--user-data-dir=/tmp/chromium</code> to keep Chromium cache/state in RAM (tmpfs).</p>
+<p><strong>Operator auto-login:</strong> If <code>~/autologin.txt</code> exists, <code>start-kiosk.sh</code> appends <code>?autologin</code> to the URL; if line 1 contains an operator name, it also appends <code>&amp;operator=&lt;name&gt;</code> for automatic messaging subscription. The server handles <code>?autologin</code> by setting a PHP session for the current event and redirecting to the clean URL, with messaging credentials embedded as JS globals for auto-subscribe.</p>
+<p><strong>Cursor size:</strong> 48 px via <code>XCURSOR_SIZE=48</code> in <code>start-kiosk.sh</code> (applied before Chromium), reinforced by <code>~/.Xresources</code> (<code>Xcursor.size: 48</code>) loaded via <code>@xrdb</code> in the LXDE autostart.</p>
+<p><strong>SD card I/O:</strong> Chromium profile to <code>/tmp/chromium</code> (tmpfs); journald <code>Storage=volatile</code> keeps journal entries in RAM. Both configured via <code>files.tar.gz</code> and <code>install.sh</code>.</p>
 <p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code> · VNC: <code>vnc://&lt;ip&gt;:5901</code></p>
 <p>For details on using the map, see <a href="https://marsaprs.org/userguide.html?back=/readme.html">USERGUIDE.MD</a>.</p>
 <hr />
-<h2 id="mobile-apps-v1163">Mobile Apps (v1.16.3)</h2>
+<h2 id="mobile-apps-v1170">Mobile Apps (v1.17.0)</h2>
 <p>Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.</p>
 <p><strong>Repository:</strong> <code>/Users/doug/aprs-map</code> (separate from this marsaprs repo)</p>
 <h3 id="app-architecture">App Architecture</h3>
@@ -626,11 +636,11 @@ wifi-watchdog.sh  (checks WiFi every 30 s;
 </tr>
 <tr>
 <td><code>lib/background_location.dart</code></td>
-<td>GPS stream + upload timer; distance-triggered upload (≥ 0.1 mi); calls <code>AprsClient</code> and <code>MobileSession</code></td>
+<td>GPS stream; <code>_heartbeatTimer</code> (timed uploads) + <code>_maybeUploadFromStream()</code> (distance-triggered); calls <code>MobileSession</code></td>
 </tr>
 <tr>
 <td><code>lib/background_task_handler.dart</code></td>
-<td>Android foreground task handler; manages timer skipping after distance-triggered beacons</td>
+<td>Android foreground service stub; no-op handler; keeps process alive</td>
 </tr>
 <tr>
 <td><code>lib/mobile_session.dart</code></td>
@@ -638,7 +648,7 @@ wifi-watchdog.sh  (checks WiFi every 30 s;
 </tr>
 <tr>
 <td><code>lib/aprs_client.dart</code></td>
-<td>TCP socket to <code>noam.aprs2.net:14580</code>; formats and sends APRS-IS position packets</td>
+<td>Legacy — TCP socket to APRS-IS; no longer used (server-side injection replaced direct TCP)</td>
 </tr>
 <tr>
 <td><code>lib/remote_config.dart</code></td>
@@ -659,38 +669,37 @@ wifi-watchdog.sh  (checks WiFi every 30 s;
 </tbody>
 </table>
 <h3 id="location-sharing-flow">Location Sharing Flow</h3>
-<p>Android and iOS use different paths to inject APRS packets — see <a href="#background-location">Background Location</a> for why.</p>
+<p>Both iOS and Android use the same upload path: position data is POSTed to the MARS server, which injects the APRS packet via its own persistent TCP connection to APRS-IS.</p>
 <pre><code>User taps Share Location
   → _ensureBackgroundPermissions()     (Android: notification + battery opt;
                                         iOS: verify Always location permission)
-  → MobileSession.join()               POST ?mobile=join {name, pin}
+  → User selects activity: Walk/Run (60 s) · Cycle (30 s) · Drive (15 s) · Stationary (2 min)
+  → MobileSession.join()               POST ?mobile=join {name, pin, sharing_mode}
       ← {token, callsign, passcode}    e.g. callsign=K6DRK-01
   → BackgroundLocationService.startTracking()
       → Geolocator.getPositionStream() (single stream; AppleSettings on iOS with
-                                        allowBackgroundLocationUpdates: true)
-  → upload triggered on GPS event if moved ≥ 0.1 mi OR ≥ 60 s since last upload:
-
-      Android:
-        onRepeatEvent() fires on configured interval; skips if _lastBeacon within
-            60 s (guards against double-fire after distance upload);
-            GPS listener sends 'force_upload' IPC if distance ≥ 0.1 mi
-        → AprsClient.sendPosition()    TCP noam.aprs2.net:14580
-              → &quot;K6DRK-01&gt;APRS,TCPIP*:!3751.72N/12232.64W&gt;Mobile/Alice\r\n&quot;
-        → MobileSession.update()       POST ?mobile=update {token}
+                                        allowBackgroundLocationUpdates: true;
+                                        AndroidSettings on Android)
+  → Android only: FlutterForegroundTask.startService() — persistent notification;
+                  background_task_handler.dart is a no-op stub
+  → Upload triggered by _heartbeatTimer (timed) OR GPS event (distance ≥ threshold):
+      Both platforms:
+        _heartbeatTimer fires at configured interval
+        _maybeUploadFromStream() on every GPS event (uploads if moved ≥ threshold
+            OR configured interval elapsed)
+        → MobileSession.update(lat, lon)    POST ?mobile=update {token, lat, lon}
               ← 200 ok  (or 404 → stops sharing)
-
-      iOS:
-        _maybeUploadFromStream() called on every GPS event; uploads if
-            moved ≥ 0.1 mi OR ≥ 60 s since last upload
-        → MobileSession.update()       POST ?mobile=update {token, lat, lon}
-              ← 200 ok  (or 404 → stops sharing)
-              → server injectAprsPacket() injects packet via local TCP 14580
+              → server injectAprsPacket() via local TCP 14580
                     → &quot;K6DRK-01&gt;APRS,TCPIP*:!3751.72N/12232.64W&gt;Mobile/Alice\r\n&quot;
-
-  → aprsDaemon receives packet from APRS-IS
+  → aproDaemon receives packet from APRS-IS
       → distance filter: skip if new position &lt; 100 ft from last breadcrumb
       → writes K6DRK-01 to trackers.json with mobile=true
   → WebView polls ?json every 5 s → map updates
+
+App restart while sharing was active:
+  → resumeSharing() reads SharedPreferences (token, callsign, interval, activity mode)
+  → Attempts token reuse via MobileSession.update(); if stale, re-joins silently
+  → Sharing resumes with same callsign and activity mode; snackbar notifies user
 </code></pre>
 <h3 id="building-distributing">Building &amp; Distributing</h3>
 <h4 id="ios">iOS</h4>
@@ -724,7 +733,7 @@ storeFile=&lt;absolute path to .jks or .p12&gt;
 <h3 id="background-location">Background Location</h3>
 <p>Background location is implemented differently on each platform because of how each OS handles suspended processes.</p>
 <h4 id="android_1">Android</h4>
-<p>The <code>geolocator</code> package starts a foreground service (<code>GeolocatorLocationService</code>) which keeps the Dart isolate running. A persistent notification is required — without it Android 13+ treats the service as having no notification and kills it when the screen locks.</p>
+<p>Two foreground services run while sharing: <code>GeolocatorLocationService</code> (from the <code>geolocator</code> package) keeps the GPS stream and Dart isolate alive; <code>FlutterForegroundTask</code> (from <code>flutter_foreground_task</code>) provides a persistent notification and prevents Android from killing the process. The <code>FlutterForegroundTask</code> handler (<code>background_task_handler.dart</code>) is a no-op stub — all beaconing is done by the main isolate via <code>_heartbeatTimer</code> and <code>_maybeUploadFromStream()</code>. A persistent notification is required — without it Android 13+ treats the service as having no notification and kills it when the screen locks.</p>
 <p><strong>Required permissions in <code>AndroidManifest.xml</code>:</strong></p>
 <table>
 <thead>
@@ -773,8 +782,8 @@ storeFile=&lt;absolute path to .jks or .p12&gt;
 <h4 id="ios_1">iOS</h4>
 <p><code>Info.plist</code> declares <code>UIBackgroundModes: location</code>. The <code>CLLocationManager</code> flag <code>allowsBackgroundLocationUpdates</code> is set to <code>true</code> via <code>AppleSettings(allowBackgroundLocationUpdates: true)</code> in the geolocator stream configuration. "Always" location permission is required — "While Using" is not sufficient. When active, a white location arrow appears in the iOS status bar.</p>
 <p><strong>Single GPS stream — critical constraint:</strong> <code>geolocator_apple</code> only supports one active event-channel listener at a time. If a second <code>Geolocator.getPositionStream()</code> call is made while one is already active, <code>PositionStreamHandler.onListenWithArguments</code> returns an error and the second call silently fails — <code>allowsBackgroundLocationUpdates</code> is never set to <code>true</code> on the underlying <code>CLLocationManager</code>, and the background location indicator never appears. The fix: <code>startTracking()</code> in <code>BackgroundLocationService</code> owns the single Geolocator stream (with <code>AppleSettings</code>), and the map's blue-dot layer subscribes to <code>_bgLocation.positionStream</code> (a Dart broadcast stream fed by that same stream) rather than opening its own.</p>
-<p><strong>GPS-event-driven keepalive:</strong> On iOS, <code>Timer.periodic</code> does not fire when the Dart isolate is suspended between GPS wakeups. The keepalive is instead driven by GPS events: <code>_maybeUploadFromStream()</code> is called on every GPS position event and uploads if the device has moved ≥ 0.1 miles OR ≥ 60 seconds have elapsed since the last upload. A <code>_heartbeatTimer</code> also exists as a belt-and-suspenders fallback for when iOS keeps the isolate continuously alive, but it is not the primary mechanism.</p>
-<p><strong>Why iOS uses server-side APRS injection instead of direct TCP:</strong> Android uses a foreground service that keeps the Dart isolate permanently alive, so it can open and maintain a raw TCP connection to APRS-IS (port 14580) reliably. On iOS, the background location mode wakes the Dart isolate briefly on each GPS event rather than keeping it continuously alive. During these brief wakeups, <code>NSURLSession</code>-based HTTP (what the <code>http</code> package uses) is explicitly supported by iOS for background network tasks; raw <code>dart:io Socket</code> TCP connections are not guaranteed to complete and are routinely blocked. Attempting to send directly to APRS-IS via TCP from iOS background would require opening a connection, logging in, sending a packet, and closing — at least two network round trips under a narrow time budget. The HTTP approach sends a single POST to our server, which injects the packet via its own persistent TCP connection to APRS-IS. The platform divergence is intentional and reflects what each OS actually supports reliably in background.</p>
+<p><strong>Upload mechanism:</strong> Both iOS and Android use the same <code>_heartbeatTimer</code> for timed uploads and <code>_maybeUploadFromStream()</code> for distance-triggered uploads. On iOS, the GPS event stream keeps the Dart isolate continuously alive, so <code>Timer.periodic</code> fires reliably. <code>_maybeUploadFromStream()</code> provides an additional trigger: it uploads immediately when the device has moved ≥ the configured distance threshold since the last upload, resetting the timer to avoid a duplicate beacon shortly after.</p>
+<p><strong>Why both platforms use server-side APRS injection:</strong> Both iOS and Android POST position data to <code>?mobile=update</code> rather than sending raw TCP packets directly to APRS-IS. On iOS, <code>NSURLSession</code>-based HTTP is explicitly supported for background network tasks while raw <code>dart:io Socket</code> TCP connections are not reliable in background. Unifying Android to the same path keeps all beaconing logic in the main isolate, makes <code>background_task_handler.dart</code> a no-op, and simplifies the overall architecture.</p>
 <hr />
 <h2 id="user-interfaces">User Interfaces</h2>
 <p>Five browser-based interfaces run on <code>marsaprs.org</code>. All are served by Apache on the server
@@ -843,6 +852,36 @@ for full details.</p>
 and disable devices. Access to the SSH terminal for any online device.</p>
 <p><strong>WiFi Manager</strong> — Password-protected. Edits <code>wifi.yaml</code>, the master list of WiFi networks distributed to all
 Pis nightly. Auto-saves on every change; no manual save step.</p>
+<hr />
+<h2 id="messaging-system">Messaging System</h2>
+<p>The messaging system allows web operators to exchange text messages with active mobile tracker participants in real time. It is enabled by setting <code>messaging_password</code> in the event's <code>event.yaml</code> (via the Admin page).</p>
+<h3 id="messaging-data-storage">Data Storage</h3>
+<table>
+<thead><tr><th>File</th><th>Location</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>messages.json</code></td><td><code>events/&lt;EventName&gt;/</code></td><td>Persistent log of all messages (both directions)</td></tr>
+<tr><td><code>web_sessions.json</code></td><td><code>/run/aprs/</code> (RAM disk)</td><td>Active web operator sessions; cleared on server reboot</td></tr>
+<tr><td><code>pending_msgs</code></td><td>field in <code>mobile_trackers.json</code></td><td>Queue of undelivered messages for each mobile participant</td></tr>
+</tbody>
+</table>
+<h3 id="messaging-web-operator-flow">Web Operator Flow</h3>
+<ol>
+<li>Operator clicks the Messages button → POST <code>?messaging=subscribe {name, password}</code> → receives token</li>
+<li>Operator right-clicks a tracker in the sidebar → compose modal (pre-addressed) → POST <code>?messaging=send</code></li>
+<li>Server appends to <code>messages.json</code> and queues the message in the tracker's <code>pending_msgs</code></li>
+<li>Operator polls <code>?messaging=poll?web_token=...&amp;since_id=N</code> every 5 seconds</li>
+<li>When a mobile tracker sends a reply, it appears in the poll response → notification modal</li>
+</ol>
+<p>The incoming notification modal shows the full conversation thread (12 px) above the new message (15 px) in a 480 px-wide window. History load fires at most one modal per page load (the most recent unnotified message).</p>
+<p><strong>Auto-subscribe for Display Pi operators:</strong> When <code>window._aprsAutoMsgPw</code> is embedded in the page (via <code>?autologin&amp;operator=&lt;name&gt;</code> → PHP session → HTML <code>&lt;script&gt;</code> tag), <code>_autoSubscribe()</code> runs silently on page load. The token is stored only in memory (not localStorage), so removing line 1 from <code>~/autologin.txt</code> and rebooting the Pi cleanly unsubscribes.</p>
+<h3 id="messaging-mobile-participant-flow">Mobile Participant Flow</h3>
+<ol>
+<li>Messages queued in <code>pending_msgs</code> are delivered in the <code>?mobile=update</code> response body</li>
+<li>A separate <code>?mobile=poll</code> call runs every 30 seconds as a lightweight check</li>
+<li>Both paths may return the same message before an ack is sent; <code>_deliveredMsgIds</code> (a <code>Set&lt;int&gt;</code> in <code>background_location.dart</code>) deduplicates at the Flutter layer</li>
+<li>Flutter shows a sound + dialog; tap <strong>Reply</strong> to POST <code>?mobile=message {token, text}</code></li>
+<li>On the next update or poll, <code>ack_ids</code> are sent to remove delivered messages from <code>pending_msgs</code></li>
+</ol>
 <hr />
 <h2 id="backup-recovery-and-updates">Backup, Recovery and Updates</h2>
 <h3 id="server-pi">Server Pi</h3>
@@ -1518,9 +1557,10 @@ symlink to the active event's file. <code>aprsDaemon.php</code> and <code>index.
 <h5 id="mobile"><code>mobile</code></h5>
 <p>Controls mobile location sharing for participants.</p>
 <pre><code class="language-yaml">mobile:
-  enabled: true    # show Share Location button in the mobile drawer
-  pin: &quot;1234&quot;      # PIN participants must enter (omit to require no PIN)
-  root: K6DRK      # base APRS callsign; participants get &lt;root&gt;-01, -02, etc.
+  enabled: true              # show Share Location button in the mobile drawer
+  pin: &quot;1234&quot;                # PIN participants must enter (omit to require no PIN)
+  root: K6DRK                # base APRS callsign; participants get &lt;root&gt;-01, -02, etc.
+  messaging_password: zippy  # enables Messages button on web map; omit to disable messaging
 </code></pre>
 <p>When <code>enabled</code> is true, any visitor on a mobile device sees a <strong>Share Location</strong> button in the drawer footer. Participants enter their name and the PIN; the server assigns a unique callsign (<code>&lt;root&gt;-NN</code>) and a session token. Position updates are injected directly into the APRS-IS network, so mobile participants appear on this map and on external APRS sites (aprs.fi, CalTopo) exactly like any other tracker. Session state is stored in <code>mobile_trackers.json</code>.</p>
 <hr />
@@ -1855,12 +1895,52 @@ for <code>?json</code>, <code>?config</code>, and <code>?history</code>.</p>
 <tr>
 <td><code>?mobile=update</code></td>
 <td>POST</td>
-<td>Heartbeat + inject APRS-IS position packet; refreshes session timestamp. Returns 404 if the session was removed or blocked.</td>
+<td>Heartbeat + inject APRS-IS position packet; refreshes session timestamp. Accepts <code>ack_ids</code> to clear delivered messages. Returns pending messages in response body. Returns 404 if the session was removed or blocked.</td>
 </tr>
 <tr>
 <td><code>?mobile=leave</code></td>
 <td>POST</td>
 <td>End the participant session and remove from <code>mobile_trackers.json</code>.</td>
+</tr>
+<tr>
+<td><code>?mobile=message</code></td>
+<td>POST</td>
+<td>Send a text message from a mobile participant to web operators. Body: <code>{token, text}</code>. Returns <code>{ok, id}</code>.</td>
+</tr>
+<tr>
+<td><code>?mobile=poll</code></td>
+<td>POST</td>
+<td>Lightweight message poll without updating position. Body: <code>{token, ack_ids?}</code>. Returns <code>{messages: [...]}</code> or 404.</td>
+</tr>
+<tr>
+<td><code>?mobile=msghistory</code></td>
+<td>POST</td>
+<td>Fetch full message history for the session callsign. Body: <code>{token}</code>. Returns <code>{messages: [...]}</code> oldest-first.</td>
+</tr>
+<tr>
+<td><code>?mobile=auth</code></td>
+<td>POST</td>
+<td>Validate the event password. Body: <code>{password}</code>. Returns 200 if accepted.</td>
+</tr>
+<tr>
+<td><code>?messaging=subscribe</code></td>
+<td>POST</td>
+<td>Subscribe as a web operator. Body: <code>{name, password}</code>. Returns <code>{token, name}</code> or <code>{error}</code>.</td>
+</tr>
+<tr>
+<td><code>?messaging=send</code></td>
+<td>POST</td>
+<td>Send a message from a web operator to a mobile tracker. Body: <code>{web_token, to, text}</code>. <code>to</code> is a callsign or <code>"*"</code> for broadcast.</td>
+</tr>
+<tr>
+<td><code>?messaging=poll</code></td>
+<td>GET</td>
+<td>Poll for new messages directed to web operators. Params: <code>web_token</code>, <code>since_id</code>. Returns <code>{messages, last_id}</code>.</td>
+</tr>
+<tr>
+<td><code>?autologin</code></td>
+<td>GET</td>
+<td>Set a PHP session for the current event (no password required); if <code>operator</code> param is set, also sets the operator name in session. Redirects to clean URL.</td>
 </tr>
 </tbody>
 </table>
@@ -2079,12 +2159,29 @@ sudo chmod -R g+w /var/www/html/events/
 10 4 * * * sudo reboot
 </code></pre>
 <h4 id="kiosk-autostart">Kiosk Autostart</h4>
-<p>Chromium is launched at boot by LXDE autostart
-(<code>/home/pi/.config/lxsession/rpd-x/autostart</code>):</p>
-<pre><code>@chromium --password-store=basic --kiosk --noerrdialogs --disable-infobars
-          --disable-dev-shm-usage --incognito
-          --disable-features=BlockInsecurePrivateNetworkRequests
-          https://marsaprs.org/
+<p>LXDE autostart (<code>/home/pi/.config/lxsession/rpd-x/autostart</code>) calls <code>~/start-kiosk.sh</code> rather than launching Chromium directly:</p>
+<pre><code>@xrdb -merge ~/.Xresources
+@/home/pi/start-kiosk.sh
+</code></pre>
+<p><code>~/start-kiosk.sh</code> handles URL construction (auto-login), cursor size, and Chromium launch:</p>
+<pre><code class="language-bash">#!/bin/bash
+URL="https://marsaprs.org/"
+if [ -f ~/autologin.txt ]; then
+    mapfile -t lines &lt; ~/autologin.txt
+    operator="${lines[0]:-}"
+    URL="https://marsaprs.org/?autologin"
+    if [ -n "$operator" ]; then
+        enc_op=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$operator")
+        URL="${URL}&amp;operator=${enc_op}"
+    fi
+fi
+export XCURSOR_SIZE=48
+rm -f ~/.config/chromium/Singleton*
+exec chromium --password-store=basic --kiosk --noerrdialogs --disable-infobars \
+    --disable-dev-shm-usage --incognito \
+    --disable-features=BlockInsecurePrivateNetworkRequests \
+    --user-data-dir=/tmp/chromium \
+    "$URL"
 </code></pre>
 <h4 id="useful-commands">Useful Commands</h4>
 <pre><code class="language-bash"># Check all services
@@ -2095,6 +2192,7 @@ sudo -u pi DISPLAY=:0 XAUTHORITY=/home/pi/.Xauthority \
   chromium --password-store=basic --kiosk --noerrdialogs \
   --disable-infobars --disable-dev-shm-usage --incognito \
   --disable-features=BlockInsecurePrivateNetworkRequests \
+  --user-data-dir=/tmp/chromium \
   'https://marsaprs.org/' &amp;
 </code></pre>
 <p><strong><code>add-wifi.php</code></strong> — Adds a WiFi network to <code>wifi.conf</code> on the local device. Accepts name, SSID, and password as arguments (or prompts interactively). Hashes the password via <code>wpa_passphrase</code> and appends the entry to <code>wifi.conf</code>, then calls <code>update-wifi.php</code> to apply it immediately. Available on all Pi types.</p>

@@ -113,7 +113,7 @@ $authed = (isset($_SESSION['aprs_admin_authed']) && $_SESSION['aprs_admin_authed
        || (isset($_SESSION['stats_auth'])        && $_SESSION['stats_auth']        === true);
 
 if (!$authed) {
-    if (isset($_GET['load']) || isset($_GET['save']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['alllocationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib']) || isset($_GET['beacondeltas']) || isset($_GET['togglelock']) || isset($_GET['mobiletrackers']) || isset($_GET['removemobile']) || isset($_GET['removemobilebulk']) || isset($_GET['blockmobile']) || isset($_GET['renamemobile'])) {
+    if (isset($_GET['load']) || isset($_GET['save']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['alllocationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib']) || isset($_GET['beacondeltas']) || isset($_GET['togglelock']) || isset($_GET['mobiletrackers']) || isset($_GET['removemobile']) || isset($_GET['removemobilebulk']) || isset($_GET['blockmobile']) || isset($_GET['renamemobile']) || isset($_GET['seteventpassword']) || isset($_GET['backup']) || isset($_GET['restore'])) {
         header('Content-Type: application/json');
         http_response_code(401);
         echo json_encode(['error' => 'Session expired — reload and log in again']);
@@ -274,9 +274,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['save'])) {
         if (trim($t['id']       ?? '') === '') $errors[] = 'Tracker ' . ($i + 1) . ': ID is required';
     }
     foreach ($cfg['aidstations'] ?? [] as $i => $g) {
-        if (trim($g['name'] ?? '') === '')                                         $errors[] = 'Aid Station ' . ($i + 1) . ': name is required';
-        if (!is_numeric($g['lat'] ?? '') || $g['lat'] < -90  || $g['lat'] > 90)   $errors[] = 'Aid Station ' . ($i + 1) . ': latitude must be −90 to 90';
-        if (!is_numeric($g['lon'] ?? '') || $g['lon'] < -180 || $g['lon'] > 180)  $errors[] = 'Aid Station ' . ($i + 1) . ': longitude must be −180 to 180';
+        if (trim($g['name'] ?? '') === '')                                         $errors[] = 'Aid/Rest Stop ' . ($i + 1) . ': name is required';
+        if (!is_numeric($g['lat'] ?? '') || $g['lat'] < -90  || $g['lat'] > 90)   $errors[] = 'Aid/Rest Stop ' . ($i + 1) . ': latitude must be −90 to 90';
+        if (!is_numeric($g['lon'] ?? '') || $g['lon'] < -180 || $g['lon'] > 180)  $errors[] = 'Aid/Rest Stop ' . ($i + 1) . ': longitude must be −180 to 180';
     }
     foreach ($cfg['igates'] ?? [] as $i => $g) {
         if (trim($g['name'] ?? '') === '')                                         $errors[] = 'iGate ' . ($i + 1) . ': name is required';
@@ -326,7 +326,7 @@ if (isset($_GET['versions'])) {
             $filename = basename(dirname($f));
             $ecfg = parseConfigYaml($f);
             $eventName = $ecfg['event'] ?? $filename;
-            $list[] = ['name' => $filename, 'eventName' => $eventName, 'mtime' => filemtime($f), 'active' => ($filename === $currentFilename), 'locked' => !empty($ecfg['locked'])];
+            $list[] = ['name' => $filename, 'eventName' => $eventName, 'mtime' => filemtime($f), 'active' => ($filename === $currentFilename), 'locked' => !empty($ecfg['locked']), 'has_password' => !empty($ecfg['event_password'] ?? '')];
         }
     }
     usort($list, fn($a, $b) => $b['mtime'] <=> $a['mtime']);
@@ -543,6 +543,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['togglelock'])) {
     respondJson(['ok' => true, 'locked' => $lock]);
 }
 
+// ── AJAX: set event password ──────────────────────────────────────────────────
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['seteventpassword'])) {
+    $body = file_get_contents('php://input');
+    $data = json_decode($body, true);
+    $name    = trim($data['name']           ?? '');
+    $pw      = trim($data['pw']             ?? '');
+    $eventPw = trim($data['event_password'] ?? '');
+    if (!preg_match('/^[a-zA-Z0-9 _\-\.]{1,80}$/', $name)) respondError('Invalid name', 400);
+    if ($storedPass === '' || $pw !== $storedPass) respondError('Incorrect admin password', 403);
+    $path = $eventsDir . '/' . $name . '/event.yaml';
+    if (!file_exists($path)) respondError('Event not found', 404);
+    require_once __DIR__ . '/../config_parse.php';
+    $cfg = parseConfigYaml($path);
+    if ($eventPw !== '') $cfg['event_password'] = $eventPw; else unset($cfg['event_password']);
+    $existing = file_get_contents($path);
+    $history  = extractHistory($existing);
+    $yaml = buildConfigYaml($cfg, $history);
+    if (file_put_contents($path, $yaml, LOCK_EX) === false) respondError('Cannot write event file');
+    aprs_admin_log('set_event_password', ['event' => $name, 'cleared' => ($eventPw === '') ? 'true' : 'false']);
+    respondJson(['ok' => true, 'has_password' => $eventPw !== '']);
+}
+
 // ── AJAX: list location files in current event ────────────────────────────────
 
 if (isset($_GET['locationfiles'])) {
@@ -719,6 +742,116 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['setactiveevent'])) {
     respondJson(['ok' => true]);
 }
 
+// ── AJAX: backup event as zip ─────────────────────────────────────────────────
+
+if (isset($_GET['backup'])) {
+    if (!class_exists('ZipArchive')) respondError('ZipArchive extension not available on server', 500);
+    $name = trim($_GET['name'] ?? '');
+    if (!preg_match('/^[a-zA-Z0-9 _\-\.]{1,80}$/', $name)) respondError('Invalid event name', 400);
+    $eventDir = $eventsDir . '/' . $name;
+    if (!is_dir($eventDir)) respondError('Event not found', 404);
+
+    $tmpFile = tempnam(sys_get_temp_dir(), 'aprs_bk_');
+    $zip     = new ZipArchive();
+    if ($zip->open($tmpFile, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+        respondError('Cannot create zip archive', 500);
+    }
+
+    $webRoot     = realpath(__DIR__ . '/..');
+    $allowedExts = ['yaml', 'gpx', 'kml', 'geojson', 'json'];
+    $added       = [];  // basename => true, for deduplication
+
+    // All files already in the event directory
+    foreach (new DirectoryIterator($eventDir) as $f) {
+        if (!$f->isFile()) continue;
+        if (!in_array(strtolower($f->getExtension()), $allowedExts)) continue;
+        $base = $f->getFilename();
+        if (!isset($added[$base])) {
+            $zip->addFile($f->getPathname(), $base);
+            $added[$base] = true;
+        }
+    }
+
+    // Course files referenced in event.yaml that may live in another event directory
+    $yamlPath = $eventDir . '/event.yaml';
+    if (file_exists($yamlPath)) {
+        require_once __DIR__ . '/../config_parse.php';
+        $cfg = parseConfigYaml($yamlPath);
+        foreach ($cfg['courses'] ?? [] as $course) {
+            $rel = trim($course['file'] ?? '');
+            if (!$rel) continue;
+            $abs = realpath($webRoot . '/' . ltrim($rel, '/'));
+            if (!$abs || !is_file($abs)) continue;
+            $base = basename($abs);
+            if (!isset($added[$base])) {
+                $zip->addFile($abs, $base);
+                $added[$base] = true;
+            }
+        }
+    }
+
+    $zip->close();
+
+    $safeName = preg_replace('/[^a-zA-Z0-9_\-]/', '_', $name);
+    aprs_admin_log('backup_event', ['event' => $name, 'files' => count($added)]);
+    header('Content-Type: application/zip');
+    header('Content-Disposition: attachment; filename="' . $safeName . '.zip"');
+    header('Content-Length: ' . filesize($tmpFile));
+    header('Cache-Control: no-store');
+    readfile($tmpFile);
+    unlink($tmpFile);
+    exit;
+}
+
+// ── AJAX: restore event from zip ──────────────────────────────────────────────
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['restore'])) {
+    if (!class_exists('ZipArchive')) respondError('ZipArchive extension not available on server', 500);
+    if (!isset($_FILES['zip']) || $_FILES['zip']['error'] !== UPLOAD_ERR_OK) {
+        respondError('Upload failed (code ' . ($_FILES['zip']['error'] ?? '?') . ')', 400);
+    }
+    $zip = new ZipArchive();
+    if ($zip->open($_FILES['zip']['tmp_name']) !== true) respondError('Invalid zip file', 400);
+
+    // Extract event.yaml to a temp file to parse the event name
+    $yamlContent = false;
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        if (basename($zip->getNameIndex($i)) === 'event.yaml') {
+            $yamlContent = $zip->getFromIndex($i);
+            break;
+        }
+    }
+    if ($yamlContent === false) { $zip->close(); respondError('No event.yaml in zip', 400); }
+
+    $tmpYaml = tempnam(sys_get_temp_dir(), 'aprs_ev_');
+    file_put_contents($tmpYaml, $yamlContent);
+    require_once __DIR__ . '/../config_parse.php';
+    $cfg = parseConfigYaml($tmpYaml);
+    unlink($tmpYaml);
+    $eventName = trim($cfg['event'] ?? '');
+    if (!$eventName || !preg_match('/^[a-zA-Z0-9 _\-\.]{1,80}$/', $eventName)) {
+        $zip->close(); respondError('Invalid or missing event name in event.yaml', 400);
+    }
+
+    $eventDir = $eventsDir . '/' . $eventName;
+    if (!is_dir($eventDir)) mkdir($eventDir, 0777, true);
+
+    $allowedExts = ['yaml', 'gpx', 'kml', 'geojson', 'json'];
+    $extracted = 0;
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        $entry = $zip->getNameIndex($i);
+        $base  = basename($entry);
+        if (!$base || $base[0] === '.' || strpos($entry, '/') !== false) continue;
+        if (!in_array(strtolower(pathinfo($base, PATHINFO_EXTENSION)), $allowedExts)) continue;
+        file_put_contents($eventDir . '/' . $base, $zip->getFromIndex($i));
+        $extracted++;
+    }
+    $zip->close();
+
+    aprs_admin_log('restore_event', ['event' => $eventName, 'files' => $extracted]);
+    respondJson(['ok' => true, 'name' => $eventName]);
+}
+
 // ── AJAX: background library ──────────────────────────────────────────────────
 
 if (isset($_GET['bglib'])) {
@@ -750,11 +883,16 @@ if (isset($_GET['mobiletrackers'])) {
     $all = json_decode($c, true) ?: [];
     $now = time();
     // Return all sessions still alive (within 24 h) + blocked entries; strip token
-    $out = array_values(array_map(function($t) use ($now) {
+    $real   = realpath($configPath);
+    $deltas = $real ? computeBeaconDeltas(dirname($real) . '/tracker_history.yaml') : [];
+    $out = array_values(array_map(function($t) use ($now, $deltas) {
         return ['id' => $t['id'], 'callsign' => $t['callsign'] ?? '', 'name' => $t['name'],
                 'lastUpdate' => $t['lastUpdate'], 'age' => $now - $t['lastUpdate'],
-                'active'  => !empty($t['token']),
-                'blocked' => !empty($t['blocked'])];
+                'active'      => !empty($t['token']),
+                'blocked'     => !empty($t['blocked']),
+                'delta'        => $deltas[$t['callsign'] ?? ''] ?? null,
+                'device_info'  => $t['device_info'] ?? null,
+                'sharing_mode' => $t['sharing_mode'] ?? ''];
     }, array_filter($all, fn($t) => !empty($t['blocked']) || ($now - $t['lastUpdate']) < 86400)));
     respondJson($out);
 }
@@ -824,6 +962,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['renamemobile'])) {
     if ($found) { ftruncate($fh, 0); rewind($fh); fwrite($fh, json_encode($data, JSON_PRETTY_PRINT) . "\n"); }
     flock($fh, LOCK_UN); fclose($fh);
     respondJson($found ? ['ok' => true] : ['error' => 'Not found'], $found ? 200 : 404);
+}
+
+// ── AJAX: message thread for current event ────────────────────────────────────
+if (isset($_GET['messages'])) {
+    $real = realpath($configPath);
+    if (!$real) { respondJson([]); }
+    $msgFile = dirname($real) . '/messages.json';
+    if (!file_exists($msgFile)) { respondJson([]); }
+    $fh = fopen($msgFile, 'r');
+    if (!$fh) { respondJson([]); }
+    flock($fh, LOCK_SH);
+    $msgs = json_decode(stream_get_contents($fh), true) ?: [];
+    flock($fh, LOCK_UN);
+    fclose($fh);
+    respondJson($msgs);
+}
+
+// ── AJAX: delete message thread for current event ─────────────────────────────
+if (isset($_GET['delete_messages'])) {
+    $real = realpath($configPath);
+    if (!$real) { respondJson(['error' => 'Event not found'], 404); }
+    $msgFile = dirname($real) . '/messages.json';
+    if (file_exists($msgFile) && !unlink($msgFile)) {
+        respondJson(['error' => 'Could not delete message thread'], 500);
+    }
+    respondJson(['ok' => true]);
 }
 
 // ── Login form ────────────────────────────────────────────────────────────────
@@ -1036,18 +1200,17 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 /* ── Delete button ── */
 .del-btn {
     flex-shrink: 0; margin-top: 14px;
-    background: none; border: none; color: #bbb; font-size: 16px;
-    cursor: pointer; padding: 2px 4px; border-radius: 3px; line-height: 1;
+    font-size: 11px; padding: 2px 8px; cursor: pointer;
+    background: #f0f0f0; border: 1px solid #b0b0b0; border-radius: 3px; color: #333;
 }
-.del-btn:hover { color: #e74c3c; background: #fdf0f0; }
+.del-btn:hover { background: #e0e0e0; border-color: #888; }
 
 /* ── Add button ── */
 .add-btn {
-    margin-top: 4px; padding: 6px 14px;
-    background: #f0f4f8; border: 1px solid #c8d4e0; border-radius: 4px;
-    font-size: 13px; color: #3a6ea8; cursor: pointer;
+    margin-top: 4px; font-size: 11px; padding: 2px 8px; cursor: pointer;
+    background: #f0f0f0; border: 1px solid #b0b0b0; border-radius: 3px; color: #333;
 }
-.add-btn:hover { background: #e2eaf4; }
+.add-btn:hover { background: #e0e0e0; border-color: #888; }
 
 /* ── Map view fields ── */
 .map-fields { display: flex; gap: 20px; flex-wrap: wrap; padding: 4px 0; }
@@ -1109,12 +1272,13 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 .lf-icon-btn.del:hover     { color: #e74c3c;  background: #fdf0f0; }
 .lf-icon-btn.save:hover    { color: #2980b9;  background: #eaf4fd; }
 .lf-small-btn {
-    padding: 3px 9px; border-radius: 3px; font-size: 12px;
-    cursor: pointer; flex-shrink: 0; border: 1px solid transparent;
+    font-size: 11px; padding: 2px 8px; border-radius: 3px; cursor: pointer;
+    flex-shrink: 0; border: 1px solid #b0b0b0; background: #f0f0f0; color: #333;
 }
-.lf-small-btn.ok     { background: #2980b9; color: #fff; }
-.lf-small-btn.ok:hover   { background: #1f6da0; }
-.lf-small-btn.cancel { background: #f0f0f0; color: #555; border-color: #ccc; }
+.lf-small-btn:hover { background: #e0e0e0; border-color: #888; }
+.lf-small-btn.ok { background: #f0f0f0; color: #333; }
+.lf-small-btn.ok:hover { background: #e0e0e0; }
+.lf-small-btn.cancel { background: #f0f0f0; color: #333; }
 .lf-small-btn.cancel:hover { background: #e0e0e0; }
 .lf-table-wrap {
     border: 1px solid #e0e0e0; border-radius: 4px; max-height: 340px; overflow-y: auto;
@@ -1139,10 +1303,10 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 .lf-td-actions { white-space: nowrap; width: 1px; }
 .lf-td-add { white-space: nowrap; width: 1px; text-align: center; }
 .lf-add-btn {
-    padding: 2px 9px; font-size: 12px; background: #2980b9; color: #fff;
-    border: none; border-radius: 3px; cursor: pointer; white-space: nowrap;
+    font-size: 11px; padding: 2px 8px; background: #f0f0f0; color: #333;
+    border: 1px solid #b0b0b0; border-radius: 3px; cursor: pointer; white-space: nowrap;
 }
-.lf-add-btn:hover { background: #1f6da0; }
+.lf-add-btn:hover { background: #e0e0e0; border-color: #888; }
 .lf-in-event { color: #27ae60; font-weight: bold; font-size: 14px; }
 
 /* ── Action footer (Save/Update buttons) ── */
@@ -1161,13 +1325,21 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
     font-size: 13px; line-height: 1.6;
 }
 
+/* ── Shared small button style ── */
+.btn {
+    font-size: 11px; padding: 2px 8px; cursor: pointer;
+    background: #f0f0f0; border: 1px solid #b0b0b0; border-radius: 3px;
+    color: #333; white-space: nowrap;
+}
+.btn:hover { background: #e0e0e0; border-color: #888; }
+
 /* ── Secondary button (Save As / Load) ── */
 .sec-btn {
-    padding: 7px 14px; background: #fff; color: #2980b9;
-    border: 1px solid #2980b9; border-radius: 4px; font-size: 13px;
-    cursor: pointer; white-space: nowrap;
+    font-size: 11px; padding: 2px 8px; cursor: pointer;
+    background: #f0f0f0; border: 1px solid #b0b0b0; border-radius: 3px;
+    color: #333; white-space: nowrap;
 }
-.sec-btn:hover { background: #eaf4fd; }
+.sec-btn:hover { background: #e0e0e0; border-color: #888; }
 
 /* ── Modal ── */
 .modal-backdrop {
@@ -1285,6 +1457,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
     </div>
     <div id="hdr-right">
         <span id="status"></span>
+        <button class="sec-btn" onclick="doNew()">New</button>
         <button class="sec-btn" onclick="doUpdate()">Update</button>
         <button class="sec-btn" onclick="location.href='?logout'">Sign out</button>
         <button class="sec-btn" onclick="doLoadModal()">Load…</button>
@@ -1304,7 +1477,31 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
         <div class="sec-body">
             <div class="map-field" style="width:100%;max-width:500px">
                 <label for="f-event">Event Name</label>
-                <input type="text" id="f-event" style="width:100%" placeholder="e.g. Marin Ultra Challenge 2026" oninput="markDirty()">
+                <div style="display:flex;gap:8px;align-items:center">
+                    <input type="text" id="f-event" style="flex:1" placeholder="e.g. Marin Ultra Challenge 2026" oninput="markDirty()">
+                    <button type="button" id="btn-backup" class="add-btn" onclick="doBackup()" style="white-space:nowrap">Backup</button>
+                    <button type="button" id="btn-restore" class="add-btn" onclick="doRestore()" style="display:none;white-space:nowrap">Restore</button>
+                </div>
+            </div>
+            <div class="map-field" style="width:100%;max-width:500px;margin-top:12px">
+                <label for="f-event-password">Event Password <span style="font-weight:400;color:#999;font-size:11px">(leave blank for no password)</span></label>
+                <input type="text" id="f-event-password" style="width:100%" placeholder="e.g. marathon2026" autocomplete="off" oninput="markDirty()">
+            </div>
+            <div class="map-field" style="width:100%;max-width:500px;margin-top:12px">
+                <label for="f-messaging-password">Messaging Password <span style="font-weight:400;color:#999;font-size:11px">(leave blank to disable messaging)</span></label>
+                <div style="display:flex;gap:8px;align-items:center">
+                    <input type="text" id="f-messaging-password" style="flex:1" placeholder="e.g. netcontrol2026" autocomplete="off" oninput="markDirty()">
+                    <button type="button" class="btn" onclick="openMsgThread()" title="View message thread">💬 Messages</button>
+                </div>
+            </div>
+            <div class="map-field" style="width:100%;max-width:500px;margin-top:12px">
+                <label for="f-blink-duration">Blink Duration &nbsp;<span id="f-blink-duration-val" style="font-weight:400;color:#555;font-size:13px">5s</span></label>
+                <div style="display:flex;align-items:center;gap:10px;margin-top:4px">
+                    <span style="color:#999;font-size:12px">0s</span>
+                    <input type="range" id="f-blink-duration" min="0" max="10" step="1" value="5" style="flex:1"
+                           oninput="document.getElementById('f-blink-duration-val').textContent=this.value+'s';markDirty()">
+                    <span style="color:#999;font-size:12px">10s</span>
+                </div>
             </div>
         </div>
     </div>
@@ -1370,6 +1567,69 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
             </div>
             <div style="margin-top:14px;padding-top:12px;border-top:1px solid #e8e8e8">
                 <div style="font-size:12px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px">
+                    Beacon Settings
+                </div>
+                <table style="border-collapse:collapse;font-size:13px;width:100%;max-width:620px">
+                    <thead><tr>
+                        <th style="text-align:left;padding:2px 10px 6px 0;color:#888;font-size:11px;font-weight:600">Mode</th>
+                        <th style="text-align:left;padding:2px 10px 6px 0;color:#888;font-size:11px;font-weight:600">Interval (5–120s)</th>
+                        <th style="text-align:left;padding:2px 10px 6px 0;color:#888;font-size:11px;font-weight:600">Distance (0.1–1.0 mi)</th>
+                        <th></th>
+                    </tr></thead>
+                    <tbody>
+                        <tr>
+                            <td style="padding:5px 10px 5px 0;white-space:nowrap">🏃 Walk/Run</td>
+                            <td style="padding:5px 10px 5px 0"><div style="display:flex;align-items:center;gap:6px">
+                                <input type="range" id="mobile-walk-interval" min="5" max="120" step="5" value="60" style="width:110px" oninput="document.getElementById('mobile-walk-interval-val').textContent=this.value+'s';markDirty(false,true)">
+                                <span id="mobile-walk-interval-val" style="min-width:32px;color:#555">60s</span>
+                            </div></td>
+                            <td style="padding:5px 10px 5px 0"><div style="display:flex;align-items:center;gap:6px">
+                                <input type="range" id="mobile-walk-distance" min="0.1" max="1.0" step="0.1" value="0.2" style="width:110px" oninput="document.getElementById('mobile-walk-distance-val').textContent=parseFloat(this.value).toFixed(1)+'mi';markDirty(false,true)">
+                                <span id="mobile-walk-distance-val" style="min-width:42px;color:#555">0.2mi</span>
+                            </div></td>
+                            <td style="padding:5px 0;white-space:nowrap"><button type="button" class="btn" onclick="resetBeaconMode('walk',60,0.2)">Default</button></td>
+                        </tr>
+                        <tr>
+                            <td style="padding:5px 10px 5px 0;white-space:nowrap">🚲 Cycle</td>
+                            <td style="padding:5px 10px 5px 0"><div style="display:flex;align-items:center;gap:6px">
+                                <input type="range" id="mobile-cycle-interval" min="5" max="120" step="5" value="30" style="width:110px" oninput="document.getElementById('mobile-cycle-interval-val').textContent=this.value+'s';markDirty(false,true)">
+                                <span id="mobile-cycle-interval-val" style="min-width:32px;color:#555">30s</span>
+                            </div></td>
+                            <td style="padding:5px 10px 5px 0"><div style="display:flex;align-items:center;gap:6px">
+                                <input type="range" id="mobile-cycle-distance" min="0.1" max="1.0" step="0.1" value="0.2" style="width:110px" oninput="document.getElementById('mobile-cycle-distance-val').textContent=parseFloat(this.value).toFixed(1)+'mi';markDirty(false,true)">
+                                <span id="mobile-cycle-distance-val" style="min-width:42px;color:#555">0.2mi</span>
+                            </div></td>
+                            <td style="padding:5px 0;white-space:nowrap"><button type="button" class="btn" onclick="resetBeaconMode('cycle',30,0.2)">Default</button></td>
+                        </tr>
+                        <tr>
+                            <td style="padding:5px 10px 5px 0;white-space:nowrap">🚗 Drive</td>
+                            <td style="padding:5px 10px 5px 0"><div style="display:flex;align-items:center;gap:6px">
+                                <input type="range" id="mobile-drive-interval" min="5" max="120" step="5" value="15" style="width:110px" oninput="document.getElementById('mobile-drive-interval-val').textContent=this.value+'s';markDirty(false,true)">
+                                <span id="mobile-drive-interval-val" style="min-width:32px;color:#555">15s</span>
+                            </div></td>
+                            <td style="padding:5px 10px 5px 0"><div style="display:flex;align-items:center;gap:6px">
+                                <input type="range" id="mobile-drive-distance" min="0.1" max="1.0" step="0.1" value="0.2" style="width:110px" oninput="document.getElementById('mobile-drive-distance-val').textContent=parseFloat(this.value).toFixed(1)+'mi';markDirty(false,true)">
+                                <span id="mobile-drive-distance-val" style="min-width:42px;color:#555">0.2mi</span>
+                            </div></td>
+                            <td style="padding:5px 0;white-space:nowrap"><button type="button" class="btn" onclick="resetBeaconMode('drive',15,0.2)">Default</button></td>
+                        </tr>
+                        <tr>
+                            <td style="padding:5px 10px 5px 0;white-space:nowrap">📍 Stationary</td>
+                            <td style="padding:5px 10px 5px 0"><div style="display:flex;align-items:center;gap:6px">
+                                <input type="range" id="mobile-stat-interval" min="5" max="120" step="5" value="120" style="width:110px" oninput="document.getElementById('mobile-stat-interval-val').textContent=this.value+'s';markDirty(false,true)">
+                                <span id="mobile-stat-interval-val" style="min-width:32px;color:#555">120s</span>
+                            </div></td>
+                            <td style="padding:5px 10px 5px 0"><div style="display:flex;align-items:center;gap:6px">
+                                <input type="range" id="mobile-stat-distance" min="0.1" max="1.0" step="0.1" value="1.0" style="width:110px" oninput="document.getElementById('mobile-stat-distance-val').textContent=parseFloat(this.value).toFixed(1)+'mi';markDirty(false,true)">
+                                <span id="mobile-stat-distance-val" style="min-width:42px;color:#555">1.0mi</span>
+                            </div></td>
+                            <td style="padding:5px 0;white-space:nowrap"><button type="button" class="btn" onclick="resetBeaconMode('stat',120,1.0)">Default</button></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div style="margin-top:14px;padding-top:12px;border-top:1px solid #e8e8e8">
+                <div style="font-size:12px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px">
                     Offline Map Download
                 </div>
                 <div style="display:flex;flex-direction:column;gap:8px;font-size:13px">
@@ -1400,7 +1660,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
             <div style="display:flex;flex-direction:column;gap:6px;font-size:13px">
                 <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="sv-trackers" checked> Trackers</label>
                 <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="sv-courses" checked> Courses</label>
-                <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="sv-aidstations" checked> Aid Stations</label>
+                <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="sv-aidstations" checked> Aid/Rest Stops</label>
                 <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="sv-igates" checked> iGates</label>
                 <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="sv-backgrounds" checked> Backgrounds</label>
             </div>
@@ -1441,12 +1701,12 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
         </div>
     </div>
 
-    <!-- ── Aid Stations ── -->
+    <!-- ── Aid/Rest Stops ── -->
     <div class="section">
-        <div class="sec-title"><span>Aid Stations</span><div class="sec-io-btns"><button type="button" class="io-btn" title="Export aid stations" onclick="showExportMenu(this,'aidstations')">↓</button><button type="button" class="io-btn" title="Import aid stations from YAML, GPX, KML, or GeoJSON" onclick="importGeoSection('aidstations')">↑</button></div></div>
+        <div class="sec-title"><span>Aid/Rest Stops</span><div class="sec-io-btns"><button type="button" class="io-btn" title="Export aid stations" onclick="showExportMenu(this,'aidstations')">↓</button><button type="button" class="io-btn" title="Import aid stations from YAML, GPX, KML, or GeoJSON" onclick="importGeoSection('aidstations')">↑</button></div></div>
         <div class="sec-body">
             <div id="aidstations-list"></div>
-            <button class="add-btn" onclick="addAid()">+ Add Aid Station</button>
+            <button class="add-btn" onclick="addAid()">+ Add Aid/Rest Stop</button>
         </div>
     </div>
 
@@ -1470,6 +1730,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
     </div>
 
     <div id="footer">
+        <button class="sec-btn" onclick="doNew()">New</button>
         <button class="sec-btn" onclick="doUpdate()">Update</button>
         <button class="sec-btn" onclick="doSave()">Save</button>
         <button class="sec-btn" onclick="doSaveAs()">Save as Default Event</button>
@@ -1490,6 +1751,14 @@ let originalConfig   = null;
 let currentFilename  = '';
 let currentEventName = '';
 const serverActiveEvent = <?= json_encode($currentFilename) ?>;
+
+function resetBeaconMode(mode, defInterval, defDistance) {
+    document.getElementById('mobile-' + mode + '-interval').value = defInterval;
+    document.getElementById('mobile-' + mode + '-interval-val').textContent = defInterval + 's';
+    document.getElementById('mobile-' + mode + '-distance').value = defDistance;
+    document.getElementById('mobile-' + mode + '-distance-val').textContent = parseFloat(defDistance).toFixed(1) + 'mi';
+    markDirty(false, true);
+}
 
 function markDirty(server = false, map = false) {
     isDirty = true;
@@ -1515,6 +1784,117 @@ function setCurrentEvent(filename, eventName) {
 window.addEventListener('beforeunload', e => {
     if (isDirty) { e.preventDefault(); e.returnValue = ''; }
 });
+
+let isNewMode = false;
+
+function setNewMode(newMode) {
+    isNewMode = newMode;
+    document.getElementById('btn-backup').style.display  = newMode ? 'none' : '';
+    document.getElementById('btn-restore').style.display = newMode ? ''     : 'none';
+}
+
+function doNew() {
+    if (isDirty && !confirm('You have unsaved changes. Start a new event anyway?')) return;
+    populateForm({
+        event: '', event_password: '', messaging_password: '', blink_duration: 5, legend: '',
+        map: { lat: '', lon: '', zoom: '' },
+        section_visibility: { trackers: true, courses: true, aidstations: true, igates: true, backgrounds: true },
+        trackers: [], courses: [], aidstations: [], igates: [], backgrounds: [],
+        mobile: { enabled: false, pin: '', root: '' },
+        tracker_style: {}
+    });
+    setCurrentEvent('', '');
+    originalConfig   = null;
+    isDirty          = false;
+    hasServerChanges = false;
+    hasMapChanges    = false;
+    setStatus('New event — enter a name and use Save as Default Event', '');
+    setNewMode(true);
+    document.getElementById('f-event').focus();
+}
+
+async function doBackup() {
+    if (!currentFilename) { alert('No event loaded — save the event first.'); return; }
+    setStatus('Preparing backup…', 'dirty');
+    try {
+        const r = await fetch('?backup&name=' + encodeURIComponent(currentFilename));
+        if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            setStatus(err.error || 'Backup failed', 'error');
+            return;
+        }
+        const blob = await r.blob();
+        const safeName = currentFilename.replace(/[^a-zA-Z0-9_\-]/g, '_');
+
+        if (window.showSaveFilePicker) {
+            try {
+                const handle = await window.showSaveFilePicker({
+                    suggestedName: safeName + '.zip',
+                    types: [{ description: 'ZIP Archive', accept: { 'application/zip': ['.zip'] } }]
+                });
+                const writable = await handle.createWritable();
+                await writable.write(blob);
+                await writable.close();
+                setStatus('Backup saved ✓', 'ok', 3000);
+                return;
+            } catch (e) {
+                if (e.name === 'AbortError') { setStatus('', ''); return; }
+                // fall through to download fallback
+            }
+        }
+        // Fallback for browsers without showSaveFilePicker
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = safeName + '.zip'; a.click();
+        URL.revokeObjectURL(url);
+        setStatus('Backup downloaded ✓', 'ok', 3000);
+    } catch (e) {
+        setStatus('Backup failed', 'error');
+        console.error(e);
+    }
+}
+
+async function doRestore() {
+    const fileInp = document.createElement('input');
+    fileInp.type = 'file';
+    fileInp.accept = '.zip';
+    fileInp.addEventListener('change', async () => {
+        const file = fileInp.files[0];
+        if (!file) return;
+        const fd = new FormData();
+        fd.append('zip', file);
+        setStatus('Restoring…', 'dirty');
+        try {
+            const r = await fetch('?restore', { method: 'POST', body: fd });
+            const result = await r.json();
+            if (!r.ok || !result.ok) { setStatus(result.error || 'Restore failed', 'error'); return; }
+            // Load the restored event
+            const [cfgResp, filesResp, bgLibResp, deltasResp] = await Promise.all([
+                fetch('?loadversion&name=' + encodeURIComponent(result.name)),
+                fetch('?locationfiles'), fetch('?bglib'), fetch('?beacondeltas')
+            ]);
+            if (cfgResp.status === 401) { location.reload(); return; }
+            const cfg = await cfgResp.json();
+            if (cfg.error) { setStatus(cfg.error, 'error'); return; }
+            if (filesResp.ok) locationFiles = await filesResp.json();
+            if (bgLibResp.ok) mergeBgLibrary(await bgLibResp.json());
+            const beaconDeltas = deltasResp.ok ? await deltasResp.json() : {};
+            populateForm(cfg);
+            applyBeaconDeltas(cfg._beaconDeltas || beaconDeltas);
+            setCurrentEvent(result.name, cfg.event || '');
+            originalConfig   = cfg;
+            isDirty          = false;
+            hasServerChanges = false;
+            hasMapChanges    = false;
+            setStatus(`Restored "${result.name}" ✓`, 'ok', 3000);
+            setNewMode(false);
+        } catch (e) {
+            setStatus('Network error during restore', 'error');
+            console.error(e);
+        }
+    });
+    fileInp.click();
+}
 
 // ── Drag-to-reorder ───────────────────────────────────────────────────────────
 
@@ -1570,8 +1950,7 @@ function makeDeleteBtn() {
     const btn     = document.createElement('button');
     btn.type      = 'button';
     btn.className = 'del-btn';
-    btn.title     = 'Remove';
-    btn.textContent = '✕';
+    btn.textContent = 'Remove';
     btn.onclick   = function() { this.closest('.list-row').remove(); markDirty(true); };
     return btn;
 }
@@ -2516,7 +2895,7 @@ async function loadMobileTrackers() {
 
         const bulkBtn = document.createElement('button');
         bulkBtn.textContent = 'Remove Selected';
-        bulkBtn.className = 'io-btn';
+        bulkBtn.className = 'btn';
         bulkBtn.style.display = 'none';
 
         toolbar.appendChild(selAll); toolbar.appendChild(selLabel); toolbar.appendChild(bulkBtn);
@@ -2572,6 +2951,42 @@ async function loadMobileTrackers() {
 
             row.appendChild(cb); row.appendChild(idSpan); row.appendChild(csSpan); row.appendChild(nameInput);
 
+            const deltaSpan = document.createElement('span');
+            deltaSpan.title = 'Minimum interval between successive breadcrumbs (last 10 received)';
+            deltaSpan.style.cssText = 'font-size:12px;white-space:nowrap';
+            if (t.delta != null) {
+                const s = t.delta;
+                deltaSpan.textContent = 'Δ ' + (s < 60 ? s + 's' : Math.round(s / 60) + 'm');
+                deltaSpan.style.color = '#555';
+            } else {
+                deltaSpan.textContent = 'Δ —';
+                deltaSpan.style.color = '#bbb';
+            }
+            row.appendChild(deltaSpan);
+
+            if (t.device_info && Object.keys(t.device_info).length) {
+                const di = t.device_info;
+                const modeIcons = { walk_run: '🏃', cycle: '🚲', drive: '🚗', drive_cycle: '🚗', stationary: '📍' };
+                const modeLabels = { walk_run: 'Walk / Run', cycle: 'Cycle', drive: 'Drive', drive_cycle: 'Drive', stationary: 'Stationary' };
+                const isWeb = /^Web\b/i.test(di.app || '');
+                const app = (di.app || '').replace(/^Web\s+/i, '');
+                const platform = isWeb ? 'Web' : (di.os || di.browser);
+                const parts = [app, platform].filter(Boolean);
+                const inlineSpan = document.createElement('span');
+                inlineSpan.style.cssText = 'font-size:11px;color:#666;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px';
+                inlineSpan.textContent = parts.join(' · ');
+                inlineSpan.title = [modeLabels[t.sharing_mode] || '', ...parts].filter(Boolean).join(' · ');
+                row.appendChild(inlineSpan);
+                const icon = modeIcons[t.sharing_mode];
+                if (icon) {
+                    const iconSpan = document.createElement('span');
+                    iconSpan.textContent = icon;
+                    iconSpan.style.cssText = 'font-size:13px;filter:grayscale(1) brightness(0.5);flex-shrink:0';
+                    iconSpan.title = modeLabels[t.sharing_mode] || '';
+                    row.appendChild(iconSpan);
+                }
+            }
+
             if (t.blocked) {
                 const bl = document.createElement('span');
                 bl.textContent = 'blocked'; bl.style.cssText = 'color:#c0392b;font-size:11px;white-space:nowrap';
@@ -2585,15 +3000,23 @@ async function loadMobileTrackers() {
 
             const blockBtn = document.createElement('button');
             blockBtn.textContent = t.blocked ? 'Unblock' : 'Block';
-            blockBtn.className = 'io-btn';
+            blockBtn.className = 'btn';
             blockBtn.addEventListener('click', () => toggleBlockMobileTracker(t.id, !t.blocked));
 
             const rmBtn = document.createElement('button');
             rmBtn.textContent = 'Remove';
-            rmBtn.className = 'io-btn';
+            rmBtn.className = 'btn';
             rmBtn.addEventListener('click', () => removeMobileTracker(t.id, row, listEl));
 
-            row.appendChild(ageSpan); row.appendChild(blockBtn); row.appendChild(rmBtn);
+            row.appendChild(ageSpan);
+            if (t.device_info && Object.keys(t.device_info).length) {
+                const infoBtn = document.createElement('button');
+                infoBtn.textContent = 'Info';
+                infoBtn.className = 'btn';
+                infoBtn.addEventListener('click', () => showDeviceInfoModal(t));
+                row.appendChild(infoBtn);
+            }
+            row.appendChild(blockBtn); row.appendChild(rmBtn);
             listEl.appendChild(row);
         });
     } catch (e) { listEl.innerHTML = '<span style="color:#c0392b">Error loading mobile trackers.</span>'; console.error('[mobiletrackers]', e); }
@@ -2629,7 +3052,34 @@ async function removeMobileTrackersBulk(listEl, updateBulkBtn) {
     } catch { alert('Network error.'); }
 }
 
-// ── Aid Station rows ──────────────────────────────────────────────────────────
+function showDeviceInfoModal(t) {
+    let modal = document.getElementById('device-info-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'device-info-modal';
+        modal.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.45)';
+        modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+        document.body.appendChild(modal);
+    }
+    const di = t.device_info || {};
+    const labels = { app: 'App version', os: 'Operating system', browser: 'Browser', model: 'Device model', manufacturer: 'Manufacturer', screen: 'Screen resolution' };
+    const modeLabels = { walk_run: 'Walk / Run', cycle: 'Cycle', drive: 'Drive', drive_cycle: 'Drive', stationary: 'Stationary' };
+    const rows = Object.entries(labels)
+        .filter(([k]) => di[k])
+        .map(([k, lbl]) => `<tr><td style="color:#666;padding:5px 14px 5px 0;white-space:nowrap">${lbl}</td><td style="font-weight:600">${di[k]}</td></tr>`)
+        .join('')
+      + (t.sharing_mode ? `<tr><td style="color:#666;padding:5px 14px 5px 0;white-space:nowrap">Sharing mode</td><td style="font-weight:600">${modeLabels[t.sharing_mode] || t.sharing_mode}</td></tr>` : '');
+    modal.innerHTML = `
+        <div style="background:#fff;border-radius:10px;padding:24px 28px;min-width:280px;box-shadow:0 8px 32px rgba(0,0,0,0.22)">
+            <div style="font-weight:700;font-size:15px;margin-bottom:14px;color:#2c3e50">Device info — ${t.name} (${t.id})</div>
+            <table style="border-collapse:collapse;font-size:14px">${rows || '<tr><td style="color:#999">No data</td></tr>'}</table>
+            <div style="text-align:right;margin-top:18px">
+                <button class="btn" onclick="document.getElementById('device-info-modal').remove()">Close</button>
+            </div>
+        </div>`;
+}
+
+// ── Aid/Rest Stop rows ──────────────────────────────────────────────────────────
 
 function buildAidRow(g) {
     const row     = document.createElement('div');
@@ -2740,21 +3190,37 @@ function collectConfig() {
     const mobile = {
         enabled: document.getElementById('mobile-enabled').checked,
         pin:     document.getElementById('mobile-pin').value.trim(),
-        root:    document.getElementById('mobile-root').value.trim().toUpperCase()
+        root:    document.getElementById('mobile-root').value.trim().toUpperCase(),
+        beacon_walk_interval:  parseInt(document.getElementById('mobile-walk-interval').value, 10),
+        beacon_walk_distance:  parseFloat(document.getElementById('mobile-walk-distance').value),
+        beacon_cycle_interval: parseInt(document.getElementById('mobile-cycle-interval').value, 10),
+        beacon_cycle_distance: parseFloat(document.getElementById('mobile-cycle-distance').value),
+        beacon_drive_interval: parseInt(document.getElementById('mobile-drive-interval').value, 10),
+        beacon_drive_distance: parseFloat(document.getElementById('mobile-drive-distance').value),
+        beacon_stat_interval:  parseInt(document.getElementById('mobile-stat-interval').value, 10),
+        beacon_stat_distance:  parseFloat(document.getElementById('mobile-stat-distance').value),
     };
     const offline_map = {
         radius:   parseFloat(document.getElementById('offline-radius').value)     || null,
         max_zoom: parseInt(document.getElementById('offline-maxzoom').value, 10)  || null,
         url:      document.getElementById('offline-url').value.trim()
     };
-    return { event: document.getElementById('f-event').value.trim(), legend: document.getElementById('f-legend').value, tracker_style, trackers, map, backgrounds, background_url, courses, aidstations, igates, section_visibility, mobile, offline_map };
+    const event_password     = document.getElementById('f-event-password').value.trim();
+    const messaging_password = document.getElementById('f-messaging-password').value.trim();
+    const blink_duration = parseInt(document.getElementById('f-blink-duration').value, 10);
+    return { event: document.getElementById('f-event').value.trim(), event_password, messaging_password, blink_duration, legend: document.getElementById('f-legend').value, tracker_style, trackers, map, backgrounds, background_url, courses, aidstations, igates, section_visibility, mobile, offline_map };
 }
 
 // ── Populate form from a config object ───────────────────────────────────────
 
 function populateForm(cfg) {
-    document.getElementById('f-event').value  = cfg.event  || '';
-    document.getElementById('f-legend').value = cfg.legend || '';
+    document.getElementById('f-event').value          = cfg.event          || '';
+    document.getElementById('f-event-password').value     = cfg.event_password     || '';
+    document.getElementById('f-messaging-password').value = cfg.messaging_password || '';
+    const _bd = cfg.blink_duration ?? 5;
+    document.getElementById('f-blink-duration').value = _bd;
+    document.getElementById('f-blink-duration-val').textContent = _bd + 's';
+    document.getElementById('f-legend').value          = cfg.legend         || '';
     initTrackerStyleSection(cfg.tracker_style || {});
     const sv = cfg.section_visibility || {};
     document.getElementById('sv-trackers').checked    = sv.trackers    !== false;
@@ -2791,6 +3257,17 @@ function populateForm(cfg) {
     document.getElementById('mobile-enabled').checked = !!mob.enabled;
     document.getElementById('mobile-pin').value        = mob.pin  || '';
     document.getElementById('mobile-root').value       = mob.root || '';
+    const _setSlider = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+    const _setVal    = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+
+    const wi = mob.beacon_walk_interval  ?? 60;  _setSlider('mobile-walk-interval',  wi);  _setVal('mobile-walk-interval-val',  wi + 's');
+    const wd = mob.beacon_walk_distance  ?? 0.2; _setSlider('mobile-walk-distance',  wd);  _setVal('mobile-walk-distance-val',  parseFloat(wd).toFixed(1) + 'mi');
+    const ci = mob.beacon_cycle_interval ?? 30;  _setSlider('mobile-cycle-interval', ci);  _setVal('mobile-cycle-interval-val', ci + 's');
+    const cd = mob.beacon_cycle_distance ?? 0.2; _setSlider('mobile-cycle-distance', cd);  _setVal('mobile-cycle-distance-val', parseFloat(cd).toFixed(1) + 'mi');
+    const di = mob.beacon_drive_interval ?? 15;  _setSlider('mobile-drive-interval', di);  _setVal('mobile-drive-interval-val', di + 's');
+    const dd = mob.beacon_drive_distance ?? 0.2; _setSlider('mobile-drive-distance', dd);  _setVal('mobile-drive-distance-val', parseFloat(dd).toFixed(1) + 'mi');
+    const si = mob.beacon_stat_interval  ?? 120; _setSlider('mobile-stat-interval',  si);  _setVal('mobile-stat-interval-val',  si + 's');
+    const sd = mob.beacon_stat_distance  ?? 1.0; _setSlider('mobile-stat-distance',  sd);  _setVal('mobile-stat-distance-val',  parseFloat(sd).toFixed(1) + 'mi');
     const om = cfg.offline_map || {};
     document.getElementById('offline-radius').value  = om.radius   || '';
     document.getElementById('offline-maxzoom').value = om.max_zoom || '';
@@ -2850,6 +3327,7 @@ async function doLoad() {
         loadMobileTrackers();
         applyBeaconDeltas(cfg._beaconDeltas || beaconDeltas);
         setCurrentEvent(filename, cfg.event || '');
+        setNewMode(false);
         originalConfig   = cfg;
         isDirty          = false;
         hasServerChanges = false;
@@ -2870,8 +3348,8 @@ function validateConfig(cfg) {
     if (isNaN(lon)  || lon  < -180 || lon  > 180) errors.push('Map: longitude must be −180 to 180');
     if (isNaN(zoom) || zoom < 0    || zoom > 19)  errors.push('Map: zoom must be 0 to 19');
     (cfg.aidstations || []).forEach((g, i) => {
-        if (isNaN(g.lat) || g.lat < -90  || g.lat > 90)   errors.push(`Aid Station ${i+1}: latitude must be −90 to 90`);
-        if (isNaN(g.lon) || g.lon < -180 || g.lon > 180)  errors.push(`Aid Station ${i+1}: longitude must be −180 to 180`);
+        if (isNaN(g.lat) || g.lat < -90  || g.lat > 90)   errors.push(`Aid/Rest Stop ${i+1}: latitude must be −90 to 90`);
+        if (isNaN(g.lon) || g.lon < -180 || g.lon > 180)  errors.push(`Aid/Rest Stop ${i+1}: longitude must be −180 to 180`);
     });
     (cfg.igates || []).forEach((g, i) => {
         if (isNaN(g.lat) || g.lat < -90  || g.lat > 90)   errors.push(`iGate ${i+1}: latitude must be −90 to 90`);
@@ -3013,6 +3491,67 @@ async function toggleLock(name, currentlyLocked, onSuccess) {
         if (r.ok && d.ok) { onSuccess(!currentlyLocked); }
         else alert(d.error || 'Failed');
     } catch { alert('Network error'); }
+}
+
+async function setEventPassword(v, onSuccess) {
+    const adminPw = await promptPassword('Event Password', `Set or clear the event password for "${v.name}".`);
+    if (adminPw === null) return;
+
+    const bd = document.createElement('div');
+    bd.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:10000';
+    const box = document.createElement('div');
+    box.style.cssText = 'background:#fff;border-radius:8px;padding:24px;width:340px;box-shadow:0 4px 20px rgba(0,0,0,.35)';
+    const h = document.createElement('h3');
+    h.textContent = 'Set Event Password';
+    h.style.cssText = 'margin:0 0 10px;font-size:16px;color:#333';
+    const msg = document.createElement('p');
+    msg.textContent = `Password for "${v.name}". Leave blank to remove the password.`;
+    msg.style.cssText = 'margin:0 0 14px;font-size:13px;color:#555;line-height:1.45';
+    const inp = document.createElement('input');
+    inp.type = 'text'; inp.placeholder = v.has_password ? '(password currently set)' : 'Enter new password';
+    inp.style.cssText = 'width:100%;padding:7px 10px;border:1px solid #ccc;border-radius:4px;font-size:13px;box-sizing:border-box';
+    const errEl = document.createElement('p');
+    errEl.style.cssText = 'color:#d32f2f;font-size:12px;margin:5px 0 0;min-height:16px';
+    const btns = document.createElement('div');
+    btns.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:14px';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.cssText = 'padding:7px 16px;border:1px solid #ccc;border-radius:4px;background:#f5f5f5;cursor:pointer;font-size:13px';
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = 'Save';
+    saveBtn.style.cssText = 'padding:7px 16px;border:none;border-radius:4px;background:#1976d2;color:#fff;cursor:pointer;font-size:13px;font-weight:bold';
+    cancelBtn.addEventListener('click', () => bd.remove());
+    saveBtn.addEventListener('click', async () => {
+        saveBtn.disabled = true;
+        try {
+            const r = await fetch('?seteventpassword', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: v.name, pw: adminPw, event_password: inp.value.trim() })
+            });
+            const d = await r.json();
+            if (r.ok && d.ok) { bd.remove(); onSuccess(d.has_password); }
+            else { errEl.textContent = d.error || 'Failed'; saveBtn.disabled = false; }
+        } catch { errEl.textContent = 'Network error'; saveBtn.disabled = false; }
+    });
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') saveBtn.click(); });
+    btns.appendChild(cancelBtn); btns.appendChild(saveBtn);
+    box.appendChild(h); box.appendChild(msg); box.appendChild(inp); box.appendChild(errEl); box.appendChild(btns);
+    bd.appendChild(box); document.body.appendChild(bd);
+    requestAnimationFrame(() => inp.focus());
+}
+
+function makePasswordBtn(v) {
+    const btn = document.createElement('button');
+    btn.className = 'item-lock';
+    const update = hasPassword => {
+        btn.textContent = hasPassword ? '🔑' : '🔓';
+        btn.title = hasPassword ? 'Event password is set — click to change or clear' : 'No event password — click to set one';
+        v.has_password = hasPassword;
+    };
+    update(v.has_password);
+    btn.addEventListener('click', e => { e.stopPropagation(); setEventPassword(v, update); });
+    return btn;
 }
 
 function makeLockBtn(v) {
@@ -3630,6 +4169,7 @@ async function doLoadModal() {
                 applyBeaconDeltas(cfg._beaconDeltas || {});
                 isDirty = false;
                 setCurrentEvent(v.name, cfg.event || '');
+                setNewMode(false);
                 const eventData = { name: v.name, config: cfg, isDefault: v.active };
                 localStorage.setItem('aprs_current_event', JSON.stringify(eventData));
                 close();
@@ -3662,6 +4202,7 @@ async function doLoadModal() {
 
         btnContainer.appendChild(activateBtn);
         btnContainer.appendChild(makeLockBtn(v));
+        btnContainer.appendChild(makePasswordBtn(v));
         btnContainer.appendChild(delBtn);
 
         row.appendChild(checkSpan);
@@ -3688,7 +4229,7 @@ function highlightErrorFields(errs) {
             row?.querySelector(tm[2].toLowerCase() === 'callsign' ? '.f-cs' : '.f-id')?.classList.add('field-error');
             return;
         }
-        const am = err.match(/^Aid Station (\d+): (lat|lon)/i);
+        const am = err.match(/^Aid\/Rest Stop (\d+): (lat|lon)/i);
         if (am) {
             const row = document.querySelectorAll('#aidstations-list > .list-row')[+am[1] - 1];
             row?.querySelector(am[2].toLowerCase() === 'lat' ? '.f-alat' : '.f-alon')?.classList.add('field-error');
@@ -4372,7 +4913,7 @@ function parseCsvCourses(text) {
         .filter(c => c.file);
 }
 
-// ── GPX export / geo import for iGates & Aid Stations ────────────────────────
+// ── GPX export / geo import for iGates & Aid/Rest Stops ────────────────────────
 
 function exportGpx(type) {
     const cfg  = collectConfig();
@@ -4436,7 +4977,7 @@ function showExportMenu(btn, type) {
     setTimeout(() => document.addEventListener('click', dismiss, true), 0);
 }
 
-// Import iGates or Aid Stations from YAML, GPX, KML, JSON, or GeoJSON.
+// Import iGates or Aid/Rest Stops from YAML, GPX, KML, JSON, or GeoJSON.
 async function importGeoSection(type) {
     const inp = document.createElement('input');
     inp.type = 'file'; inp.accept = '.yaml,.yml,.gpx,.kml,.json,.geojson,.csv'; inp.multiple = true;
@@ -4521,6 +5062,114 @@ setInterval(async () => {
         else console.warn('[beacondeltas] HTTP', r.status);
     } catch (e) { console.warn('[beacondeltas] poll failed:', e); }
 }, 30000);
+
+// ── Message thread viewer ─────────────────────────────────────────────────────
+async function openMsgThread() {
+    let msgs = [];
+    try {
+        const r = await fetch('?messages');
+        if (r.ok) msgs = await r.json();
+    } catch {}
+
+    const body = document.createElement('div');
+    if (!msgs.length) {
+        body.innerHTML = '<p style="color:#999;font-size:13px;text-align:center;padding:20px 0">No messages recorded for this event.</p>';
+    } else {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const fmtTs = ts => new Date(ts * 1000).toLocaleString([], {
+            month:'2-digit', day:'2-digit',
+            hour:'2-digit', minute:'2-digit', second:'2-digit'
+        });
+        const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        body.innerHTML =
+            `<table class="lf-table" style="font-size:12px">` +
+            `<thead><tr>` +
+            `<th class="lf-th lf-th-noclick" style="width:130px">Time</th>` +
+            `<th class="lf-th lf-th-noclick" style="width:120px">From</th>` +
+            `<th class="lf-th lf-th-noclick" style="width:120px">To</th>` +
+            `<th class="lf-th lf-th-noclick">Message</th>` +
+            `</tr></thead><tbody>` +
+            msgs.map(m => {
+                const toLabel = m.broadcast ? '📢 All' : (m.to_label ? esc(m.to_label) + ' <span style="color:#aaa">(' + esc(m.to) + ')</span>' : esc(m.to));
+                const fromLabel = esc(m.from_label || m.from);
+                return `<tr class="lf-tr">` +
+                    `<td class="lf-td lf-td-date" style="white-space:nowrap">${fmtTs(m.ts)}</td>` +
+                    `<td class="lf-td">${fromLabel}</td>` +
+                    `<td class="lf-td">${toLabel}</td>` +
+                    `<td class="lf-td" style="white-space:pre-wrap;word-break:break-word">${esc(m.text)}</td>` +
+                    `</tr>`;
+            }).join('') +
+            `</tbody></table>`;
+    }
+    const wrap = document.createElement('div');
+    wrap.className = 'lf-table-wrap';
+    wrap.style.maxHeight = '60vh';
+    wrap.appendChild(body);
+
+    const exportBtn = document.createElement('button');
+    exportBtn.className = 'save-btn';
+    exportBtn.style.cssText = 'padding:7px 16px;font-size:13px';
+    exportBtn.textContent = 'Export .txt';
+    exportBtn.onclick = () => exportMsgThread(msgs);
+
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'del-btn';
+    clearBtn.style.cssText = 'padding:7px 14px;font-size:13px;margin-top:0;background:#fff0f0;border-color:#d9534f;color:#c0392b';
+    clearBtn.textContent = 'Clear Thread';
+    clearBtn.onclick = async () => {
+        if (clearBtn.dataset.confirm !== '1') {
+            clearBtn.textContent = 'Confirm Delete?';
+            clearBtn.dataset.confirm = '1';
+            setTimeout(() => { clearBtn.textContent = 'Clear Thread'; delete clearBtn.dataset.confirm; }, 4000);
+            return;
+        }
+        try {
+            const r = await fetch('?delete_messages');
+            if (!r.ok) throw new Error();
+            clearBtn.closest('.modal-backdrop').remove();
+        } catch {
+            alert('Failed to delete message thread.');
+        }
+    };
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'sec-btn';
+    closeBtn.style.cssText = 'padding:7px 14px;font-size:13px';
+    closeBtn.textContent = 'Close';
+
+    const eventName = document.getElementById('f-event')?.value || 'event';
+    openModal('💬 Message Thread — ' + eventName, wrap, [exportBtn, clearBtn, closeBtn]);
+    closeBtn.closest('.modal-backdrop')?.querySelector('.modal-footer');
+    closeBtn.onclick = () => closeBtn.closest('.modal-backdrop').remove();
+}
+
+function exportMsgThread(msgs) {
+    const eventName = document.getElementById('f-event')?.value || 'event';
+    const fmtTs = ts => new Date(ts * 1000).toLocaleString([], {
+        year:'numeric', month:'2-digit', day:'2-digit',
+        hour:'2-digit', minute:'2-digit', second:'2-digit', hour12: false
+    });
+    const lines = [
+        'Message Thread — ' + eventName,
+        'Exported: ' + new Date().toLocaleString(),
+        '─'.repeat(60),
+        ''
+    ];
+    msgs.forEach(m => {
+        const to = m.broadcast ? 'ALL' : ((m.to_label || '') ? m.to_label + ' (' + m.to + ')' : m.to);
+        lines.push('[' + fmtTs(m.ts) + ']');
+        lines.push('  From: ' + (m.from_label || m.from));
+        lines.push('  To:   ' + to);
+        lines.push('  ' + m.text);
+        lines.push('');
+    });
+    const blob = new Blob([lines.join('\n')], {type: 'text/plain'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'messages-' + eventName.replace(/[^a-zA-Z0-9_\-]/g, '_') + '.txt';
+    a.click();
+    URL.revokeObjectURL(a.href);
+}
 
 // Sync log name from localStorage into the PHP session so all logged actions
 // carry the user's name even when they were already logged in before the name
