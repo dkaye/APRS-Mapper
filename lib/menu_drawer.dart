@@ -34,6 +34,8 @@ class MenuDrawer extends StatefulWidget {
   final String? sharingName;
   final int sharingActivityMode;
   final VoidCallback? onSendMessage;
+  final Future<void> Function(int mode)? onActivityModeChange;
+  final Future<void> Function(int mode)? onStartSharingWithMode;
 
   const MenuDrawer({
     super.key,
@@ -63,6 +65,8 @@ class MenuDrawer extends StatefulWidget {
     this.sharingName,
     this.sharingActivityMode = -1,
     this.onSendMessage,
+    this.onActivityModeChange,
+    this.onStartSharingWithMode,
   });
 
   @override
@@ -87,6 +91,65 @@ class _MenuDrawerState extends State<MenuDrawer> {
 
   void _toggleSection(String key) =>
       setState(() => _expanded.contains(key) ? _expanded.remove(key) : _expanded.add(key));
+
+  void _openSharingModal(BuildContext drawerCtx) {
+    const modes = [(0, 'Walk / Run'), (1, 'Cycle'), (2, 'Drive'), (3, 'Stationary')];
+    showDialog<void>(
+      context: drawerCtx,
+      builder: (dlgCtx) {
+        void closeAll() {
+          Navigator.pop(dlgCtx);
+          Navigator.pop(drawerCtx);
+        }
+        return AlertDialog(
+          title: const Text('Activity Mode'),
+          contentPadding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+          content: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final entry in modes)
+                ChoiceChip(
+                  label: Text(entry.$2,
+                      style: TextStyle(
+                        color: widget.sharingActivityMode == entry.$1
+                            ? Colors.white
+                            : Colors.black54,
+                        fontWeight: widget.sharingActivityMode == entry.$1
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                      )),
+                  selected: widget.sharingActivityMode == entry.$1,
+                  selectedColor: Colors.blueGrey.shade700,
+                  backgroundColor: Colors.grey.shade200,
+                  showCheckmark: false,
+                  onSelected: (_) {
+                    if (widget.isSharing) {
+                      widget.onActivityModeChange?.call(entry.$1);
+                    } else {
+                      widget.onStartSharingWithMode?.call(entry.$1);
+                    }
+                    closeAll();
+                  },
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                if (widget.isSharing) widget.onShareToggle?.call();
+                closeAll();
+              },
+              style: widget.isSharing
+                  ? TextButton.styleFrom(foregroundColor: Colors.red[700])
+                  : null,
+              child: Text(widget.isSharing ? 'Stop Sharing' : 'Cancel'),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
   Color _trackerColor(String color) {
     switch (color) {
@@ -177,13 +240,12 @@ class _MenuDrawerState extends State<MenuDrawer> {
                 children: [
                   if (widget.config.mobileEnabled)
                     _footerBtn(
-                      widget.isSharing ? 'Stop Sharing' : 'Share Location',
-                      widget.isSharing ? Icons.location_off : Icons.share_location,
-                      () async {
-                        Navigator.pop(context);
-                        await widget.onShareToggle?.call();
-                      },
-                      color: widget.isSharing ? Colors.red[700] : null,
+                      widget.isSharing ? 'Sharing' : 'Share Location',
+                      Icons.share_location,
+                      widget.isSharing
+                          ? () => _openSharingModal(context)
+                          : () { Navigator.pop(context); widget.onStartSharingWithMode?.call(0); },
+                      color: widget.isSharing ? Colors.green[700] : null,
                     ),
                   if (widget.isSharing && widget.onSendMessage != null)
                     _footerBtn('Message', Icons.chat_bubble_outline, () {

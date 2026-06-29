@@ -96,13 +96,14 @@ class MobileSession {
   /// Heartbeat update. On iOS, include lat/lon so the server injects to APRS-IS
   /// (raw TCP sockets are blocked in iOS background; HTTP is not).
   /// Returns null if session is gone (404), otherwise list of pending messages.
-  Future<List<InboundMessage>?> update({double? lat, double? lon, List<int> ackIds = const []}) async {
+  Future<List<InboundMessage>?> update({double? lat, double? lon, List<int> ackIds = const [], String sharingMode = ''}) async {
     final t = token;
     if (t == null) return null;
     try {
       final body = <String, dynamic>{'token': t};
       if (lat != null && lon != null) { body['lat'] = lat; body['lon'] = lon; }
       if (ackIds.isNotEmpty) body['ack_ids'] = ackIds;
+      if (sharingMode.isNotEmpty) body['sharing_mode'] = sharingMode;
       final response = await http.post(
         Uri.parse('${MapConfig.serverBaseUrl}/index.php?mobile=update'),
         headers: {'Content-Type': 'application/json'},

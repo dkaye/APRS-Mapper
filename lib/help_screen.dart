@@ -17,12 +17,25 @@ class HelpScreen extends StatelessWidget {
         title: const Text('Quick Start'),
         backgroundColor: const Color(0xFF2C3E50),
         foregroundColor: Colors.white,
+        actions: [
+          TextButton(
+            onPressed: () async {
+              if (isFirstLaunch) {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setBool('help_seen', true);
+              }
+              if (context.mounted) Navigator.pop(context);
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.white),
+            child: const Text('Continue', style: TextStyle(fontSize: 15)),
+          ),
+        ],
       ),
       body: ListView(
         padding: EdgeInsets.fromLTRB(16, 20, 16, 32 + MediaQuery.of(context).padding.bottom),
         children: [
 
-           if (isFirstLaunch)
+          if (isFirstLaunch)
             Container(
               margin: const EdgeInsets.only(bottom: 20),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -83,11 +96,17 @@ class HelpScreen extends StatelessWidget {
               WidgetSpan(child: Icon(Icons.share_location, size: 16, color: Color(0xFF333333)), alignment: PlaceholderAlignment.middle),
               const TextSpan(text: ' Share Location.', style: TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4)),
           ]))),
-            _tip('Enter your first name and the event PIN, then choose your activity:'),
+            _tip('Enter your first name (pre-filled from your last session) and the event PIN — both shown as plain text.'),
+            _tip('Tap an activity to start sharing immediately:'),
             _indent('Walk / Run — sends your position every 60 seconds.'),
             _indent('Cycle — sends your position every 30 seconds, or immediately when you move ≥ 0.2 mile.'),
             _indent('Drive — sends your position every 15 seconds, or immediately when you move ≥ 0.2 mile.'),
             _indent('Stationary — sends your position every 2 minutes.'),
+            _tipWidget(Text.rich(TextSpan(children: [
+              const TextSpan(text: 'While sharing, tap ', style: TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4)),
+              WidgetSpan(child: Icon(Icons.share_location, size: 16, color: Colors.green[700]), alignment: PlaceholderAlignment.middle),
+              const TextSpan(text: ' Sharing to change your activity mode or stop.', style: TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4)),
+            ]))),
             _tip('Your position keeps updating even with the screen locked or the app in the background so long as you don\'t stop the app.'),
             _tip('iOS only: if asked, tap "Change to Always Allow" to enable background tracking.'),
             _tip('Android only: grant Notifications and allow battery optimization when prompted the first time.'),

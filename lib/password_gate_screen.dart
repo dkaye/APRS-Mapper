@@ -25,7 +25,6 @@ class _PasswordGateScreenState extends State<PasswordGateScreen> {
   String _eventName   = '';
   String _error       = '';
   bool   _submitting  = false;
-  bool   _obscure     = true;
 
   final _controller = TextEditingController();
 
@@ -58,16 +57,18 @@ class _PasswordGateScreenState extends State<PasswordGateScreen> {
 
     if (!required) { _goToMap(); return; }
 
-    // Try stored password for this event first
+    // Pre-fill stored password only if it still matches what the server expects
     final prefs = await SharedPreferences.getInstance();
     final storedName = prefs.getString(_prefsNameKey);
     final storedPw   = prefs.getString(_prefsPwKey);
     if (storedName == eventName && storedPw != null && storedPw.isNotEmpty) {
       final ok = await MobileSession.authEventPassword(storedPw);
-      if (ok) { _goToMap(); return; }
-      // Stored password is wrong (event password changed) — clear it
-      await prefs.remove(_prefsPwKey);
-      await prefs.remove(_prefsNameKey);
+      if (ok) {
+        _controller.text = storedPw;
+      } else {
+        await prefs.remove(_prefsPwKey);
+        await prefs.remove(_prefsNameKey);
+      }
     }
 
     if (!mounted) return;
@@ -155,18 +156,23 @@ class _PasswordGateScreenState extends State<PasswordGateScreen> {
                           style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
                               color: Color(0xFF555555), letterSpacing: 0.8)),
                         const SizedBox(height: 8),
-                        TextField(
-                          controller: _controller,
-                          obscureText: _obscure,
-                          autofocus: true,
-                          textInputAction: TextInputAction.done,
-                          onSubmitted: (_) => _submitting ? null : _submit(),
-                          decoration: InputDecoration(
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
-                            suffixIcon: IconButton(
-                              icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility),
-                              onPressed: () => setState(() => _obscure = !_obscure),
+                        Theme(
+                          data: Theme.of(context).copyWith(
+                            textSelectionTheme: const TextSelectionThemeData(
+                              selectionHandleColor: Colors.transparent,
+                            ),
+                          ),
+                          child: TextField(
+                            controller: _controller,
+                            autofocus: true,
+                            textInputAction: TextInputAction.done,
+                            autocorrect: false,
+                            enableSuggestions: false,
+                            autofillHints: const [],
+                            onSubmitted: (_) => _submitting ? null : _submit(),
+                            decoration: InputDecoration(
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
                             ),
                           ),
                         ),

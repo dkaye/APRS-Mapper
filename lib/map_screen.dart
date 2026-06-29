@@ -235,7 +235,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     );
     _poller.start();
     _loadSavedMap();
-    _showHelpIfFirstLaunch();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _showHelpIfFirstLaunch());
     _bgLocation.onBeaconSent = () {
       if (!mounted) return;
       setState(() => _shareBadgeOn = false);
@@ -695,6 +695,22 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     }
   }
 
+
+  Future<void> _changeActivityMode(int newMode) async {
+    if (!_isSharing || newMode == _sharingActivityMode) return;
+    const modeKeys = ['walk_run', 'cycle', 'drive', 'stationary'];
+    final intervals = _beaconIntervalsSec.map((s) => Duration(seconds: s)).toList();
+    await _bgLocation.changeActivityMode(
+      newMode,
+      intervals[newMode],
+      _beaconDistancesMi[newMode],
+      modeKeys[newMode],
+    );
+    if (!mounted) return;
+    setState(() => _sharingActivityMode = newMode);
+    await _showSharingStartedDialog(_bgLocation.callsign ?? '');
+  }
+
   Future<void> _toggleSharing() async {
     if (_isSharing) {
       await _bgLocation.stopSharing();
@@ -726,17 +742,46 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     if (mounted) await _showShareDialog();
   }
 
+  Future<void> _startSharingWithMode(int mode) async {
+    if (_isSharing) return;
+    if (!mounted) return;
+    if (!_isOnline) {
+      showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('No Connection'),
+          content: const Text('You are offline. Connect to the internet to share your location.'),
+          actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+        ),
+      );
+      return;
+    }
+    final permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+      final granted = await Geolocator.requestPermission();
+      if (granted == LocationPermission.denied || granted == LocationPermission.deniedForever) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Location access is required to share your location.'),
+        ));
+        return;
+      }
+    }
+    if (mounted) await _showShareDialog(initialMode: mode);
+  }
+
   /// Shows the Share Location dialog. Handles join attempts inline —
   /// wrong PIN shows an error inside the dialog; success closes it and
   /// shows the callsign info modal; network failure closes it and shows
   /// a separate error dialog.
-  Future<void> _showShareDialog() async {
-    final nameCtl = TextEditingController();
+  Future<void> _showShareDialog({int initialMode = 0}) async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedName = prefs.getString('sharing_name') ?? '';
+    final nameCtl = TextEditingController(text: savedName);
     final pinCtl = TextEditingController();
     final pinFocus = FocusNode();
     String? errorText;
     bool loading = false;
-    int activityMode = 0; // 0=Walk/Run, 1=Cycle, 2=Drive, 3=Stationary
+    int activityMode = initialMode;
 
     await showDialog<void>(
       context: context,
@@ -789,32 +834,44 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
           return AlertDialog(
             title: const Text('Share Location'),
+            insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+            contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
             content: SingleChildScrollView(
               child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
                   controller: nameCtl,
-                  decoration: const InputDecoration(labelText: 'Your First Name'),
-                  textCapitalization: TextCapitalization.words,
+                  decoration: const InputDecoration(
+                    labelText: 'Your First Name',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(vertical: 8),
+                  ),
+                  textCapitalization: TextCapitalization.sentences,
                   onSubmitted: (_) => pinFocus.requestFocus(),
                 ),
                 const SizedBox(height: 8),
                 TextField(
                   controller: pinCtl,
                   focusNode: pinFocus,
-                  decoration: const InputDecoration(labelText: 'PIN'),
+                  decoration: const InputDecoration(
+                    labelText: 'PIN',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(vertical: 8),
+                  ),
                   keyboardType: TextInputType.number,
                   obscureText: true,
                   onSubmitted: (_) => submit(),
                 ),
-                const SizedBox(height: 12),
-                const Text('Activity',
-                    style: TextStyle(fontSize: 12, color: Colors.grey)),
-                const SizedBox(height: 6),
+                const SizedBox(height: 10),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Activity', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                ),
+                const SizedBox(height: 4),
                 Wrap(
                   spacing: 6,
-                  runSpacing: 6,
+                  runSpacing: 4,
                   children: [
                     for (final entry in const [
                       (0, 'Walk / Run'),
@@ -825,6 +882,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                       ChoiceChip(
                         label: Text(entry.$2,
                             style: TextStyle(
+                              fontSize: 12,
                               color: activityMode == entry.$1 ? Colors.white : Colors.black54,
                               fontWeight: activityMode == entry.$1 ? FontWeight.w600 : FontWeight.normal,
                             )),
@@ -832,28 +890,30 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                         selectedColor: Colors.blueGrey.shade700,
                         backgroundColor: Colors.grey.shade200,
                         showCheckmark: false,
-                        onSelected: (_) => setDialogState(() => activityMode = entry.$1),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        onSelected: (_) {
+                          setDialogState(() => activityMode = entry.$1);
+                          submit();
+                        },
                       ),
                   ],
                 ),
                 if (errorText != null) ...[
-                  const SizedBox(height: 10),
-                  Text(
-                    errorText!,
-                    style: const TextStyle(color: Colors.red, fontSize: 13),
-                  ),
+                  const SizedBox(height: 8),
+                  Text(errorText!, style: const TextStyle(color: Colors.red, fontSize: 13)),
                 ],
               ],
             ),
             ),
             actions: [
-              TextButton(onPressed: loading ? null : () => Navigator.pop(ctx), child: const Text('Cancel')),
-              TextButton(
-                onPressed: loading ? null : submit,
-                child: loading
-                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Text('Share'),
-              ),
+              if (loading)
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                )
+              else
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
             ],
           );
         },
@@ -1312,6 +1372,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         onSaveMap: _handleSaveMap,
         onRefreshTiles: _refreshTiles,
         onSendMessage: _isSharing ? _showSendMessageDialog : null,
+        onActivityModeChange: _isSharing ? _changeActivityMode : null,
+        onStartSharingWithMode: _isSharing ? null : _startSharingWithMode,
       ),
       body: _buildBody(),
     );

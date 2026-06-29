@@ -2,7 +2,7 @@
 
 **Author:** Doug Kaye (K6DRK) · **Copyright:** 2026 Doug Kaye. All Rights Reserved.
 
-**Version:** 1.17.0+2
+**Version:** 1.17.2+0
 
 A Flutter iOS and Android application for the MARS APRS system. Displays live tracker positions from the marsaprs.org server and supports mobile location sharing over APRS-IS.
 
@@ -10,7 +10,7 @@ A Flutter iOS and Android application for the MARS APRS system. Displays live tr
 
 - Live tracker map polling `marsaprs.org` every 5 seconds
 - Native sidebar drawer with collapsible sections: Trackers, Courses, Aid Stations, iGates, Backgrounds
-- **Share Location** — broadcasts GPS position to the APRS network via the MARS server; activity type (Walk/Run = 60 s · Cycle = 30 s · Drive = 15 s · Stationary = 2 min) sets the upload interval; all modes also trigger an immediate upload when the device moves ≥ the configured distance threshold
+- **Share Location** — broadcasts GPS position to the APRS network via the MARS server; enter name (pre-filled from last session) and PIN, then tap an activity chip to start sharing immediately; button shows **Sharing** (green) while active and opens a mode-change/stop panel when tapped; activity type (Walk/Run = 60 s · Cycle = 30 s · Drive = 15 s · Stationary = 2 min) sets the upload interval; all modes also trigger an immediate upload when the device moves ≥ the configured distance threshold; mode can be switched without stopping the session
 - **Auto-resume sharing** — if the app is closed and reopened while sharing was active, sharing resumes automatically with the same callsign
 - **Distance-triggered beaconing** — sends an immediate beacon when the device moves ≥ the configured distance threshold (default 0.2 miles for Walk/Run, Cycle, and Drive; 1.0 mile for Stationary); resets the upload timer
 - **Background location** — continues reporting when the screen locks (foreground service on Android; Always permission on iOS)

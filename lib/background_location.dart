@@ -41,6 +41,8 @@ class BackgroundLocationService {
   int _activityMode = -1;
   int get activityMode => _activityMode;
 
+  String _pendingSharingMode = '';
+
   String? _trackerName;
 
   bool get isSharing => _session.active;
@@ -239,6 +241,18 @@ class BackgroundLocationService {
     await prefs.setInt(_kPrefActivityMode, mode);
   }
 
+  Future<void> changeActivityMode(int mode, Duration interval, double distMi, String sharingMode) async {
+    _activityMode = mode;
+    _distanceThresholdM = distMi * _kMiToM;
+    _pendingSharingMode = sharingMode;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kPrefActivityMode, mode);
+    await prefs.setInt(_kPrefIntervalMs, interval.inMilliseconds);
+    await prefs.setDouble(_kPrefDistThreshold, distMi);
+    updateInterval(interval); // reschedules heartbeat timer
+    if (_sharingActive) unawaited(_uploadNow()); // send new mode immediately
+  }
+
   Future<void> _saveSession(String name, String pin) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kPrefActive, true);
@@ -357,10 +371,13 @@ class BackgroundLocationService {
     // Position is passed to the server on all platforms; server injects to APRS-IS.
     final ackIds = List<int>.from(_pendingAckIds);
     _pendingAckIds.clear();
+    final modeToSend = _pendingSharingMode;
+    _pendingSharingMode = '';
     final msgs = await _session.update(
       lat: pos?.latitude,
       lon: pos?.longitude,
       ackIds: ackIds,
+      sharingMode: modeToSend,
     );
     if (msgs == null && _sharingActive) {
       _sharingActive = false;

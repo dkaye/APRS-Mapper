@@ -81,7 +81,6 @@ class RemoteConfig {
   final double? offlineRadiusMiles;
   final int offlineMaxZoom;
   final String offlineTileUrl;
-
   const RemoteConfig({
     required this.event,
     required this.attribution,
