@@ -1,5 +1,5 @@
 <h1 id="aprs-tracker-map-user-guide">APRS Tracker Map — User Guide</h1>
-<p><strong>Version 1.17.0 · June 28, 2026</strong></p>
+<p><strong>Version 1.17.2 · June 29, 2026</strong></p>
 <hr />
 <p>This document is a guide for users of the MARS APRS system. For technical details on the architecture and software see the <a href="https://marsaprs.org/readme.html?back=/userguide.html">README</a> file.</p>
 <h2 id="contents">Contents</h2>
@@ -128,7 +128,8 @@ A user with admin privileges can switch to a different default event, which all 
 <li>Tap <strong>Open</strong> when installation completes.</li>
 </ol>
 <p>The first time you run the app it will ask for location permission — tap <strong>Allow</strong>. When you first tap Share Location the app will also ask for notification and battery permissions; grant both (see <a href="#share-location-in-the-app">Share Location in the App</a>).</p>
-<p><strong>First launch:</strong> The first time the app opens it displays a Help page with a quick overview of the main features. The page also suggests using the web version at <a href="https://marsaprs.org">marsaprs.org</a> if you do not need background location sharing or offline map tiles — the web map has all the same features and requires no installation. You can return to the Help page at any time via the <strong>Help</strong> button in the drawer footer.</p>
+<p><strong>Event password:</strong> Each time the app opens you will be prompted for the event password (provided by the event administrator). The password is shown as plain text so you can see what you are typing.</p>
+<p><strong>First launch:</strong> The first time the app opens it displays a <strong>Quick Start</strong> guide with a brief overview of the main features. Tap <strong>Continue</strong> in the top bar (or the Continue button at the bottom) to proceed to the map. You can return to the Quick Start at any time by tapping <strong>Help</strong> in the drawer footer, then <strong>Quick Start</strong>.</p>
 <h3 id="app-drawer">App Drawer</h3>
 <p>The app has its own native drawer — separate from the web map's ⚙ gear drawer. Open it by <strong>tapping the ☰ menu icon</strong> in the upper-left corner of the screen, or by <strong>swiping right from the left edge</strong>.</p>
 <p>The drawer header shows the app name and the current event. The body has collapsible sections:</p>
@@ -176,8 +177,8 @@ A user with admin privileges can switch to a different default event, which all 
 </thead>
 <tbody>
 <tr>
-<td><strong>Share Location</strong> / <strong>Stop Sharing</strong></td>
-<td>Start or stop broadcasting your GPS position. Only shown when the event administrator has enabled mobile tracking.</td>
+<td><strong>Share Location</strong> / <strong>Sharing</strong></td>
+<td>When not sharing: opens the location sharing dialog. When sharing (shown in green): opens a panel where you can switch activity mode or stop sharing. Only shown when the event administrator has enabled mobile tracking.</td>
 </tr>
 <tr>
 <td><strong>Save Map</strong></td>
@@ -204,14 +205,27 @@ A user with admin privileges can switch to a different default event, which all 
 <h3 id="reload-tiles">Reload Tiles</h3>
 <p>The <strong>Reload Tiles</strong> button in the drawer footer downloads and caches map tiles for the area currently visible on screen. Use this before heading into areas with poor cell coverage to ensure the map background stays visible when you go offline. Cached tiles are used automatically when the network is unavailable.</p>
 <h3 id="share-location-in-the-app">Share Location in the App</h3>
-<p>Share Location works the same way as on the web map — enter your name and the event PIN, choose your activity type, and your position is transmitted to the APRS network at the corresponding interval. The key difference is that <strong>the app keeps reporting your position even when the screen is locked or you switch to another app</strong>. You do not need to keep the screen on or stay in the app.</p>
-<p><strong>Auto-resume:</strong> If you close and reopen the app while sharing was active, sharing resumes automatically with the same callsign and activity mode. A brief notification confirms it.</p>
-<p><strong>Activity modes:</strong> Choose the mode that matches your situation:
-- <strong>Walk / Run</strong> — transmits every 60 seconds.
-- <strong>Cycle</strong> — transmits every 30 seconds, or immediately when you move ≥ 0.2 miles.
-- <strong>Drive</strong> — transmits every 15 seconds, or immediately when you move ≥ 0.2 miles.
-- <strong>Stationary</strong> — transmits every 2 minutes. Use this when you are at a fixed post and do not need frequent updates.</p>
+<p>The key advantage of the native app over the web map is that <strong>location sharing continues in the background</strong> — your GPS position keeps updating even when the screen is locked or you switch to another app. You do not need to keep the screen on or stay in the app.</p>
+<p><strong>Starting:</strong></p>
+<ol>
+<li>Tap <strong>Share Location</strong> in the drawer footer.</li>
+<li>Enter your first name (pre-filled if you have shared before) and the event PIN. Both are shown as plain text.</li>
+<li>Tap an <strong>activity</strong> button — this immediately starts sharing and closes the dialog:
+<ul>
+<li><strong>Walk / Run</strong> — transmits every 60 seconds.</li>
+<li><strong>Cycle</strong> — transmits every 30 seconds, or immediately when you move ≥ 0.2 miles.</li>
+<li><strong>Drive</strong> — transmits every 15 seconds, or immediately when you move ≥ 0.2 miles.</li>
+<li><strong>Stationary</strong> — transmits every 2 minutes. Use when you are at a fixed post.</li>
+</ul>
+</li>
+<li>A confirmation shows your assigned APRS callsign. Your name appears in the Trackers list and you are visible on the map.</li>
+</ol>
 <p>Beacon intervals and distance thresholds are configured by the event administrator and may differ from the defaults above.</p>
+<p><strong>Changing activity mode while sharing:</strong></p>
+<p>Tap the <strong>Sharing</strong> button (green) in the drawer footer. A panel appears with the activity mode buttons and a <strong>Stop Sharing</strong> button. Tap a different activity to switch modes immediately — your sharing session continues uninterrupted.</p>
+<p><strong>Stopping:</strong></p>
+<p>Tap <strong>Sharing</strong> (green) in the drawer footer, then tap <strong>Stop Sharing</strong>.</p>
+<p><strong>Auto-resume:</strong> If you close and reopen the app while sharing was active, sharing resumes automatically with the same callsign and activity mode. A brief notification confirms it.</p>
 <p><strong>Distance-triggered upload:</strong> In addition to the timed interval, the app sends an immediate beacon whenever you move past the configured distance threshold since your last upload. After a distance-triggered upload the timer resets, so you will not receive a redundant beacon moments later.</p>
 <p><strong>First-time setup — Android:</strong> When you tap Share Location for the first time, the app will prompt for two permissions:</p>
 <ol>
@@ -312,7 +326,7 @@ expanding the section.</p>
 </tr>
 </tbody>
 </table>
-<p>The footer of the drawer contains action buttons: <strong>Reset Map</strong>, <strong>Save Map</strong>, <strong>Admin</strong>, <strong>User Guide</strong>, <strong>Kiosk Mode</strong>, <strong>Clients</strong>, and (when enabled by the administrator) <strong>Share Location</strong> / <strong>Stop Sharing</strong>.</p>
+<p>The footer of the drawer contains action buttons: <strong>Reset Map</strong>, <strong>Save Map</strong>, <strong>Admin</strong>, <strong>User Guide</strong>, <strong>Kiosk Mode</strong>, <strong>Clients</strong>, and (when enabled by the administrator) <strong>Share Location</strong> / <strong>Sharing</strong>.</p>
 <p>The <strong>Trackers</strong> section is open by default when the drawer is first displayed.</p>
 <hr />
 <h3 id="tracker-list-ls">Tracker List (L,S)</h3>
@@ -409,30 +423,42 @@ in beyond its maximum, the map automatically zooms out to the highest level that
 <p><strong>Starting:</strong></p>
 <ol>
 <li>Tap <strong>Share Location</strong> at the bottom of the drawer.</li>
-<li>Enter your name and the event PIN.</li>
-<li>Select your <strong>activity type</strong>: <strong>Walk / Run</strong> (every 60 s), <strong>Cycle</strong> (every 30 s), <strong>Drive</strong> (every 15 s), or <strong>Stationary</strong> (every 2 min — use when you are at a fixed post).</li>
-<li>Tap <strong>Share</strong>.</li>
-<li>A confirmation shows your assigned APRS callsign (e.g., <code>K6DRK-01</code>). You will appear in the Trackers list under that callsign and be visible on the map. Your callsign is also shown in the <strong>About</strong> section of the drawer while sharing is active.</li>
+<li>Enter your first name (pre-filled if you have shared before) and the event PIN. Both fields are shown as plain text.</li>
+<li>Tap an <strong>activity</strong> — this immediately starts sharing and closes the dialog:
+<ul>
+<li><strong>Walk / Run</strong> — transmits every 60 s</li>
+<li><strong>Cycle</strong> — transmits every 30 s, or immediately when you move ≥ 0.2 mi</li>
+<li><strong>Drive</strong> — transmits every 15 s, or immediately when you move ≥ 0.2 mi</li>
+<li><strong>Stationary</strong> — transmits every 2 min (use when at a fixed post)</li>
+</ul>
+</li>
+<li>A confirmation shows your assigned APRS callsign (e.g., <code>K6DRK-01</code>). You will appear in the Trackers list and be visible on the map. Your callsign is also shown in the <strong>Help</strong> panel while sharing is active.</li>
 </ol>
 <p>Your position is transmitted at the chosen interval and appears on this map and on external APRS sites such as <a href="https://aprs.fi">aprs.fi</a> and CalTopo.</p>
-<p><strong>Callsign persistence:</strong> The app remembers your device across sessions. If you stop sharing and start again — or close and reopen the app — you will be assigned the <strong>same callsign</strong> as before, so your track history is continuous. If you reinstall the app you will be assigned a new callsign.</p>
-<p><strong>Auto-resume (native app only):</strong> If the app is closed or restarted while sharing was active, sharing resumes automatically when the app reopens — no need to re-enter your name and PIN. A brief notification confirms the resume.</p>
+<p><strong>Changing activity mode while sharing:</strong></p>
+<p>Tap the <strong>Sharing</strong> button in the drawer footer. A panel appears with the activity buttons and a <strong>Stop Sharing</strong> button. Tap a different activity to switch modes immediately — your sharing session continues uninterrupted.</p>
 <p><strong>Stopping:</strong></p>
-<p>Tap <strong>Stop Sharing</strong> in the drawer footer.</p>
+<p>Tap <strong>Sharing</strong> in the drawer footer, then tap <strong>Stop Sharing</strong>.</p>
+<p><strong>Callsign persistence:</strong> The system remembers your device across sessions. If you stop sharing and start again you will be assigned the <strong>same callsign</strong> as before, so your track history is continuous.</p>
+<p><strong>Auto-resume (native app only):</strong> If the app is closed or restarted while sharing was active, sharing resumes automatically when the app reopens — no need to re-enter your name and PIN. A brief notification confirms the resume.</p>
 <p><strong>Notes:</strong></p>
 <ul>
 <li>If the PIN you entered is incorrect, you will see an error — check the PIN with the event administrator.</li>
 <li>If an administrator ends your session remotely, you will see a notification and the button will return to <strong>Share Location</strong>.</li>
 <li>Starting a new session with the same callsign automatically clears any old breadcrumb dots from your previous session.</li>
 </ul>
-<p><strong>Web map (browser):</strong>
-- A red <strong>Sharing</strong> badge appears in the upper-right corner of the map while you are sharing, and blinks briefly each time a beacon is sent.
-- The screen stays on while you are sharing (the browser's Wake Lock prevents sleep). The screen dims after 30 seconds of no interaction to save battery; tap anywhere to restore full brightness.
-- If the browser is sent to the background or the screen locks, position updates will stop.</p>
-<p><strong>Native iOS/Android app:</strong>
-- Location sharing continues in the background while the screen is locked. You do not need to keep the app in the foreground.
-- <strong>Android:</strong> When you first tap Share Location, the app may ask for permission to show notifications and to run without battery restrictions. Grant both — they are required for the app to keep running in the background when the screen is off. A notification ("APRS Map — Sharing your location") will appear in the notification bar while sharing is active; this confirms the background service is running. To confirm the notification is visible, wake the screen and swipe down from the top.
-- <strong>iOS:</strong> When you first tap Share Location, iOS may ask to upgrade your location permission from "While Using" to "Always". Tap <strong>Change to Always Allow</strong> — this is required for the app to send your location while the screen is locked.</p>
+<p><strong>Web map (browser):</strong></p>
+<ul>
+<li>A red <strong>Sharing</strong> badge appears in the upper-right corner of the map while you are sharing, and blinks briefly each time a beacon is sent.</li>
+<li>The screen stays on while you are sharing (the browser's Wake Lock prevents sleep). The screen dims after 30 seconds of no interaction to save battery; tap anywhere to restore full brightness.</li>
+<li>If the browser is sent to the background or the screen locks, position updates will stop.</li>
+</ul>
+<p><strong>Native iOS/Android app:</strong></p>
+<ul>
+<li>Location sharing continues in the background while the screen is locked. You do not need to keep the app in the foreground.</li>
+<li><strong>Android:</strong> When you first tap Share Location, the app may ask for permission to show notifications and to run without battery restrictions. Grant both — they are required for the app to keep running in the background when the screen is off. A notification ("APRS Map — Sharing your location") will appear in the notification bar while sharing is active; this confirms the background service is running. To confirm the notification is visible, wake the screen and swipe down from the top.</li>
+<li><strong>iOS:</strong> When you first tap Share Location, iOS may ask to upgrade your location permission from "While Using" to "Always". Tap <strong>Change to Always Allow</strong> — this is required for the app to send your location while the screen is locked.</li>
+</ul>
 <hr />
 <h3 id="messaging-ls">Messaging (L, S)</h3>
 <p>When the event administrator has enabled messaging, net control operators can exchange real-time text messages with active mobile tracker participants.</p>

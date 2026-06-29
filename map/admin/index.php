@@ -249,7 +249,33 @@ if (isset($_GET['load'])) {
     }
     $cfg['_filename'] = $currentFilename;
     $real = realpath($configPath);
-    if ($real) $cfg['_beaconDeltas'] = computeBeaconDeltas(dirname($real) . '/tracker_history.yaml');
+    if ($real) {
+        $deltas = computeBeaconDeltas(dirname($real) . '/tracker_history.yaml');
+        // Supplement with recent_beacons from mobile_trackers.json (accurate for stationary trackers)
+        $mobileJson = __DIR__ . '/../mobile_trackers.json';
+        if (file_exists($mobileJson)) {
+            $mfh = @fopen($mobileJson, 'r');
+            if ($mfh) {
+                flock($mfh, LOCK_SH);
+                $mdata = json_decode(stream_get_contents($mfh), true) ?: [];
+                flock($mfh, LOCK_UN); fclose($mfh);
+                foreach ($mdata as $mt) {
+                    $cs = $mt['callsign'] ?? '';
+                    $rb = $mt['recent_beacons'] ?? [];
+                    if ($cs === '' || count($rb) < 2) continue;
+                    $min = PHP_INT_MAX;
+                    for ($i = 0; $i < count($rb) - 1; $i++) {
+                        $gap = $rb[$i] - $rb[$i + 1];
+                        if ($gap > 0 && $gap < $min) $min = $gap;
+                    }
+                    if ($min < PHP_INT_MAX && ($deltas[$cs] === null || !isset($deltas[$cs]) || $min < $deltas[$cs])) {
+                        $deltas[$cs] = $min;
+                    }
+                }
+            }
+        }
+        $cfg['_beaconDeltas'] = $deltas;
+    }
     respondJson($cfg);
 }
 
@@ -289,7 +315,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['save'])) {
     if (!is_numeric($lat)  || $lat < -90   || $lat > 90)   $errors[] = 'Map: latitude must be −90 to 90';
     if (!is_numeric($lon)  || $lon < -180  || $lon > 180)  $errors[] = 'Map: longitude must be −180 to 180';
     if (!is_numeric($zoom) || $zoom < 0    || $zoom > 19)  $errors[] = 'Map: zoom must be 0 to 19';
-
     if ($errors) {
         respondJson(['errors' => $errors], 422);
     }
@@ -2964,27 +2989,27 @@ async function loadMobileTrackers() {
             }
             row.appendChild(deltaSpan);
 
-            if (t.device_info && Object.keys(t.device_info).length) {
-                const di = t.device_info;
+            {
                 const modeIcons = { walk_run: '🏃', cycle: '🚲', drive: '🚗', drive_cycle: '🚗', stationary: '📍' };
                 const modeLabels = { walk_run: 'Walk / Run', cycle: 'Cycle', drive: 'Drive', drive_cycle: 'Drive', stationary: 'Stationary' };
-                const isWeb = /^Web\b/i.test(di.app || '');
-                const app = (di.app || '').replace(/^Web\s+/i, '');
-                const platform = isWeb ? 'Web' : (di.os || di.browser);
-                const parts = [app, platform].filter(Boolean);
-                const inlineSpan = document.createElement('span');
-                inlineSpan.style.cssText = 'font-size:11px;color:#666;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px';
-                inlineSpan.textContent = parts.join(' · ');
-                inlineSpan.title = [modeLabels[t.sharing_mode] || '', ...parts].filter(Boolean).join(' · ');
-                row.appendChild(inlineSpan);
-                const icon = modeIcons[t.sharing_mode];
-                if (icon) {
-                    const iconSpan = document.createElement('span');
-                    iconSpan.textContent = icon;
-                    iconSpan.style.cssText = 'font-size:13px;filter:grayscale(1) brightness(0.5);flex-shrink:0';
-                    iconSpan.title = modeLabels[t.sharing_mode] || '';
-                    row.appendChild(iconSpan);
+                if (t.device_info && Object.keys(t.device_info).length) {
+                    const di = t.device_info;
+                    const isWeb = /^Web\b/i.test(di.app || '');
+                    const app = (di.app || '').replace(/^Web\s+/i, '');
+                    const platform = isWeb ? 'Web' : (di.os || di.browser);
+                    const parts = [app, platform].filter(Boolean);
+                    const inlineSpan = document.createElement('span');
+                    inlineSpan.style.cssText = 'font-size:11px;color:#666;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px';
+                    inlineSpan.textContent = parts.join(' · ');
+                    inlineSpan.title = [modeLabels[t.sharing_mode] || '', ...parts].filter(Boolean).join(' · ');
+                    row.appendChild(inlineSpan);
                 }
+                const icon = modeIcons[t.sharing_mode] || '📱';
+                const iconSpan = document.createElement('span');
+                iconSpan.textContent = icon;
+                iconSpan.style.cssText = 'font-size:13px;filter:grayscale(1) brightness(0.5);flex-shrink:0';
+                iconSpan.title = modeLabels[t.sharing_mode] || 'Mobile tracker';
+                row.appendChild(iconSpan);
             }
 
             if (t.blocked) {
@@ -3205,8 +3230,8 @@ function collectConfig() {
         max_zoom: parseInt(document.getElementById('offline-maxzoom').value, 10)  || null,
         url:      document.getElementById('offline-url').value.trim()
     };
-    const event_password     = document.getElementById('f-event-password').value.trim();
-    const messaging_password = document.getElementById('f-messaging-password').value.trim();
+    const event_password       = document.getElementById('f-event-password').value.trim();
+    const messaging_password   = document.getElementById('f-messaging-password').value.trim();
     const blink_duration = parseInt(document.getElementById('f-blink-duration').value, 10);
     return { event: document.getElementById('f-event').value.trim(), event_password, messaging_password, blink_duration, legend: document.getElementById('f-legend').value, tracker_style, trackers, map, backgrounds, background_url, courses, aidstations, igates, section_visibility, mobile, offline_map };
 }

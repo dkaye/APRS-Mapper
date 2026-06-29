@@ -2,7 +2,7 @@
 
 **Author:** Doug Kaye (K6DRK) · **Copyright:** 2026 Doug Kaye. All Rights Reserved.
 
-**Version:** Server & Displays (v1.16.3); Mobile App (v1.17.0); iGates (v5.0)
+**Version:** Server & Displays (v1.16.3); Mobile App (v1.17.2); iGates (v5.0)
 
 ---
 
@@ -320,7 +320,7 @@ For details on using the map, see [USERGUIDE.MD](https://marsaprs.org/userguide.
 
 ---
 
-## Mobile Apps (v1.17.0)
+## Mobile Apps (v1.17.2)
 
 Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.
 
@@ -1151,7 +1151,7 @@ mobile:
   messaging_password: zippy  # enables Messages button on web map; omit to disable messaging
 ```
 
-When `enabled` is true, any visitor on a mobile device sees a **Share Location** button in the drawer footer. Participants enter their name and the PIN; the server assigns a unique callsign (`<root>-NN`) and a session token. Position updates are injected directly into the APRS-IS network, so mobile participants appear on this map and on external APRS sites (aprs.fi, CalTopo) exactly like any other tracker. Session state is stored in `mobile_trackers.json`.
+When `enabled` is true, any visitor on a mobile device sees a **Share Location** button in the drawer footer. Participants enter their name (pre-filled from localStorage on return visits) and the PIN (both shown as plain text), then tap an activity chip to start sharing immediately. The button changes to **Sharing** while active; tapping it opens a panel to switch activity mode or stop sharing. The server assigns a unique callsign (`<root>-NN`) and a session token. Position updates are injected directly into the APRS-IS network, so mobile participants appear on this map and on external APRS sites (aprs.fi, CalTopo) exactly like any other tracker. Session state is stored in `mobile_trackers.json`.
 
 ---
 
@@ -1273,7 +1273,7 @@ width is saved in `localStorage`.
 - **⊕ My Location** — requests the browser's geolocation and pans to the result; blinks while locating; shows an error tooltip if geolocation fails or times out (8 s timeout).
 
 **Mobile drawer:** Sections are collapsible accordions. Visibility checkboxes work the same
-as desktop. Footer buttons: Save Map, Admin, User Guide, Kiosk Mode, Clients, and (when `mobile.enabled`) Share Location / Stop Sharing. The **About** section of the drawer shows the user's assigned APRS callsign while sharing is active. The floating reset button (↺) pinned to the map also closes the drawer if it is open before recentering.
+as desktop. Footer buttons: Save Map, Admin, User Guide, Kiosk Mode, Clients, and (when `mobile.enabled`) Share Location / Sharing. The **About** section of the drawer shows the user's assigned APRS callsign while sharing is active. The floating reset button (↺) pinned to the map also closes the drawer if it is open before recentering.
 
 **Mobile tracker markers:** Mobile participants (sharing via Share Location) are rendered as **rounded squares** on both the map and in the sidebar, distinguishing them from regular APRS trackers (which use the configured icon shape). The shape is determined by `t.mobile` in the tracker JSON. In `index.php`, the icon is selected as `t.mobile ? 'square' : trackerStyle.icon`; the sidebar dot gets `border-radius: 3px` for mobile and `50%` for others. In the native Flutter app, each marker also shows the **tracker ID** as a text label directly next to the dot on the map.
 

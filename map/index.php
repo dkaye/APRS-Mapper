@@ -15,7 +15,7 @@
  *   ?config  Map/background/course/tracker config from config.yaml (ETag-cached)
  */
 
-define('WEB_VERSION', '1.17.0+2');
+define('WEB_VERSION', '1.17.1+0');
 
 $trackerStatusFilename = 'trackers.json';
 
@@ -55,7 +55,7 @@ if (isset($_GET['json'])) {
 		foreach (json_decode($mc, true) ?: [] as $t) {
 			$cs = $t['callsign'] ?? null;
 			if (!$cs || !empty($t['blocked']) || empty($t['token']) || ($now - ($t['lastUpdate'] ?? 0)) > 86400) continue;
-			$activeMobile[$cs] = ['id' => $t['id'], 'name' => $t['name'], 'sharing_mode' => $t['sharing_mode'] ?? '', 'lastUpdate' => (int)($t['lastUpdate'] ?? 0)];
+			$activeMobile[$cs] = ['id' => $t['id'], 'name' => $t['name'], 'sharing_mode' => $t['sharing_mode'] ?? '', 'lastUpdate' => (int)($t['lastUpdate'] ?? 0), 'lat' => $t['aprs_lat'] ?? null, 'lon' => $t['aprs_lon'] ?? null];
 		}
 	}
 	// Remove mobile entries whose session is gone or blocked
@@ -69,6 +69,7 @@ if (isset($_GET['json'])) {
 		if (empty($t['mobile']) || !isset($activeMobile[$t['callsign']])) continue;
 		$am = $activeMobile[$t['callsign']];
 		if ($am['sharing_mode'] !== '') $t['sharing_mode'] = $am['sharing_mode'];
+		if ($am['lat'] !== null && $t['lat'] === null) { $t['lat'] = $am['lat']; $t['lon'] = $am['lon']; }
 		if ($am['lastUpdate'] > ($t['lastUpdate'] ?? 0)) {
 			$age = $_now - $am['lastUpdate'];
 			$s = $age % 60; $m = ($age - $s) / 60;
@@ -94,7 +95,7 @@ if (isset($_GET['json'])) {
 			$entry = ['callsign' => $cs, 'id' => $ms['id'], 'name' => $ms['name'],
 			          'lastUpdate' => $lu, 'timeSinceLastUpdate' => $age, 'time' => $tf,
 			          'color' => ($age > 0 && $age <= 120) ? 'green' : (($age > 0 && $age <= 300) ? 'blue' : 'red'),
-			          'lat' => null, 'lon' => null, 'path' => '', 'mobile' => true];
+			          'lat' => $ms['lat'], 'lon' => $ms['lon'], 'path' => '', 'mobile' => true];
 			if ($ms['sharing_mode'] !== '') $entry['sharing_mode'] = $ms['sharing_mode'];
 			$trackers[] = $entry;
 		}
@@ -119,13 +120,13 @@ if (isset($_GET['json'])) {
 	];
 	header('Content-Type: application/json');
 	echo json_encode([
-		'default_event'    => $defaultEvent,
-		'password_required'=> !empty($cfg['event_password'] ?? ''),
-		'blink_duration'   => (int)($cfg['blink_duration'] ?? 5),
-		'mobile_beacons'   => $_bc,
-		'trackers'         => $trackers,
-		'igate_beacons'    => $readBeaconFile($igatesStatusFilename),
-		'aid_beacons'      => $readBeaconFile($aidstationsStatusFilename),
+		'default_event'      => $defaultEvent,
+		'password_required'  => !empty($cfg['event_password'] ?? ''),
+		'blink_duration'     => (int)($cfg['blink_duration'] ?? 5),
+		'mobile_beacons'     => $_bc,
+		'trackers'           => $trackers,
+		'igate_beacons'      => $readBeaconFile($igatesStatusFilename),
+		'aid_beacons'        => $readBeaconFile($aidstationsStatusFilename),
 	]);
 	exit;
 }
@@ -227,10 +228,10 @@ if (isset($_GET['config'])) {
 		'aidstations'        => $cfg['aidstations'] ?? [],
 		'igates'             => $cfg['igates'] ?? [],
 		'section_visibility' => $sv,
-		'mobile_enabled'     => $mobileEnabled,
-		'mobile_beacons'     => $beaconCfg,
-		'messaging_enabled'  => !empty(trim($cfg['messaging_password'] ?? '')),
-		'offline_map'        => (object)($cfg['offline_map'] ?? []),
+		'mobile_enabled'      => $mobileEnabled,
+		'mobile_beacons'      => $beaconCfg,
+		'messaging_enabled'   => !empty(trim($cfg['messaging_password'] ?? '')),
+		'offline_map'         => (object)($cfg['offline_map'] ?? []),
 	]);
 	exit;
 }
@@ -618,11 +619,14 @@ if (isset($_GET['mobile'])) {
 		$lat     = isset($input['lat']) ? round((float)$input['lat'], 6) : null;
 		$lon     = isset($input['lon']) ? round((float)$input['lon'], 6) : null;
 		$ackIds  = array_map('intval', $input['ack_ids'] ?? []);
+		$rawMode = trim($input['sharing_mode'] ?? '');
+		if ($rawMode === 'drive_cycle') $rawMode = 'drive';
+		$updMode = in_array($rawMode, ['walk_run', 'cycle', 'drive', 'stationary'], true) ? $rawMode : '';
 		if (!$token) { http_response_code(400); echo json_encode(['error' => 'Missing token']); exit; }
 
 		$found = false; $blocked = false; $foundCallsign = null; $pendingMsgs = [];
 		$shouldInject = false;
-		modifyMobileTrackers($mobileFile, function($data) use ($token, $lat, $lon, $ackIds, &$found, &$blocked, &$foundCallsign, &$pendingMsgs, &$shouldInject) {
+		modifyMobileTrackers($mobileFile, function($data) use ($token, $lat, $lon, $ackIds, $updMode, &$found, &$blocked, &$foundCallsign, &$pendingMsgs, &$shouldInject) {
 			$now = time();
 			foreach ($data as &$t) {
 				if (empty($t['token']) || !hash_equals($t['token'], $token)) continue;
@@ -630,6 +634,9 @@ if (isset($_GET['mobile'])) {
 				$found = true; $foundCallsign = $t['callsign'] ?? null;
 				$pendingMsgs = $t['pending_msgs'] ?? [];
 				if ($ackIds) $t['pending_msgs'] = array_values(array_filter($t['pending_msgs'] ?? [], fn($m) => !in_array((int)$m['id'], $ackIds)));
+				if ($updMode !== '') $t['sharing_mode'] = $updMode;
+				// Track last 10 beacon timestamps for admin delta display
+				$t['recent_beacons'] = array_slice(array_merge([$now], $t['recent_beacons'] ?? []), 0, 10);
 				$t['lastUpdate'] = $now;
 				if ($lat !== null && $lon !== null) {
 					$prevLat = $t['aprs_lat'] ?? null;
@@ -905,7 +912,7 @@ html, body { width: 100%; height: 100%; overflow: hidden;
     color: var(--tracker-label-color, #000);
 }
 .place-label {
-    background: #fff; border: 1px solid #bbb; box-shadow: 0 1px 3px rgba(0,0,0,.15);
+    background: none; border: none; box-shadow: none;
     font-weight: bold; font-size: 12px; white-space: nowrap;
     color: #000;
 }
@@ -1014,7 +1021,19 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 .sec-hdr:first-child { border-top: none; }
 .sec-hdr:hover, .sec-hdr:active { background: #e0e0e0; }
 .sec-hdr-right { display: flex; align-items: center; }
-.aprs-hide-trackers .tracker-label { display: none !important; }
+.aprs-hide-trackers .tracker-label        { display: none !important; }
+.aprs-hide-tracker-labels .tracker-label  { display: none !important; }
+.aprs-hide-aid-labels .aid-station-label  { display: none !important; }
+.aprs-hide-igate-labels .igate-label      { display: none !important; }
+.aprs-hide-tracker-labels .tracker-label.label-force-show  { display: block !important; }
+.aprs-hide-aid-labels .aid-station-label.label-force-show  { display: block !important; }
+.aprs-hide-igate-labels .igate-label.label-force-show      { display: block !important; }
+.sec-label-btn {
+    background: none; border: none; padding: 0 3px 0 0; margin: 0; cursor: pointer;
+    color: #888; display: flex; align-items: center; line-height: 1;
+}
+.sec-label-btn:hover { color: #333; }
+.sec-label-btn.labels-off { color: #bbb; }
 .section-dimmed { opacity: 0.35; }
 .section-divider { border: none; border-top: 1px solid #ccc; margin: 6px 0 4px; }
 
@@ -1044,19 +1063,28 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 .course-name  { flex: 1; }
 .course-name:hover { text-decoration: underline; }
 .course-color-input { position: absolute; width: 0; height: 0; border: none; padding: 0; overflow: hidden; }
-.course-checkbox, .bg-checkbox, .sec-vis-cb {
+.course-checkbox, .sec-vis-cb {
     appearance: none; -webkit-appearance: none;
     width: 14px; height: 14px; flex-shrink: 0; margin: 0;
     border: 1.5px solid #aaa; border-radius: 2px; background: #fff;
 }
 .course-checkbox { cursor: pointer; }
-.bg-checkbox     { pointer-events: none; }
 .sec-vis-cb      { cursor: pointer; }
 .course-checkbox:checked,
-.bg-checkbox:checked,
 .sec-vis-cb:checked {
     border-color: #aaa;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpolyline points='1.5,6 4.5,9.5 10.5,2.5' stroke='%23aaa' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: center; background-size: 10px;
+}
+.bg-radio {
+    appearance: none; -webkit-appearance: none;
+    width: 14px; height: 14px; flex-shrink: 0; margin: 0;
+    border: 1.5px solid #aaa; border-radius: 50%; background: #fff;
+    pointer-events: none;
+}
+.bg-radio:checked {
+    border-color: #2980b9; background-color: #2980b9;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Ccircle cx='6' cy='6' r='2.8' fill='%23fff'/%3E%3C/svg%3E");
     background-repeat: no-repeat; background-position: center; background-size: 10px;
 }
 
@@ -1110,7 +1138,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
     .course-item  { font-size: 12px; }
     .sidebar-btn  { padding: 10px 0; font-size: 12px; }
     #sidebar-btn-grid { gap: 6px; margin-top: 10px; }
-    .course-checkbox, .bg-checkbox { width: 18px; height: 18px; }
+    .course-checkbox, .bg-radio { width: 18px; height: 18px; }
 }
 /* Portrait, larger tablets (820px+): slightly generous rows */
 @media (min-width: 820px) and (max-width: 1024px) and (orientation: portrait) {
@@ -1299,8 +1327,8 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
         border: 1.5px solid #aaa; border-radius: 50%; background: #fff; pointer-events: none;
     }
     .m-layer-check.checked {
-        border-color: #2980b9; background: #2980b9;
-        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpolyline points='1.5,6 4.5,9.5 10.5,2.5' stroke='%23fff' stroke-width='2.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+        border-color: #2980b9; background-color: #2980b9;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Ccircle cx='6' cy='6' r='2.8' fill='%23fff'/%3E%3C/svg%3E");
         background-repeat: no-repeat; background-position: center; background-size: 11px;
     }
 
@@ -1484,6 +1512,28 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 .mjoin-chip { padding:5px 12px;border:1px solid #ccc;border-radius:16px;background:#f0f0f0;color:#555;font-size:12px;cursor:pointer;font-family:inherit; }
 .mjoin-chip-sel { background:#37526d;color:#fff;border-color:#37526d; }
 
+#mchange-modal { position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center; }
+#mchange-backdrop { position:absolute;inset:0;background:rgba(0,0,0,0.45); }
+#mchange-box {
+    position:relative;background:#fff;border-radius:8px;
+    padding:18px 22px;min-width:260px;max-width:320px;width:88%;
+    box-shadow:0 4px 24px rgba(0,0,0,.35);z-index:1;
+    font-family:arial,helvetica,sans-serif;font-size:13px;
+}
+#mchange-header { display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;font-size:14px;font-weight:bold; }
+#mchange-close { background:none;border:none;font-size:20px;line-height:1;cursor:pointer;color:#888;padding:0 2px; }
+#mchange-close:hover { color:#000; }
+#mchange-stop {
+    width:100%;padding:9px;background:#c0392b;color:#fff;
+    border:none;border-radius:5px;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:8px;
+}
+#mchange-stop:hover { background:#a93226; }
+#mchange-cancel {
+    width:100%;padding:9px;background:none;color:#555;
+    border:1px solid #ccc;border-radius:5px;font-size:13px;cursor:pointer;
+}
+#mchange-cancel:hover { background:#f5f5f5; }
+
 #mobile-alert-modal {
     position: fixed; inset: 0; z-index: 10001;
     display: flex; align-items: center; justify-content: center;
@@ -1605,7 +1655,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 <!-- ── Desktop sidebar ─────────────────────────────────────────────────── -->
 <div id="sidebar">
 	<div id="sidebar-scroll">
-		<div class="sec-hdr open" data-body="legend"><span>Trackers</span><span class="sec-hdr-right"><input type="checkbox" class="sec-vis-cb" checked data-section="trackers"></span></div>
+		<div class="sec-hdr open" data-body="legend"><span>Trackers</span><span class="sec-hdr-right"><button class="sec-label-btn" data-section="trackers" title="Toggle labels"></button><input type="checkbox" class="sec-vis-cb" checked data-section="trackers"></span></div>
 		<div id="legend"></div>
 
 		<div id="courses-section" style="display:none">
@@ -1614,12 +1664,12 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 		</div>
 
 		<div id="aidstations-section" style="display:none">
-			<div class="sec-hdr open" data-body="aidstations"><span>Aid/Rest Stops</span><span class="sec-hdr-right"><input type="checkbox" class="sec-vis-cb" checked data-section="aidstations"></span></div>
+			<div class="sec-hdr open" data-body="aidstations"><span>Aid/Rest Stops</span><span class="sec-hdr-right"><button class="sec-label-btn" data-section="aidstations" title="Toggle labels"></button><input type="checkbox" class="sec-vis-cb" checked data-section="aidstations"></span></div>
 			<div id="aidstations"></div>
 		</div>
 
 		<div id="igates-section" style="display:none">
-			<div class="sec-hdr open" data-body="igates"><span>iGates</span><span class="sec-hdr-right"><input type="checkbox" class="sec-vis-cb" checked data-section="igates"></span></div>
+			<div class="sec-hdr open" data-body="igates"><span>iGates</span><span class="sec-hdr-right"><button class="sec-label-btn" data-section="igates" title="Toggle labels"></button><input type="checkbox" class="sec-vis-cb" checked data-section="igates"></span></div>
 			<div id="igates"></div>
 		</div>
 
@@ -1778,7 +1828,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 		<label class="mjoin-label" for="mjoin-name">Your first name (12 characters max)</label>
 		<input id="mjoin-name" class="mjoin-input" type="text" maxlength="12" autocomplete="off" autocorrect="off" spellcheck="false">
 		<label class="mjoin-label" for="mjoin-pin">PIN code</label>
-		<input id="mjoin-pin" class="mjoin-input" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off">
+		<input id="mjoin-pin" class="mjoin-input" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off">
 		<div style="margin-bottom:10px">
 			<div class="mjoin-label" style="margin-bottom:6px">Activity</div>
 			<div id="mjoin-activity" style="display:flex;gap:6px;flex-wrap:wrap">
@@ -1789,7 +1839,28 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 			</div>
 		</div>
 		<div id="mjoin-error"></div>
-		<button id="mjoin-submit">Share Location</button>
+		<button id="mjoin-cancel" style="width:100%;padding:9px;background:none;color:#555;border:1px solid #ccc;border-radius:5px;font-size:13px;cursor:pointer">Cancel</button>
+	</div>
+</div>
+
+<div id="mchange-modal" style="display:none">
+	<div id="mchange-backdrop"></div>
+	<div id="mchange-box">
+		<div id="mchange-header">
+			<span>Location Sharing</span>
+			<button id="mchange-close">&times;</button>
+		</div>
+		<div style="margin-bottom:16px">
+			<div class="mjoin-label" style="margin-bottom:6px">Activity</div>
+			<div id="mchange-activity" style="display:flex;gap:6px;flex-wrap:wrap">
+				<button type="button" class="mjoin-chip" data-mode="0">Walk / Run</button>
+				<button type="button" class="mjoin-chip" data-mode="1">Cycle</button>
+				<button type="button" class="mjoin-chip" data-mode="2">Drive</button>
+				<button type="button" class="mjoin-chip" data-mode="3">Stationary</button>
+			</div>
+		</div>
+		<button id="mchange-stop">Stop Sharing</button>
+		<button id="mchange-cancel">Cancel</button>
 	</div>
 </div>
 
@@ -2062,7 +2133,7 @@ new (L.Control.extend({
 			L.DomEvent.on(exitBtn, 'click', () => { location.href = location.pathname; });
 			L.DomEvent.disableClickPropagation(exitBtn);
 			const txt = L.DomUtil.create('span', '', d);
-			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.17.0+2 &copy; 2026 Doug Kaye (K6DRK)';
+			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.17.2+0 &copy; 2026 Doug Kaye (K6DRK)';
 		} else {
 			if (!isMobile) {
 				const exitBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
@@ -2080,8 +2151,8 @@ new (L.Control.extend({
 			}
 			const ftxt = L.DomUtil.create('span', '', d);
 			ftxt.innerHTML = isMobile
-				? 'MARS APRS v1.17.0+2 &copy; 2026 Doug Kaye (K6DRK)'
-				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.17.0+2 &copy; 2026 Doug Kaye (K6DRK)';
+				? 'MARS APRS v1.17.2+0 &copy; 2026 Doug Kaye (K6DRK)'
+				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.17.2+0 &copy; 2026 Doug Kaye (K6DRK)';
 			if (isMobile) d.style.fontSize = '10px';
 		}
 		return d;
@@ -2411,6 +2482,51 @@ function scaledRadius(base) {
 	return Math.max(2, Math.round(base * markerScale()));
 }
 
+function trackerIconSize(callsign) {
+	const base = Math.max(4, Math.round(trackerStyle.size * markerScale()));
+	return (callsign === selectedCallsign && trackerClickCount === 1) ? Math.round(base * 2) : base;
+}
+function refreshTrackerIcon(callsign) {
+	const m = markers[callsign];
+	if (!m) return;
+	const enlarged = callsign === selectedCallsign && trackerClickCount === 1;
+	m.setIcon(makeTrackerIcon(m._mobile ? 'square' : trackerStyle.icon, m._trackerColor, trackerIconSize(callsign)));
+	const tipEl = m.getTooltip()?.getElement();
+	if (tipEl) tipEl.classList.toggle('label-force-show', enlarged);
+}
+function refreshIgateRadius(idx) {
+	const d = igateMarkers[idx]; if (!d) return;
+	const enlarged = selectedIgateIdx === idx && igateClickCount === 1;
+	d.m.setRadius(enlarged ? Math.round(scaledRadius(d.m._baseRadius) * 2) : scaledRadius(d.m._baseRadius));
+	const tipEl = d.m.getTooltip()?.getElement();
+	if (tipEl) tipEl.classList.toggle('label-force-show', enlarged);
+}
+function refreshAidRadius(idx) {
+	const d = aidMarkers[idx]; if (!d) return;
+	const enlarged = selectedAidIdx === idx && aidClickCount === 1;
+	d.m.setRadius(enlarged ? Math.round(scaledRadius(d.m._baseRadius) * 2) : scaledRadius(d.m._baseRadius));
+	const tipEl = d.m.getTooltip()?.getElement();
+	if (tipEl) tipEl.classList.toggle('label-force-show', enlarged);
+}
+function _deselectIgate() {
+	if (selectedIgateIdx < 0) return;
+	const idx = selectedIgateIdx;
+	setIgateTooltip(idx, true);
+	selectedIgateIdx = -1; igateClickCount = 0;
+	refreshIgateRadius(idx); // restores normal radius and removes label-force-show
+	const d = igateMarkers[idx];
+	if (d) d.el.classList.remove('selected');
+}
+function _deselectAid() {
+	if (selectedAidIdx < 0) return;
+	const idx = selectedAidIdx;
+	setAidTooltip(idx, true);
+	selectedAidIdx = -1; aidClickCount = 0;
+	refreshAidRadius(idx); // restores normal radius and removes label-force-show
+	const d = aidMarkers[idx];
+	if (d) d.el.classList.remove('selected');
+}
+
 function makeTrackerIcon(shape, fillColor, size) {
 	const sz = Math.max(4, Math.min(20, size || 8));
 	const d = sz * 2, c = sz, r = sz - 1.5;
@@ -2594,11 +2710,15 @@ function triggerBlink(callsign) {
 	if (item) item.classList.add('blinking');
 	const el = markers[callsign]?.getElement();
 	if (el) el.style.animation = 'blink-anim 0.4s steps(2,end) infinite';
+	const tipEl = markers[callsign]?.getTooltip()?.getElement();
+	if (tipEl) tipEl.style.animation = 'blink-anim 0.4s steps(2,end) infinite';
 	blinkHistoryLayers(callsign, true);
 	blinkTimers[callsign] = setTimeout(() => {
 		if (item) item.classList.remove('blinking');
 		const e2 = markers[callsign]?.getElement();
 		if (e2) e2.style.animation = '';
+		const t2 = markers[callsign]?.getTooltip()?.getElement();
+		if (t2) t2.style.animation = '';
 		blinkHistoryLayers(callsign, false);
 		delete blinkTimers[callsign];
 	}, _blinkDuration);
@@ -2609,20 +2729,35 @@ function triggerCourseBlink(file, nameEl) {
 	if (_blinkDuration <= 0) return;
 	if (courseBlinkTimers[file]) clearTimeout(courseBlinkTimers[file]);
 	if (nameEl) nameEl.classList.add('blinking');
-	const layer = courseLayers[file];
-	if (layer) layer.eachLayer(l => { const el = l.getElement?.(); if (el) el.style.animation = 'blink-anim 0.4s steps(2,end) infinite'; });
-	courseBlinkTimers[file] = setTimeout(() => {
-		if (nameEl) nameEl.classList.remove('blinking');
-		const l2 = courseLayers[file];
-		if (l2) l2.eachLayer(l => { const el = l.getElement?.(); if (el) el.style.animation = ''; });
-		delete courseBlinkTimers[file];
-	}, _blinkDuration);
+	const wasLoaded = !!courseLayers[file];
+
+	const startBlink = () => {
+		const layer = courseLayers[file];
+		if (layer) layer.eachLayer(l => { const el = l.getElement?.(); if (el) el.style.animation = 'blink-anim 0.4s steps(2,end) infinite'; });
+		courseBlinkTimers[file] = setTimeout(() => {
+			if (nameEl) nameEl.classList.remove('blinking');
+			const l2 = courseLayers[file];
+			if (l2) l2.eachLayer(l => { const el = l.getElement?.(); if (el) el.style.animation = ''; });
+			if (!wasLoaded && courseLayers[file]) { map.removeLayer(courseLayers[file]); delete courseLayers[file]; }
+			delete courseBlinkTimers[file];
+		}, _blinkDuration);
+	};
+
+	if (wasLoaded) {
+		startBlink();
+	} else {
+		loadCourseLayer(file);
+		const layer = courseLayers[file];
+		if (layer) layer.once('ready', startBlink);
+	}
 }
 
 function triggerDotBlink(d) {
 	if (_blinkDuration <= 0) return;
 	const el = d.m.getElement();
 	if (el) { el.style.animation = 'blink-anim 0.4s steps(2,end) infinite'; setTimeout(() => { el.style.animation = ''; }, _blinkDuration); }
+	const tipEl = d.m.getTooltip()?.getElement();
+	if (tipEl) { tipEl.style.animation = 'blink-anim 0.4s steps(2,end) infinite'; setTimeout(() => { tipEl.style.animation = ''; }, _blinkDuration); }
 	d.el.classList.add('blinking');
 	setTimeout(() => d.el.classList.remove('blinking'), _blinkDuration);
 }
@@ -2653,9 +2788,11 @@ function flashAidBeacon(callsign) {
 
 // ── Clear all selections ──────────────────────────────────────────────────
 function clearAllSelections() {
-	if (selectedIgateIdx >= 0) { setIgateTooltip(selectedIgateIdx, false); igateMarkers[selectedIgateIdx]?.el.classList.remove('selected'); selectedIgateIdx = -1; igateClickCount = 0; }
-	if (selectedAidIdx  >= 0) { setAidTooltip(selectedAidIdx, false);     aidMarkers[selectedAidIdx]?.el.classList.remove('selected');   selectedAidIdx  = -1; aidClickCount  = 0; }
+	_deselectIgate();
+	_deselectAid();
+	const prevCS = selectedCallsign;
 	selectedCallsign = null; trackerClickCount = 0;
+	if (prevCS) refreshTrackerIcon(prevCS); // restore enlarged icon
 	document.querySelectorAll('.legend-item, .m-legend-item').forEach(el => el.classList.remove('selected'));
 	if (originMarker) { originMarker.remove(); originMarker = null; origin = null; }
 	hideAllHistoryDots();
@@ -2663,34 +2800,35 @@ function clearAllSelections() {
 }
 
 // ── Place marker tooltip (shared by iGates and aid stations) ──────────────
-function setPlaceTooltip(markers, idx, permanent) {
+function setPlaceTooltip(markers, idx, permanent, typeClass) {
 	const d = markers[idx]; if (!d) return;
 	d.m.unbindTooltip();
 	const label = d.callsign ? `${d.name} (${d.callsign})` : d.name;
-	d.m.bindTooltip(label, { permanent, direction: 'right', className: 'place-label', offset: [8, 0] });
+	d.m.bindTooltip(label, { permanent, direction: 'right', className: `place-label ${typeClass}`, offset: [8, 0] });
 }
-function setIgateTooltip(idx, permanent) { setPlaceTooltip(igateMarkers, idx, permanent); }
-function setAidTooltip(idx, permanent)   { if (!kiosk) setPlaceTooltip(aidMarkers, idx, permanent); }
+function setIgateTooltip(idx, permanent) { setPlaceTooltip(igateMarkers, idx, permanent, 'igate-label'); }
+function setAidTooltip(idx, permanent)   { if (!kiosk) setPlaceTooltip(aidMarkers, idx, permanent, 'aid-station-label'); }
 
 function onIgateClick(idx) {
 	const d = igateMarkers[idx];
 	const legSel = isMobile ? '.m-legend-item' : '.legend-item';
 	if (selectedIgateIdx !== idx) {
-		if (selectedIgateIdx >= 0) { setIgateTooltip(selectedIgateIdx, false); igateMarkers[selectedIgateIdx].el.classList.remove('selected'); }
-		if (selectedAidIdx  >= 0) { setAidTooltip(selectedAidIdx, false); aidMarkers[selectedAidIdx].el.classList.remove('selected'); selectedAidIdx = -1; aidClickCount = 0; }
+		_deselectIgate();
+		_deselectAid();
 		selectedCallsign = null; trackerClickCount = 0;
 		document.querySelectorAll(legSel).forEach(el => el.classList.remove('selected'));
 		selectedIgateIdx = idx; igateClickCount = 1;
 		d.el.classList.add('selected');
 		setIgateTooltip(idx, true);
+		refreshIgateRadius(idx);
 		triggerDotBlink(d);
 		setSheetOpen(false);
 	} else if (igateClickCount === 1) {
 		igateClickCount = 2;
+		refreshIgateRadius(idx);
 		map.setView(d.latlng, 15); setSheetOpen(false);
 	} else {
-		setIgateTooltip(idx, false); d.el.classList.remove('selected');
-		selectedIgateIdx = -1; igateClickCount = 0;
+		_deselectIgate();
 		map.setView([defaultView.lat, defaultView.lon], defaultView.zoom);
 	}
 }
@@ -2700,37 +2838,41 @@ function onAidClick(idx) {
 	const d = aidMarkers[idx];
 	const legSel = isMobile ? '.m-legend-item' : '.legend-item';
 	if (selectedAidIdx !== idx) {
-		if (selectedAidIdx  >= 0) { setAidTooltip(selectedAidIdx, false); aidMarkers[selectedAidIdx].el.classList.remove('selected'); }
-		if (selectedIgateIdx >= 0) { setIgateTooltip(selectedIgateIdx, false); igateMarkers[selectedIgateIdx].el.classList.remove('selected'); selectedIgateIdx = -1; igateClickCount = 0; }
+		_deselectAid();
+		_deselectIgate();
 		selectedCallsign = null; trackerClickCount = 0;
 		document.querySelectorAll(legSel).forEach(el => el.classList.remove('selected'));
 		selectedAidIdx = idx; aidClickCount = 1;
 		d.el.classList.add('selected');
 		setAidTooltip(idx, true);
+		refreshAidRadius(idx);
 		triggerDotBlink(d);
 		setSheetOpen(false);
 	} else if (aidClickCount === 1) {
 		aidClickCount = 2;
+		refreshAidRadius(idx);
 		map.setView(d.latlng, 15); setSheetOpen(false);
 	} else {
-		setAidTooltip(idx, false); d.el.classList.remove('selected');
-		selectedAidIdx = -1; aidClickCount = 0;
+		_deselectAid();
 		map.setView([defaultView.lat, defaultView.lon], defaultView.zoom);
 	}
 }
 
 // ── Tracker click cycle ────────────────────────────────────────────────────
 function onLegendClick(callsign) {
-	if (selectedIgateIdx >= 0) { setIgateTooltip(selectedIgateIdx, false); igateMarkers[selectedIgateIdx].el.classList.remove('selected'); selectedIgateIdx = -1; igateClickCount = 0; }
-	if (selectedAidIdx  >= 0) { setAidTooltip(selectedAidIdx, false);     aidMarkers[selectedAidIdx].el.classList.remove('selected');   selectedAidIdx  = -1; aidClickCount  = 0; }
+	_deselectIgate();
+	_deselectAid();
 
 	const legSel = isMobile ? '.m-legend-item' : '.legend-item';
 	const legPfx = isMobile ? 'm-legend-'      : 'legend-';
 
 	if (selectedCallsign !== callsign) {
+		const prevCS = selectedCallsign;
 		selectedCallsign = callsign; trackerClickCount = 1;
+		if (prevCS) refreshTrackerIcon(prevCS); // restore previously enlarged tracker
 		document.querySelectorAll(legSel).forEach(el => el.classList.remove('selected'));
 		document.getElementById(legPfx + callsign)?.classList.add('selected');
+		refreshTrackerIcon(callsign); // enlarge to 2x
 		triggerBlink(callsign);
 		setSheetOpen(false);
 		hideAllHistoryDots();
@@ -2742,24 +2884,29 @@ function onLegendClick(callsign) {
 		showTrackerHistory(callsign, color);
 	} else if (trackerClickCount === 1) {
 		trackerClickCount = 2;
+		refreshTrackerIcon(callsign); // restore to normal on zoom click
 		const m = markers[callsign];
 		if (m) { map.setView(m.getLatLng(), 15); setSheetOpen(false); }
 	} else {
 		hideAllHistoryDots();
 		map.setView([defaultView.lat, defaultView.lon], defaultView.zoom);
 		selectedCallsign = null; trackerClickCount = 0;
+		refreshTrackerIcon(callsign); // restore to normal on reset
 		document.querySelectorAll(legSel).forEach(el => el.classList.remove('selected'));
 	}
 }
 
 // ── Mobile tracker tap / long-press ───────────────────────────────────────
 function onMobileTrackerTap(callsign) {
-	if (selectedIgateIdx >= 0) { setIgateTooltip(selectedIgateIdx, false); igateMarkers[selectedIgateIdx].el.classList.remove('selected'); selectedIgateIdx = -1; igateClickCount = 0; }
-	if (selectedAidIdx  >= 0) { setAidTooltip(selectedAidIdx, false);     aidMarkers[selectedAidIdx].el.classList.remove('selected');   selectedAidIdx  = -1; aidClickCount  = 0; }
+	_deselectIgate();
+	_deselectAid();
+	const prevCS = selectedCallsign;
 	selectedCallsign = callsign; trackerClickCount = 1;
+	if (prevCS && prevCS !== callsign) refreshTrackerIcon(prevCS);
 	document.querySelectorAll('.m-legend-item').forEach(el => el.classList.remove('selected'));
 	document.getElementById('m-legend-' + callsign)?.classList.add('selected');
 	hideAllHistoryDots();
+	refreshTrackerIcon(callsign);
 	triggerBlink(callsign);
 	const color = document.querySelector('#m-legend-' + callsign + ' .m-dot')?.style.background || 'red';
 	if (!markers[callsign]) {
@@ -2961,7 +3108,7 @@ function updateMap() {
 			located.forEach(t => {
 				const latlng = [t.lat, t.lon];
 				const color  = t.color || 'red';
-				const sz     = Math.max(4, Math.round(trackerStyle.size * markerScale()));
+				const sz     = trackerIconSize(t.callsign);
 				const shape  = t.mobile ? 'square' : trackerStyle.icon;
 				const icon   = makeTrackerIcon(shape, color, sz);
 				if (markers[t.callsign]) {
@@ -3117,7 +3264,7 @@ function refreshMobileAbout() {
 	const rows = [
 		currentEventName ? { label: 'Event',   val: currentEventName } : null,
 		{ label: 'Org',     val: 'Marin Amateur Radio Society' },
-		{ label: 'Version', val: 'APRS Tracker Map · v1.17.0+2' },
+		{ label: 'Version', val: 'APRS Tracker Map · v1.17.2+0' },
 		mobileCallsign ? { label: 'Callsign', val: mobileCallsign } : null,
 		{ label: 'Map',     val: currentBgAttribution || '' },
 		{ label: 'Credit',  val: '&copy; 2026 Doug Kaye (K6DRK)' },
@@ -3221,13 +3368,13 @@ function applyBackgrounds(backgrounds, backgroundUrl = '') {
 		const active  = bg.url === currentBgUrl;
 		const item    = document.createElement('div');   item.className = 'sidebar-item';
 		const nameEl  = document.createElement('span');  nameEl.textContent = bg.name; nameEl.style.flex = '1';
-		const checkEl = document.createElement('input'); checkEl.type = 'checkbox'; checkEl.checked = active; checkEl.className = 'bg-checkbox';
-		item.appendChild(nameEl); item.appendChild(checkEl);
+		const radioEl = document.createElement('input'); radioEl.type = 'radio'; radioEl.name = 'bg'; radioEl.checked = active; radioEl.className = 'bg-radio';
+		item.appendChild(nameEl); item.appendChild(radioEl);
 		item.addEventListener('click', () => {
 			localStorage.setItem(LS_BG, bg.url);
 			switchBackground(bg);
-			document.querySelectorAll('#backgrounds .bg-checkbox').forEach(e => { e.checked = false; });
-			checkEl.checked = true;
+			document.querySelectorAll('#backgrounds .bg-radio').forEach(e => { e.checked = false; });
+			radioEl.checked = true;
 		});
 		container.appendChild(item);
 	});
@@ -3413,7 +3560,7 @@ function applyIgates(igates) {
 		}).addTo(map);
 		m._baseRadius = igateBase;
 		const tipLabel = g.callsign ? `${g.name} (${g.callsign})` : g.name;
-		m.bindTooltip(tipLabel, { direction: 'right', sticky: false, className: 'place-label' });
+		m.bindTooltip(tipLabel, { permanent: true, direction: 'right', className: 'place-label igate-label', offset: [8, 0] });
 		if (isMobile) m.on('click', function(e) { L.DomEvent.stopPropagation(e); onIgateClick(igateMarkers.length); });
 
 		let item;
@@ -3461,7 +3608,7 @@ function applyAidStations(stations) {
 		const aidTipLabel = g.callsign ? `${g.name} (${g.callsign})` : g.name;
 		m.bindTooltip(aidTipLabel, kiosk
 			? { permanent: true, direction: 'right', className: 'place-label-kiosk' }
-			: { direction: 'right', sticky: false, className: 'place-label' });
+			: { permanent: true, direction: 'right', className: 'place-label aid-station-label', offset: [8, 0] });
 		if (isMobile) m.on('click', function(e) { L.DomEvent.stopPropagation(e); onAidClick(aidMarkers.length); });
 
 		let item;
@@ -3543,17 +3690,15 @@ map.on('moveend', function() {
 });
 
 map.on('zoomend', function() {
-	// Rescale tracker markers
-	Object.values(markers).forEach(m => {
+	// Rescale tracker markers (selected tracker stays 2x)
+	Object.entries(markers).forEach(([cs, m]) => {
 		if (m._trackerColor !== undefined) {
-			const sz = Math.max(4, Math.round(trackerStyle.size * markerScale()));
-			m.setIcon(makeTrackerIcon(m._mobile ? 'square' : trackerStyle.icon, m._trackerColor, sz));
+			m.setIcon(makeTrackerIcon(m._mobile ? 'square' : trackerStyle.icon, m._trackerColor, trackerIconSize(cs)));
 		}
 	});
-	// Rescale igate, aid station, course, and history dots
-	[...igateMarkers, ...aidMarkers].forEach(d => {
-		if (d.m._baseRadius !== undefined) d.m.setRadius(scaledRadius(d.m._baseRadius));
-	});
+	// Rescale igate and aid station markers (selected ones stay 2x)
+	igateMarkers.forEach((d, idx) => { if (d.m._baseRadius !== undefined) refreshIgateRadius(idx); });
+	aidMarkers.forEach((d, idx)   => { if (d.m._baseRadius !== undefined) refreshAidRadius(idx); });
 	Object.values(courseLayers).forEach(layer => {
 		layer.eachLayer(sub => {
 			if (sub._baseRadius !== undefined) sub.setRadius(scaledRadius(sub._baseRadius));
@@ -3677,7 +3822,7 @@ function openAboutModal() {
 	const attrText = currentBgAttribution || '';
 	const rows = [
 		{ label: 'Organization', val: 'Marin Amateur Radio Society' },
-		{ label: 'Application',  val: 'APRS Tracker Map · v1.17.0+2' },
+		{ label: 'Application',  val: 'APRS Tracker Map · v1.17.2+0' },
 		currentEventName ? { label: 'Event', val: currentEventName } : null,
 		mobileCallsign ? { label: 'My Callsign', val: mobileCallsign } : null,
 		mobileCallsign ? { label: 'Activity', val: ['Walk / Run', 'Cycle', 'Drive', 'Stationary'][_mobileActivityMode] } : null,
@@ -3810,7 +3955,40 @@ function setSectionVisible(section, visible) {
 		const el = document.getElementById(id);
 		if (el) el.classList.toggle('section-dimmed', !visible);
 	});
+	// Sync label visibility: hide labels when section is off; restore eye state when section comes back on
+	if (LABEL_HIDE_CLASS[section]) {
+		map._container.classList.toggle(LABEL_HIDE_CLASS[section], !visible || !labelVisible[section]);
+	}
 }
+
+// ── Label visibility (eye buttons, desktop sidebar only) ──────────────────
+const EYE_ON  = `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 8s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2.5" fill="currentColor" stroke="none"/></svg>`;
+const EYE_OFF = `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 8s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2.5" fill="currentColor" stroke="none"/><line x1="2" y1="14" x2="14" y2="2"/></svg>`;
+const LS_LABELS = 'aprs_label_vis';
+const LABEL_HIDE_CLASS = { trackers: 'aprs-hide-tracker-labels', aidstations: 'aprs-hide-aid-labels', igates: 'aprs-hide-igate-labels' };
+let labelVisible = { trackers: true, aidstations: true, igates: false };
+try { const s = JSON.parse(localStorage.getItem(LS_LABELS) || '{}'); Object.keys(labelVisible).forEach(k => { if (s[k] !== undefined) labelVisible[k] = !!s[k]; }); } catch {}
+
+function setLabelVisible(section, visible) {
+	labelVisible[section] = visible;
+	// Only show labels if both the eye is on AND the section itself is visible
+	map._container.classList.toggle(LABEL_HIDE_CLASS[section], !visible || !sectionVisible[section]);
+	document.querySelectorAll(`.sec-label-btn[data-section="${section}"]`).forEach(btn => {
+		btn.innerHTML = visible ? EYE_ON : EYE_OFF;
+		btn.classList.toggle('labels-off', !visible);
+	});
+	try { localStorage.setItem(LS_LABELS, JSON.stringify(labelVisible)); } catch {}
+}
+
+document.querySelectorAll('.sec-label-btn').forEach(btn => {
+	btn.addEventListener('click', e => {
+		e.stopPropagation();
+		setLabelVisible(btn.dataset.section, !labelVisible[btn.dataset.section]);
+	});
+});
+
+// Apply initial state (on by default; localStorage may override)
+Object.keys(labelVisible).forEach(k => setLabelVisible(k, labelVisible[k]));
 
 // ── Mobile location sharing ────────────────────────────────────────────────
 
@@ -3838,18 +4016,54 @@ function initMobileTracking(enabled) {
 }
 
 function onShareLocClick() {
-	if (mobileToken) { stopMobileTracking(); } else { openMobileJoinModal(); }
+	if (mobileToken) { openModeChangeModal(); } else { openMobileJoinModal(); }
 }
 
 function setShareLocBtnState(state) {
-	const label  = state === 'tracking' ? 'Stop Sharing' : 'Share Location';
+	const tracking = state === 'tracking';
+	const label  = tracking ? 'Sharing' : 'Share Location';
 	const btnD   = document.getElementById('share-loc-btn');
 	const btnM   = document.getElementById('m-share-loc-btn');
 	if (btnD) btnD.textContent = label;
 	if (btnM) btnM.textContent = label;
 	const badge  = document.getElementById('sharing-badge');
-	if (badge) badge.style.display = state === 'tracking' ? 'block' : 'none';
+	if (badge) badge.style.display = tracking ? 'block' : 'none';
 }
+
+function openModeChangeModal() {
+	const chips = document.querySelectorAll('#mchange-activity .mjoin-chip');
+	chips.forEach(b => b.classList.toggle('mjoin-chip-sel', parseInt(b.dataset.mode, 10) === _mobileActivityMode));
+	document.getElementById('mchange-modal').style.display = 'flex';
+}
+
+function closeModeChangeModal() {
+	document.getElementById('mchange-modal').style.display = 'none';
+}
+
+document.getElementById('mchange-close').addEventListener('click', closeModeChangeModal);
+document.getElementById('mchange-backdrop').addEventListener('click', closeModeChangeModal);
+document.getElementById('mchange-cancel').addEventListener('click', closeModeChangeModal);
+document.getElementById('mchange-stop').addEventListener('click', () => { closeModeChangeModal(); stopMobileTracking(); });
+document.getElementById('mchange-activity').addEventListener('click', e => {
+	const btn = e.target.closest('.mjoin-chip');
+	if (!btn || !mobileToken) return;
+	const newMode = parseInt(btn.dataset.mode, 10);
+	if (newMode === _mobileActivityMode) { closeModeChangeModal(); return; }
+	_mobileActivityMode = newMode;
+	document.querySelectorAll('#mchange-activity .mjoin-chip').forEach(b => b.classList.toggle('mjoin-chip-sel', b === btn));
+	try { const s = JSON.parse(localStorage.getItem('aprs_mobile_tracker') || '{}'); s.mode = newMode; localStorage.setItem('aprs_mobile_tracker', JSON.stringify(s)); } catch {}
+	const modes = ['walk_run','cycle','drive','stationary'];
+	fetch('index.php?mobile=update', {
+		method: 'POST', headers: {'Content-Type':'application/json'},
+		body: JSON.stringify({ token: mobileToken, sharing_mode: modes[newMode] })
+	}).catch(() => {});
+	// Restart the geolocation interval with new timing
+	if (_activeSendUpdate) {
+		clearInterval(_mobileInterval);
+		startMobileGeolocation();
+	}
+	closeModeChangeModal();
+});
 
 let _shareBlinkTimer = null;
 function blinkShareBtn() {
@@ -3867,13 +4081,12 @@ function blinkShareBtn() {
 }
 
 function openMobileJoinModal() {
-	document.getElementById('mjoin-name').value  = '';
+	const savedName = localStorage.getItem('aprs_sharing_name') || '';
+	document.getElementById('mjoin-name').value  = savedName;
 	document.getElementById('mjoin-pin').value   = '';
 	document.getElementById('mjoin-error').textContent = '';
-	document.getElementById('mjoin-submit').disabled    = false;
-	document.getElementById('mjoin-submit').textContent = 'Share Location';
 	document.getElementById('mobile-join-modal').style.display = 'flex';
-	document.getElementById('mjoin-name').focus();
+	(savedName ? document.getElementById('mjoin-pin') : document.getElementById('mjoin-name')).focus();
 }
 
 function closeMobileJoinModal() {
@@ -3915,7 +4128,7 @@ document.getElementById('mjoin-close').addEventListener('click', closeMobileJoin
 document.getElementById('mjoin-backdrop').addEventListener('click', closeMobileJoinModal);
 document.getElementById('malert-ok').addEventListener('click', closeMobileAlert);
 document.getElementById('malert-backdrop').addEventListener('click', closeMobileAlert);
-document.getElementById('mjoin-submit').addEventListener('click', submitMobileJoin);
+document.getElementById('mjoin-cancel').addEventListener('click', closeMobileJoinModal);
 document.getElementById('mjoin-name').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('mjoin-pin').focus(); });
 document.getElementById('mjoin-pin').addEventListener('keydown',  e => { if (e.key === 'Enter') submitMobileJoin(); });
 
@@ -3924,7 +4137,8 @@ document.getElementById('mjoin-activity').addEventListener('click', e => {
 	const btn = e.target.closest('.mjoin-chip');
 	if (!btn) return;
 	_mjoinMode = parseInt(btn.dataset.mode, 10);
-	document.querySelectorAll('.mjoin-chip').forEach(b => b.classList.toggle('mjoin-chip-sel', b === btn));
+	document.querySelectorAll('#mjoin-activity .mjoin-chip').forEach(b => b.classList.toggle('mjoin-chip-sel', b === btn));
+	submitMobileJoin();
 });
 
 function _collectWebDeviceInfo() {
@@ -3964,9 +4178,9 @@ function submitMobileJoin() {
 	const name = document.getElementById('mjoin-name').value.trim();
 	const pin  = document.getElementById('mjoin-pin').value;
 	const errEl = document.getElementById('mjoin-error');
-	const btn   = document.getElementById('mjoin-submit');
+	const cancelBtn = document.getElementById('mjoin-cancel');
 	if (!name) { errEl.textContent = 'Please enter your name.'; return; }
-	btn.disabled = true;
+	cancelBtn.disabled = true;
 	errEl.textContent = '';
 	fetch('index.php?mobile=join', {
 		method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -3978,11 +4192,12 @@ function submitMobileJoin() {
 			errEl.textContent = d.error === 'Incorrect PIN'
 				? 'Incorrect PIN. Please try again.'
 				: (d.error || 'Could not connect. Please try again.');
-			btn.disabled = false;
+			cancelBtn.disabled = false;
 			return;
 		}
 		mobileToken = d.token; mobileId = d.id; mobileCallsign = d.callsign || null;
 			try { localStorage.setItem('aprs_mobile_tracker', JSON.stringify({ token: d.token, id: d.id, callsign: d.callsign || null, mode: _mjoinMode })); } catch {}
+			try { localStorage.setItem('aprs_sharing_name', name); } catch {}
 			_mobileActivityMode = _mjoinMode;
 		// Clear stale breadcrumbs for this callsign so old history doesn't linger
 		if (mobileCallsign && historyDots[mobileCallsign]) {
@@ -3995,7 +4210,7 @@ function submitMobileJoin() {
 		if (isMobile) { acquireWakeLock(); startDimTimer(); }
 		showShareInfoModal(d.callsign || '');
 	})
-	.catch(() => { errEl.textContent = 'Network error. Try again.'; btn.disabled = false; });
+	.catch(() => { errEl.textContent = 'Network error. Try again.'; cancelBtn.disabled = false; });
 }
 
 let _mobileLastPos = null;

@@ -1,6 +1,6 @@
 # APRS Tracker Map — User Guide
 
-**Version 1.17.0 · June 28, 2026**
+**Version 1.17.2 · June 29, 2026**
 
 ---
 
@@ -140,7 +140,9 @@ For future updates, open TestFlight and tap **Update** next to APRS Map.
 
 The first time you run the app it will ask for location permission — tap **Allow**. When you first tap Share Location the app will also ask for notification and battery permissions; grant both (see [Share Location in the App](#share-location-in-the-app)).
 
-**First launch:** The first time the app opens it displays a **Quick Start** guide with a brief overview of the main features. You can return to it at any time by tapping **Help** in the drawer footer, then **Quick Start**.
+**Event password:** Each time the app opens you will be prompted for the event password (provided by the event administrator). The password is shown as plain text so you can see what you are typing.
+
+**First launch:** The first time the app opens it displays a **Quick Start** guide with a brief overview of the main features. Tap **Continue** in the top bar (or the Continue button at the bottom) to proceed to the map. You can return to the Quick Start at any time by tapping **Help** in the drawer footer, then **Quick Start**.
 
 ### App Drawer
 
@@ -160,7 +162,7 @@ The drawer footer has buttons:
 
 | Button | Action |
 |--------|--------|
-| **Share Location** / **Stop Sharing** | Start or stop broadcasting your GPS position. Only shown when the event administrator has enabled mobile tracking. |
+| **Share Location** / **Sharing** | When not sharing: opens the location sharing dialog. When sharing (shown in green): opens a panel where you can switch activity mode or stop sharing. Only shown when the event administrator has enabled mobile tracking. |
 | **Save Map** | Save the current map position and zoom as your personal default. |
 | **Reload Tiles** | Download fresh map tiles for the current view. See [Reload Tiles](#reload-tiles) below. |
 | **Help** | Opens a panel showing organization, app version and build number, event name, your assigned callsign (while sharing), map attribution, and copyright — with buttons for **Quick Start** (built-in guide), **User Guide**, and **Submit a Bug or Suggestion**. |
@@ -180,17 +182,30 @@ The **Reload Tiles** button in the drawer footer downloads and caches map tiles 
 
 ### Share Location in the App
 
-Share Location works the same way as on the web map — enter your name and the event PIN, choose your activity type, and your position is transmitted to the APRS network at the corresponding interval. The key difference is that **the app keeps reporting your position even when the screen is locked or you switch to another app**. You do not need to keep the screen on or stay in the app.
+The key advantage of the native app over the web map is that **location sharing continues in the background** — your GPS position keeps updating even when the screen is locked or you switch to another app. You do not need to keep the screen on or stay in the app.
 
-**Auto-resume:** If you close and reopen the app while sharing was active, sharing resumes automatically with the same callsign and activity mode. A brief notification confirms it.
+**Starting:**
 
-**Activity modes:** Choose the mode that matches your situation:
-- **Walk / Run** — transmits every 60 seconds.
-- **Cycle** — transmits every 30 seconds, or immediately when you move ≥ 0.2 miles.
-- **Drive** — transmits every 15 seconds, or immediately when you move ≥ 0.2 miles.
-- **Stationary** — transmits every 2 minutes. Use this when you are at a fixed post and do not need frequent updates.
+1. Tap **Share Location** in the drawer footer.
+2. Enter your first name (pre-filled if you have shared before) and the event PIN. Both are shown as plain text.
+3. Tap an **activity** button — this immediately starts sharing and closes the dialog:
+   - **Walk / Run** — transmits every 60 seconds.
+   - **Cycle** — transmits every 30 seconds, or immediately when you move ≥ 0.2 miles.
+   - **Drive** — transmits every 15 seconds, or immediately when you move ≥ 0.2 miles.
+   - **Stationary** — transmits every 2 minutes. Use when you are at a fixed post.
+4. A confirmation shows your assigned APRS callsign. Your name appears in the Trackers list and you are visible on the map.
 
 Beacon intervals and distance thresholds are configured by the event administrator and may differ from the defaults above.
+
+**Changing activity mode while sharing:**
+
+Tap the **Sharing** button (green) in the drawer footer. A panel appears with the activity mode buttons and a **Stop Sharing** button. Tap a different activity to switch modes immediately — your sharing session continues uninterrupted.
+
+**Stopping:**
+
+Tap **Sharing** (green) in the drawer footer, then tap **Stop Sharing**.
+
+**Auto-resume:** If you close and reopen the app while sharing was active, sharing resumes automatically with the same callsign and activity mode. A brief notification confirms it.
 
 **Distance-triggered upload:** In addition to the timed interval, the app sends an immediate beacon whenever you move past the configured distance threshold since your last upload. After a distance-triggered upload the timer resets, so you will not receive a redundant beacon moments later.
 
@@ -266,7 +281,7 @@ expanding the section.
 | **iGates** | Same as Aid Stations. Hidden if none are configured. |
 | **Help** | Version, organization, and map attribution. Shows your assigned APRS callsign while you are sharing your location. Also contains buttons for the User Guide and to submit a bug or suggestion. |
 
-The footer of the drawer contains action buttons arranged in a grid: **Help**, **Save Map**, **Kiosk Mode**, **Admin**, and (when enabled by the administrator) **Share Location** / **Stop Sharing**. When subscribed to messaging, a **Broadcast** button also appears.
+The footer of the drawer contains action buttons arranged in a grid: **Help**, **Save Map**, **Kiosk Mode**, **Admin**, and (when enabled by the administrator) **Share Location** / **Sharing**. When subscribed to messaging, a **Broadcast** button also appears.
 
 The **Trackers** section is open by default when the drawer is first displayed.
 
@@ -374,20 +389,27 @@ Location sharing is available on:
 **Starting:**
 
 1. Tap **Share Location** at the bottom of the drawer.
-2. Enter your name and the event PIN.
-3. Select your **activity type**: **Walk / Run** (every 60 s), **Cycle** (every 30 s), **Drive** (every 15 s), or **Stationary** (every 2 min — use when you are at a fixed post).
-4. Tap **Share**.
-5. A confirmation shows your assigned APRS callsign (e.g., `K6DRK-01`). You will appear in the Trackers list under that callsign and be visible on the map. Your callsign is also shown in the **Help** panel while sharing is active.
+2. Enter your first name (pre-filled if you have shared before) and the event PIN. Both fields are shown as plain text.
+3. Tap an **activity** — this immediately starts sharing and closes the dialog:
+   - **Walk / Run** — transmits every 60 s
+   - **Cycle** — transmits every 30 s, or immediately when you move ≥ 0.2 mi
+   - **Drive** — transmits every 15 s, or immediately when you move ≥ 0.2 mi
+   - **Stationary** — transmits every 2 min (use when at a fixed post)
+4. A confirmation shows your assigned APRS callsign (e.g., `K6DRK-01`). You will appear in the Trackers list and be visible on the map. Your callsign is also shown in the **Help** panel while sharing is active.
 
 Your position is transmitted at the chosen interval and appears on this map and on external APRS sites such as [aprs.fi](https://aprs.fi) and CalTopo.
 
-**Callsign persistence:** The app remembers your device across sessions. If you stop sharing and start again — or close and reopen the app — you will be assigned the **same callsign** as before, so your track history is continuous. If you reinstall the app you will be assigned a new callsign.
+**Changing activity mode while sharing:**
 
-**Auto-resume (native app only):** If the app is closed or restarted while sharing was active, sharing resumes automatically when the app reopens — no need to re-enter your name and PIN. A brief notification confirms the resume.
+Tap the **Sharing** button in the drawer footer. A panel appears with the activity buttons and a **Stop Sharing** button. Tap a different activity to switch modes immediately — your sharing session continues uninterrupted.
 
 **Stopping:**
 
-Tap **Stop Sharing** in the drawer footer.
+Tap **Sharing** in the drawer footer, then tap **Stop Sharing**.
+
+**Callsign persistence:** The system remembers your device across sessions. If you stop sharing and start again you will be assigned the **same callsign** as before, so your track history is continuous.
+
+**Auto-resume (native app only):** If the app is closed or restarted while sharing was active, sharing resumes automatically when the app reopens — no need to re-enter your name and PIN. A brief notification confirms the resume.
 
 **Notes:**
 
