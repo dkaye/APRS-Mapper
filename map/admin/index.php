@@ -113,7 +113,7 @@ $authed = (isset($_SESSION['aprs_admin_authed']) && $_SESSION['aprs_admin_authed
        || (isset($_SESSION['stats_auth'])        && $_SESSION['stats_auth']        === true);
 
 if (!$authed) {
-    if (isset($_GET['load']) || isset($_GET['save']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['alllocationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib']) || isset($_GET['beacondeltas']) || isset($_GET['togglelock']) || isset($_GET['mobiletrackers']) || isset($_GET['removemobile']) || isset($_GET['removemobilebulk']) || isset($_GET['blockmobile']) || isset($_GET['renamemobile']) || isset($_GET['seteventpassword']) || isset($_GET['backup']) || isset($_GET['restore'])) {
+    if (isset($_GET['load']) || isset($_GET['save']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['alllocationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib']) || isset($_GET['beacondeltas']) || isset($_GET['togglelock']) || isset($_GET['mobiletrackers']) || isset($_GET['removemobile']) || isset($_GET['removemobilebulk']) || isset($_GET['blockmobile']) || isset($_GET['renamemobile']) || isset($_GET['resetbeacons']) || isset($_GET['setdisplayid']) || isset($_GET['seteventpassword']) || isset($_GET['backup']) || isset($_GET['restore'])) {
         header('Content-Type: application/json');
         http_response_code(401);
         echo json_encode(['error' => 'Session expired — reload and log in again']);
@@ -906,18 +906,74 @@ if (isset($_GET['mobiletrackers'])) {
     if (!file_exists($mf)) { respondJson([]); exit; }
     $fh = fopen($mf, 'r'); flock($fh, LOCK_SH); $c = stream_get_contents($fh); flock($fh, LOCK_UN); fclose($fh);
     $all = json_decode($c, true) ?: [];
-    $now = time();
-    // Return all sessions still alive (within 24 h) + blocked entries; strip token
-    $real   = realpath($configPath);
-    $deltas = $real ? computeBeaconDeltas(dirname($real) . '/tracker_history.yaml') : [];
-    $out = array_values(array_map(function($t) use ($now, $deltas) {
-        return ['id' => $t['id'], 'callsign' => $t['callsign'] ?? '', 'name' => $t['name'],
-                'lastUpdate' => $t['lastUpdate'], 'age' => $now - $t['lastUpdate'],
-                'active'      => !empty($t['token']),
-                'blocked'     => !empty($t['blocked']),
-                'delta'        => $deltas[$t['callsign'] ?? ''] ?? null,
+    $now  = time();
+    $real = realpath($configPath);
+
+    // Radio deltas — from APRS-IS beacon history (tracker_history.yaml)
+    $radioDeltas = $real ? computeBeaconDeltas(dirname($real) . '/tracker_history.yaml') : [];
+
+    // Mobile deltas — from recent_beacons in mobile_trackers.json (accurate for all mobile sessions)
+    $mobileDeltas = [];
+    foreach ($all as $mt) {
+        $cs = $mt['callsign'] ?? '';
+        $rb = $mt['recent_beacons'] ?? [];
+        if ($cs === '' || count($rb) < 2) continue;
+        $min = PHP_INT_MAX;
+        for ($i = 0; $i < count($rb) - 1; $i++) {
+            $gap = $rb[$i] - $rb[$i + 1];
+            if ($gap > 0 && $gap < $min) $min = $gap;
+        }
+        if ($min < PHP_INT_MAX) $mobileDeltas[$cs] = $min;
+    }
+
+    // Radio position/path from trackers.json (written by daemon from APRS-IS)
+    $daemonTrackers = [];
+    $tf = __DIR__ . '/../trackers.json';
+    if (file_exists($tf)) {
+        $fh2 = fopen($tf, 'r'); flock($fh2, LOCK_SH); $tj = stream_get_contents($fh2); flock($fh2, LOCK_UN); fclose($fh2);
+        foreach (json_decode($tj, true) ?: [] as $tr) {
+            if (isset($tr['callsign'])) $daemonTrackers[$tr['callsign']] = $tr;
+        }
+    }
+
+    $out = array_values(array_map(function($t) use ($now, $mobileDeltas, $radioDeltas, $daemonTrackers) {
+        $cs  = $t['callsign'] ?? '';
+        $ham = $t['ham_callsign'] ?? null;
+
+        // For hybrid trackers, expose radio beacon data separately
+        $radio = null;
+        if ($ham !== null && isset($daemonTrackers[$ham])) {
+            $tr  = $daemonTrackers[$ham];
+            $rlu = (int)($tr['lastUpdate'] ?? 0);
+            $radio = [
+                'lastUpdate' => $rlu,
+                'age'        => $rlu > 0 ? $now - $rlu : null,
+                'path'       => $tr['path'] ?? '',
+                'lat'        => $tr['lat'] ?? null,
+                'lon'        => $tr['lon'] ?? null,
+                'delta'      => $radioDeltas[$ham] ?? null,
+            ];
+        }
+
+        // Non-hybrid delta: best of radio history and mobile recent_beacons
+        $delta = null;
+        if ($ham === null) {
+            $rd = $radioDeltas[$cs] ?? null;
+            $md = $mobileDeltas[$cs] ?? null;
+            $delta = ($rd !== null && $md !== null) ? min($rd, $md) : ($rd ?? $md);
+        }
+
+        return ['id' => $t['id'], 'callsign' => $cs, 'name' => $t['name'],
+                'lastUpdate'   => $t['lastUpdate'], 'age' => $now - $t['lastUpdate'],
+                'active'       => !empty($t['token']),
+                'blocked'      => !empty($t['blocked']),
+                'delta'        => $delta,
+                'mobile_delta' => $ham !== null ? ($mobileDeltas[$cs] ?? null) : null,
                 'device_info'  => $t['device_info'] ?? null,
-                'sharing_mode' => $t['sharing_mode'] ?? ''];
+                'sharing_mode' => $t['sharing_mode'] ?? '',
+                'ham_callsign' => $ham,
+                'display_id'   => $t['display_id'] ?? null,
+                'radio'        => $radio];
     }, array_filter($all, fn($t) => !empty($t['blocked']) || ($now - $t['lastUpdate']) < 86400)));
     respondJson($out);
 }
@@ -984,6 +1040,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['renamemobile'])) {
     $data = json_decode(stream_get_contents($fh), true) ?: [];
     $found = false;
     foreach ($data as &$t) { if ($t['id'] === $id) { $t['name'] = $name; $found = true; break; } }
+    if ($found) { ftruncate($fh, 0); rewind($fh); fwrite($fh, json_encode($data, JSON_PRETTY_PRINT) . "\n"); }
+    flock($fh, LOCK_UN); fclose($fh);
+    respondJson($found ? ['ok' => true] : ['error' => 'Not found'], $found ? 200 : 404);
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['setdisplayid'])) {
+    $input = json_decode(file_get_contents('php://input'), true) ?: [];
+    $id    = trim($input['id'] ?? '');
+    $disp  = substr(preg_replace('/[^A-Za-z0-9\-]/', '', trim($input['display_id'] ?? '')), 0, 16);
+    if (!$id) { respondJson(['error' => 'Missing id'], 400); exit; }
+    $mf = __DIR__ . '/../mobile_trackers.json';
+    $fh = fopen($mf, 'c+');
+    if (!$fh) { respondJson(['error' => 'Cannot open file'], 500); exit; }
+    flock($fh, LOCK_EX);
+    $data = json_decode(stream_get_contents($fh), true) ?: [];
+    $found = false;
+    foreach ($data as &$t) {
+        if ($t['id'] === $id) {
+            if ($disp === '' || $disp === $t['id']) { unset($t['display_id']); }
+            else { $t['display_id'] = $disp; }
+            $found = true; break;
+        }
+    }
+    if ($found) { ftruncate($fh, 0); rewind($fh); fwrite($fh, json_encode($data, JSON_PRETTY_PRINT) . "\n"); }
+    flock($fh, LOCK_UN); fclose($fh);
+    respondJson($found ? ['ok' => true] : ['error' => 'Not found'], $found ? 200 : 404);
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['resetbeacons'])) {
+    $input = json_decode(file_get_contents('php://input'), true) ?: [];
+    $id    = trim($input['id'] ?? '');
+    if (!$id) { respondJson(['error' => 'Missing id'], 400); exit; }
+    $mf = __DIR__ . '/../mobile_trackers.json';
+    $fh = fopen($mf, 'c+');
+    if (!$fh) { respondJson(['error' => 'Cannot open file'], 500); exit; }
+    flock($fh, LOCK_EX);
+    $data = json_decode(stream_get_contents($fh), true) ?: [];
+    $found = false;
+    foreach ($data as &$t) { if ($t['id'] === $id) { $t['recent_beacons'] = []; $found = true; break; } }
     if ($found) { ftruncate($fh, 0); rewind($fh); fwrite($fh, json_encode($data, JSON_PRETTY_PRINT) . "\n"); }
     flock($fh, LOCK_UN); fclose($fh);
     respondJson($found ? ['ok' => true] : ['error' => 'Not found'], $found ? 200 : 404);
@@ -2942,22 +3037,73 @@ async function loadMobileTrackers() {
         bulkBtn.addEventListener('click', () => removeMobileTrackersBulk(listEl, updateBulkBtn));
 
         // ── Tracker rows ───────────────────────────────────────────────────
+        // ── Helpers ────────────────────────────────────────────────────────
+        const carSvg = `<svg viewBox="0 0 20 14" width="13" height="9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M3 7L6 3H14L17 7"/><rect x="1" y="7" width="18" height="4.5" rx="1.2"/><circle cx="5.5" cy="12.5" r="1.5"/><circle cx="14.5" cy="12.5" r="1.5"/></svg>`;
+        const modeIcons  = { walk_run: '🏃', cycle: '🚲', drive: carSvg, drive_cycle: carSvg, stationary: '📍' };
+        const modeLabels = { walk_run: 'Walk / Run', cycle: 'Cycle', drive: 'Drive', drive_cycle: 'Drive', stationary: 'Stationary' };
+
+        const fmtAge   = secs => secs == null ? '—' : secs < 60 ? secs + 's ago' : Math.round(secs / 60) + 'm ago';
+        const fmtDelta = secs => secs == null ? 'Δ —' : 'Δ ' + (secs < 60 ? secs + 's' : Math.round(secs / 60) + 'm');
+
+        // Build a beacon sub-row (📱 or 📻)
+        const makeBeaconRow = (icon, delta, ageVal, extraEls, actionEls) => {
+            const r = document.createElement('div');
+            r.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 0 2px 4px;flex-wrap:wrap';
+            const iconEl = document.createElement('span');
+            iconEl.textContent = icon;
+            iconEl.style.cssText = 'font-size:13px;flex-shrink:0;width:18px;text-align:center';
+            r.appendChild(iconEl);
+            const dEl = document.createElement('span');
+            dEl.textContent = fmtDelta(delta);
+            dEl.style.cssText = 'font-size:12px;white-space:nowrap;min-width:40px;color:' + (delta != null ? '#555' : '#bbb');
+            r.appendChild(dEl);
+            extraEls.forEach(el => r.appendChild(el));
+            const spacer = document.createElement('span'); spacer.style.cssText = 'flex:1'; r.appendChild(spacer);
+            const ageEl = document.createElement('span');
+            ageEl.textContent = fmtAge(ageVal);
+            ageEl.style.cssText = 'color:#888;font-size:12px;white-space:nowrap';
+            r.appendChild(ageEl);
+            actionEls.forEach(el => r.appendChild(el));
+            return { row: r, deltaEl: dEl };
+        };
+
+        // ── Tracker rows ───────────────────────────────────────────────────
         trackers.forEach(t => {
             const row = document.createElement('div');
             row.className = 'list-row';
-            row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid #f0f0f0';
+            const isHybrid = !!t.ham_callsign;
+            row.style.cssText = 'padding:5px 4px;border-bottom:1px solid #f0f0f0;'
+                + (isHybrid ? 'display:flex;flex-direction:column;gap:2px' : 'display:flex;align-items:center;gap:8px');
+
+            const identityRow = isHybrid ? document.createElement('div') : row;
+            if (isHybrid) identityRow.style.cssText = 'display:flex;align-items:center;gap:8px';
 
             const cb = document.createElement('input');
             cb.type = 'checkbox'; cb.className = 'mt-cb'; cb.dataset.id = t.id;
             cb.addEventListener('change', updateBulkBtn);
 
-            const idSpan = document.createElement('span');
-            idSpan.textContent = t.id;
-            idSpan.style.cssText = 'font-weight:600;min-width:34px;font-size:13px';
+            const dispInput = document.createElement('input');
+            dispInput.type = 'text';
+            dispInput.value = t.display_id || t.id;
+            dispInput.maxLength = 16;
+            dispInput.title = 'Display ID shown in sidebar and on map (default: ' + t.id + ')';
+            dispInput.style.cssText = 'width:52px;font-size:12px;font-family:monospace;font-weight:600;padding:2px 5px;border:1px solid #ddd;border-radius:4px';
+            const saveDispId = async () => {
+                const val = dispInput.value.trim() || t.id;
+                dispInput.value = val;
+                const r2 = await fetch('?setdisplayid', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id: t.id, display_id: val}) });
+                if (r2.ok) { t.display_id = val === t.id ? null : val; dispInput.style.borderColor = '#ddd'; }
+                else { dispInput.style.borderColor = '#c0392b'; }
+            };
+            dispInput.addEventListener('blur', saveDispId);
+            dispInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); dispInput.blur(); } });
 
             const csSpan = document.createElement('span');
             csSpan.textContent = t.callsign || '';
-            csSpan.style.cssText = 'font-family:monospace;font-size:12px;color:#555;white-space:nowrap;min-width:72px';
+            csSpan.title = isHybrid ? 'Ham radio callsign' : 'APRS callsign';
+            csSpan.style.cssText = isHybrid
+                ? 'font-family:monospace;font-size:11px;color:#1a8a3a;background:#e8f8ee;border-radius:3px;padding:1px 4px;white-space:nowrap;flex-shrink:0;min-width:72px'
+                : 'font-family:monospace;font-size:12px;color:#555;white-space:nowrap;min-width:72px';
 
             const nameInput = document.createElement('input');
             nameInput.type = 'text';
@@ -2967,31 +3113,88 @@ async function loadMobileTrackers() {
             const saveName = async () => {
                 const newName = nameInput.value.trim();
                 if (!newName || newName === t.name) { nameInput.value = t.name; return; }
-                const r = await fetch('?renamemobile', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id: t.id, name: newName}) });
-                if (r.ok) { t.name = newName; nameInput.style.borderColor = '#ddd'; }
+                const r2 = await fetch('?renamemobile', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id: t.id, name: newName}) });
+                if (r2.ok) { t.name = newName; nameInput.style.borderColor = '#ddd'; }
                 else { nameInput.style.borderColor = '#c0392b'; nameInput.value = t.name; }
             };
             nameInput.addEventListener('blur', saveName);
             nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); nameInput.blur(); } });
 
-            row.appendChild(cb); row.appendChild(idSpan); row.appendChild(csSpan); row.appendChild(nameInput);
+            identityRow.appendChild(cb); identityRow.appendChild(dispInput); identityRow.appendChild(csSpan); identityRow.appendChild(nameInput);
+            if (isHybrid) row.appendChild(identityRow);
 
-            const deltaSpan = document.createElement('span');
-            deltaSpan.title = 'Minimum interval between successive breadcrumbs (last 10 received)';
-            deltaSpan.style.cssText = 'font-size:12px;white-space:nowrap';
-            if (t.delta != null) {
-                const s = t.delta;
-                deltaSpan.textContent = 'Δ ' + (s < 60 ? s + 's' : Math.round(s / 60) + 'm');
-                deltaSpan.style.color = '#555';
+            const makeRmBtn  = () => { const b = document.createElement('button'); b.textContent = 'Remove'; b.className = 'btn'; b.addEventListener('click', () => removeMobileTracker(t.id, row, listEl)); return b; };
+            const makeBlkBtn = () => { const b = document.createElement('button'); b.textContent = t.blocked ? 'Unblock' : 'Block'; b.className = 'btn'; b.addEventListener('click', () => toggleBlockMobileTracker(t.id, !t.blocked)); return b; };
+
+            if (isHybrid) {
+                // 📱 Mobile beacon row
+                const mobileExtras = [];
+                if (t.device_info && Object.keys(t.device_info).length) {
+                    const di = t.device_info;
+                    const isWeb = /^Web\b/i.test(di.app || '');
+                    const app = (di.app || '').replace(/^Web\s+/i, '');
+                    const platform = isWeb ? 'Web' : (di.os || di.browser);
+                    const parts = [app, platform].filter(Boolean);
+                    const infoInline = document.createElement('span');
+                    infoInline.style.cssText = 'font-size:11px;color:#666;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px';
+                    infoInline.textContent = parts.join(' · ');
+                    infoInline.title = [modeLabels[t.sharing_mode] || '', ...parts].filter(Boolean).join(' · ');
+                    mobileExtras.push(infoInline);
+                }
+                if (t.sharing_mode) {
+                    const modeEl = document.createElement('span');
+                    modeEl.innerHTML = modeIcons[t.sharing_mode] || '';
+                    modeEl.style.cssText = 'font-size:13px;filter:grayscale(1) brightness(0.5);flex-shrink:0';
+                    modeEl.title = modeLabels[t.sharing_mode] || '';
+                    mobileExtras.push(modeEl);
+                }
+                if (t.blocked) { const bl = document.createElement('span'); bl.textContent = 'blocked'; bl.style.cssText = 'color:#c0392b;font-size:11px;white-space:nowrap'; mobileExtras.push(bl); }
+                const mobileActions = [];
+                if (t.device_info && Object.keys(t.device_info).length) {
+                    const ib = document.createElement('button'); ib.textContent = 'Info'; ib.className = 'btn';
+                    ib.addEventListener('click', () => showDeviceInfoModal(t)); mobileActions.push(ib);
+                }
+                mobileActions.push(makeBlkBtn(), makeRmBtn());
+                const { row: mobRow, deltaEl: mobDeltaEl } = makeBeaconRow('📱', t.mobile_delta, t.age, mobileExtras, mobileActions);
+                mobDeltaEl.title = 'Min interval between app beacons · Click to reset';
+                mobDeltaEl.style.cursor = 'pointer';
+                mobDeltaEl.addEventListener('click', async () => {
+                    mobDeltaEl.textContent = 'Δ —'; mobDeltaEl.style.color = '#bbb';
+                    await fetch('?resetbeacons', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id: t.id}) });
+                });
+                row.appendChild(mobRow);
+
+                // 📻 Radio beacon row
+                const rd = t.radio;
+                const radioExtras = [];
+                if (rd && rd.path) {
+                    const pathEl = document.createElement('span');
+                    pathEl.textContent = 'via ' + rd.path;
+                    pathEl.style.cssText = 'font-size:11px;color:#666;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px';
+                    pathEl.title = rd.path;
+                    radioExtras.push(pathEl);
+                }
+                const radioActions = [];
+                if (rd) {
+                    const rib = document.createElement('button'); rib.textContent = 'Info'; rib.className = 'btn';
+                    rib.addEventListener('click', () => showRadioInfoModal(t)); radioActions.push(rib);
+                }
+                radioActions.push(makeRmBtn());
+                const { row: radioRow } = makeBeaconRow('📻', rd ? rd.delta : null, rd ? rd.age : null, radioExtras, radioActions);
+                row.appendChild(radioRow);
+
             } else {
-                deltaSpan.textContent = 'Δ —';
-                deltaSpan.style.color = '#bbb';
-            }
-            row.appendChild(deltaSpan);
-
-            {
-                const modeIcons = { walk_run: '🏃', cycle: '🚲', drive: '🚗', drive_cycle: '🚗', stationary: '📍' };
-                const modeLabels = { walk_run: 'Walk / Run', cycle: 'Cycle', drive: 'Drive', drive_cycle: 'Drive', stationary: 'Stationary' };
+                // Non-hybrid: single flat row
+                const deltaSpan = document.createElement('span');
+                deltaSpan.title = 'Min interval between beacons · Click to reset and start monitoring';
+                deltaSpan.style.cssText = 'font-size:12px;white-space:nowrap;cursor:pointer';
+                const setDelta = (val) => { deltaSpan.textContent = fmtDelta(val); deltaSpan.style.color = val != null ? '#555' : '#bbb'; };
+                setDelta(t.delta);
+                deltaSpan.addEventListener('click', async () => {
+                    setDelta(null);
+                    await fetch('?resetbeacons', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id: t.id}) });
+                });
+                row.appendChild(deltaSpan);
                 if (t.device_info && Object.keys(t.device_info).length) {
                     const di = t.device_info;
                     const isWeb = /^Web\b/i.test(di.app || '');
@@ -3004,44 +3207,23 @@ async function loadMobileTrackers() {
                     inlineSpan.title = [modeLabels[t.sharing_mode] || '', ...parts].filter(Boolean).join(' · ');
                     row.appendChild(inlineSpan);
                 }
-                const icon = modeIcons[t.sharing_mode] || '📱';
                 const iconSpan = document.createElement('span');
-                iconSpan.textContent = icon;
+                iconSpan.innerHTML = modeIcons[t.sharing_mode] || '?';
                 iconSpan.style.cssText = 'font-size:13px;filter:grayscale(1) brightness(0.5);flex-shrink:0';
                 iconSpan.title = modeLabels[t.sharing_mode] || 'Mobile tracker';
                 row.appendChild(iconSpan);
+                if (t.blocked) { const bl = document.createElement('span'); bl.textContent = 'blocked'; bl.style.cssText = 'color:#c0392b;font-size:11px;white-space:nowrap'; row.appendChild(bl); }
+                const ageSpan = document.createElement('span');
+                ageSpan.textContent = fmtAge(t.age);
+                ageSpan.style.cssText = 'color:#888;font-size:12px;white-space:nowrap;margin-left:auto';
+                row.appendChild(ageSpan);
+                if (t.device_info && Object.keys(t.device_info).length) {
+                    const infoBtn = document.createElement('button'); infoBtn.textContent = 'Info'; infoBtn.className = 'btn';
+                    infoBtn.addEventListener('click', () => showDeviceInfoModal(t)); row.appendChild(infoBtn);
+                }
+                row.appendChild(makeBlkBtn()); row.appendChild(makeRmBtn());
             }
 
-            if (t.blocked) {
-                const bl = document.createElement('span');
-                bl.textContent = 'blocked'; bl.style.cssText = 'color:#c0392b;font-size:11px;white-space:nowrap';
-                row.appendChild(bl);
-            }
-
-            const age = t.age < 60 ? t.age + 's ago' : Math.round(t.age / 60) + 'm ago';
-            const ageSpan = document.createElement('span');
-            ageSpan.textContent = age;
-            ageSpan.style.cssText = 'color:#888;font-size:12px;white-space:nowrap;margin-left:auto';
-
-            const blockBtn = document.createElement('button');
-            blockBtn.textContent = t.blocked ? 'Unblock' : 'Block';
-            blockBtn.className = 'btn';
-            blockBtn.addEventListener('click', () => toggleBlockMobileTracker(t.id, !t.blocked));
-
-            const rmBtn = document.createElement('button');
-            rmBtn.textContent = 'Remove';
-            rmBtn.className = 'btn';
-            rmBtn.addEventListener('click', () => removeMobileTracker(t.id, row, listEl));
-
-            row.appendChild(ageSpan);
-            if (t.device_info && Object.keys(t.device_info).length) {
-                const infoBtn = document.createElement('button');
-                infoBtn.textContent = 'Info';
-                infoBtn.className = 'btn';
-                infoBtn.addEventListener('click', () => showDeviceInfoModal(t));
-                row.appendChild(infoBtn);
-            }
-            row.appendChild(blockBtn); row.appendChild(rmBtn);
             listEl.appendChild(row);
         });
     } catch (e) { listEl.innerHTML = '<span style="color:#c0392b">Error loading mobile trackers.</span>'; console.error('[mobiletrackers]', e); }
@@ -3100,6 +3282,37 @@ function showDeviceInfoModal(t) {
             <table style="border-collapse:collapse;font-size:14px">${rows || '<tr><td style="color:#999">No data</td></tr>'}</table>
             <div style="text-align:right;margin-top:18px">
                 <button class="btn" onclick="document.getElementById('device-info-modal').remove()">Close</button>
+            </div>
+        </div>`;
+}
+
+function showRadioInfoModal(t) {
+    const rd = t.radio || {};
+    let modal = document.getElementById('radio-info-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'radio-info-modal';
+        modal.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.45)';
+        modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+        document.body.appendChild(modal);
+    }
+    const fmtAge  = secs => secs == null ? 'Never heard' : secs < 60 ? secs + 's ago' : Math.round(secs / 60) + 'm ago';
+    const fmtDelta = secs => secs == null ? '—' : secs < 60 ? secs + 's' : Math.round(secs / 60) + 'm';
+    const fmtCoord = v => v == null ? '—' : v.toFixed(5);
+    const rows = [
+        ['Callsign',        t.ham_callsign || t.callsign],
+        ['Last heard',      fmtAge(rd.age)],
+        ['Beacon interval', fmtDelta(rd.delta)],
+        ['APRS path',       rd.path || '—'],
+        ['Latitude',        fmtCoord(rd.lat)],
+        ['Longitude',       fmtCoord(rd.lon)],
+    ].map(([lbl, val]) => `<tr><td style="color:#666;padding:5px 14px 5px 0;white-space:nowrap">${lbl}</td><td style="font-weight:600;font-family:monospace">${val}</td></tr>`).join('');
+    modal.innerHTML = `
+        <div style="background:#fff;border-radius:10px;padding:24px 28px;min-width:300px;box-shadow:0 8px 32px rgba(0,0,0,0.22)">
+            <div style="font-weight:700;font-size:15px;margin-bottom:14px;color:#2c3e50">📻 Radio info — ${t.name} (${t.display_id || t.id})</div>
+            <table style="border-collapse:collapse;font-size:14px">${rows}</table>
+            <div style="text-align:right;margin-top:18px">
+                <button class="btn" onclick="document.getElementById('radio-info-modal').remove()">Close</button>
             </div>
         </div>`;
 }

@@ -15,7 +15,7 @@
  *   ?config  Map/background/course/tracker config from config.yaml (ETag-cached)
  */
 
-define('WEB_VERSION', '1.17.1+0');
+define('WEB_VERSION', '1.17.2+0');
 
 $trackerStatusFilename = 'trackers.json';
 
@@ -54,8 +54,16 @@ if (isset($_GET['json'])) {
 		$now = time();
 		foreach (json_decode($mc, true) ?: [] as $t) {
 			$cs = $t['callsign'] ?? null;
-			if (!$cs || !empty($t['blocked']) || empty($t['token']) || ($now - ($t['lastUpdate'] ?? 0)) > 86400) continue;
-			$activeMobile[$cs] = ['id' => $t['id'], 'name' => $t['name'], 'sharing_mode' => $t['sharing_mode'] ?? '', 'lastUpdate' => (int)($t['lastUpdate'] ?? 0), 'lat' => $t['aprs_lat'] ?? null, 'lon' => $t['aprs_lon'] ?? null];
+			if (!$cs || !empty($t['blocked'])) continue;
+			$hasHam       = !empty($t['ham_callsign']);
+			$hasSession   = !empty($t['token']) && ($now - ($t['lastUpdate'] ?? 0)) <= 86400;
+			// Include active mobile sessions, OR ham-callsign entries (radio may still be heard even after app stops).
+			if (!$hasSession && !$hasHam) continue;
+			$displayId = $t['display_id'] ?? $t['id'];
+			$activeMobile[$cs] = ['id' => $displayId, 'tracker_id' => $t['id'], 'name' => $t['name'],
+				'sharing_mode' => $t['sharing_mode'] ?? '', 'lastUpdate' => (int)($t['lastUpdate'] ?? 0),
+				'lat' => $t['aprs_lat'] ?? null, 'lon' => $t['aprs_lon'] ?? null,
+				'ham_callsign' => $t['ham_callsign'] ?? null, 'has_session' => $hasSession];
 		}
 	}
 	// Remove mobile entries whose session is gone or blocked
@@ -66,9 +74,13 @@ if (isset($_GET['json'])) {
 	// The mobile sessions file is updated on every beacon; trackers.json lags by APRS-IS round-trip.
 	$_now = time();
 	foreach ($trackers as &$t) {
-		if (empty($t['mobile']) || !isset($activeMobile[$t['callsign']])) continue;
+		if (!isset($activeMobile[$t['callsign']])) continue;
 		$am = $activeMobile[$t['callsign']];
+		$t['mobile'] = true;
+		$t['id']     = $am['id'];
+		$t['name']   = $am['name'];
 		if ($am['sharing_mode'] !== '') $t['sharing_mode'] = $am['sharing_mode'];
+		if ($am['ham_callsign'] !== null) $t['ham_callsign'] = $am['ham_callsign'];
 		if ($am['lat'] !== null && $t['lat'] === null) { $t['lat'] = $am['lat']; $t['lon'] = $am['lon']; }
 		if ($am['lastUpdate'] > ($t['lastUpdate'] ?? 0)) {
 			$age = $_now - $am['lastUpdate'];
@@ -82,10 +94,11 @@ if (isset($_GET['json'])) {
 		}
 	}
 	unset($t);
-	// Inject placeholder entries for sessions not yet heard by the daemon
+	// Inject placeholder entries for sessions not yet heard by the daemon.
+	// Ham-only entries (no active mobile session) are skipped — the daemon supplies position from radio beacons.
 	$knownCallsigns = array_column($trackers, 'callsign');
 	foreach ($activeMobile as $cs => $ms) {
-		if (!in_array($cs, $knownCallsigns, true)) {
+		if (!in_array($cs, $knownCallsigns, true) && $ms['has_session']) {
 			$lu = $ms['lastUpdate'] ?? 0;
 			$age = $lu > 0 ? ($_now - $lu) : 0;
 			$s = $age % 60; $m = ($age - $s) / 60;
@@ -97,6 +110,7 @@ if (isset($_GET['json'])) {
 			          'color' => ($age > 0 && $age <= 120) ? 'green' : (($age > 0 && $age <= 300) ? 'blue' : 'red'),
 			          'lat' => $ms['lat'], 'lon' => $ms['lon'], 'path' => '', 'mobile' => true];
 			if ($ms['sharing_mode'] !== '') $entry['sharing_mode'] = $ms['sharing_mode'];
+			if ($ms['ham_callsign'] !== null) $entry['ham_callsign'] = $ms['ham_callsign'];
 			$trackers[] = $entry;
 		}
 	}
@@ -429,6 +443,17 @@ function haversineMeters(float $lat1, float $lon1, float $lat2, float $lon2): fl
 	return $R * 2 * atan2(sqrt($a), sqrt(1-$a));
 }
 
+function validateHamCallsign(string $root): bool {
+	$root = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', $root));
+	if (!preg_match('/^[A-Z]{1,2}[0-9][A-Z]{1,3}$/', $root)) return false;
+	$url  = 'https://callook.info/' . urlencode($root) . '/json';
+	$ctx  = stream_context_create(['http' => ['timeout' => 6, 'header' => "User-Agent: MARSAPRS/1.0\r\n"]]);
+	$json = @file_get_contents($url, false, $ctx);
+	if (!$json) return false;
+	$data = json_decode($json, true);
+	return ($data['status'] ?? '') === 'VALID';
+}
+
 function aprsPasscode(string $callsign): int {
 	$call = strtoupper(preg_replace('/-.*/', '', $callsign));
 	$hash = 0x73e2;
@@ -533,9 +558,20 @@ if (isset($_GET['mobile'])) {
 		}
 		$root = strtoupper(substr(preg_replace('/[^A-Za-z0-9]/', '', $mobileCfg['root'] ?? ''), 0, 6));
 		if ($root === '') { http_response_code(500); echo json_encode(['error' => 'Root callsign not configured']); exit; }
+		// Optional ham radio callsign (user-supplied, validated against FCC ULS)
+		$hamRoot = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', trim($input['ham_root'] ?? '')));
+		$hamSsid = (int)($input['ham_ssid'] ?? 0);
+		$hamCallsign = null;
+		if ($hamRoot !== '') {
+			if ($hamSsid < 1 || $hamSsid > 15) {
+				http_response_code(422); echo json_encode(['error' => 'SSID must be between 1 and 15', 'field' => 'ssid']); exit;
+			}
+			$hamCallsign = "{$hamRoot}-{$hamSsid}";
+		}
 		$newEntry = null;
 		$isBlocked = false;
-		modifyMobileTrackers($mobileFile, function($data) use ($name, $root, $deviceId, $deviceInfo, $sharingMode, &$newEntry, &$isBlocked) {
+		$hamConflict = false;
+		modifyMobileTrackers($mobileFile, function($data) use ($name, $root, $deviceId, $deviceInfo, $sharingMode, $hamCallsign, &$newEntry, &$isBlocked, &$hamConflict) {
 			$now = time();
 			// If device is known, check blocked status before doing anything else.
 			if ($deviceId !== '') {
@@ -553,15 +589,34 @@ if (isset($_GET['mobile'])) {
 				$age = $now - ($t['lastUpdate'] ?? 0);
 				return !empty($t['device_id']) ? $age < 2592000 : $age < 86400;
 			}));
+			// If a ham callsign was requested, verify it isn't already claimed by a different device.
+			if ($hamCallsign !== null) {
+				foreach ($data as $ot) {
+					if (($ot['device_id'] ?? '') !== $deviceId
+						&& ($ot['callsign'] ?? '') === $hamCallsign
+						&& !empty($ot['token'])
+						&& ($now - ($ot['lastUpdate'] ?? 0)) < 86400) {
+						$hamConflict = true;
+						return $data;
+					}
+				}
+			}
 			// Re-use existing entry for this device (keeps same callsign across restarts).
 			if ($deviceId !== '') {
 				foreach ($data as &$t) {
 					if (($t['device_id'] ?? '') === $deviceId) {
-						$t['token']        = bin2hex(random_bytes(16));
-						$t['lastUpdate']   = $now;
-						$t['name']         = $name; // allow name change on rejoin
+						$t['token']      = bin2hex(random_bytes(16));
+						$t['lastUpdate'] = $now;
+						$t['name']       = $name;
 						if ($deviceInfo !== null) $t['device_info'] = $deviceInfo;
 						if ($sharingMode !== '') $t['sharing_mode'] = $sharingMode;
+						if ($hamCallsign !== null) {
+							$t['callsign']     = $hamCallsign;
+							$t['ham_callsign'] = $hamCallsign;
+						} elseif (isset($t['ham_callsign'])) {
+							// User removed their ham callsign — revert to manufactured callsign
+							unset($t['ham_callsign']);
+						}
 						$newEntry = $t;
 						return $data;
 					}
@@ -573,23 +628,25 @@ if (isset($_GET['mobile'])) {
 					return !(empty($t['device_id']) && empty($t['token']) && ($t['name'] ?? '') === $name);
 				}));
 			}
-			// No existing entry — allocate the next available slot.
+			// No existing entry — allocate the next available slot (M-ID) and APRS callsign.
 			$used = [];
 			foreach ($data as $t) {
 				if (preg_match('/^M(\d+)$/', $t['id'], $m)) $used[(int)$m[1]] = true;
 			}
 			for ($n = 1; isset($used[$n]); $n++);
 			$id       = sprintf('M%02d', $n);
-			$callsign = sprintf('%s-%02d', $root, $n);
+			$callsign = $hamCallsign ?? sprintf('%s-%02d', $root, $n);
 			$newEntry = ['id' => $id, 'callsign' => $callsign, 'name' => $name,
 			             'token' => bin2hex(random_bytes(16)), 'lastUpdate' => $now, 'created' => $now];
 			if ($deviceId !== '') $newEntry['device_id'] = $deviceId;
 			if ($deviceInfo !== null) $newEntry['device_info'] = $deviceInfo;
 			if ($sharingMode !== '') $newEntry['sharing_mode'] = $sharingMode;
+			if ($hamCallsign !== null) $newEntry['ham_callsign'] = $hamCallsign;
 			$data[] = $newEntry;
 			return $data;
 		});
 		if ($isBlocked) { http_response_code(403); echo json_encode(['error' => 'Incorrect PIN']); exit; }
+		if ($hamConflict) { http_response_code(409); echo json_encode(['error' => "{$hamCallsign} is already in use by another active session", 'field' => 'callsign']); exit; }
 		// Clear stale breadcrumbs for this callsign so old history doesn't linger
 		$cfgReal  = realpath('config.yaml');
 		$histPath = $cfgReal ? dirname($cfgReal) . '/tracker_history.yaml' : null;
@@ -624,14 +681,14 @@ if (isset($_GET['mobile'])) {
 		$updMode = in_array($rawMode, ['walk_run', 'cycle', 'drive', 'stationary'], true) ? $rawMode : '';
 		if (!$token) { http_response_code(400); echo json_encode(['error' => 'Missing token']); exit; }
 
-		$found = false; $blocked = false; $foundCallsign = null; $pendingMsgs = [];
+		$found = false; $blocked = false; $foundCallsign = null; $foundHamCallsign = null; $pendingMsgs = [];
 		$shouldInject = false;
-		modifyMobileTrackers($mobileFile, function($data) use ($token, $lat, $lon, $ackIds, $updMode, &$found, &$blocked, &$foundCallsign, &$pendingMsgs, &$shouldInject) {
+		modifyMobileTrackers($mobileFile, function($data) use ($token, $lat, $lon, $ackIds, $updMode, &$found, &$blocked, &$foundCallsign, &$foundHamCallsign, &$pendingMsgs, &$shouldInject) {
 			$now = time();
 			foreach ($data as &$t) {
 				if (empty($t['token']) || !hash_equals($t['token'], $token)) continue;
 				if (!empty($t['blocked'])) { $blocked = true; break; }
-				$found = true; $foundCallsign = $t['callsign'] ?? null;
+				$found = true; $foundCallsign = $t['callsign'] ?? null; $foundHamCallsign = $t['ham_callsign'] ?? null;
 				$pendingMsgs = $t['pending_msgs'] ?? [];
 				if ($ackIds) $t['pending_msgs'] = array_values(array_filter($t['pending_msgs'] ?? [], fn($m) => !in_array((int)$m['id'], $ackIds)));
 				if ($updMode !== '') $t['sharing_mode'] = $updMode;
@@ -659,7 +716,8 @@ if (isset($_GET['mobile'])) {
 		});
 		if ($blocked) { http_response_code(403); echo json_encode(['error' => 'Blocked']); exit; }
 		if (!$found)  { http_response_code(404); echo json_encode(['error' => 'Token not found']); exit; }
-		if ($shouldInject) {
+		if ($shouldInject && $foundHamCallsign === null) {
+			// Ham callsigns are not injected — the radio handles APRS-IS via iGates.
 			$root = strtoupper(substr(preg_replace('/[^A-Za-z0-9]/', '', $mobileCfg['root'] ?? ''), 0, 6));
 			if ($root !== '' && $foundCallsign) injectAprsPacket($foundCallsign, $lat, $lon, $root);
 		}
@@ -1688,7 +1746,6 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 			<button id="share-loc-btn" class="sidebar-btn" style="display:none">Share Location</button>
 			<a href="admin/" id="admin-btn" class="sidebar-btn">Admin</a>
 			<button id="msg-messaging-btn" class="sidebar-btn" style="display:none">Messaging</button>
-			<button id="msg-broadcast-btn" class="sidebar-btn" style="display:none">📢 Broadcast</button>
 			<button id="fs-btn" class="sidebar-btn" style="display:none">Full Screen</button>
 		</div>
 	</div>
@@ -2490,7 +2547,7 @@ function refreshTrackerIcon(callsign) {
 	const m = markers[callsign];
 	if (!m) return;
 	const enlarged = callsign === selectedCallsign && trackerClickCount === 1;
-	m.setIcon(makeTrackerIcon(m._mobile ? 'square' : trackerStyle.icon, m._trackerColor, trackerIconSize(callsign)));
+	m.setIcon(makeTrackerIcon(m._mobile && m._hamCallsign ? 'triangle' : m._mobile ? 'square' : trackerStyle.icon, m._trackerColor, trackerIconSize(callsign)));
 	const tipEl = m.getTooltip()?.getElement();
 	if (tipEl) tipEl.classList.toggle('label-force-show', enlarged);
 }
@@ -2979,11 +3036,12 @@ function updateDesktopLegend(trackers) {
 		}
 		const color = t.color || 'red';
 		item.querySelector('.legend-dot').style.background    = color;
-		item.querySelector('.legend-dot').style.borderRadius  = t.mobile ? '3px' : '50%';
+		item.querySelector('.legend-dot').style.borderRadius  = t.mobile && !t.ham_callsign ? '3px' : t.mobile ? '0' : '50%';
+		item.querySelector('.legend-dot').style.clipPath      = t.mobile && t.ham_callsign ? 'polygon(50% 0%,100% 100%,0% 100%)' : '';
 		item.querySelector('.legend-time').style.color        = color;
 		item.querySelector('.legend-id').textContent        = t.id;
 		item.querySelector('.legend-name').textContent      = t.name;
-		item.querySelector('.legend-mode').textContent      = _modeIcon(t.sharing_mode || '');
+		item.querySelector('.legend-mode').innerHTML        = _modeIcon(t.sharing_mode || '', t.mobile);
 		item.querySelector('.legend-time').textContent      = t.lat === null ? '—' : color === 'red' ? 'stale' : t.time;
 		// Update onclick every poll so beacon-status transitions take effect immediately.
 		item.onclick = hasBeacon
@@ -2993,8 +3051,14 @@ function updateDesktopLegend(trackers) {
 	});
 }
 
-function _modeIcon(mode) {
-	return mode === 'drive' || mode === 'drive_cycle' ? '🚗' : mode === 'cycle' ? '🚲' : mode === 'walk_run' ? '🏃' : mode === 'stationary' ? '📍' : '';
+function _modeIcon(mode, isMobile) {
+	const car = `<svg viewBox="0 0 20 14" width="13" height="9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M3 7L6 3H14L17 7"/><rect x="1" y="7" width="18" height="4.5" rx="1.2"/><circle cx="5.5" cy="12.5" r="1.5"/><circle cx="14.5" cy="12.5" r="1.5"/></svg>`;
+	const radio = `<svg viewBox="0 0 12 10" width="11" height="9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="vertical-align:middle"><circle cx="6" cy="9" r="1.1" fill="currentColor" stroke="none"/><path d="M3.5 7.5Q6 5 8.5 7.5"/><path d="M1 4.5Q6 0 11 4.5"/></svg>`;
+	if (mode === 'drive' || mode === 'drive_cycle') return car;
+	if (mode === 'cycle')      return '🚲';
+	if (mode === 'walk_run')   return '🏃';
+	if (mode === 'stationary') return '📍';
+	return isMobile ? '' : radio;
 }
 
 function updateMobileLegend(trackers) {
@@ -3039,11 +3103,12 @@ function updateMobileLegend(trackers) {
 		const color = t.color || 'red';
 		item.querySelector('.m-dot').style.background    = color;
 		item.querySelector('.m-dot').style.borderColor   = color === 'green' ? '#1a7a1a' : (color === 'blue' ? '#0a5a9a' : '#a00');
-		item.querySelector('.m-dot').style.borderRadius  = t.mobile ? '3px' : '50%';
+		item.querySelector('.m-dot').style.borderRadius  = t.mobile && !t.ham_callsign ? '3px' : t.mobile ? '0' : '50%';
+		item.querySelector('.m-dot').style.clipPath      = t.mobile && t.ham_callsign ? 'polygon(50% 0%,100% 100%,0% 100%)' : '';
 		item.querySelector('.m-time').style.color      = color;
 		item.querySelector('.m-id').textContent        = t.id;
 		item.querySelector('.m-name').textContent      = t.name;
-		item.querySelector('.m-mode').textContent      = _modeIcon(t.sharing_mode || '');
+		item.querySelector('.m-mode').innerHTML        = _modeIcon(t.sharing_mode || '', t.mobile);
 		item.querySelector('.m-time').textContent      = t.lat === null ? '—' : color === 'red' ? 'stale' : t.time;
 		legend.appendChild(item);  // re-insert in sorted position (moves existing elements)
 	});
@@ -3109,7 +3174,7 @@ function updateMap() {
 				const latlng = [t.lat, t.lon];
 				const color  = t.color || 'red';
 				const sz     = trackerIconSize(t.callsign);
-				const shape  = t.mobile ? 'square' : trackerStyle.icon;
+				const shape  = t.mobile && t.ham_callsign ? 'triangle' : t.mobile ? 'square' : trackerStyle.icon;
 				const icon   = makeTrackerIcon(shape, color, sz);
 				if (markers[t.callsign]) {
 					const oldLL = markers[t.callsign].getLatLng();
@@ -3117,6 +3182,7 @@ function updateMap() {
 					const prevColor = markers[t.callsign]._trackerColor;
 					markers[t.callsign]._trackerColor = color;
 					markers[t.callsign]._mobile = t.mobile;
+					markers[t.callsign]._hamCallsign = t.ham_callsign || null;
 					markers[t.callsign].setLatLng(latlng);
 					markers[t.callsign].setIcon(icon);
 					if (trackerPopups[t.callsign]) trackerPopups[t.callsign].setContent(popupHtml(t));
@@ -3127,6 +3193,7 @@ function updateMap() {
 					const m = L.marker(latlng, { icon, pane: 'trackerPane' }).addTo(map);
 					m._trackerColor = color;
 					m._mobile = t.mobile;
+					m._hamCallsign = t.ham_callsign || null;
 					const popup = L.popup({ closeButton: true, autoPan: isMobile, autoPanPadding: [16, 16] })
 						.setContent(popupHtml(t));
 					trackerPopups[t.callsign] = popup;
@@ -3693,7 +3760,7 @@ map.on('zoomend', function() {
 	// Rescale tracker markers (selected tracker stays 2x)
 	Object.entries(markers).forEach(([cs, m]) => {
 		if (m._trackerColor !== undefined) {
-			m.setIcon(makeTrackerIcon(m._mobile ? 'square' : trackerStyle.icon, m._trackerColor, trackerIconSize(cs)));
+			m.setIcon(makeTrackerIcon(m._mobile && m._hamCallsign ? 'triangle' : m._mobile ? 'square' : trackerStyle.icon, m._trackerColor, trackerIconSize(cs)));
 		}
 	});
 	// Rescale igate and aid station markers (selected ones stay 2x)
@@ -4558,8 +4625,7 @@ async function _loadMsgHistory() {
 }
 
 function _setSubscribedUI(subscribed) {
-	document.getElementById('msg-broadcast-btn').style.display  = subscribed ? '' : 'none';
-	document.getElementById('msg-messaging-btn').style.display  = subscribed ? 'none' : '';
+	// msg-messaging-btn stays visible whenever messaging is enabled
 }
 
 function _initMsgUI(enabled) {
@@ -4622,17 +4688,20 @@ document.getElementById('msg-sub-submit').addEventListener('click', async () => 
 	} catch { errEl.textContent = 'Connection error. Please try again.'; }
 });
 
-// Messaging button (shown when enabled but not subscribed)
+// Messaging button — opens compose when subscribed, subscribe modal otherwise
 document.getElementById('msg-messaging-btn').addEventListener('click', () => {
-	document.getElementById('msg-sub-name').value = '';
-	document.getElementById('msg-sub-pw').value   = '';
-	document.getElementById('msg-sub-error').textContent = '';
-	document.getElementById('msg-sub-modal').style.display = 'flex';
-	setTimeout(() => document.getElementById('msg-sub-name').focus(), 50);
+	if (_msgIsSubscribed()) {
+		_showComposeModal('*', 'All Trackers');
+	} else {
+		const _savedMsg = JSON.parse(localStorage.getItem('aprs_msg_session') || 'null');
+		const _savedName = _savedMsg?.name || '';
+		document.getElementById('msg-sub-name').value = _savedName;
+		document.getElementById('msg-sub-pw').value   = '';
+		document.getElementById('msg-sub-error').textContent = '';
+		document.getElementById('msg-sub-modal').style.display = 'flex';
+		setTimeout(() => (_savedName ? document.getElementById('msg-sub-pw') : document.getElementById('msg-sub-name')).focus(), 50);
+	}
 });
-
-// Broadcast button
-document.getElementById('msg-broadcast-btn').addEventListener('click', () => _showComposeModal('*', 'All Trackers'));
 
 // Right-click / Ctrl+click on sidebar tracker rows → compose to that tracker
 function _handleTrackerActivate(cs, name) {

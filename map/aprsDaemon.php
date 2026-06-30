@@ -540,8 +540,17 @@ while (TRUE) {
 		resolveHistoryPath();
 		readTrackerHistoryFile();
 	}
-	if (loadMobileSessions())							//reload when mobile_trackers.json changes
+	if (loadMobileSessions()) {							//reload when mobile_trackers.json changes
 		writeNewTrackerstatusFile($trackerStatusFilename);	//push mobile session changes to browser immediately
+		// Reconnect if the callsign set changed (e.g. new ham callsign added) to update the APRS-IS filter.
+		$currCallsigns = array_column($trackers, 'callsign');
+		sort($currCallsigns);
+		if ($currCallsigns !== $prevCallsigns) {
+			echo("Mobile sessions changed callsign set, reconnecting to update APRS-IS filter...\n");
+			connectToAprsServer();
+			$prevCallsigns = $currCallsigns;
+		}
+	}
 	$line=socket_read($socket,1000,PHP_NORMAL_READ);
 	if ($line === false || $line === '') fatal("Socket read failed (connection lost or timed out)");
 	else {
@@ -566,15 +575,16 @@ while (TRUE) {
 						$trackers[$key]["lastUpdate"]=time();	//update time last seen for that callsign
 						$trackers[$key]["path"]=$aprsPath;
 						if ($lat !== null) {
+							if (!isset($trackerHistory[$callsign])) $trackerHistory[$callsign] = [];
 							$lastCrumb = $trackerHistory[$callsign][0] ?? null;
-							if ($lastCrumb === null || haversineMeters($lastCrumb['lat'], $lastCrumb['lon'], $lat, $lon) >= MIN_MOVE_METRES) {
-								$trackers[$key]["lat"]=$lat;
-								$trackers[$key]["lon"]=$lon;
-								if (!isset($trackerHistory[$callsign])) $trackerHistory[$callsign] = [];
-								array_unshift($trackerHistory[$callsign], ['lat'=>$lat,'lon'=>$lon,'path'=>$aprsPath,'ts'=>time()]);
-								if (count($trackerHistory[$callsign]) > 10) array_pop($trackerHistory[$callsign]);
-								writeTrackerHistoryFile();
-							}
+							$moved = ($lastCrumb === null) || haversineMeters($lastCrumb['lat'], $lastCrumb['lon'], $lat, $lon) >= MIN_MOVE_METRES;
+							if ($moved) { $trackers[$key]["lat"]=$lat; $trackers[$key]["lon"]=$lon; }
+							// Always record timestamp (needed for beacon-interval delta); lat/lon only updated when moved.
+							$useLat = $moved ? $lat : ($lastCrumb['lat'] ?? $lat);
+							$useLon = $moved ? $lon : ($lastCrumb['lon'] ?? $lon);
+							array_unshift($trackerHistory[$callsign], ['lat'=>$useLat,'lon'=>$useLon,'path'=>$aprsPath,'ts'=>time()]);
+							if (count($trackerHistory[$callsign]) > 10) array_pop($trackerHistory[$callsign]);
+							writeTrackerHistoryFile();
 						}
 					}
 				}
@@ -598,15 +608,15 @@ while (TRUE) {
 						$trackers[$foundKey]['name']       = $ms['name'];
 					}
 					if ($lat !== null) {
+						if (!isset($trackerHistory[$callsign])) $trackerHistory[$callsign] = [];
 						$lastCrumb = $trackerHistory[$callsign][0] ?? null;
-						if ($lastCrumb === null || haversineMeters($lastCrumb['lat'], $lastCrumb['lon'], $lat, $lon) >= MIN_MOVE_METRES) {
-							$trackers[$foundKey]['lat'] = $lat;
-							$trackers[$foundKey]['lon'] = $lon;
-							if (!isset($trackerHistory[$callsign])) $trackerHistory[$callsign] = [];
-							array_unshift($trackerHistory[$callsign], ['lat'=>$lat,'lon'=>$lon,'path'=>$aprsPath,'ts'=>time()]);
-							if (count($trackerHistory[$callsign]) > 10) array_pop($trackerHistory[$callsign]);
-							writeTrackerHistoryFile();
-						}
+						$moved = ($lastCrumb === null) || haversineMeters($lastCrumb['lat'], $lastCrumb['lon'], $lat, $lon) >= MIN_MOVE_METRES;
+						if ($moved) { $trackers[$foundKey]['lat'] = $lat; $trackers[$foundKey]['lon'] = $lon; }
+						$useLat = $moved ? $lat : ($lastCrumb['lat'] ?? $lat);
+						$useLon = $moved ? $lon : ($lastCrumb['lon'] ?? $lon);
+						array_unshift($trackerHistory[$callsign], ['lat'=>$useLat,'lon'=>$useLon,'path'=>$aprsPath,'ts'=>time()]);
+						if (count($trackerHistory[$callsign]) > 10) array_pop($trackerHistory[$callsign]);
+						writeTrackerHistoryFile();
 					}
 				}
 
