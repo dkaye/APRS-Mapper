@@ -11,6 +11,7 @@ class TrackerData {
   final int lastUpdate;
   final bool mobile;
   final String sharingMode; // 'walk_run' | 'cycle' | 'drive' | 'stationary' | ''
+  final String? hamCallsign;
 
   const TrackerData({
     required this.id,
@@ -23,6 +24,7 @@ class TrackerData {
     required this.lastUpdate,
     required this.mobile,
     this.sharingMode = '',
+    this.hamCallsign,
   });
 
   bool get hasPosition => lat != null && lon != null;
@@ -39,6 +41,7 @@ class TrackerData {
         lastUpdate: (j['lastUpdate'] as num?)?.toInt() ?? 0,
         mobile: j['mobile'] as bool? ?? false,
         sharingMode: j['sharing_mode'] as String? ?? '',
+        hamCallsign: j['ham_callsign'] as String?,
       );
 }
 

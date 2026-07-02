@@ -93,7 +93,7 @@ class _MenuDrawerState extends State<MenuDrawer> {
       setState(() => _expanded.contains(key) ? _expanded.remove(key) : _expanded.add(key));
 
   void _openSharingModal(BuildContext drawerCtx) {
-    const modes = [(0, 'Walk / Run'), (1, 'Cycle'), (2, 'Drive'), (3, 'Stationary')];
+    const modes = [(0, 'Walk/Run'), (1, 'Cycle'), (2, 'Drive'), (3, 'Stationary')];
     showDialog<void>(
       context: drawerCtx,
       builder: (dlgCtx) {
@@ -247,7 +247,7 @@ class _MenuDrawerState extends State<MenuDrawer> {
                           : () { Navigator.pop(context); widget.onStartSharingWithMode?.call(0); },
                       color: widget.isSharing ? Colors.green[700] : null,
                     ),
-                  if (widget.isSharing && widget.onSendMessage != null)
+                  if (widget.onSendMessage != null)
                     _footerBtn('Message', Icons.chat_bubble_outline, () {
                       Navigator.pop(context);
                       widget.onSendMessage?.call();
@@ -294,7 +294,7 @@ class _MenuDrawerState extends State<MenuDrawer> {
                                   ? '${widget.sharingName} (${widget.sharingCallsign})'
                                   : widget.sharingCallsign!),
                             if (widget.isSharing && widget.sharingActivityMode >= 0)
-                              _aboutRow('Activity', const ['Walk / Run', 'Cycle', 'Drive', 'Stationary'][widget.sharingActivityMode]),
+                              _aboutRow('Activity', const ['Walk/Run', 'Cycle', 'Drive', 'Stationary'][widget.sharingActivityMode]),
                             _aboutRowWidget('Map Data', GestureDetector(
                               onTap: () => launchUrl(
                                 Uri.parse('https://www.openstreetmap.org/copyright'),
@@ -433,16 +433,23 @@ class _MenuDrawerState extends State<MenuDrawer> {
         child: Row(children: [
           Opacity(
             opacity: opacity,
-            child: Container(
-              width: 10,
-              height: 10,
-              margin: const EdgeInsets.only(right: 8),
-              decoration: BoxDecoration(
-                color: baseColor,
-                shape: t.mobile ? BoxShape.rectangle : BoxShape.circle,
-                borderRadius: t.mobile ? BorderRadius.circular(2) : null,
-                border: Border.all(color: Colors.white, width: 1.5),
-              ),
+            child: Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: t.mobile && t.hamCallsign != null
+                ? CustomPaint(
+                    size: const Size(10, 10),
+                    painter: _TrackerTriangle(fill: baseColor, border: Colors.white),
+                  )
+                : Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: baseColor,
+                      shape: t.mobile ? BoxShape.rectangle : BoxShape.circle,
+                      borderRadius: t.mobile ? BorderRadius.circular(2) : null,
+                      border: Border.all(color: Colors.white, width: 1.5),
+                    ),
+                  ),
             ),
           ),
           Text(t.id,
@@ -455,10 +462,11 @@ class _MenuDrawerState extends State<MenuDrawer> {
             final age = DateTime.now().millisecondsSinceEpoch ~/ 1000 - t.lastUpdate;
             final label = !t.hasPosition ? '—' : (t.lastUpdate > 0 && age > 300) ? 'stale' : t.time;
             final modeIcon = switch (t.sharingMode) {
-              'drive_cycle'  => Icons.directions_car,
-              'walk_run'     => Icons.directions_run,
-              'stationary'   => Icons.location_on,
-              _              => null,
+              'drive' || 'drive_cycle' => Icons.directions_car_outlined,
+              'cycle'                  => Icons.directions_bike,
+              'walk_run'               => Icons.directions_run,
+              'stationary'             => Icons.location_on,
+              _                        => t.mobile ? null : Icons.rss_feed,
             };
             return Row(mainAxisSize: MainAxisSize.min, children: [
               if (modeIcon != null) ...[
@@ -615,4 +623,24 @@ class _MenuDrawerState extends State<MenuDrawer> {
       ),
     );
   }
+}
+
+class _TrackerTriangle extends CustomPainter {
+  final Color fill;
+  final Color border;
+  const _TrackerTriangle({required this.fill, required this.border});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path()
+      ..moveTo(size.width / 2, 0)
+      ..lineTo(size.width, size.height)
+      ..lineTo(0, size.height)
+      ..close();
+    canvas.drawPath(path, Paint()..color = fill);
+    canvas.drawPath(path, Paint()..color = border..style = PaintingStyle.stroke..strokeWidth = 1.5..strokeJoin = StrokeJoin.round);
+  }
+
+  @override
+  bool shouldRepaint(_TrackerTriangle old) => old.fill != fill || old.border != border;
 }

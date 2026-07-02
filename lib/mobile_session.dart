@@ -7,7 +7,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'map_config.dart';
 
-enum JoinResult { success, wrongPin, failed }
+enum JoinResult { success, wrongPin, callsignError, failed }
 
 class InboundMessage {
   final int id;
@@ -28,6 +28,8 @@ class MobileSession {
   String? trackerId;
   String? callsign;
   int? passcode;
+  String? lastJoinError;
+  String? pendingSetMode; // set_mode delivered by last update(); cleared after each call
 
   bool get active => token != null;
 
@@ -68,12 +70,19 @@ class MobileSession {
     return info;
   }
 
-  Future<JoinResult> join({required String name, required String pin, String sharingMode = ''}) async {
+  Future<JoinResult> join({
+    required String name,
+    required String pin,
+    String sharingMode = '',
+    String hamRoot = '',
+    int hamSsid = 0,
+  }) async {
     try {
       final deviceId = await getDeviceId();
       final deviceInfo = await _collectDeviceInfo();
       final body = <String, dynamic>{'name': name, 'pin': pin, 'device_id': deviceId, 'device_info': deviceInfo};
       if (sharingMode.isNotEmpty) body['sharing_mode'] = sharingMode;
+      if (hamRoot.isNotEmpty) { body['ham_root'] = hamRoot.toUpperCase(); body['ham_ssid'] = hamSsid; }
       final response = await http.post(
         Uri.parse('${MapConfig.serverBaseUrl}/index.php?mobile=join'),
         headers: {'Content-Type': 'application/json'},
@@ -86,9 +95,17 @@ class MobileSession {
         trackerId = data['id'] as String?;
         callsign = data['callsign'] as String?;
         passcode = data['passcode'] as int?;
+        lastJoinError = null;
         return token != null ? JoinResult.success : JoinResult.failed;
       }
       if (response.statusCode == 403) return JoinResult.wrongPin;
+      if (response.statusCode == 422 || response.statusCode == 409) {
+        try {
+          final data = jsonDecode(response.body) as Map<String, dynamic>;
+          lastJoinError = data['error'] as String? ?? 'Invalid callsign';
+        } catch (_) { lastJoinError = 'Invalid callsign'; }
+        return JoinResult.callsignError;
+      }
     } catch (_) {}
     return JoinResult.failed;
   }
@@ -112,11 +129,12 @@ class MobileSession {
       if (response.statusCode == 404) return null;
       try {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
+        pendingSetMode = data['set_mode'] as String?;
         final msgs = (data['messages'] as List<dynamic>? ?? [])
             .map((m) => InboundMessage.fromJson(m as Map<String, dynamic>))
             .toList();
         return msgs;
-      } catch (_) { return []; }
+      } catch (_) { pendingSetMode = null; return []; }
     } catch (_) {}
     return [];
   }

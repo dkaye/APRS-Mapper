@@ -24,6 +24,8 @@ class BackgroundLocationService {
   static const _kPrefName = 'sharing_name';
   static const _kPrefPin = 'sharing_pin';
   static const _kPrefActivityMode = 'sharing_activity_mode';
+  static const _kPrefHamRoot = 'sharing_ham_root';
+  static const _kPrefHamSsid = 'sharing_ham_ssid';
 
   final MobileSession _session = MobileSession();
 
@@ -55,6 +57,7 @@ class BackgroundLocationService {
   void Function()? onBeaconSent;
   void Function(InboundMessage)? onMessageReceived;
   void Function(List<InboundMessage>)? onHistoryLoaded;
+  void Function(String mode)? onModeChanged;
 
   final List<int> _pendingAckIds = [];
   final Set<int> _deliveredMsgIds = {}; // dedup across poll + update paths
@@ -128,14 +131,16 @@ class BackgroundLocationService {
     double distanceThresholdMiles = 0.2,
     String sharingMode = '',
     int activityModeIndex = -1,
+    String hamRoot = '',
+    int hamSsid = 0,
   }) async {
     _uploadInterval = interval;
     _distanceThresholdM = distanceThresholdMiles * _kMiToM;
     _activityMode = activityModeIndex;
-    final result = await _session.join(name: name, pin: pin, sharingMode: sharingMode);
+    final result = await _session.join(name: name, pin: pin, sharingMode: sharingMode, hamRoot: hamRoot, hamSsid: hamSsid);
     if (result == JoinResult.success) {
       _trackerName = name;
-      unawaited(_saveSession(name, pin));
+      unawaited(_saveSession(name, pin, hamRoot: hamRoot, hamSsid: hamSsid));
       await _activateSharing();
     }
     return result;
@@ -155,8 +160,10 @@ class BackgroundLocationService {
     final trackerId = prefs.getString(_kPrefTrackerId);
     final intervalMs = prefs.getInt(_kPrefIntervalMs) ?? MapConfig.uploadInterval.inMilliseconds;
     final distMi = prefs.getDouble(_kPrefDistThreshold) ?? 0.2;
-    final name = prefs.getString(_kPrefName) ?? '';
-    final pin  = prefs.getString(_kPrefPin) ?? '';
+    final name    = prefs.getString(_kPrefName) ?? '';
+    final pin     = prefs.getString(_kPrefPin) ?? '';
+    final hamRoot = prefs.getString(_kPrefHamRoot) ?? '';
+    final hamSsid = prefs.getInt(_kPrefHamSsid) ?? 0;
     _activityMode = prefs.getInt(_kPrefActivityMode) ?? -1;
 
     if (callsign.isEmpty || passcode == 0) {
@@ -183,9 +190,9 @@ class BackgroundLocationService {
 
     // Token expired — re-join silently with saved credentials.
     if (name.isNotEmpty && pin.isNotEmpty) {
-      final result = await _session.join(name: name, pin: pin);
+      final result = await _session.join(name: name, pin: pin, hamRoot: hamRoot, hamSsid: hamSsid);
       if (result == JoinResult.success) {
-        unawaited(_saveSession(name, pin));
+        unawaited(_saveSession(name, pin, hamRoot: hamRoot, hamSsid: hamSsid));
         await _activateSharing();
         return true;
       }
@@ -253,7 +260,7 @@ class BackgroundLocationService {
     if (_sharingActive) unawaited(_uploadNow()); // send new mode immediately
   }
 
-  Future<void> _saveSession(String name, String pin) async {
+  Future<void> _saveSession(String name, String pin, {String hamRoot = '', int hamSsid = 0}) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_kPrefActive, true);
     await prefs.setString(_kPrefCallsign, _session.callsign ?? '');
@@ -265,6 +272,8 @@ class BackgroundLocationService {
     await prefs.setString(_kPrefName, name);
     await prefs.setString(_kPrefPin, pin);
     await prefs.setInt(_kPrefActivityMode, _activityMode);
+    await prefs.setString(_kPrefHamRoot, hamRoot);
+    await prefs.setInt(_kPrefHamSsid, hamSsid);
   }
 
   Future<void> _clearSession() async {
@@ -388,6 +397,8 @@ class BackgroundLocationService {
       onSessionEnded?.call();
     } else if (msgs != null) {
       onBeaconSent?.call();
+      final setMode = _session.pendingSetMode;
+      if (setMode != null) onModeChanged?.call(setMode);
       for (final m in msgs) {
         _pendingAckIds.add(m.id);
         if (_deliveredMsgIds.add(m.id)) onMessageReceived?.call(m);

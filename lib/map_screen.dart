@@ -36,7 +36,7 @@ import 'widgets/mode_indicator.dart';
 import 'widgets/offline_banner.dart';
 import 'widgets/permission_denied_view.dart';
 
-enum _LocationState { checking, granted, denied, permanentlyDenied }
+enum _LocationState { notRequested, whileInUse, always, denied, permanentlyDenied }
 
 class MapScreen extends StatefulWidget {
   final RemoteConfig config;
@@ -49,7 +49,8 @@ class MapScreen extends StatefulWidget {
 }
 
 class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
-  _LocationState _locationState = _LocationState.checking;
+  _LocationState _locationState = _LocationState.notRequested;
+  bool _sharingConsentShown = false; // true once user has seen the sharing consent screen
   final _mapController = MapController();
   LatLng? _lastUserLatLng;
   StreamSubscription<Position>? _positionSub;
@@ -165,7 +166,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _beaconIntervalsSec = List.of(_config.beaconIntervalsSec);
     _beaconDistancesMi  = List.of(_config.beaconDistancesMi);
     _initCourseVisibility();
-    _requestPermission();
+    _checkExistingPermission();
     _poller = OnlinePoller(
       onData: (data) {
         if (!mounted) return;
@@ -275,9 +276,26 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       if (!mounted) return;
       _handleInboundMessage(msg);
     };
+    _bgLocation.onModeChanged = (mode) {
+      if (!mounted) return;
+      const modeMap = {'walk_run': 0, 'cycle': 1, 'drive': 2, 'stationary': 3};
+      const modeKeys = ['walk_run', 'cycle', 'drive', 'stationary'];
+      final idx = modeMap[mode];
+      if (idx == null || idx == _sharingActivityMode) return;
+      final intervals = _beaconIntervalsSec.map((s) => Duration(seconds: s)).toList();
+      _bgLocation.changeActivityMode(idx, intervals[idx], _beaconDistancesMi[idx], modeKeys[idx]);
+      setState(() => _sharingActivityMode = idx);
+    };
   }
 
   void _showSendMessageDialog({String? prefill}) {
+    if (!_isSharing) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Start sharing your location to send messages'),
+        duration: Duration(seconds: 3),
+      ));
+      return;
+    }
     final controller = TextEditingController(text: prefill ?? '');
     final scrollController = ScrollController();
     bool didScroll = false;
@@ -302,7 +320,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 4, 0),
+              padding: const EdgeInsets.fromLTRB(16, 10, 4, 0),
               child: Row(children: [
                 const Expanded(child: Text('Send Message',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
@@ -316,8 +334,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             ),
             if (recent.isNotEmpty) ...[
               Container(
-                constraints: const BoxConstraints(maxHeight: 200),
-                margin: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                constraints: const BoxConstraints(maxHeight: 130),
+                margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                 decoration: BoxDecoration(
                   color: const Color(0xFFF5F5F5),
                   borderRadius: BorderRadius.circular(6),
@@ -343,17 +361,17 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
               const Divider(height: 1, thickness: 1, color: Color(0xFFBDBDBD), indent: 16, endIndent: 16),
             ],
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
               child: TextField(
                 controller: controller,
                 maxLength: 280,
-                maxLines: 4,
+                maxLines: 3,
                 decoration: const InputDecoration(hintText: 'Type your message…', border: OutlineInputBorder()),
                 autofocus: true,
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(0, 0, 8, 12),
+              padding: const EdgeInsets.fromLTRB(0, 0, 8, 8),
               child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
                 TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
                 TextButton(
@@ -366,6 +384,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                       if (_msgLog.length > 30) _msgLog.removeAt(0);
                     });
                     await _bgLocation.session.sendMessage(text);
+                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('Message Sent'),
+                      duration: Duration(seconds: 3),
+                    ));
                   },
                   child: const Text('Send'),
                 ),
@@ -581,6 +603,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                     if (_msgLog.length > 30) _msgLog.removeAt(0);
                   });
                   await _bgLocation.session.sendMessage(text);
+                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('Message Sent'),
+                    duration: Duration(seconds: 3),
+                  ));
                 },
                 child: const Text('Send'),
               ),
@@ -612,19 +638,177 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
   // ── Location permission ───────────────────────────────────────────────────
 
-  Future<void> _requestPermission() async {
+  // Called at startup — only checks existing grant, never shows the system prompt.
+  Future<void> _checkExistingPermission() async {
     try {
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
+      final permission = await Geolocator.checkPermission();
       if (!mounted) return;
-      if (permission == LocationPermission.always ||
-          permission == LocationPermission.whileInUse) {
-        setState(() => _locationState = _LocationState.granted);
-        unawaited(_bgLocation.startTracking()); // must start GPS before subscribing via positionStream
+      if (permission == LocationPermission.always) {
+        setState(() => _locationState = _LocationState.always);
+        unawaited(_bgLocation.startTracking());
         _startPositionStream();
         unawaited(_maybeResumeSharing());
+      } else if (permission == LocationPermission.whileInUse) {
+        setState(() => _locationState = _LocationState.whileInUse);
+        unawaited(_bgLocation.startTracking());
+        _startPositionStream();
+        // Android foreground service works with whileInUse; iOS needs always.
+        if (Platform.isAndroid) unawaited(_maybeResumeSharing());
+      } else if (permission == LocationPermission.deniedForever) {
+        setState(() => _locationState = _LocationState.permanentlyDenied);
+      } else {
+        setState(() => _locationState = _LocationState.notRequested);
+      }
+    } catch (_) {
+      if (mounted) setState(() => _locationState = _LocationState.notRequested);
+    }
+  }
+
+  // Shows Apple's recommended pre-alert screen before the system permission dialog.
+  Future<bool> _showLocationPreAlert({
+    required String title,
+    required String body,
+    required IconData icon,
+  }) async {
+    if (!mounted) return false;
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: BoxDecoration(
+          color: Theme.of(ctx).colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: EdgeInsets.fromLTRB(24, 12, 24,
+            24 + MediaQuery.of(ctx).viewPadding.bottom),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.only(bottom: 24),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Icon(icon, size: 52, color: Colors.blue),
+            const SizedBox(height: 16),
+            Text(title,
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            Text(body,
+              style: TextStyle(fontSize: 15, color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 28),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Continue'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    return confirmed == true;
+  }
+
+  // Shows the consent screen disclosing that location will be sent to the server.
+  // Not a system dialog — our own UI. Shown once per app session.
+  // backgroundLimited: true when permission is only "While Using" so we warn
+  // that sharing pauses when the screen locks.
+  Future<bool> _showSharingConsentScreen({bool backgroundLimited = false}) async {
+    if (!mounted) return false;
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: BoxDecoration(
+          color: Theme.of(ctx).colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: EdgeInsets.fromLTRB(24, 12, 24,
+            24 + MediaQuery.of(ctx).viewPadding.bottom),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.only(bottom: 24),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const Icon(Icons.share_location, size: 52, color: Colors.blue),
+            const SizedBox(height: 16),
+            const Text('Share Your Location with Participants',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              backgroundLimited
+                ? 'Others will be able to see your location on the map — '
+                  'including users of this app, our website, and third-party '
+                  'apps like aprs.fi and CalTopo.com.\n\n'
+                  'Your name and ham-radio callsign will also be visible, '
+                  'if entered.\n\n'
+                  'Sharing will pause when the screen locks or you switch apps. '
+                  'To share in the background, go to Settings → Privacy & Security → '
+                  'Location Services → APRS Map and choose “Always”.'
+                : 'Others will be able to see your location on the map — '
+                  'including users of this app, our website, and third-party '
+                  'apps like aprs.fi and CalTopo.com.\n\n'
+                  'Your name and ham-radio callsign will also be visible, '
+                  'if entered.\n\n'
+                  'Because you\'ve allowed background access, sharing will '
+                  'continue even when the screen is locked.',
+              style: TextStyle(fontSize: 15, color: Colors.grey[600]),
+            ),
+            const SizedBox(height: 28),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Continue'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    return confirmed == true;
+  }
+
+  // Requests the initial location permission (for blue dot or share).
+  // Sets _locationState to whileInUse or always, and starts GPS on success.
+  Future<void> _requestLocationPermission() async {
+    try {
+      final permission = await Geolocator.requestPermission();
+      if (!mounted) return;
+      if (permission == LocationPermission.always) {
+        setState(() => _locationState = _LocationState.always);
+        unawaited(_bgLocation.startTracking());
+        _startPositionStream();
+      } else if (permission == LocationPermission.whileInUse) {
+        setState(() => _locationState = _LocationState.whileInUse);
+        unawaited(_bgLocation.startTracking());
+        _startPositionStream();
       } else if (permission == LocationPermission.deniedForever) {
         setState(() => _locationState = _LocationState.permanentlyDenied);
       } else {
@@ -633,6 +817,86 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     } catch (_) {
       if (mounted) setState(() => _locationState = _LocationState.denied);
     }
+  }
+
+  // Requests upgrade from "While Using" to "Always" (iOS background sharing).
+  Future<void> _requestAlwaysPermission() async {
+    try {
+      final permission = await Geolocator.requestPermission();
+      if (!mounted) return;
+      if (permission == LocationPermission.always) {
+        setState(() => _locationState = _LocationState.always);
+      }
+    } catch (_) {}
+  }
+
+  // Full permission + consent gate for the Share Location flow.
+  // Returns true only when all required permissions are granted and user consented.
+  Future<bool> _ensureSharePermissions() async {
+    // Re-sync with the real iOS permission state. "Allow Once" expires when the
+    // app is backgrounded, reverting to notDetermined — our cached _locationState
+    // can be stale. Checking here lets Step 1 re-run the dialog in that case.
+    if (Platform.isIOS) {
+      try {
+        final current = await Geolocator.checkPermission();
+        if (!mounted) return false;
+        if (current == LocationPermission.always) {
+          setState(() => _locationState = _LocationState.always);
+        } else if (current == LocationPermission.whileInUse) {
+          setState(() => _locationState = _LocationState.whileInUse);
+        } else if (current == LocationPermission.deniedForever) {
+          setState(() => _locationState = _LocationState.permanentlyDenied);
+        } else {
+          setState(() => _locationState = _LocationState.notRequested);
+        }
+      } catch (_) {}
+    }
+
+    // Step 1: need at least "While Using"
+    // Track whether permission was just granted here so we can skip Step 3:
+    // if Share Location is the user's first action, the pre-alert + Apple dialog
+    // already established the sharing context. Step 3 is only needed when the
+    // user previously granted location for the blue dot ("stays on device") and
+    // now we need to disclose that sharing sends it to the server.
+    var justGrantedPermission = false;
+    if (_locationState == _LocationState.notRequested) {
+      final ok = await _showLocationPreAlert(
+        title: 'Share Your Location',
+        icon: Icons.share_location,
+        body: 'Sharing your location lets others see where you are — including '
+              'users of this app, our website, and third-party apps like '
+              'aprs.fi and CalTopo.com.\n\n'
+              'Your name and ham-radio callsign will also be visible, if entered.\n\n'
+              'For background tracking, choose "Always" when prompted, or '
+              'change it later in Settings → Privacy & Security → '
+              'Location Services → APRS Map.',
+      );
+      if (!ok || !mounted) return false;
+      await _requestLocationPermission();
+      if (_locationState == _LocationState.notRequested ||
+          _locationState == _LocationState.denied ||
+          _locationState == _LocationState.permanentlyDenied) return false;
+      justGrantedPermission = true;
+    }
+
+    // Step 2: iOS needs "Always" for background tracking
+    if (Platform.isIOS && _locationState == _LocationState.whileInUse) {
+      await _requestAlwaysPermission();
+      // Proceed even if user declined the upgrade — it's their choice.
+    }
+
+    // Step 3: consent screen — only when permission was already granted (blue dot
+    // used first), so the user needs to know sharing sends their location to the server.
+    // Warn about background limitation if we only have "While Using" permission.
+    if (!_sharingConsentShown && !justGrantedPermission) {
+      if (!mounted) return false;
+      final backgroundLimited = _locationState == _LocationState.whileInUse;
+      final consented = await _showSharingConsentScreen(backgroundLimited: backgroundLimited);
+      if (!consented) return false;
+      _sharingConsentShown = true;
+    }
+
+    return true;
   }
 
   void _startPositionStream() {
@@ -666,13 +930,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       if (await Permission.ignoreBatteryOptimizations.isDenied) {
         await Permission.ignoreBatteryOptimizations.request();
       }
-    } else if (Platform.isIOS) {
-      // iOS needs "Always" location permission for background updates.
-      // If the user only granted "When In Use", prompt to upgrade.
-      final current = await Geolocator.checkPermission();
-      if (current == LocationPermission.whileInUse) {
-        await Geolocator.requestPermission();
-      }
     }
   }
 
@@ -696,7 +953,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
 
-  Future<void> _changeActivityMode(int newMode) async {
+  Future<void> _changeActivityMode(int newMode, {bool silent = false}) async {
     if (!_isSharing || newMode == _sharingActivityMode) return;
     const modeKeys = ['walk_run', 'cycle', 'drive', 'stationary'];
     final intervals = _beaconIntervalsSec.map((s) => Duration(seconds: s)).toList();
@@ -708,7 +965,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     );
     if (!mounted) return;
     setState(() => _sharingActivityMode = newMode);
-    await _showSharingStartedDialog(_bgLocation.callsign ?? '');
+    if (!silent) await _showSharingStartedDialog(_bgLocation.callsign ?? '');
   }
 
   Future<void> _toggleSharing() async {
@@ -729,17 +986,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       );
       return;
     }
-    final permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
-      final granted = await Geolocator.requestPermission();
-      if (granted == LocationPermission.denied || granted == LocationPermission.deniedForever) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Location access is required to share your location.'),
-        ));
-        return;
-      }
-    }
-    if (mounted) await _showShareDialog();
+    final ready = await _ensureSharePermissions();
+    if (!ready || !mounted) return;
+    await _showShareDialog();
   }
 
   Future<void> _startSharingWithMode(int mode) async {
@@ -756,31 +1005,29 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       );
       return;
     }
-    final permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
-      final granted = await Geolocator.requestPermission();
-      if (granted == LocationPermission.denied || granted == LocationPermission.deniedForever) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Location access is required to share your location.'),
-        ));
-        return;
-      }
-    }
-    if (mounted) await _showShareDialog(initialMode: mode);
+    final ready = await _ensureSharePermissions();
+    if (!ready || !mounted) return;
+    await _showShareDialog();
   }
 
   /// Shows the Share Location dialog. Handles join attempts inline —
   /// wrong PIN shows an error inside the dialog; success closes it and
   /// shows the callsign info modal; network failure closes it and shows
   /// a separate error dialog.
-  Future<void> _showShareDialog({int initialMode = 0}) async {
+  Future<void> _showShareDialog({int initialMode = -1}) async {
     final prefs = await SharedPreferences.getInstance();
-    final savedName = prefs.getString('sharing_name') ?? '';
-    final nameCtl = TextEditingController(text: savedName);
-    final pinCtl = TextEditingController();
-    final pinFocus = FocusNode();
+    final savedName    = prefs.getString('sharing_name') ?? '';
+    final savedHamRoot = prefs.getString('sharing_ham_root') ?? '';
+    final savedHamSsid = prefs.getInt('sharing_ham_ssid') ?? 0;
+    final nameCtl    = TextEditingController(text: savedName);
+    final pinCtl     = TextEditingController();
+    final hamRootCtl = TextEditingController(text: savedHamRoot);
+    final hamSsidCtl = TextEditingController(text: savedHamSsid > 0 ? savedHamSsid.toString() : '');
+    final pinFocus     = FocusNode();
+    final hamRootFocus = FocusNode();
     String? errorText;
     bool loading = false;
+    bool hamExpanded = savedHamRoot.isNotEmpty;
     int activityMode = initialMode;
 
     await showDialog<void>(
@@ -795,11 +1042,28 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
               setDialogState(() => errorText = 'Please enter your first name.');
               return;
             }
-            if (pin.isEmpty) return;
+            if (pin.isEmpty) {
+              setDialogState(() => errorText = 'Please enter the event PIN.');
+              return;
+            }
             setDialogState(() { loading = true; errorText = null; });
             await _ensureBackgroundPermissions();
             final intervals = _beaconIntervalsSec.map((s) => Duration(seconds: s)).toList();
             const modeKeys = ['walk_run', 'cycle', 'drive', 'stationary'];
+            final hamRoot = hamExpanded ? hamRootCtl.text.trim().toUpperCase() : '';
+            final hamSsid = hamExpanded ? (int.tryParse(hamSsidCtl.text.trim()) ?? 0) : 0;
+            if (hamExpanded && hamRoot.isNotEmpty) {
+              // ITU/FCC callsign: 1–3 prefix chars (letters or digit), one area digit, 1–3 letter suffix
+              final _csRe = RegExp(r'^[A-Z0-9]{1,3}[0-9][A-Z]{1,3}$');
+              if (!_csRe.hasMatch(hamRoot)) {
+                setDialogState(() { errorText = 'Enter a valid callsign (e.g. K6DRK or W6SG).'; loading = false; });
+                return;
+              }
+            }
+            if (hamExpanded && hamRoot.isNotEmpty && (hamSsid < 1 || hamSsid > 15)) {
+              setDialogState(() { errorText = 'SSID must be between 1 and 15.'; loading = false; });
+              return;
+            }
             final joinResult = await _bgLocation.startSharing(
               name: name,
               pin: pin,
@@ -807,6 +1071,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
               distanceThresholdMiles: _beaconDistancesMi[activityMode],
               sharingMode: modeKeys[activityMode],
               activityModeIndex: activityMode,
+              hamRoot: hamRoot,
+              hamSsid: hamSsid,
             );
             if (!ctx.mounted) return;
             if (joinResult == JoinResult.success) {
@@ -817,6 +1083,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             } else if (joinResult == JoinResult.wrongPin) {
               setDialogState(() {
                 errorText = 'Incorrect PIN. Please try again.';
+                loading = false;
+              });
+            } else if (joinResult == JoinResult.callsignError) {
+              setDialogState(() {
+                errorText = _bgLocation.session.lastJoinError ?? 'Invalid callsign.';
                 loading = false;
               });
             } else {
@@ -863,40 +1134,103 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                   obscureText: true,
                   onSubmitted: (_) => submit(),
                 ),
+                const SizedBox(height: 6),
+                GestureDetector(
+                  onTap: () => setDialogState(() => hamExpanded = !hamExpanded),
+                  child: Row(children: [
+                    Icon(hamExpanded ? Icons.expand_less : Icons.expand_more,
+                        size: 16, color: Colors.blueGrey),
+                    const SizedBox(width: 4),
+                    Text('Ham Radio Callsign (optional)',
+                        style: TextStyle(fontSize: 12, color: Colors.blueGrey.shade700)),
+                  ]),
+                ),
+                if (hamExpanded) ...[
+                  const SizedBox(height: 6),
+                  Row(children: [
+                    Expanded(
+                      flex: 3,
+                      child: TextField(
+                        controller: hamRootCtl,
+                        focusNode: hamRootFocus,
+                        decoration: const InputDecoration(
+                          labelText: 'Callsign (e.g. K6DRK)',
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(vertical: 8),
+                        ),
+                        textCapitalization: TextCapitalization.characters,
+                        onChanged: (v) {
+                          final up = v.toUpperCase();
+                          if (up != v) hamRootCtl.value = hamRootCtl.value.copyWith(text: up, selection: TextSelection.collapsed(offset: up.length));
+                        },
+                      ),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 6),
+                      child: Text('–', style: TextStyle(fontSize: 18, color: Colors.grey)),
+                    ),
+                    SizedBox(
+                      width: 52,
+                      child: TextField(
+                        controller: hamSsidCtl,
+                        decoration: const InputDecoration(
+                          labelText: 'SSID',
+                          hintText: '1–15',
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(vertical: 8),
+                        ),
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
+                  ]),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 3),
+                    child: Text('SSID 1–15',
+                        style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
+                  ),
+                ],
                 const SizedBox(height: 10),
                 const Align(
                   alignment: Alignment.centerLeft,
                   child: Text('Activity', style: TextStyle(fontSize: 12, color: Colors.grey)),
                 ),
                 const SizedBox(height: 4),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 4,
+                Row(
                   children: [
                     for (final entry in const [
-                      (0, 'Walk / Run'),
+                      (0, 'Walk/Run'),
                       (1, 'Cycle'),
                       (2, 'Drive'),
                       (3, 'Stationary'),
-                    ])
-                      ChoiceChip(
-                        label: Text(entry.$2,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: activityMode == entry.$1 ? Colors.white : Colors.black54,
-                              fontWeight: activityMode == entry.$1 ? FontWeight.w600 : FontWeight.normal,
-                            )),
-                        selected: activityMode == entry.$1,
-                        selectedColor: Colors.blueGrey.shade700,
-                        backgroundColor: Colors.grey.shade200,
-                        showCheckmark: false,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        onSelected: (_) {
-                          setDialogState(() => activityMode = entry.$1);
-                          submit();
-                        },
+                    ]) ...[
+                      if (entry.$1 > 0) const SizedBox(width: 5),
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () {
+                            setDialogState(() => activityMode = entry.$1);
+                            submit();
+                          },
+                          child: Container(
+                            height: 34,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: activityMode == entry.$1
+                                  ? Colors.blueGrey.shade700
+                                  : Colors.grey.shade200,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              entry.$2,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: activityMode == entry.$1 ? Colors.white : Colors.black54,
+                                fontWeight: activityMode == entry.$1 ? FontWeight.w600 : FontWeight.normal,
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
+                    ],
                   ],
                 ),
                 if (errorText != null) ...[
@@ -919,6 +1253,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         },
       ),
     );
+    nameCtl.dispose(); pinCtl.dispose();
+    hamRootCtl.dispose(); hamSsidCtl.dispose();
+    pinFocus.dispose(); hamRootFocus.dispose();
   }
 
   Future<void> _showSharingStartedDialog(String cs) async {
@@ -966,7 +1303,19 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
   // ── Map controls ──────────────────────────────────────────────────────────
 
-  void _handleRecenter() {
+  Future<void> _handleRecenter() async {
+    if (_locationState == _LocationState.notRequested) {
+      final ok = await _showLocationPreAlert(
+        title: 'Show Your Location on the Map',
+        icon: Icons.my_location,
+        body: 'APRS Map will show your position as a blue dot on the map.\n\n'
+              'This works in both online and offline modes.',
+      );
+      if (!ok) return;
+      await _requestLocationPermission();
+      // GPS stream now running — re-center once first position arrives
+      return;
+    }
     final userPos = _lastUserLatLng;
     if (userPos == null) return;
     _mapController.move(userPos, 14.0);
@@ -1371,7 +1720,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         onResetMap: _handleReset,
         onSaveMap: _handleSaveMap,
         onRefreshTiles: _refreshTiles,
-        onSendMessage: _isSharing ? _showSendMessageDialog : null,
+        onSendMessage: _showSendMessageDialog,
         onActivityModeChange: _isSharing ? _changeActivityMode : null,
         onStartSharingWithMode: _isSharing ? null : _startSharingWithMode,
       ),
@@ -1380,9 +1729,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildBody() {
-    if (_locationState == _LocationState.checking) {
-      return const Center(child: CircularProgressIndicator());
-    }
     if (_locationState == _LocationState.permanentlyDenied) {
       return const PermissionDeniedView(permanent: true);
     }
@@ -1422,7 +1768,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                   tileProvider: _tileProvider,
                 ),
                 CourseLayer(courses: _visibleCourses),
-                if (_trailPoints.length > 1)
+                if (_trailPoints.length > 1 && !(_blinkingIds.contains(_selectedId) && !_blinkOn))
                   PolylineLayer(polylines: [
                     Polyline(
                       points: _trailPoints,
@@ -1431,26 +1777,34 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                       pattern: StrokePattern.dashed(segments: [4, 7]),
                     ),
                   ]),
-                if (_trailEntries.isNotEmpty)
+                if (_trailEntries.isNotEmpty && !(_blinkingIds.contains(_selectedId) && !_blinkOn))
                   MarkerLayer(markers: _trailEntries.map((e) {
                     final pt = LatLng((e['lat'] as num).toDouble(), (e['lon'] as num).toDouble());
                     return Marker(
                       point: pt,
-                      width: 28,
-                      height: 28,
+                      width: 30,
+                      height: 30,
                       child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
                         onTap: () => _showTrailEntryInfo(e),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: _trailColor.withOpacity(0.5),
-                            border: Border.all(color: _trailColor, width: 1.5),
+                        onLongPress: () => _openGoogleMaps(pt.latitude, pt.longitude),
+                        child: Center(
+                          child: SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: _trailColor.withOpacity(0.5),
+                                border: Border.all(color: _trailColor, width: 1.5),
+                              ),
+                            ),
                           ),
                         ),
                       ),
                     );
                   }).toList()),
-                if (_trailPoints.length > 1)
+                if (_trailPoints.length > 1 && !(_blinkingIds.contains(_selectedId) && !_blinkOn))
                   MarkerLayer(markers: [
                     for (var i = 0; i < _trailPoints.length - 1; i++)
                       Marker(
@@ -1497,7 +1851,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                     blinkOn: _blinkOn,
                     onLongPress: (t) { if (t.lat != null && t.lon != null) _openGoogleMaps(t.lat!, t.lon!); },
                   ),
-                if (_locationState == _LocationState.granted)
+                if (_locationState == _LocationState.whileInUse ||
+                    _locationState == _LocationState.always)
                   CurrentLocationLayer(
                     positionStream: _locationMarkerStream,
                     // Passing an empty heading stream stops flutter_compass from
@@ -1617,7 +1972,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                     alignment: Alignment.center,
                     child: Icon(
                       Icons.my_location,
-                      color: _locationState == _LocationState.granted
+                      color: (_locationState == _LocationState.whileInUse ||
+                              _locationState == _LocationState.always)
                           ? Colors.blue[700]
                           : Colors.grey,
                     ),
