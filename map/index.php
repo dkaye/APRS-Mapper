@@ -15,7 +15,7 @@
  *   ?config  Map/background/course/tracker config from config.yaml (ETag-cached)
  */
 
-define('WEB_VERSION', '1.17.2+0');
+define('WEB_VERSION', '1.18.1+0');
 
 $trackerStatusFilename = 'trackers.json';
 
@@ -57,22 +57,34 @@ if (isset($_GET['json'])) {
 			if (!$cs || !empty($t['blocked'])) continue;
 			$hasHam       = !empty($t['ham_callsign']);
 			$hasSession   = !empty($t['token']) && ($now - ($t['lastUpdate'] ?? 0)) <= 86400;
-			// Include active mobile sessions, OR ham-callsign entries (radio may still be heard even after app stops).
-			if (!$hasSession && !$hasHam) continue;
+			if (!$hasSession) continue;
 			$displayId = $t['display_id'] ?? $t['id'];
 			$activeMobile[$cs] = ['id' => $displayId, 'tracker_id' => $t['id'], 'name' => $t['name'],
 				'sharing_mode' => $t['sharing_mode'] ?? '', 'lastUpdate' => (int)($t['lastUpdate'] ?? 0),
 				'lat' => $t['aprs_lat'] ?? null, 'lon' => $t['aprs_lon'] ?? null,
-				'ham_callsign' => $t['ham_callsign'] ?? null, 'has_session' => $hasSession];
+				'ham_callsign' => $t['ham_callsign'] ?? null, 'has_session' => $hasSession,
+				'carrier' => $t['device_info']['carrier'] ?? null];
 		}
 	}
-	// Remove mobile entries whose session is gone or blocked
+	// Index ham tracker entries by callsign so mobile sessions can absorb their position data.
+	// Ham entries (radio components of hybrid trackers) are NOT shown as separate map/sidebar entries.
+	$hamData = [];
+	foreach ($trackers as $t) {
+		if (!empty($t['ham'])) $hamData[$t['callsign']] = $t;
+	}
+	// Remove stale mobile entries and all ham entries (integrated into their mobile session).
 	$trackers = array_values(array_filter($trackers, function($t) use ($activeMobile) {
+		if (!empty($t['ham']))    return false;
 		return empty($t['mobile']) || isset($activeMobile[$t['callsign']]);
 	}));
 	// Inject sharing_mode and fresher lastUpdate for mobile trackers already in trackers.json.
-	// The mobile sessions file is updated on every beacon; trackers.json lags by APRS-IS round-trip.
+	// For hybrid trackers also absorb ham radio position if it is more recent.
 	$_now = time();
+	$fmtAge = function(int $age): string {
+		$s = $age % 60; $m = ($age - $s) / 60;
+		if ($m >= 60) { $h = intdiv($m, 60); $rm = $m % 60; return ">{$h}h {$rm}m"; }
+		return sprintf('%d:%02d', $m, $s);
+	};
 	foreach ($trackers as &$t) {
 		if (!isset($activeMobile[$t['callsign']])) continue;
 		$am = $activeMobile[$t['callsign']];
@@ -80,16 +92,28 @@ if (isset($_GET['json'])) {
 		$t['id']     = $am['id'];
 		$t['name']   = $am['name'];
 		if ($am['sharing_mode'] !== '') $t['sharing_mode'] = $am['sharing_mode'];
-		if ($am['ham_callsign'] !== null) $t['ham_callsign'] = $am['ham_callsign'];
+		if ($am['carrier'] !== null) $t['carrier'] = $am['carrier'];
+		if ($am['ham_callsign'] !== null) {
+			$t['ham_callsign'] = $am['ham_callsign'];
+			// Absorb ham radio position if it is fresher than the injection position
+			$hd = $hamData[$am['ham_callsign']] ?? null;
+			if ($hd && ($hd['lastUpdate'] ?? 0) > ($t['lastUpdate'] ?? 0) && $hd['lat'] !== null) {
+				$t['lat'] = $hd['lat']; $t['lon'] = $hd['lon'];
+				$t['lastUpdate'] = $hd['lastUpdate'];
+				$t['path'] = $hd['path'] ?? $t['path'];
+			}
+		}
 		if ($am['lat'] !== null && $t['lat'] === null) { $t['lat'] = $am['lat']; $t['lon'] = $am['lon']; }
 		if ($am['lastUpdate'] > ($t['lastUpdate'] ?? 0)) {
 			$age = $_now - $am['lastUpdate'];
-			$s = $age % 60; $m = ($age - $s) / 60;
-			if ($m >= 60) { $h = intdiv($m, 60); $rm = $m % 60; $tf = ">{$h}h {$rm}m"; }
-			else { $tf = sprintf('%d:%02d', $m, $s); }
 			$t['lastUpdate']          = $am['lastUpdate'];
 			$t['timeSinceLastUpdate'] = $age;
-			$t['time']                = $tf;
+			$t['time']                = $fmtAge($age);
+			$t['color']               = $age <= 120 ? 'green' : ($age <= 300 ? 'blue' : 'red');
+		} elseif (isset($t['lastUpdate']) && $t['lastUpdate'] > 0) {
+			$age = $_now - $t['lastUpdate'];
+			$t['timeSinceLastUpdate'] = $age;
+			$t['time']                = $fmtAge($age);
 			$t['color']               = $age <= 120 ? 'green' : ($age <= 300 ? 'blue' : 'red');
 		}
 	}
@@ -111,6 +135,7 @@ if (isset($_GET['json'])) {
 			          'lat' => $ms['lat'], 'lon' => $ms['lon'], 'path' => '', 'mobile' => true];
 			if ($ms['sharing_mode'] !== '') $entry['sharing_mode'] = $ms['sharing_mode'];
 			if ($ms['ham_callsign'] !== null) $entry['ham_callsign'] = $ms['ham_callsign'];
+			if ($ms['carrier'] !== null) $entry['carrier'] = $ms['carrier'];
 			$trackers[] = $entry;
 		}
 	}
@@ -445,11 +470,16 @@ function haversineMeters(float $lat1, float $lon1, float $lat2, float $lon2): fl
 
 function validateHamCallsign(string $root): bool {
 	$root = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', $root));
-	if (!preg_match('/^[A-Z]{1,2}[0-9][A-Z]{1,3}$/', $root)) return false;
+	// ITU/FCC format: 1–3 prefix chars (letters or digit), one area digit, 1–3 letter suffix
+	if (!preg_match('/^[A-Z0-9]{1,3}[0-9][A-Z]{1,3}$/', $root)) return false;
+	// callook.info only knows FCC-licensed US callsigns (K, N, W, AA–AL prefixes).
+	// For international callsigns, format check above is sufficient.
+	$looksUS = preg_match('/^[KNW]/', $root) || preg_match('/^A[A-L]/', $root);
+	if (!$looksUS) return true;
 	$url  = 'https://callook.info/' . urlencode($root) . '/json';
 	$ctx  = stream_context_create(['http' => ['timeout' => 6, 'header' => "User-Agent: MARSAPRS/1.0\r\n"]]);
 	$json = @file_get_contents($url, false, $ctx);
-	if (!$json) return false;
+	if (!$json) return true;  // callook.info unreachable — allow through
 	$data = json_decode($json, true);
 	return ($data['status'] ?? '') === 'VALID';
 }
@@ -548,6 +578,22 @@ if (isset($_GET['mobile'])) {
 			}
 			if (!empty($cleaned)) $deviceInfo = $cleaned;
 		}
+		// Carrier/ISP lookup by client IP — no app permissions needed.
+		$_joinIp = trim($_SERVER['HTTP_CF_CONNECTING_IP']
+		    ?? (isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? explode(',', $_SERVER['HTTP_X_FORWARDED_FOR'])[0] : null)
+		    ?? $_SERVER['REMOTE_ADDR']);
+		if (filter_var($_joinIp, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+		    $_ipCtx = stream_context_create(['http' => ['timeout' => 3, 'header' => "User-Agent: MARS-APRS/1.0\r\n"]]);
+		    $_ipResp = @file_get_contents("http://ip-api.com/json/{$_joinIp}?fields=isp", false, $_ipCtx);
+		    if ($_ipResp) {
+		        $_ipData = json_decode($_ipResp, true);
+		        $_isp = trim($_ipData['isp'] ?? '');
+		        if ($_isp !== '') {
+		            if ($deviceInfo === null) $deviceInfo = [];
+		            $deviceInfo['carrier'] = $_isp;
+		        }
+		    }
+		}
 		$rawMode = trim($input['sharing_mode'] ?? '');
 		if ($rawMode === 'drive_cycle') $rawMode = 'drive'; // legacy migration
 		$sharingMode = in_array($rawMode, ['walk_run', 'cycle', 'drive', 'stationary'], true) ? $rawMode : '';
@@ -565,6 +611,9 @@ if (isset($_GET['mobile'])) {
 		if ($hamRoot !== '') {
 			if ($hamSsid < 1 || $hamSsid > 15) {
 				http_response_code(422); echo json_encode(['error' => 'SSID must be between 1 and 15', 'field' => 'ssid']); exit;
+			}
+			if (!validateHamCallsign($hamRoot)) {
+				http_response_code(422); echo json_encode(['error' => 'Callsign not found in license database. Check your callsign and try again.', 'field' => 'callsign']); exit;
 			}
 			$hamCallsign = "{$hamRoot}-{$hamSsid}";
 		}
@@ -611,11 +660,14 @@ if (isset($_GET['mobile'])) {
 						if ($deviceInfo !== null) $t['device_info'] = $deviceInfo;
 						if ($sharingMode !== '') $t['sharing_mode'] = $sharingMode;
 						if ($hamCallsign !== null) {
-							$t['callsign']     = $hamCallsign;
-							$t['ham_callsign'] = $hamCallsign;
-						} elseif (isset($t['ham_callsign'])) {
-							// User removed their ham callsign — revert to manufactured callsign
-							unset($t['ham_callsign']);
+							$t['ham_callsign'] = $hamCallsign; // injection callsign stays as MARSQQ-NN
+						} else {
+							unset($t['ham_callsign']); // user removed ham callsign
+						}
+						// Sanitize: if injection callsign was corrupted to the ham callsign, reset it.
+						if (preg_match('/^M(\d+)$/', $t['id'] ?? '', $mm)
+							&& !preg_match('/^\Q' . $root . '\E-\d+$/', $t['callsign'] ?? '')) {
+							$t['callsign'] = sprintf('%s-%02d', $root, (int)$mm[1]);
 						}
 						$newEntry = $t;
 						return $data;
@@ -635,7 +687,7 @@ if (isset($_GET['mobile'])) {
 			}
 			for ($n = 1; isset($used[$n]); $n++);
 			$id       = sprintf('M%02d', $n);
-			$callsign = $hamCallsign ?? sprintf('%s-%02d', $root, $n);
+			$callsign = sprintf('%s-%02d', $root, $n);
 			$newEntry = ['id' => $id, 'callsign' => $callsign, 'name' => $name,
 			             'token' => bin2hex(random_bytes(16)), 'lastUpdate' => $now, 'created' => $now];
 			if ($deviceId !== '') $newEntry['device_id'] = $deviceId;
@@ -647,21 +699,6 @@ if (isset($_GET['mobile'])) {
 		});
 		if ($isBlocked) { http_response_code(403); echo json_encode(['error' => 'Incorrect PIN']); exit; }
 		if ($hamConflict) { http_response_code(409); echo json_encode(['error' => "{$hamCallsign} is already in use by another active session", 'field' => 'callsign']); exit; }
-		// Clear stale breadcrumbs for this callsign so old history doesn't linger
-		$cfgReal  = realpath('config.yaml');
-		$histPath = $cfgReal ? dirname($cfgReal) . '/tracker_history.yaml' : null;
-		if ($histPath && file_exists($histPath)) {
-			$fh = fopen($histPath, 'c+');
-			if ($fh && flock($fh, LOCK_EX)) {
-				$content = stream_get_contents($fh);
-				$cs = preg_quote($newEntry['callsign'], '/');
-				// Remove the callsign block (key line + all indented lines that follow)
-				$content = preg_replace('/^' . $cs . ':(?:\n[ \t]+.*)*\n?/m', '', $content);
-				ftruncate($fh, 0); rewind($fh);
-				fwrite($fh, $content);
-				flock($fh, LOCK_UN); fclose($fh);
-			}
-		}
 		echo json_encode([
 			'id'       => $newEntry['id'],
 			'token'    => $newEntry['token'],
@@ -681,16 +718,18 @@ if (isset($_GET['mobile'])) {
 		$updMode = in_array($rawMode, ['walk_run', 'cycle', 'drive', 'stationary'], true) ? $rawMode : '';
 		if (!$token) { http_response_code(400); echo json_encode(['error' => 'Missing token']); exit; }
 
-		$found = false; $blocked = false; $foundCallsign = null; $foundHamCallsign = null; $pendingMsgs = [];
+		$found = false; $blocked = false; $foundCallsign = null; $foundHamCallsign = null; $pendingMsgs = []; $pendingMode = '';
 		$shouldInject = false;
-		modifyMobileTrackers($mobileFile, function($data) use ($token, $lat, $lon, $ackIds, $updMode, &$found, &$blocked, &$foundCallsign, &$foundHamCallsign, &$pendingMsgs, &$shouldInject) {
+		modifyMobileTrackers($mobileFile, function($data) use ($token, $lat, $lon, $ackIds, $updMode, &$found, &$blocked, &$foundCallsign, &$foundHamCallsign, &$pendingMsgs, &$pendingMode, &$shouldInject) {
 			$now = time();
 			foreach ($data as &$t) {
 				if (empty($t['token']) || !hash_equals($t['token'], $token)) continue;
 				if (!empty($t['blocked'])) { $blocked = true; break; }
 				$found = true; $foundCallsign = $t['callsign'] ?? null; $foundHamCallsign = $t['ham_callsign'] ?? null;
 				$pendingMsgs = $t['pending_msgs'] ?? [];
+				$pendingMode = $t['pending_mode'] ?? '';
 				if ($ackIds) $t['pending_msgs'] = array_values(array_filter($t['pending_msgs'] ?? [], fn($m) => !in_array((int)$m['id'], $ackIds)));
+				if ($pendingMode !== '') unset($t['pending_mode']);
 				if ($updMode !== '') $t['sharing_mode'] = $updMode;
 				// Track last 10 beacon timestamps for admin delta display
 				$t['recent_beacons'] = array_slice(array_merge([$now], $t['recent_beacons'] ?? []), 0, 10);
@@ -721,7 +760,9 @@ if (isset($_GET['mobile'])) {
 			$root = strtoupper(substr(preg_replace('/[^A-Za-z0-9]/', '', $mobileCfg['root'] ?? ''), 0, 6));
 			if ($root !== '' && $foundCallsign) injectAprsPacket($foundCallsign, $lat, $lon, $root);
 		}
-		echo json_encode(['ok' => true, 'messages' => $pendingMsgs]);
+		$resp = ['ok' => true, 'messages' => $pendingMsgs];
+		if ($pendingMode !== '') $resp['set_mode'] = $pendingMode;
+		echo json_encode($resp);
 		exit;
 	}
 
@@ -803,19 +844,10 @@ if (isset($_GET['mobile'])) {
 		$token = $input['token'] ?? '';
 		if (!$token) { http_response_code(400); echo json_encode(['error' => 'Missing token']); exit; }
 		modifyMobileTrackers($mobileFile, function($data) use ($token) {
-			foreach ($data as &$t) {
-				if (!empty($t['token']) && hash_equals($t['token'], $token)) {
-					if (!empty($t['device_id'])) {
-						// Keep the entry so the device reclaims the same callsign on next join.
-						$t['token'] = null;
-					} else {
-						$t = null; // Anonymous session: remove entirely.
-					}
-					break;
-				}
-			}
-			unset($t);
-			return array_values(array_filter($data, fn($t) => $t !== null));
+			return array_values(array_filter($data, function($t) use ($token) {
+				// Remove the matching entry entirely; fresh join gets a fresh ID and callsign.
+				return empty($t['token']) || !hash_equals($t['token'], $token);
+			}));
 		});
 		echo json_encode(['ok' => true]);
 		exit;
@@ -2154,6 +2186,8 @@ if (!isMobile) {
 map.createPane('coursePane');
 map.getPane('coursePane').style.zIndex = 410;
 const courseRenderer = L.svg({ pane: 'coursePane' });
+map.createPane('historyPane');
+map.getPane('historyPane').style.zIndex = 445;
 map.createPane('trackerPane');
 map.getPane('trackerPane').style.zIndex = 450;
 map.createPane('aidPane');
@@ -2190,7 +2224,7 @@ new (L.Control.extend({
 			L.DomEvent.on(exitBtn, 'click', () => { location.href = location.pathname; });
 			L.DomEvent.disableClickPropagation(exitBtn);
 			const txt = L.DomUtil.create('span', '', d);
-			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.17.2+0 &copy; 2026 Doug Kaye (K6DRK)';
+			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.18.1+0 &copy; 2026 Doug Kaye (K6DRK)';
 		} else {
 			if (!isMobile) {
 				const exitBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
@@ -2208,8 +2242,8 @@ new (L.Control.extend({
 			}
 			const ftxt = L.DomUtil.create('span', '', d);
 			ftxt.innerHTML = isMobile
-				? 'MARS APRS v1.17.2+0 &copy; 2026 Doug Kaye (K6DRK)'
-				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.17.2+0 &copy; 2026 Doug Kaye (K6DRK)';
+				? 'MARS APRS v1.18.1+0 &copy; 2026 Doug Kaye (K6DRK)'
+				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.18.1+0 &copy; 2026 Doug Kaye (K6DRK)';
 			if (isMobile) d.style.fontSize = '10px';
 		}
 		return d;
@@ -2281,6 +2315,7 @@ let   courseOrder          = [];
 const lastBeacons          = {};
 const blinkTimers          = {};
 let   _blinkDuration       = 5000; // ms; overridden by blink_duration from ?json
+let   _histBlinkTimer      = null; // setInterval handle for history-dot blinking
 // Beacon settings; overridden from ?config mobile_beacons
 let _beaconIntervalMs = [60000, 30000, 15000, 120000]; // Walk, Cycle, Drive, Stationary
 let _beaconDistMi     = [0.2,   0.2,   0.2,   1.0];    // Walk, Cycle, Drive, Stationary
@@ -2649,7 +2684,8 @@ function _mapTip(text, ms = 5000) {
 function popupHtml(t) {
 	let html = `<b>${esc(t.name)}</b> (${esc(t.id)})<br>${esc(t.callsign)}<br>Last heard ${esc(t.time)} ago`;
 	if (t.mobile) {
-		html += `<div class="popup-path" style="color:#555;font-style:italic">Mobile device</div>`;
+		const carrier = t.carrier ? ` · ${esc(t.carrier)}` : '';
+		html += `<div class="popup-path" style="color:#555;font-style:italic">Mobile device${carrier}</div>`;
 	} else if (t.path) {
 		html += `<div class="popup-path">${formatAprsPath(t.path)}</div>`;
 	}
@@ -2663,6 +2699,8 @@ function showNoLocation(name) {
 function closeNoLocation() { document.getElementById('noloc-modal').style.display = 'none'; }
 
 function hideAllHistoryDots() {
+	if (_histBlinkTimer) { clearInterval(_histBlinkTimer); _histBlinkTimer = null; }
+	const _hp = map.getPane('historyPane'); if (_hp) _hp.style.opacity = '';
 	Object.values(historyDots).forEach(dots => dots.forEach(d => d.remove()));
 	Object.keys(historyDots).forEach(k => delete historyDots[k]);
 }
@@ -2678,8 +2716,15 @@ function showTrackerHistory(callsign, color) {
 		})
 		.then(hist => {
 			if (!hist) return;
-			const raw = hist[callsign] || [];
-			// Drop consecutive duplicate positions (same lat+lon reported twice in a row)
+			// For hybrid trackers, merge injection-callsign history with ham-callsign history.
+			// The two sources are separate physical devices so positions will differ slightly;
+			// sort chronologically and only drop exact lat/lon duplicates.
+			const hamCallsign = markers[callsign]?._hamCallsign || null;
+			const raw = [
+				...(hist[callsign]    || []),
+				...(hamCallsign ? (hist[hamCallsign] || []) : [])
+			].sort((a, b) => b.ts - a.ts);
+			// Drop consecutive exact duplicates (same beacon echoed by multiple iGates)
 			const entries = raw.filter((e, i) => i === 0 || e.lat !== raw[i-1].lat || e.lon !== raw[i-1].lon);
 			if (!entries.length) return;
 
@@ -2692,10 +2737,16 @@ function showTrackerHistory(callsign, color) {
 			entries.forEach(e => {
 				const dot = L.circleMarker([e.lat, e.lon], {
 					radius: scaledRadius(r), color: color, fillColor: color,
-					fillOpacity: 0.5, weight: 1.5, pane: 'trackerPane'
+					fillOpacity: 0.5, weight: 1.5, pane: 'historyPane'
 				});
 				dot._baseRadius = r;
-				const tipHtml = () => `<div class="aprs-path-time">${esc(relativeTime(e.ts))}</div>` + (e.path ? formatAprsPath(e.path) : '');
+				const _carrier = markers[callsign]?._carrier || null;
+				const tipHtml = () => {
+					let th = `<div class="aprs-path-time">${esc(relativeTime(e.ts))}</div>`;
+					if (e.path) th += formatAprsPath(e.path);
+					if (_carrier) th += `<div style="color:#888;font-size:11px;margin-top:3px">${esc(_carrier)}</div>`;
+					return th;
+				};
 				dot.addTo(map);
 				layers.push(dot);
 				if (isMobile) {
@@ -2704,7 +2755,7 @@ function showTrackerHistory(callsign, color) {
 					// into view, dismissable) instead of an off-screen tooltip.
 					const hit = L.circleMarker([e.lat, e.lon], {
 						radius: Math.max(scaledRadius(r) + 12, 18), stroke: false,
-						fillOpacity: 0, fillColor: color, pane: 'trackerPane'
+						fillOpacity: 0, fillColor: color, pane: 'historyPane'
 					});
 					hit.on('click', function(ev) {
 						L.DomEvent.stopPropagation(ev);
@@ -2727,7 +2778,7 @@ function showTrackerHistory(callsign, color) {
 			if (allPts.length > 1) {
 				// Dotted connecting line
 				const line = L.polyline(allPts, {
-					color, weight: 3, dashArray: '4 7', opacity: 0.80, pane: 'trackerPane'
+					color, weight: 3, dashArray: '4 7', opacity: 0.80, pane: 'historyPane'
 				}).addTo(map);
 				layers.push(line);
 
@@ -2740,7 +2791,7 @@ function showTrackerHistory(callsign, color) {
 							html: `<svg width="20" height="20" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(${brg}deg);display:block"><polygon points="10,2 18,18 10,12 2,18" fill="${color}" opacity="0.85"/></svg>`,
 							className: '', iconSize: [20, 20], iconAnchor: [10, 10]
 						}),
-						pane: 'trackerPane', interactive: false
+						pane: 'historyPane', interactive: false
 					}).addTo(map);
 					layers.push(arw);
 				}
@@ -2753,10 +2804,13 @@ function showTrackerHistory(callsign, color) {
 
 // ── Blink ─────────────────────────────────────────────────────────────────
 function blinkHistoryLayers(callsign, on) {
-	(historyDots[callsign] || []).forEach(layer => {
-		const he = layer.getElement?.();
-		if (he) on ? he.classList.add('blinking') : he.classList.remove('blinking');
-	});
+	if (_histBlinkTimer) { clearInterval(_histBlinkTimer); _histBlinkTimer = null; }
+	const pane = map.getPane('historyPane');
+	if (!pane) return;
+	pane.style.opacity = '';    // always restore first
+	if (!on) return;
+	let vis = true;
+	_histBlinkTimer = setInterval(() => { vis = !vis; pane.style.opacity = vis ? '' : '0'; }, 200);
 }
 
 function triggerBlink(callsign) {
@@ -3183,6 +3237,7 @@ function updateMap() {
 					markers[t.callsign]._trackerColor = color;
 					markers[t.callsign]._mobile = t.mobile;
 					markers[t.callsign]._hamCallsign = t.ham_callsign || null;
+					markers[t.callsign]._carrier = t.carrier || null;
 					markers[t.callsign].setLatLng(latlng);
 					markers[t.callsign].setIcon(icon);
 					if (trackerPopups[t.callsign]) trackerPopups[t.callsign].setContent(popupHtml(t));
@@ -3194,6 +3249,7 @@ function updateMap() {
 					m._trackerColor = color;
 					m._mobile = t.mobile;
 					m._hamCallsign = t.ham_callsign || null;
+					m._carrier = t.carrier || null;
 					const popup = L.popup({ closeButton: true, autoPan: isMobile, autoPanPadding: [16, 16] })
 						.setContent(popupHtml(t));
 					trackerPopups[t.callsign] = popup;
@@ -3331,7 +3387,7 @@ function refreshMobileAbout() {
 	const rows = [
 		currentEventName ? { label: 'Event',   val: currentEventName } : null,
 		{ label: 'Org',     val: 'Marin Amateur Radio Society' },
-		{ label: 'Version', val: 'APRS Tracker Map · v1.17.2+0' },
+		{ label: 'Version', val: 'APRS Tracker Map · v1.18.1+0' },
 		mobileCallsign ? { label: 'Callsign', val: mobileCallsign } : null,
 		{ label: 'Map',     val: currentBgAttribution || '' },
 		{ label: 'Credit',  val: '&copy; 2026 Doug Kaye (K6DRK)' },
@@ -3889,7 +3945,7 @@ function openAboutModal() {
 	const attrText = currentBgAttribution || '';
 	const rows = [
 		{ label: 'Organization', val: 'Marin Amateur Radio Society' },
-		{ label: 'Application',  val: 'APRS Tracker Map · v1.17.2+0' },
+		{ label: 'Application',  val: 'APRS Tracker Map · v1.18.1+0' },
 		currentEventName ? { label: 'Event', val: currentEventName } : null,
 		mobileCallsign ? { label: 'My Callsign', val: mobileCallsign } : null,
 		mobileCallsign ? { label: 'Activity', val: ['Walk / Run', 'Cycle', 'Drive', 'Stationary'][_mobileActivityMode] } : null,

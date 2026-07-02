@@ -193,7 +193,7 @@
 <div id="content">
 <h1 id="mars-aprs-system">MARS APRS System</h1>
 <p><strong>Author:</strong> Doug Kaye (K6DRK) · <strong>Copyright:</strong> 2026 Doug Kaye. All Rights Reserved.</p>
-<p><strong>Version:</strong> Server &amp; Displays (v1.16.3); Mobile App (v1.17.2); iGates (v5.0)</p>
+<p><strong>Version:</strong> Server &amp; Displays (v1.16.3); Mobile App (v1.18.1); iGates (v5.0)</p>
 <hr />
 <h2 id="table-of-contents">Table of Contents</h2>
 <ol>
@@ -204,7 +204,7 @@
 <li><a href="#aprs-server-v1163">APRS Server (v1.16.3)</a></li>
 <li><a href="#cloudflare-tunnel">Cloudflare Tunnel</a></li>
 <li><a href="#display-pis-v1163">Display Pis (v1.16.3)</a></li>
-<li><a href="#mobile-apps-v1172">Mobile Apps (v1.17.2)</a></li>
+<li><a href="#mobile-apps-v1181">Mobile Apps (v1.18.1)</a></li>
 <li><a href="#app-architecture">Architecture</a> · <a href="#location-sharing-flow">Location Sharing Flow</a> · <a href="#building-distributing">Building &amp; Distributing</a> · <a href="#background-location">Background Location</a></li>
 <li><a href="#user-interfaces">User Interfaces</a></li>
 <li><a href="#backup-recovery-and-updates">Backup, Recovery and Updates</a></li>
@@ -575,7 +575,7 @@ wifi-watchdog.sh  (checks WiFi every 30 s;
 <p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code> · VNC: <code>vnc://&lt;ip&gt;:5901</code></p>
 <p>For details on using the map, see <a href="https://marsaprs.org/userguide.html?back=/readme.html">USERGUIDE.MD</a>.</p>
 <hr />
-<h2 id="mobile-apps-v1172">Mobile Apps (v1.17.2)</h2>
+<h2 id="mobile-apps-v1181">Mobile Apps (v1.18.1)</h2>
 <p>Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.</p>
 <p><strong>Repository:</strong> <code>/Users/doug/aprs-map</code> (separate from this marsaprs repo)</p>
 <h3 id="app-architecture">App Architecture</h3>
@@ -624,7 +624,7 @@ wifi-watchdog.sh  (checks WiFi every 30 s;
 </tr>
 <tr>
 <td><code>lib/tracker_layer.dart</code></td>
-<td>Native map marker overlay; squares for mobile, circles for fixed; ID label next to each dot</td>
+<td>Native map marker overlay; <strong>squares</strong> for mobile-only participants, <strong>triangles</strong> for hybrid (app + ham radio), <strong>circles</strong> for fixed radio trackers; ID label next to each dot</td>
 </tr>
 <tr>
 <td><code>lib/arrow_painter.dart</code></td>
@@ -1705,7 +1705,35 @@ objects) and a click-to-collapse toggle. Sidebar width is adjustable by dragging
 width is saved in <code>localStorage</code>.</p>
 <p><strong>Mobile drawer:</strong> Sections are collapsible accordions. Visibility checkboxes work the same
 as desktop. Footer buttons: Reset Map, Save Map, Admin, User Guide, Kiosk Mode, Clients, and (when <code>mobile.enabled</code>) Share Location / Stop Sharing. The <strong>About</strong> section of the drawer shows the user's assigned APRS callsign while sharing is active. The floating reset button (↺) pinned to the map also closes the drawer if it is open before recentering.</p>
-<p><strong>Mobile tracker markers:</strong> Mobile participants (sharing via Share Location) are rendered as <strong>rounded squares</strong> on both the map and in the sidebar, distinguishing them from regular APRS trackers (which use the configured icon shape). The shape is determined by <code>t.mobile</code> in the tracker JSON. In <code>index.php</code>, the icon is selected as <code>t.mobile ? 'square' : trackerStyle.icon</code>; the sidebar dot gets <code>border-radius: 3px</code> for mobile and <code>50%</code> for others. In the native Flutter app, each marker also shows the <strong>tracker ID</strong> as a text label directly next to the dot on the map.</p>
+<p><strong>Tracker marker shapes:</strong> Three distinct shapes communicate how a tracker's position is reported.</p>
+<table>
+<thead>
+<tr>
+<th>Shape</th>
+<th>Tracker type</th>
+<th>How position is reported</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Circle</strong> (or configured shape)</td>
+<td>Radio tracker</td>
+<td>APRS radio transmissions received by iGates; defined in <code>config.yaml</code></td>
+</tr>
+<tr>
+<td><strong>Rounded square</strong></td>
+<td>Mobile tracker</td>
+<td>Flutter app only; GPS injected to APRS-IS under a MARSQQ-NN callsign; no ham radio</td>
+</tr>
+<tr>
+<td><strong>Triangle</strong></td>
+<td>Hybrid tracker</td>
+<td>Flutter app <em>and</em> a licensed ham radio callsign; position data may come from either source, whichever is more recent</td>
+</tr>
+</tbody>
+</table>
+<p>The shape is determined from <code>t.mobile</code> and <code>t.ham_callsign</code> in the <code>?json</code> tracker payload. In <code>index.php</code>, the icon is selected as: <code>t.mobile &amp;&amp; t.ham_callsign ? 'triangle' : t.mobile ? 'square' : trackerStyle.icon</code>. The sidebar dot uses <code>border-radius: 3px</code> for squares, a CSS clip-path for triangles, and <code>50%</code> for circles. In the native Flutter app, each marker also shows the <strong>tracker ID</strong> as a text label directly next to the dot on the map.</p>
+<p><strong>Hybrid tracker details:</strong> A hybrid participant runs the Flutter app <em>and</em> transmits via ham radio (a separate physical device). Both signals reach APRS-IS independently. The system displays a single map entry for the participant: the <code>?json</code> endpoint merges the two data sources, preferring the more-recently-updated position. Breadcrumb history is drawn from both the injection callsign and the ham callsign combined. In the admin participant list, a hybrid tracker occupies two rows — one for the mobile/app row (injection callsign MARSQQ-NN, non-editable) and one for the radio row (the ham callsign, editable). The triangle icon appears in the sidebar and on the map; the ham callsign is shown in the sidebar entry alongside the participant's name.</p>
 <p><strong>Tracker clicks (desktop — three-click cycle):</strong>
 1. Blink tracker + show beacon history (up to 10 positions as dots + dashed polyline with directional arrows; trail auto-refreshes as tracker moves)
 2. Zoom to tracker's last position (zoom 15)

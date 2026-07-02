@@ -2,7 +2,7 @@
 
 **Author:** Doug Kaye (K6DRK) · **Copyright:** 2026 Doug Kaye. All Rights Reserved.
 
-**Version:** Server & Displays (v1.16.3); Mobile App (v1.17.2); iGates (v5.0)
+**Version:** Server & Displays (v1.16.3); Mobile App (v1.18.1); iGates (v5.0)
 
 ---
 
@@ -320,7 +320,7 @@ For details on using the map, see [USERGUIDE.MD](https://marsaprs.org/userguide.
 
 ---
 
-## Mobile Apps (v1.17.2)
+## Mobile Apps (v1.18.1)
 
 Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.
 

@@ -1,5 +1,5 @@
 <h1 id="aprs-tracker-map-user-guide">APRS Tracker Map — User Guide</h1>
-<p><strong>Version 1.17.2 · June 29, 2026</strong></p>
+<p><strong>Version 1.18.1 · July 1, 2026</strong></p>
 <hr />
 <p>This document is a guide for users of the MARS APRS system. For technical details on the architecture and software see the <a href="https://marsaprs.org/readme.html?back=/userguide.html">README</a> file.</p>
 <h2 id="contents">Contents</h2>
@@ -210,6 +210,7 @@ A user with admin privileges can switch to a different default event, which all 
 <ol>
 <li>Tap <strong>Share Location</strong> in the drawer footer.</li>
 <li>Enter your first name (pre-filled if you have shared before) and the event PIN. Both are shown as plain text.</li>
+<li><em>Optional — Ham Radio Callsign:</em> If you are also transmitting via an APRS-capable ham radio, tap <strong>Ham Radio Callsign (optional)</strong> to expand the field and enter your base callsign (e.g., <code>W6SG</code>) and SSID (e.g., <code>4</code>). When set, you become a <strong>hybrid tracker</strong> — your position data comes from both the app and your radio, and your marker on the map is shown as a triangle. Leave this collapsed if you are using the app only.</li>
 <li>Tap an <strong>activity</strong> button — this immediately starts sharing and closes the dialog:
 <ul>
 <li><strong>Walk / Run</strong> — transmits every 60 seconds.</li>
@@ -354,7 +355,29 @@ time since its last beacon was received.</p>
 </tr>
 </tbody>
 </table>
-<p><strong>Marker shapes:</strong> Regular trackers use the shape configured by the administrator (circle, square, diamond, etc.). Mobile participants sharing their location via the <strong>Share Location</strong> feature appear as a <strong>rounded square</strong> (both on the map and in the sidebar) to distinguish them from fixed APRS trackers.</p>
+<p><strong>Marker shapes:</strong> The shape of a tracker marker tells you how that participant's position is being reported.</p>
+<table>
+<thead>
+<tr>
+<th>Shape</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Circle</strong> (or configured shape)</td>
+<td><strong>Radio tracker</strong> — position reported by an APRS radio transmitter received by iGates. The administrator configures the shape (circle, square, diamond, etc.) for all radio trackers.</td>
+</tr>
+<tr>
+<td><strong>Rounded square</strong></td>
+<td><strong>Mobile tracker</strong> — participant sharing via the APRS app (iPhone or Android) with no ham radio. GPS position is sent over the internet to the APRS network.</td>
+</tr>
+<tr>
+<td><strong>Triangle</strong></td>
+<td><strong>Hybrid tracker</strong> — participant using <em>both</em> the app and a licensed ham radio transmitter simultaneously. The map shows a single entry using whichever position source is more recent. The participant's ham callsign is shown alongside their name in the sidebar.</td>
+</tr>
+</tbody>
+</table>
 <p>When a tracker has not been heard for more than 5 minutes its sidebar entry shows <strong>stale</strong> in red instead of an elapsed time. Hovering over the marker on the map shows the actual elapsed time (e.g., "&gt;2h 15m ago").</p>
 <p>The tracker's marker on the map and sidebar entry both update every 5 seconds.</p>
 <h4 id="clicking-a-tracker-l">Clicking a tracker (L)</h4>
@@ -806,7 +829,9 @@ recognized, as are N/S/E/W direction letters.</p>
 </tr>
 </tbody>
 </table>
-<p>Below the settings is the <strong>active participant list</strong>, which refreshes automatically. Each row shows the participant's name, assigned callsign, and the time of their last position update. Three actions are available per row:</p>
+<p>Below the settings is the <strong>active participant list</strong>, which refreshes automatically. Each row shows the participant's name, assigned callsign, and the time of their last position update.</p>
+<p><strong>Hybrid participants</strong> — participants who joined with a ham radio callsign — occupy <em>two rows</em> in this list: a <strong>mobile row</strong> (showing the app injection callsign, e.g., MARSQQ-01) and a <strong>radio row</strong> (showing the ham callsign, e.g., W6SG-4). On the map and in the public sidebar they appear as a single triangle-marker entry. The radio row's beacon interval (Δ) and last-heard time reflect the ham radio signal; the mobile row reflects the app beacons.</p>
+<p>Three actions are available per row:</p>
 <table>
 <thead>
 <tr>
