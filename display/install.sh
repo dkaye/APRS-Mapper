@@ -57,6 +57,12 @@ rsync -a "$TMP/home/"     /home/pi/
 sudo rsync -a "$TMP/systemd/" /etc/systemd/system/
 ok "Display files applied"
 
+# ── Journald volatile storage (reduces SD card writes) ────────────────────────
+sudo mkdir -p /etc/systemd/journald.conf.d
+sudo cp "$TMP/etc/systemd/journald.conf.d/volatile.conf" /etc/systemd/journald.conf.d/volatile.conf
+sudo systemctl restart systemd-journald
+ok "Journald configured for volatile (RAM) storage"
+
 # ── Deploy daemon scripts to /usr/local/bin ───────────────────────────────────
 msg "Installing daemon scripts to /usr/local/bin"
 for script in aprs-monitor.sh wifi-watchdog.sh wifi-restored.sh; do
