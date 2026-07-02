@@ -755,10 +755,13 @@ if (isset($_GET['mobile'])) {
 		});
 		if ($blocked) { http_response_code(403); echo json_encode(['error' => 'Blocked']); exit; }
 		if (!$found)  { http_response_code(404); echo json_encode(['error' => 'Token not found']); exit; }
-		if ($shouldInject && $foundHamCallsign === null) {
-			// Ham callsigns are not injected — the radio handles APRS-IS via iGates.
+		if ($shouldInject) {
 			$root = strtoupper(substr(preg_replace('/[^A-Za-z0-9]/', '', $mobileCfg['root'] ?? ''), 0, 6));
 			if ($root !== '' && $foundCallsign) injectAprsPacket($foundCallsign, $lat, $lon, $root);
+			// For hybrid trackers also inject under the ham callsign so aprs.fi and other
+			// apps can track either callsign. aprsDaemon deduplicates breadcrumbs by
+			// MIN_MOVE_METRES, and the web UI merges+deduplicates both history streams.
+			if ($foundHamCallsign) injectAprsPacket($foundHamCallsign, $lat, $lon, $foundHamCallsign);
 		}
 		$resp = ['ok' => true, 'messages' => $pendingMsgs];
 		if ($pendingMode !== '') $resp['set_mode'] = $pendingMode;
