@@ -278,6 +278,42 @@ function writeTrackerHistoryFile() {
 	fclose($fh);
 }
 
+// Write breadcrumbs for mobile trackers directly from mobile_trackers.json.
+// Mobile callsigns are excluded from the APRS-IS filter (we inject them ourselves),
+// so this is the sole source of mobile position history in tracker_history.yaml.
+// Called after readTrackerHistoryFile() at startup and whenever mobile_trackers.json changes.
+function syncMobilePositionHistory() {
+	global $trackerHistory, $trackers, $mobileTrackersFile;
+	$fh = @fopen($mobileTrackersFile, 'r');
+	if (!$fh) return;
+	flock($fh, LOCK_SH); $c = stream_get_contents($fh); flock($fh, LOCK_UN); fclose($fh);
+	$changed = false;
+	foreach (json_decode($c, true) ?: [] as $t) {
+		$cs  = $t['callsign'] ?? null;
+		$lat = $t['aprs_lat'] ?? null;
+		$lon = $t['aprs_lon'] ?? null;
+		$ts  = $t['aprs_ts']  ?? 0;
+		if (!$cs || $lat === null || !$ts) continue;
+		if (!empty($t['blocked'])) continue;
+		if (!isset($trackerHistory[$cs])) $trackerHistory[$cs] = [];
+		$lastCrumb = $trackerHistory[$cs][0] ?? null;
+		if ($lastCrumb !== null && $lastCrumb['ts'] >= $ts) continue;  // already recorded
+		$moved  = ($lastCrumb === null) || haversineMeters($lastCrumb['lat'], $lastCrumb['lon'], $lat, $lon) >= MIN_MOVE_METRES;
+		$useLat = $moved ? $lat : $lastCrumb['lat'];
+		$useLon = $moved ? $lon : $lastCrumb['lon'];
+		if ($moved) {
+			foreach ($trackers as &$tr) {
+				if ($tr['callsign'] === $cs) { $tr['lat'] = $lat; $tr['lon'] = $lon; $tr['lastUpdate'] = $ts; break; }
+			}
+			unset($tr);
+		}
+		array_unshift($trackerHistory[$cs], ['lat' => $useLat, 'lon' => $useLon, 'path' => 'TCPIP*', 'ts' => $ts]);
+		if (count($trackerHistory[$cs]) > 10) array_pop($trackerHistory[$cs]);
+		$changed = true;
+	}
+	if ($changed) writeTrackerHistoryFile();
+}
+
 // Close any open socket, rebuild the filter command from current $trackers, and reconnect
 function connectToAprsServer() {
 	global $socket,$trackers,$aprsLoginCommand,$aprsServer,$aprsPort,$mobileRoot,$mobileEnabled;
@@ -286,8 +322,11 @@ function connectToAprsServer() {
 		$socket=null;
 	}
 	$cmd=$aprsLoginCommand;
-	foreach ($trackers as $tracker) $cmd .= "/" . $tracker["callsign"];
-	if ($mobileEnabled && $mobileRoot !== '') $cmd .= "/" . $mobileRoot;
+	foreach ($trackers as $tracker) {
+		if (!empty($tracker['mobile'])) continue;  // mobile history comes from syncMobilePositionHistory()
+		$cmd .= "/" . $tracker["callsign"];
+	}
+	// mobileRoot prefix omitted — mobile tracker positions come directly from mobile_trackers.json
 	$cmd .= "\r\n";
 	debug("Command=$cmd");
 	$socket=socket_create(AF_INET,SOCK_STREAM,SOL_TCP);
@@ -382,18 +421,24 @@ function loadMobileSessions() {
 	if ($fh) { flock($fh, LOCK_SH); $c = stream_get_contents($fh); flock($fh, LOCK_UN); fclose($fh); $data = json_decode($c, true) ?: []; }
 	$now = time();
 	$newSessions = [];
+	$hamSessions = [];  // ham_callsign → {id, name} for hybrid trackers
 	foreach ($data as $t) {
 		if (!empty($t['blocked'])) continue;			// blocked: ignore in daemon, ?json filters display
 		if (($now - ($t['lastUpdate'] ?? 0)) > 86400) continue;	// expired
 		$cs = $t['callsign'] ?? null;
 		if (!$cs) continue;
 		$newSessions[$cs] = ['id' => $t['id'], 'name' => $t['name']];
+		// Collect ham callsigns so they get their own APRS-IS filter entry and tracker slot.
+		$ham = $t['ham_callsign'] ?? null;
+		if ($ham) $hamSessions[$ham] = ['id' => $t['id'], 'name' => $t['name']];
 	}
-	// Remove $trackers entries for sessions that are gone or blocked
-	$trackers = array_values(array_filter($trackers, function($t) use ($newSessions) {
-		return empty($t['mobile']) || isset($newSessions[$t['callsign']]);
+	// Remove $trackers entries for mobile/ham sessions that are gone or blocked
+	$trackers = array_values(array_filter($trackers, function($t) use ($newSessions, $hamSessions) {
+		if (!empty($t['mobile'])) return isset($newSessions[$t['callsign']]);
+		if (!empty($t['ham']))    return isset($hamSessions[$t['callsign']]);
+		return true;
 	}));
-	// Pre-add new sessions so they appear in trackers.json before first APRS beacon.
+	// Pre-add new mobile sessions so they appear in trackers.json before first APRS beacon.
 	// Also update name/id and clear stale data when a slot is reassigned to a new person.
 	foreach ($newSessions as $cs => $ms) {
 		$idx = null;
@@ -407,6 +452,21 @@ function loadMobileSessions() {
 			unset($trackerHistory[$cs]);
 		} else {
 			// Name or id changed (admin rename) — update display fields, preserve live position.
+			$trackers[$idx]['name'] = $ms['name'];
+			$trackers[$idx]['id']   = $ms['id'];
+		}
+	}
+	// Pre-add ham callsigns so the APRS-IS filter includes them and their beacons are tracked.
+	foreach ($hamSessions as $cs => $ms) {
+		$idx = null;
+		foreach ($trackers as $i => $t) {
+			if ($t['callsign'] === $cs) { $idx = $i; break; }
+		}
+		if ($idx === null) {
+			$trackers[] = ['callsign' => $cs, 'id' => $ms['id'], 'name' => $ms['name'],
+			               'lastUpdate' => 0, 'lat' => null, 'lon' => null, 'path' => '', 'ham' => true];
+			unset($trackerHistory[$cs]);
+		} else {
 			$trackers[$idx]['name'] = $ms['name'];
 			$trackers[$idx]['id']   = $ms['id'];
 		}
@@ -491,6 +551,7 @@ function writeNewTrackerstatusFile($filename) {
 			"path"=>$tracker["path"] ?? ''
 		);
 		if (!empty($tracker["mobile"])) $entry["mobile"] = true;
+		if (!empty($tracker["ham"]))    $entry["ham"]    = true;
 		$output[]=$entry;
 	}
 	$fh = fopen($filename, 'w');
@@ -513,6 +574,7 @@ readTrackerstatusFile($trackerStatusFilename);		//seed lastUpdate history from e
 resolveHistoryPath();
 loadMobileSessions();		// must run before readTrackerHistoryFile so startup unset() calls are harmless
 readTrackerHistoryFile();
+syncMobilePositionHistory();	// seed breadcrumbs from current mobile positions (history now loaded)
 connectToAprsServer();
 
 $prevCallsigns=array_column($trackers,'callsign');
@@ -541,6 +603,7 @@ while (TRUE) {
 		readTrackerHistoryFile();
 	}
 	if (loadMobileSessions()) {							//reload when mobile_trackers.json changes
+		syncMobilePositionHistory();					//write breadcrumbs for any position changes
 		writeNewTrackerstatusFile($trackerStatusFilename);	//push mobile session changes to browser immediately
 		// Reconnect if the callsign set changed (e.g. new ham callsign added) to update the APRS-IS filter.
 		$currCallsigns = array_column($trackers, 'callsign');
@@ -607,7 +670,11 @@ while (TRUE) {
 						$trackers[$foundKey]['path']       = $aprsPath;
 						$trackers[$foundKey]['name']       = $ms['name'];
 					}
-					if ($lat !== null) {
+					// Only write breadcrumb here when $foundKey was null (tracker wasn't in
+					// $trackers yet so the general loop above didn't handle it). When
+					// $foundKey !== null the general loop already wrote the crumb, and writing
+					// again produces duplicate history entries.
+					if ($foundKey === null && $lat !== null) {
 						if (!isset($trackerHistory[$callsign])) $trackerHistory[$callsign] = [];
 						$lastCrumb = $trackerHistory[$callsign][0] ?? null;
 						$moved = ($lastCrumb === null) || haversineMeters($lastCrumb['lat'], $lastCrumb['lon'], $lat, $lon) >= MIN_MOVE_METRES;
