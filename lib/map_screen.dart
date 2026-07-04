@@ -2,11 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
 import 'dart:typed_data';
-import 'package:audio_session/audio_session.dart';
+import 'package:just_audio/just_audio.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart'
     show FlutterForegroundTask;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:just_audio/just_audio.dart';
 import 'dart:math' as math;
 import 'package:flutter/gestures.dart' show PointerPanZoomUpdateEvent;
 import 'package:flutter/material.dart';
@@ -34,7 +33,6 @@ import 'tracker_data.dart';
 import 'tracker_layer.dart';
 import 'widgets/mode_indicator.dart';
 import 'widgets/offline_banner.dart';
-import 'widgets/permission_denied_view.dart';
 
 enum _LocationState { notRequested, whileInUse, always, denied, permanentlyDenied }
 
@@ -116,16 +114,49 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _appLifecycleState = state;
-    if (state == AppLifecycleState.resumed && _pendingMessages.isNotEmpty) {
-      final queued = List<InboundMessage>.of(_pendingMessages);
-      _pendingMessages.clear();
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        for (final msg in queued) {
-          if (!mounted) return;
-          await _showInboundDialog(msg);
-        }
-      });
+    if (state == AppLifecycleState.resumed) {
+      if (_pendingMessages.isNotEmpty) {
+        final queued = List<InboundMessage>.of(_pendingMessages);
+        _pendingMessages.clear();
+        WidgetsBinding.instance.addPostFrameCallback((_) async {
+          for (final msg in queued) {
+            if (!mounted) return;
+            await _showInboundDialog(msg);
+          }
+        });
+      }
+      // Re-check location permission — user may have changed it in Settings.
+      if (_locationState == _LocationState.permanentlyDenied ||
+          _locationState == _LocationState.denied ||
+          _locationState == _LocationState.notRequested) {
+        _recheckLocationPermission();
+      }
     }
+  }
+
+  // Called on app resume to pick up permission changes made in Settings.
+  Future<void> _recheckLocationPermission() async {
+    try {
+      final permission = await Geolocator.checkPermission();
+      if (!mounted) return;
+      if (permission == LocationPermission.always) {
+        if (_locationState == _LocationState.always) return;
+        setState(() => _locationState = _LocationState.always);
+        unawaited(_bgLocation.startTracking());
+        _startPositionStream();
+        unawaited(_maybeResumeSharing());
+      } else if (permission == LocationPermission.whileInUse) {
+        if (_locationState == _LocationState.whileInUse) return;
+        setState(() => _locationState = _LocationState.whileInUse);
+        unawaited(_bgLocation.startTracking());
+        _startPositionStream();
+        if (Platform.isAndroid) unawaited(_maybeResumeSharing());
+      } else if (permission == LocationPermission.deniedForever) {
+        setState(() => _locationState = _LocationState.permanentlyDenied);
+      } else {
+        setState(() => _locationState = _LocationState.notRequested);
+      }
+    } catch (_) {}
   }
 
   Future<void> _initNotifications() async {
@@ -361,20 +392,21 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
               const Divider(height: 1, thickness: 1, color: Color(0xFFBDBDBD), indent: 16, endIndent: 16),
             ],
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-              child: TextField(
-                controller: controller,
-                maxLength: 280,
-                maxLines: 3,
-                decoration: const InputDecoration(hintText: 'Type your message…', border: OutlineInputBorder()),
-                autofocus: true,
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(0, 0, 8, 8),
-              child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-                TextButton(
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 12),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                Expanded(
+                  child: TextField(
+                    controller: controller,
+                    maxLength: 280,
+                    maxLines: 5,
+                    minLines: 1,
+                    decoration: const InputDecoration(hintText: 'Type your message…', border: OutlineInputBorder()),
+                    autofocus: true,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.send),
+                  color: const Color(0xFF1565C0),
                   onPressed: () async {
                     final text = controller.text.trim();
                     if (text.isEmpty) return;
@@ -389,7 +421,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                       duration: Duration(seconds: 3),
                     ));
                   },
-                  child: const Text('Send'),
                 ),
               ]),
             ),
@@ -427,45 +458,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     );
   }
 
-  // Configures and activates the audio session while in the foreground so iOS
-  // allows audio playback to continue after the app is backgrounded.
-  Future<void> _primeAudioSession() async {
-    if (!Platform.isIOS) return;
-    try {
-      final session = await AudioSession.instance;
-      await session.configure(const AudioSessionConfiguration(
-        avAudioSessionCategory: AVAudioSessionCategory.playback,
-        avAudioSessionMode: AVAudioSessionMode.defaultMode,
-        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.duckOthers,
-      ));
-      await session.setActive(true);
-    } catch (_) {}
-  }
-
   Future<void> _handleInboundMessage(InboundMessage msg) async {
     setState(() {
       _msgLog.add((label: msg.fromLabel, text: msg.text, isMe: false, time: DateTime.fromMillisecondsSinceEpoch(msg.ts * 1000)));
       if (_msgLog.length > 30) _msgLog.removeAt(0);
     });
-    try {
-      final session = await AudioSession.instance;
-      await session.configure(const AudioSessionConfiguration(
-        androidAudioAttributes: AndroidAudioAttributes(
-          contentType: AndroidAudioContentType.sonification,
-          usage: AndroidAudioUsage.alarm,
-        ),
-        avAudioSessionCategory: AVAudioSessionCategory.playback,
-        avAudioSessionMode: AVAudioSessionMode.defaultMode,
-        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.duckOthers,
-      ));
-      await session.setActive(true);
-      await _audioPlayer.setAudioSource(ConcatenatingAudioSource(children: [
-        AudioSource.asset('assets/sounds/message.wav'),
-        AudioSource.asset('assets/sounds/message.wav'),
-        AudioSource.asset('assets/sounds/message.wav'),
-      ]));
-      unawaited(_audioPlayer.play());
-    } catch (_) {}
     if (_appLifecycleState != AppLifecycleState.resumed) {
       _pendingMessages.add(msg);
       if (Platform.isAndroid) {
@@ -483,7 +480,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
               importance: Importance.max,
               priority: Priority.max,
               fullScreenIntent: true,
-              playSound: false,
+              playSound: true,
               enableVibration: true,
               vibrationPattern: Int64List.fromList([0, 400, 200, 400, 200, 400]),
               autoCancel: true,
@@ -498,7 +495,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           notificationDetails: const NotificationDetails(
             iOS: DarwinNotificationDetails(
               presentAlert: true,
-              presentSound: false,
+              presentSound: true,
               presentBadge: true,
               interruptionLevel: InterruptionLevel.timeSensitive,
             ),
@@ -507,6 +504,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       }
       return;
     }
+    try {
+      await _audioPlayer.setAudioSource(AudioSource.asset('assets/sounds/message.wav'));
+      unawaited(_audioPlayer.play());
+    } catch (_) {}
     await _showInboundDialog(msg);
   }
 
@@ -630,8 +631,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _poller.stop();
     _positionSub?.cancel();
     _blinkTimer?.cancel();
-    _bgLocation.dispose();
     _audioPlayer.dispose();
+    _bgLocation.dispose();
     _mapController.dispose();
     super.dispose();
   }
@@ -858,6 +859,28 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     // already established the sharing context. Step 3 is only needed when the
     // user previously granted location for the blue dot ("stays on device") and
     // now we need to disclose that sharing sends it to the server.
+    // Can't share if location access is permanently disabled.
+    if (_locationState == _LocationState.permanentlyDenied) {
+      if (!mounted) return false;
+      showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Location Access Disabled'),
+          content: const Text(
+            'Enable Location Services for APRS Map in Settings to share your location.',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            TextButton(
+              onPressed: () { Navigator.pop(ctx); openAppSettings(); },
+              child: const Text('Open Settings'),
+            ),
+          ],
+        ),
+      );
+      return false;
+    }
+
     var justGrantedPermission = false;
     if (_locationState == _LocationState.notRequested) {
       final ok = await _showLocationPreAlert(
@@ -906,6 +929,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     // and leaves allowsBackgroundLocationUpdates = false (no blue arrow, no
     // background location). startTracking() owns the single GPS stream and
     // feeds all position events through positionStream.
+    _positionSub?.cancel();
     final posStream = _bgLocation.positionStream;
     _positionSub = posStream.listen((pos) {
       _lastUserLatLng = LatLng(pos.latitude, pos.longitude);
@@ -944,7 +968,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     if (!mounted) return;
     if (resumed) {
       setState(() { _isSharing = true; _sharingActivityMode = _bgLocation.activityMode; });
-      unawaited(_primeAudioSession());
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Location sharing resumed'),
         duration: Duration(seconds: 3),
@@ -1046,6 +1069,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
               setDialogState(() => errorText = 'Please enter the event PIN.');
               return;
             }
+            if (activityMode < 0) {
+              setDialogState(() => errorText = 'Please select an activity.');
+              return;
+            }
             setDialogState(() { loading = true; errorText = null; });
             await _ensureBackgroundPermissions();
             final intervals = _beaconIntervalsSec.map((s) => Duration(seconds: s)).toList();
@@ -1078,7 +1105,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             if (joinResult == JoinResult.success) {
               Navigator.pop(ctx);
               if (mounted) setState(() { _isSharing = true; _sharingActivityMode = activityMode; });
-              unawaited(_primeAudioSession());
               await _showSharingStartedDialog(_bgLocation.callsign ?? '');
             } else if (joinResult == JoinResult.wrongPin) {
               setDialogState(() {
@@ -1304,6 +1330,27 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   // ── Map controls ──────────────────────────────────────────────────────────
 
   Future<void> _handleRecenter() async {
+    if (_locationState == _LocationState.permanentlyDenied ||
+        _locationState == _LocationState.denied) {
+      if (!mounted) return;
+      showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Location Access Disabled'),
+          content: const Text(
+            'Enable Location Services for APRS Map in Settings to see your position on the map.',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            TextButton(
+              onPressed: () { Navigator.pop(ctx); openAppSettings(); },
+              child: const Text('Open Settings'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
     if (_locationState == _LocationState.notRequested) {
       final ok = await _showLocationPreAlert(
         title: 'Show Your Location on the Map',
@@ -1561,17 +1608,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _refreshTiles() async {
-    final fresh = await ConfigService().load();
-    if (!mounted) return;
-    setState(() {
-      _config = fresh;
-      _initCourseVisibility();
-    });
-    Navigator.pushReplacement(context,
-        MaterialPageRoute(builder: (_) => DownloadScreen(config: fresh, forceRefresh: true)));
-  }
-
   void _handleTrackpadZoom(PointerPanZoomUpdateEvent event) {
     final camera = _mapController.camera;
     final newZoom = (camera.zoom - event.panDelta.dy * 0.01)
@@ -1719,7 +1755,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         onShareToggle: _toggleSharing,
         onResetMap: _handleReset,
         onSaveMap: _handleSaveMap,
-        onRefreshTiles: _refreshTiles,
         onSendMessage: _showSendMessageDialog,
         onActivityModeChange: _isSharing ? _changeActivityMode : null,
         onStartSharingWithMode: _isSharing ? null : _startSharingWithMode,
@@ -1729,10 +1764,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
   Widget _buildBody() {
-    if (_locationState == _LocationState.permanentlyDenied) {
-      return const PermissionDeniedView(permanent: true);
-    }
-
     final showTrackers = _sectionVisible['trackers'] ?? true;
     final showAid = _sectionVisible['aidstations'] ?? true;
     final showIgates = _sectionVisible['igates'] ?? true;
@@ -1768,7 +1799,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                   tileProvider: _tileProvider,
                 ),
                 CourseLayer(courses: _visibleCourses),
-                if (_trailPoints.length > 1 && !(_blinkingIds.contains(_selectedId) && !_blinkOn))
+                if (_trailPoints.length > 1)
                   PolylineLayer(polylines: [
                     Polyline(
                       points: _trailPoints,
@@ -1777,7 +1808,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                       pattern: StrokePattern.dashed(segments: [4, 7]),
                     ),
                   ]),
-                if (_trailEntries.isNotEmpty && !(_blinkingIds.contains(_selectedId) && !_blinkOn))
+                if (_trailEntries.isNotEmpty)
                   MarkerLayer(markers: _trailEntries.map((e) {
                     final pt = LatLng((e['lat'] as num).toDouble(), (e['lon'] as num).toDouble());
                     return Marker(
@@ -1804,7 +1835,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                       ),
                     );
                   }).toList()),
-                if (_trailPoints.length > 1 && !(_blinkingIds.contains(_selectedId) && !_blinkOn))
+                if (_trailPoints.length > 1)
                   MarkerLayer(markers: [
                     for (var i = 0; i < _trailPoints.length - 1; i++)
                       Marker(

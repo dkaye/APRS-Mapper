@@ -38,7 +38,9 @@ class TrackerLayer extends StatelessWidget {
         final opacity = blinking ? (blinkOn ? 1.0 : 0.15) : 1.0;
 
         final dot = _TrackerMarker(color: color, mobile: t.mobile);
-        final labelText = selected && t.name.isNotEmpty ? t.name : t.id;
+        final labelText = (blinkingIds.contains(t.id) && t.name.isNotEmpty)
+            ? '${t.id} ${t.name}'
+            : t.id;
 
         final labelWidget = selected
             ? Container(

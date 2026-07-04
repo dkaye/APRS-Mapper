@@ -134,7 +134,6 @@ class HelpScreen extends StatelessWidget {
             _tip('The app will continue to operate even if you have no WiFi or cellular connection to the internet.'),
             _indent('Your location will not be seen by others.'),
             _indent('You will not see other\'s locations.'),
-            _indent('You cannot reload the map tiles.'),
           ]),
 
           const SizedBox(height: 8),

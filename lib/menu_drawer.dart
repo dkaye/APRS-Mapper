@@ -29,7 +29,6 @@ class MenuDrawer extends StatefulWidget {
   final Future<void> Function()? onShareToggle;
   final VoidCallback? onResetMap;
   final Future<void> Function()? onSaveMap;
-  final Future<void> Function()? onRefreshTiles;
   final String? sharingCallsign;
   final String? sharingName;
   final int sharingActivityMode;
@@ -60,7 +59,6 @@ class MenuDrawer extends StatefulWidget {
     this.onShareToggle,
     this.onResetMap,
     this.onSaveMap,
-    this.onRefreshTiles,
     this.sharingCallsign,
     this.sharingName,
     this.sharingActivityMode = -1,
@@ -85,7 +83,7 @@ class _MenuDrawerState extends State<MenuDrawer> {
   void initState() {
     super.initState();
     PackageInfo.fromPlatform().then((info) {
-      if (mounted) setState(() => _appVersion = '${info.version}+${info.buildNumber}');
+      if (mounted) setState(() => _appVersion = info.version);
     });
   }
 
@@ -256,10 +254,6 @@ class _MenuDrawerState extends State<MenuDrawer> {
                     Navigator.pop(context);
                     await widget.onSaveMap?.call();
                   }),
-                  _footerBtn('Reload Tiles', Icons.download_for_offline, () async {
-                    Navigator.pop(context);
-                    await widget.onRefreshTiles?.call();
-                  }),
                   _footerBtn('Help', Icons.help_outline, () {
                     showModalBottomSheet<void>(
                       context: context,
@@ -337,10 +331,19 @@ class _MenuDrawerState extends State<MenuDrawer> {
                             SizedBox(
                               width: double.infinity,
                               child: OutlinedButton(
-                                onPressed: () => launchUrl(
-                                  Uri.parse('${MapConfig.serverBaseUrl}/tickets/'),
-                                  mode: LaunchMode.externalApplication,
-                                ),
+                                onPressed: () {
+                                  final params = <String, String>{
+                                    'platform': Platform.isIOS ? 'iOS' : 'Android',
+                                    if (_appVersion.isNotEmpty) 'version': _appVersion,
+                                    if ((widget.sharingName ?? widget.sharingCallsign) != null)
+                                      'name': widget.sharingName ?? widget.sharingCallsign!,
+                                  };
+                                  launchUrl(
+                                    Uri.parse('${MapConfig.serverBaseUrl}/tickets/')
+                                        .replace(queryParameters: params),
+                                    mode: LaunchMode.externalApplication,
+                                  );
+                                },
                                 style: OutlinedButton.styleFrom(
                                   padding: const EdgeInsets.symmetric(vertical: 10),
                                   textStyle: const TextStyle(fontSize: 13),

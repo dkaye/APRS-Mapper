@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io' show Platform;
 import 'dart:math';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -34,18 +35,26 @@ class MobileSession {
   bool get active => token != null;
 
   static const _deviceIdKey = 'aprs_device_id';
+  static const _keychain = FlutterSecureStorage(
+    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
+  );
 
-  /// Returns a stable random ID for this installation, creating one on first call.
+  /// Returns a stable device ID that survives app reinstalls (stored in Keychain on iOS).
+  /// Migrates from SharedPreferences if a Keychain value isn't yet present.
   static Future<String> getDeviceId() async {
+    // Keychain survives reinstalls — check it first.
+    var id = await _keychain.read(key: _deviceIdKey);
+    if (id != null) return id;
+    // Migrate existing SharedPreferences ID (same-install upgrade path).
     final prefs = await SharedPreferences.getInstance();
-    var id = prefs.getString(_deviceIdKey);
+    id = prefs.getString(_deviceIdKey);
     if (id == null) {
       final rng = Random.secure();
       id = List.generate(16, (_) => rng.nextInt(256))
           .map((b) => b.toRadixString(16).padLeft(2, '0'))
           .join();
-      await prefs.setString(_deviceIdKey, id);
     }
+    await _keychain.write(key: _deviceIdKey, value: id);
     return id;
   }
 

@@ -1,7 +1,7 @@
 name: aprs_map
 description: APRS event tracker map for Marin County — online and offline.
 publish_to: 'none'
-version: 1.18.1+0
+version: 1.18.4+4
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -23,10 +23,10 @@ dependencies:
   url_launcher: ^6.3.0
   flutter_foreground_task: ^9.0.0
   shared_preferences: ^2.3.0
+  flutter_secure_storage: ^9.0.0
   device_info_plus: ^12.4.0
-  just_audio: ^0.9.46
   flutter_local_notifications: ^22.0.1
-  audio_session: ^0.1.25
+  just_audio: ^0.9.46
 
 dev_dependencies:
   flutter_test:
