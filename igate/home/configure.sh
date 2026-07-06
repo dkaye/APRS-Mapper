@@ -13,6 +13,17 @@
 DIREWOLF_CONF="/home/pi/direwolf.conf"
 WEB_CONFIG="/var/www/html/config.php"
 
+# Ensure all interactive prompts read from the terminal even when stdin is a pipe
+exec < /dev/tty
+
+# ── Bootstrap: ensure current hostname is in /etc/hosts ──────────────────────
+# Pi Imager sets /etc/hostname but not /etc/hosts; sudo warns "unable to resolve host"
+_bh=$(hostname)
+if ! grep -qE "^\S+\s+${_bh}(\s|$)" /etc/hosts 2>/dev/null; then
+    echo "127.0.1.1 $_bh" | sudo tee -a /etc/hosts > /dev/null
+fi
+unset _bh
+
 # ── Bootstrap: ensure direwolf.conf has the expected template lines ───────────
 if ! grep -q "^MYCALL " "$DIREWOLF_CONF" 2>/dev/null; then
     echo "direwolf.conf is missing or empty — downloading template..."
@@ -395,11 +406,6 @@ if [[ "${CONFIRM,,}" == "n" ]]; then
     exit 0
 fi
 
-# ── Backup ────────────────────────────────────────────────────────────────────
-TS=$(date '+%Y%m%d-%H%M%S')
-cp "$DIREWOLF_CONF" "${DIREWOLF_CONF}.bak-$TS"
-sudo cp "$WEB_CONFIG" "${WEB_CONFIG}.bak-$TS"
-
 # ── Apply hostname ────────────────────────────────────────────────────────────
 OLD_HOSTNAME=$(hostname)
 if [[ "$HOSTNAME_NEW" != "$OLD_HOSTNAME" ]]; then
@@ -412,6 +418,11 @@ if [[ "$HOSTNAME_NEW" != "$OLD_HOSTNAME" ]]; then
     fi
     ok "Hostname changed: $OLD_HOSTNAME → $HOSTNAME_NEW"
 fi
+
+# ── Backup ────────────────────────────────────────────────────────────────────
+TS=$(date '+%Y%m%d-%H%M%S')
+cp "$DIREWOLF_CONF" "${DIREWOLF_CONF}.bak-$TS"
+sudo cp "$WEB_CONFIG" "${WEB_CONFIG}.bak-$TS"
 
 # ── Apply to direwolf.conf ────────────────────────────────────────────────────
 sed -i "s|^MYCALL .*|MYCALL $CALLSIGN|" "$DIREWOLF_CONF"
@@ -465,7 +476,7 @@ if ! command -v netbird &>/dev/null; then
         sudo systemctl start rpcbind.socket rpcbind.service avahi-daemon
         sudo systemctl enable --now systemd-timesyncd
         sudo timedatectl set-ntp true
-        sudo netbird up --enable-lazy-connection -k "$NETBIRD_KEY"
+        sudo netbird up -k "$NETBIRD_KEY"
         echo ""
         ok "NetBird enrolled and connected"
         netbird status | head -5
@@ -473,6 +484,10 @@ if ! command -v netbird &>/dev/null; then
         warn "NetBird skipped — run manually: sudo netbird up -k <setup-key>"
     fi
 fi
+
+# ── Disable unnecessary audio stack (not needed on headless iGate) ───────────
+systemctl --user stop wireplumber pipewire pipewire.socket 2>/dev/null
+systemctl --user disable wireplumber pipewire pipewire.socket 2>/dev/null
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""

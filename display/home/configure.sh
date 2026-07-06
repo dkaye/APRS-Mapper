@@ -99,7 +99,7 @@ if [ -n "${NETBIRD_KEY:-}" ]; then
     sudo systemctl start  rpcbind.socket rpcbind.service avahi-daemon
     sudo systemctl enable --now systemd-timesyncd
     sudo timedatectl set-ntp true
-    sudo netbird up --enable-lazy-connection -k "$NETBIRD_KEY"
+    sudo netbird up -k "$NETBIRD_KEY"
     echo ""
     ok "NetBird enrolled and connected"
     netbird status 2>/dev/null | head -5
