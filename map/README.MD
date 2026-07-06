@@ -2,7 +2,7 @@
 
 **Author:** Doug Kaye (K6DRK) · **Copyright:** 2026 Doug Kaye. All Rights Reserved.
 
-**Version:** Server & Displays (v1.16.3); Mobile App (v1.18.1); iGates (v5.0)
+**Version:** Server & Displays (v1.18.4); Mobile App (v1.18.4); iGates (v5.0)
 
 ---
 
@@ -12,11 +12,11 @@
 2. [System Architecture](#system-architecture)
 3. [NetBird VPN](#netbird-vpn)
 4. [iGates (v5.0)](#igates-v50)
-5. [APRS Server (v1.16.3)](#aprs-server-v1163)
+5. [APRS Server (v1.18.4)](#aprs-server-v1184)
    - [Cloudflare Tunnel](#cloudflare-tunnel)
-6. [Display Pis (v1.16.3)](#display-pis-v1163)
-7. [Mobile Apps (v1.16.3)](#mobile-apps-v1163)
-   - [Architecture](#app-architecture) · [Location Sharing Flow](#location-sharing-flow) · [Building & Distributing](#building-distributing) · [Background Location](#background-location)
+6. [Display Pis (v1.18.4)](#display-pis-v1184)
+7. [Mobile Apps (v1.18.4)](#mobile-apps-v1184)
+   - [Architecture](#app-architecture) · [Location Sharing Flow](#location-sharing-flow) · [Smart Track](#smart-track) · [Building & Distributing](#building-distributing) · [Background Location](#background-location)
 8. [User Interfaces](#user-interfaces)
 9. [Backup, Recovery and Updates](#backup-recovery-and-updates)
    - [Server Pi](#server-pi) · [Display Pis](#display-pis) · [iGates](#igates)
@@ -71,18 +71,18 @@ APRS Radio (144.39 MHz)
            ▼
 ┌──────────────────────────────────────┐     ┌──────────────────────────────┐
 │           APRS-IS Network            │◀────│  Mobile App  (iOS/Android)   │
-│         noam.aprs2.net:14580         │     │  Flutter v1.16.3               │
+│         noam.aprs2.net:14580         │     │  Flutter v1.18.4               │
 └────────────────┬─────────────────────┘     │  TCP 14580 (inject position) │
                  │ TCP 14580                 └──────────────┬───────────────┘
 ┌────────────────▼─────────────────────┐                    │ HTTPS (map + config + session)
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.16.3      │
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.18.4      │
 │  aprsDaemon.php → trackers.json      │◀───────────────────┘
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.16.3
+│  Display Pi  (×2)      │  Pi 4 · v1.18.4
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -187,7 +187,7 @@ Log: `/var/log/direwolf/watchdog.log`
 
 ---
 
-## APRS Server (v1.16.3)
+## APRS Server (v1.18.4)
 
 The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
 APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
@@ -273,7 +273,7 @@ The tunnel token is obtained from the **Cloudflare Zero Trust dashboard**:
 
 ---
 
-## Display Pis (v1.16.3)
+## Display Pis (v1.18.4)
 
 A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
 `marsaprs.org`. It is a read-only display device — no long-term local configuration or data storage.
@@ -320,7 +320,7 @@ For details on using the map, see [USERGUIDE.MD](https://marsaprs.org/userguide.
 
 ---
 
-## Mobile Apps (v1.18.1)
+## Mobile Apps (v1.18.4)
 
 Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.
 
@@ -379,8 +379,7 @@ Both iOS and Android use the same upload path: position data is POSTed to the MA
 User taps Share Location
   → _ensureBackgroundPermissions()     (Android: notification + battery opt;
                                         iOS: verify Always location permission)
-  → User selects activity: Walk/Run (60 s) · Cycle (30 s) · Drive (15 s) · Stationary (2 min)
-  → MobileSession.join()               POST ?mobile=join {name, pin, sharing_mode}
+  → MobileSession.join()               POST ?mobile=join {name, pin, sharing_mode: "unknown"}
       ← {token, callsign, passcode}    e.g. callsign=K6DRK-01
   → BackgroundLocationService.startTracking()
       → Geolocator.getPositionStream() (single stream; AppleSettings on iOS with
@@ -407,6 +406,46 @@ App restart while sharing was active:
   → Attempts token reuse via MobileSession.update(); if stale, re-joins silently
   → Sharing resumes with same callsign and activity mode; snackbar notifies user
 ```
+
+### Smart Track
+
+Smart Track is the automatic beacon-interval algorithm in the native app (iOS/Android), Apple Watch app, and web map. It monitors GPS speed and adjusts the upload frequency without any input from the user.
+
+**Unknown (?) mode — startup phase:**
+
+Every session begins in **unknown** mode (shown as **?** in the web sidebar). The app joins the server with `sharing_mode: "unknown"` and stays in this phase until Smart Track collects enough GPS readings to make a confident initial determination — typically within 90 seconds. When the mode is first set, the app waits 15 seconds before sending the first real-mode beacon so the sidebar briefly shows **?** before the actual activity icon appears.
+
+**Speed thresholds:**
+
+| Mode | Speed | Interval |
+|------|-------|----------|
+| Stationary | ≤ 1.0 m/s (2.2 mph) | 120 s |
+| Walk / Run | ≤ 4.5 m/s (10 mph) | 60 s |
+| Cycle | ≤ 11.0 m/s (25 mph) | 30 s |
+| Drive | > 11.0 m/s | 15 s |
+
+**Debounce — preventing false mode changes:**
+
+A mode switch only occurs after a run of consecutive GPS samples all agree on the new mode. The required run length:
+- Walk/Run/Cycle/Drive: 15 consecutive samples
+- Stationary: 20 consecutive samples, plus at least 5 minutes of wall-clock time since last movement
+
+A timer also fires every 30 seconds to catch the case where the device stops moving but GPS events stall. If no movement has been detected for 5 minutes (or 90 seconds during startup) the mode switches directly to stationary without waiting for GPS events.
+
+**Startup fast-window:**
+
+During the first 10 GPS readings of a new session, only 3 consecutive matching samples are needed to set the initial mode (instead of 15–20). This lets Smart Track make a confident initial guess within 30–60 seconds of starting rather than waiting several minutes. Once those 10 readings have been processed, the full debounce requirements apply.
+
+**GPS noise defense:**
+
+Two mechanisms prevent GPS jitter from causing false mode transitions:
+
+1. **Accuracy gate:** Any GPS reading with horizontal accuracy worse than 20 m is excluded when updating the last-movement timestamp. A brief poor-fix cannot reset the stationary timer.
+2. **Movement confirmation guard:** Three consecutive readings must all exceed the stationary threshold (> 1.0 m/s with accuracy ≤ 20 m) before the last-movement timestamp is updated. A single speed spike from GPS noise cannot prevent the stationary timer from eventually firing.
+
+**Implementation:**
+
+The algorithm runs identically in `lib/map_screen.dart` (Flutter iOS/Android), `Sources/BeaconService.swift` (Apple Watch), and `index.php` (web JS). Key functions: `_processSpeedSample` / `processSpeedSample` / `_autoDetectFromSpeed` for sample-based detection; `_checkStationaryByTime` / `checkStationaryByTime` for the timer-based fallback.
 
 ### Building & Distributing
 
@@ -451,6 +490,77 @@ storeFile=<absolute path to .jks or .p12>
 **`compileSdk` note:** `objectbox_flutter_libs` in `~/.pub-cache` may hardcode `compileSdkVersion 31`. Patch it to `36` to match `build.gradle.kts`.
 
 To distribute: share the APK via Google Drive or email. Testers tap the download link, open the file with **Package Installer**, and if Android warns about an unknown source, tap **More details** → **Install anyway**.
+
+#### Submitting to Google Play Store
+
+**One-time setup:**
+
+1. Create a Google Play Developer account at [play.google.com/console](https://play.google.com/console) ($25 one-time fee).
+2. Generate a signing keystore (only done once — never change it after first publish):
+   ```bash
+   keytool -genkey -v -keystore ~/aprs-map-release.jks \
+     -alias aprs-map -keyalg RSA -keysize 2048 -validity 10000 \
+     -dname "CN=Doug Kaye, OU=MARS, O=W6SG, L=Marin, ST=CA, C=US"
+   ```
+3. Create `android/key.properties` (gitignored — back up the passwords and `.jks` file securely):
+   ```
+   storePassword=<store-password>
+   keyPassword=<key-password>
+   keyAlias=aprs-map
+   storeFile=/Users/doug/aprs-map-release.jks
+   ```
+
+**Each release:**
+
+1. Bump `version` in `pubspec.yaml` (e.g. `1.18.1+0` → `1.19.0+0` — the build number after `+` must increase with each upload).
+2. Build a signed App Bundle (AAB):
+   ```bash
+   flutter build appbundle --release
+   ```
+   Output: `build/app/outputs/bundle/release/app-release.aab`
+3. In Play Console → **Your app** → **Testing → Internal testing** → **Create new release** → upload the `.aab`.
+4. After internal testing, promote the release through **Closed testing → Open testing → Production** using the **Promote release** button.
+5. Google typically reviews new production releases within 1–3 days.
+
+**Store listing assets required (one-time, update as needed):**
+- Short description (80 chars), full description (4000 chars)
+- At least 2 phone screenshots (minimum 320px on shortest side)
+- Feature graphic: 1024 × 500 px PNG or JPG
+- App icon: 512 × 512 px PNG (must match the launcher icon)
+- Content rating questionnaire (set category to **Utilities** or **Tools**)
+
+#### Submitting to Apple App Store Connect
+
+**One-time setup:**
+
+1. Enroll in the **Apple Developer Program** at [developer.apple.com](https://developer.apple.com) ($99/year).
+2. In App Store Connect ([appstoreconnect.apple.com](https://appstoreconnect.apple.com)) → **Apps** → **+** → **New App**:
+   - Platform: iOS
+   - Bundle ID: `org.w6sg.aprsmap` (must match `ios/Runner.xcodeproj`)
+   - SKU: `aprsmap` (any unique string)
+3. In Xcode → **Signing & Capabilities**: set Team to your Apple Developer account; let Xcode manage provisioning profiles automatically.
+
+**Each release:**
+
+1. Bump `version` in `pubspec.yaml` (build number after `+` must increase with each upload).
+2. Build the iOS app:
+   ```bash
+   flutter build ios --release --no-codesign
+   ```
+3. Open `ios/Runner.xcworkspace` in Xcode.
+4. **Product → Archive**. When complete, the Organizer opens automatically.
+5. Click **Distribute App → App Store Connect → Upload**.
+6. In App Store Connect → **Your app → TestFlight**: the build appears within minutes; full App Review takes 5–30 minutes before testers can install it.
+7. To submit for **App Store production review**:
+   - Go to **Your app → App Store → + Version**
+   - Fill in "What's New", select the build, submit for review.
+   - Apple review typically takes 1–3 days.
+
+**Store listing assets required (one-time, update as needed):**
+- App description, keywords, support URL, marketing URL
+- Screenshots for iPhone 6.9" display (required) and iPad 13" (required if supporting iPad)
+- App icon: 1024 × 1024 px PNG (no alpha channel)
+- Privacy policy URL (required for apps that collect location data)
 
 ### Background Location
 
@@ -1151,7 +1261,7 @@ mobile:
   messaging_password: zippy  # enables Messages button on web map; omit to disable messaging
 ```
 
-When `enabled` is true, any visitor on a mobile device sees a **Share Location** button in the drawer footer. Participants enter their name (pre-filled from localStorage on return visits) and the PIN (both shown as plain text), then tap an activity chip to start sharing immediately. The button changes to **Sharing** while active; tapping it opens a panel to switch activity mode or stop sharing. The server assigns a unique callsign (`<root>-NN`) and a session token. Position updates are injected directly into the APRS-IS network, so mobile participants appear on this map and on external APRS sites (aprs.fi, CalTopo) exactly like any other tracker. Session state is stored in `mobile_trackers.json`.
+When `enabled` is true, any visitor on a mobile device sees a **Share Location** button in the drawer footer. Participants enter their name (pre-filled from localStorage on return visits) and the PIN (both shown as plain text), then tap **Share Location** to start sharing in **unknown** (?) mode. **Smart Track** automatically determines the activity and adjusts the beacon interval based on GPS speed within ~90 seconds (see [Smart Track](#smart-track)). The button changes to **Sharing** while active; tapping it opens a panel to stop sharing. The server assigns a unique callsign (`<root>-NN`) and a session token. Position updates are injected directly into the APRS-IS network, so mobile participants appear on this map and on external APRS sites (aprs.fi, CalTopo) exactly like any other tracker. Session state is stored in `mobile_trackers.json`.
 
 ---
 

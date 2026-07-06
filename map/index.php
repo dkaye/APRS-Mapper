@@ -15,7 +15,7 @@
  *   ?config  Map/background/course/tracker config from config.yaml (ETag-cached)
  */
 
-define('WEB_VERSION', '1.18.1+0');
+define('WEB_VERSION', '1.18.4+4');
 
 $trackerStatusFilename = 'trackers.json';
 
@@ -51,8 +51,9 @@ if (isset($_GET['json'])) {
 	$fhm = @fopen($mobileFile, 'r');
 	if ($fhm) {
 		flock($fhm, LOCK_SH); $mc = stream_get_contents($fhm); flock($fhm, LOCK_UN); fclose($fhm);
+		$_mt = json_decode($mc, true) ?: [];
 		$now = time();
-		foreach (json_decode($mc, true) ?: [] as $t) {
+		foreach (isset($_mt['trackers']) ? $_mt['trackers'] : $_mt as $t) {
 			$cs = $t['callsign'] ?? null;
 			if (!$cs || !empty($t['blocked'])) continue;
 			$hasHam       = !empty($t['ham_callsign']);
@@ -60,7 +61,7 @@ if (isset($_GET['json'])) {
 			if (!$hasSession) continue;
 			$displayId = $t['display_id'] ?? $t['id'];
 			$activeMobile[$cs] = ['id' => $displayId, 'tracker_id' => $t['id'], 'name' => $t['name'],
-				'sharing_mode' => $t['sharing_mode'] ?? '', 'lastUpdate' => (int)($t['lastUpdate'] ?? 0),
+				'sharing_mode' => ($t['sharing_mode'] ?? '') ?: ($t['pending_mode'] ?? ''), 'lastUpdate' => (int)($t['lastUpdate'] ?? 0),
 				'lat' => $t['aprs_lat'] ?? null, 'lon' => $t['aprs_lon'] ?? null,
 				'ham_callsign' => $t['ham_callsign'] ?? null, 'has_session' => $hasSession,
 				'carrier' => $t['device_info']['carrier'] ?? null];
@@ -388,7 +389,7 @@ if (isset($_GET['messaging'])) {
 		$mobileFile = __DIR__ . '/mobile_trackers.json';
 		$mobileData = [];
 		$fh = fopen($mobileFile, 'r');
-		if ($fh) { flock($fh, LOCK_SH); $mobileData = json_decode(stream_get_contents($fh), true) ?: []; flock($fh, LOCK_UN); fclose($fh); }
+		if ($fh) { flock($fh, LOCK_SH); $_mtd = json_decode(stream_get_contents($fh), true) ?: []; $mobileData = isset($_mtd['trackers']) ? $_mtd['trackers'] : $_mtd; flock($fh, LOCK_UN); fclose($fh); }
 		$toLabel = $broadcast ? '*' : $to;
 		if (!$broadcast) { foreach ($mobileData as $t) { if (($t['callsign'] ?? '') === $to) { $toLabel = $t['name'] ?? $to; break; } } }
 		$msgId = null;
@@ -404,14 +405,16 @@ if (isset($_GET['messaging'])) {
 		$fh = fopen($mobileFile, 'c+');
 		if ($fh) {
 			flock($fh, LOCK_EX);
-			$data = json_decode(stream_get_contents($fh), true) ?: [];
+			$_mfraw = json_decode(stream_get_contents($fh), true) ?: [];
+			$_mfcounter = $_mfraw['counter'] ?? 0;
+			$data = isset($_mfraw['trackers']) ? $_mfraw['trackers'] : $_mfraw;
 			foreach ($data as &$t) {
 				if (empty($t['token'])) continue;
 				if ($broadcast || ($t['callsign'] ?? '') === $to) $t['pending_msgs'][] = $pendingEntry;
 			}
 			unset($t);
 			ftruncate($fh, 0); rewind($fh);
-			fwrite($fh, json_encode($data, JSON_PRETTY_PRINT) . "\n");
+			fwrite($fh, json_encode(['counter' => $_mfcounter, 'trackers' => $data], JSON_PRETTY_PRINT) . "\n");
 			flock($fh, LOCK_UN); fclose($fh);
 		}
 		echo json_encode(['ok' => true, 'id' => $msgId]);
@@ -546,16 +549,31 @@ if (isset($_GET['mobile'])) {
 
 	if (!$mobileOn) { http_response_code(403); echo json_encode(['error' => 'Mobile tracking is not enabled']); exit; }
 
-	// Atomic read-modify-write with exclusive lock
+	// Atomic read-modify-write with exclusive lock.
+	// File format: {"counter": N, "trackers": [...]} (or legacy plain array on first read).
+	// Callback receives ($entries, &$meta) where $meta = ['counter' => N].
+	// Callback must return the (possibly modified) $entries array.
 	function modifyMobileTrackers($file, $fn) {
 		$fh = fopen($file, 'c+');
 		if (!$fh) return false;
 		flock($fh, LOCK_EX);
-		$c = stream_get_contents($fh);
-		$data = json_decode($c, true) ?: [];
-		$data = $fn($data);
+		$c      = stream_get_contents($fh);
+		$parsed = json_decode($c, true);
+		if (is_array($parsed) && array_key_exists('trackers', $parsed)) {
+			$meta    = ['counter' => (int)($parsed['counter'] ?? 0)];
+			$entries = $parsed['trackers'] ?? [];
+		} else {
+			// Migrate legacy plain-array format: seed counter from max existing ID.
+			$entries = is_array($parsed) ? $parsed : [];
+			$counter = 0;
+			foreach ($entries as $t) {
+				if (preg_match('/^M(\d+)$/', $t['id'] ?? '', $m)) $counter = max($counter, (int)$m[1]);
+			}
+			$meta = ['counter' => $counter];
+		}
+		$entries = $fn($entries, $meta);
 		ftruncate($fh, 0); rewind($fh);
-		fwrite($fh, json_encode($data, JSON_PRETTY_PRINT) . "\n");
+		fwrite($fh, json_encode(['counter' => $meta['counter'], 'trackers' => $entries], JSON_PRETTY_PRINT) . "\n");
 		flock($fh, LOCK_UN); fclose($fh);
 		return true;
 	}
@@ -596,13 +614,13 @@ if (isset($_GET['mobile'])) {
 		}
 		$rawMode = trim($input['sharing_mode'] ?? '');
 		if ($rawMode === 'drive_cycle') $rawMode = 'drive'; // legacy migration
-		$sharingMode = in_array($rawMode, ['walk_run', 'cycle', 'drive', 'stationary'], true) ? $rawMode : '';
+		$sharingMode = in_array($rawMode, ['walk_run', 'cycle', 'drive', 'stationary', 'unknown'], true) ? $rawMode : '';
 		if ($name === '') { http_response_code(400); echo json_encode(['error' => 'Name is required']); exit; }
 		$storedPin = (string)($mobileCfg['pin'] ?? '');
 		if ($storedPin === '' || !hash_equals($storedPin, $pin)) {
 			http_response_code(403); echo json_encode(['error' => 'Incorrect PIN']); exit;
 		}
-		$root = strtoupper(substr(preg_replace('/[^A-Za-z0-9]/', '', $mobileCfg['root'] ?? ''), 0, 6));
+		$root = strtoupper(substr(preg_replace('/[^A-Za-z0-9]/', '', $mobileCfg['root'] ?? ''), 0, 5));
 		if ($root === '') { http_response_code(500); echo json_encode(['error' => 'Root callsign not configured']); exit; }
 		// Optional ham radio callsign (user-supplied, validated against FCC ULS)
 		$hamRoot = strtoupper(preg_replace('/[^A-Za-z0-9]/', '', trim($input['ham_root'] ?? '')));
@@ -620,7 +638,8 @@ if (isset($_GET['mobile'])) {
 		$newEntry = null;
 		$isBlocked = false;
 		$hamConflict = false;
-		modifyMobileTrackers($mobileFile, function($data) use ($name, $root, $deviceId, $deviceInfo, $sharingMode, $hamCallsign, &$newEntry, &$isBlocked, &$hamConflict) {
+		$isNewCallsign = false;
+		modifyMobileTrackers($mobileFile, function($data, &$meta) use ($name, $root, $deviceId, $deviceInfo, $sharingMode, $hamCallsign, &$newEntry, &$isBlocked, &$hamConflict, &$isNewCallsign) {
 			$now = time();
 			// If device is known, check blocked status before doing anything else.
 			if ($deviceId !== '') {
@@ -641,10 +660,8 @@ if (isset($_GET['mobile'])) {
 			// If a ham callsign was requested, verify it isn't already claimed by a different device.
 			if ($hamCallsign !== null) {
 				foreach ($data as $ot) {
-					if (($ot['device_id'] ?? '') !== $deviceId
-						&& ($ot['callsign'] ?? '') === $hamCallsign
-						&& !empty($ot['token'])
-						&& ($now - ($ot['lastUpdate'] ?? 0)) < 86400) {
+					if (($ot['ham_callsign'] ?? '') === $hamCallsign
+						&& ($ot['device_id'] ?? '') !== $deviceId) {
 						$hamConflict = true;
 						return $data;
 					}
@@ -667,7 +684,7 @@ if (isset($_GET['mobile'])) {
 						// Sanitize: if injection callsign was corrupted to the ham callsign, reset it.
 						if (preg_match('/^M(\d+)$/', $t['id'] ?? '', $mm)
 							&& !preg_match('/^\Q' . $root . '\E-\d+$/', $t['callsign'] ?? '')) {
-							$t['callsign'] = sprintf('%s-%02d', $root, (int)$mm[1]);
+							$t['callsign'] = sprintf("%s-%03d", $root, (int)$mm[1]);
 						}
 						$newEntry = $t;
 						return $data;
@@ -680,14 +697,26 @@ if (isset($_GET['mobile'])) {
 					return !(empty($t['device_id']) && empty($t['token']) && ($t['name'] ?? '') === $name);
 				}));
 			}
-			// No existing entry — allocate the next available slot (M-ID) and APRS callsign.
-			$used = [];
-			foreach ($data as $t) {
-				if (preg_match('/^M(\d+)$/', $t['id'], $m)) $used[(int)$m[1]] = true;
+			// No existing entry — assign next sequential number (highest-ever + 1).
+			// After 999, wrap and find the lowest unused number from 000.
+			// Fail if all 1000 slots (000–999) are occupied.
+			$next = $meta['counter'] + 1;
+			if ($next > 999) {
+				$used = [];
+				foreach ($data as $t) {
+					if (preg_match('/^M(\d+)$/', $t['id'], $m)) $used[(int)$m[1]] = true;
+				}
+				$next = null;
+				for ($k = 0; $k <= 999; $k++) { if (!isset($used[$k])) { $next = $k; break; } }
+				if ($next === null) {
+					// All 1000 tracker slots are in use.
+					$newEntry = 'limit_reached';
+					return $data;
+				}
 			}
-			for ($n = 1; isset($used[$n]); $n++);
-			$id       = sprintf('M%02d', $n);
-			$callsign = sprintf('%s-%02d', $root, $n);
+			$meta['counter'] = $next;
+			$id       = sprintf("M%03d", $next);
+			$callsign = sprintf("%s-%03d", $root, $next);
 			$newEntry = ['id' => $id, 'callsign' => $callsign, 'name' => $name,
 			             'token' => bin2hex(random_bytes(16)), 'lastUpdate' => $now, 'created' => $now];
 			if ($deviceId !== '') $newEntry['device_id'] = $deviceId;
@@ -695,10 +724,31 @@ if (isset($_GET['mobile'])) {
 			if ($sharingMode !== '') $newEntry['sharing_mode'] = $sharingMode;
 			if ($hamCallsign !== null) $newEntry['ham_callsign'] = $hamCallsign;
 			$data[] = $newEntry;
+			$isNewCallsign = true;
 			return $data;
 		});
 		if ($isBlocked) { http_response_code(403); echo json_encode(['error' => 'Incorrect PIN']); exit; }
-		if ($hamConflict) { http_response_code(409); echo json_encode(['error' => "{$hamCallsign} is already in use by another active session", 'field' => 'callsign']); exit; }
+		if ($hamConflict) { http_response_code(409); echo json_encode(['error' => "{$hamCallsign} is already registered to another tracker", 'field' => 'callsign']); exit; }
+		if ($newEntry === 'limit_reached') { http_response_code(503); echo json_encode(['error' => 'The limit of 1000 trackers has been reached. It is not possible to add your tracker at this time.']); exit; }
+		// Purge any messages to/from this callsign — it's a fresh assignment, likely a new user.
+		if ($isNewCallsign) {
+			$_cfgReal = realpath('config.yaml');
+			$_msgsFile = $_cfgReal ? dirname($_cfgReal) . '/messages.json' : null;
+			if ($_msgsFile && file_exists($_msgsFile)) {
+				$_cs = $newEntry['callsign'];
+				$_fh = fopen($_msgsFile, 'c+');
+				if ($_fh) {
+					flock($_fh, LOCK_EX);
+					$_msgs = json_decode(stream_get_contents($_fh), true) ?: [];
+					$_msgs = array_values(array_filter($_msgs, function($m) use ($_cs) {
+						return ($m['from'] ?? '') !== $_cs && ($m['to'] ?? '') !== $_cs;
+					}));
+					ftruncate($_fh, 0); rewind($_fh);
+					fwrite($_fh, json_encode($_msgs, JSON_PRETTY_PRINT) . "\n");
+					flock($_fh, LOCK_UN); fclose($_fh);
+				}
+			}
+		}
 		echo json_encode([
 			'id'       => $newEntry['id'],
 			'token'    => $newEntry['token'],
@@ -715,7 +765,7 @@ if (isset($_GET['mobile'])) {
 		$ackIds  = array_map('intval', $input['ack_ids'] ?? []);
 		$rawMode = trim($input['sharing_mode'] ?? '');
 		if ($rawMode === 'drive_cycle') $rawMode = 'drive';
-		$updMode = in_array($rawMode, ['walk_run', 'cycle', 'drive', 'stationary'], true) ? $rawMode : '';
+		$updMode = in_array($rawMode, ['walk_run', 'cycle', 'drive', 'stationary', 'unknown'], true) ? $rawMode : '';
 		if (!$token) { http_response_code(400); echo json_encode(['error' => 'Missing token']); exit; }
 
 		$found = false; $blocked = false; $foundCallsign = null; $foundHamCallsign = null; $pendingMsgs = []; $pendingMode = '';
@@ -730,7 +780,12 @@ if (isset($_GET['mobile'])) {
 				$pendingMode = $t['pending_mode'] ?? '';
 				if ($ackIds) $t['pending_msgs'] = array_values(array_filter($t['pending_msgs'] ?? [], fn($m) => !in_array((int)$m['id'], $ackIds)));
 				if ($pendingMode !== '') unset($t['pending_mode']);
-				if ($updMode !== '') $t['sharing_mode'] = $updMode;
+				if ($updMode !== '' && $updMode !== ($t['sharing_mode'] ?? '')) {
+					$t['sharing_mode'] = $updMode;
+					$t['recent_beacons'] = []; // mode changed; reset delta so old interval doesn't pollute new one
+				} elseif ($updMode !== '') {
+					$t['sharing_mode'] = $updMode;
+				}
 				// Track last 10 beacon timestamps for admin delta display
 				$t['recent_beacons'] = array_slice(array_merge([$now], $t['recent_beacons'] ?? []), 0, 10);
 				$t['lastUpdate'] = $now;
@@ -756,7 +811,7 @@ if (isset($_GET['mobile'])) {
 		if ($blocked) { http_response_code(403); echo json_encode(['error' => 'Blocked']); exit; }
 		if (!$found)  { http_response_code(404); echo json_encode(['error' => 'Token not found']); exit; }
 		if ($shouldInject) {
-			$root = strtoupper(substr(preg_replace('/[^A-Za-z0-9]/', '', $mobileCfg['root'] ?? ''), 0, 6));
+			$root = strtoupper(substr(preg_replace('/[^A-Za-z0-9]/', '', $mobileCfg['root'] ?? ''), 0, 5));
 			if ($root !== '' && $foundCallsign) injectAprsPacket($foundCallsign, $lat, $lon, $root);
 		}
 		$resp = ['ok' => true, 'messages' => $pendingMsgs];
@@ -790,7 +845,8 @@ if (isset($_GET['mobile'])) {
 		$callsign = null;
 		$fh = fopen($mobileFile, 'r');
 		if ($fh) { flock($fh, LOCK_SH); $d = json_decode(stream_get_contents($fh), true) ?: []; flock($fh, LOCK_UN); fclose($fh);
-			foreach ($d as $t) { if (!empty($t['token']) && hash_equals($t['token'], $token)) { $callsign = $t['callsign'] ?? null; break; } } }
+			$trackers = isset($d['trackers']) ? $d['trackers'] : $d;
+			foreach ($trackers as $t) { if (!empty($t['token']) && hash_equals($t['token'], $token)) { $callsign = $t['callsign'] ?? null; break; } } }
 		if (!$callsign) { http_response_code(404); echo json_encode(['error' => 'Token not found']); exit; }
 		$cfgReal = realpath('config.yaml');
 		$messagesFile = $cfgReal ? dirname($cfgReal) . '/messages.json' : null;
@@ -816,7 +872,8 @@ if (isset($_GET['mobile'])) {
 		$found = null;
 		$fh = fopen($mobileFile, 'r');
 		if ($fh) { flock($fh, LOCK_SH); $d = json_decode(stream_get_contents($fh), true) ?: []; flock($fh, LOCK_UN); fclose($fh);
-			foreach ($d as $t) { if (!empty($t['token']) && hash_equals($t['token'], $token)) { $found = $t; break; } } }
+			$trackers = isset($d['trackers']) ? $d['trackers'] : $d;
+			foreach ($trackers as $t) { if (!empty($t['token']) && hash_equals($t['token'], $token)) { $found = $t; break; } } }
 		if (!$found) { http_response_code(404); echo json_encode(['error' => 'Token not found']); exit; }
 		$cfgReal = realpath('config.yaml');
 		$messagesFile = $cfgReal ? dirname($cfgReal) . '/messages.json' : null;
@@ -872,6 +929,9 @@ $_zoom = isset($_m['zoom']) ? (int)$_m['zoom']   : 10;
 
 // ── Event password gate ───────────────────────────────────────────────────────
 if ($_eventPw !== '') {
+    $__sessionDays = 30;
+    ini_set('session.gc_maxlifetime', $__sessionDays * 86400);
+    session_set_cookie_params(['lifetime' => $__sessionDays * 86400, 'samesite' => 'Lax']);
     session_start();
     $_sessionKey = 'map_auth_' . hash('sha256', $_eventPw);
     $_pwError    = false;
@@ -1138,7 +1198,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 .legend-id   { }
 .legend-name { color: #444; }
 .legend-sub  { font-size: 11px; color: #888; }
-.legend-time { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.legend-time { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 40px; text-align: right; flex-shrink: 0; }
 
 .sidebar-item {
     display: flex; justify-content: space-between; align-items: center;
@@ -1381,7 +1441,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
     .m-dot  { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid #333; flex-shrink: 0; }
     .m-id   { font-size: 12px; min-width: 22px; }
     .m-name { font-size: 12px; flex: 1; color: #222; }
-    .m-time { font-size: 10px; color: #888; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .m-time { font-size: 10px; color: #888; white-space: nowrap; font-variant-numeric: tabular-nums; min-width: 52px; text-align: right; }
 
     /* course rows */
     .m-course-row {
@@ -1917,17 +1977,22 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 		<input id="mjoin-name" class="mjoin-input" type="text" maxlength="12" autocomplete="off" autocorrect="off" spellcheck="false">
 		<label class="mjoin-label" for="mjoin-pin">PIN code</label>
 		<input id="mjoin-pin" class="mjoin-input" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off">
-		<div style="margin-bottom:10px">
-			<div class="mjoin-label" style="margin-bottom:6px">Activity</div>
-			<div id="mjoin-activity" style="display:flex;gap:6px;flex-wrap:wrap">
-				<button type="button" class="mjoin-chip mjoin-chip-sel" data-mode="0">Walk / Run</button>
-				<button type="button" class="mjoin-chip" data-mode="1">Cycle</button>
-				<button type="button" class="mjoin-chip" data-mode="2">Drive</button>
-				<button type="button" class="mjoin-chip" data-mode="3">Stationary</button>
+		<div style="border-top:1px solid #e8e8e8;margin:10px 0 8px;padding-top:10px">
+			<div style="color:#999;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px">Ham Radio <span style="font-weight:normal;text-transform:none;letter-spacing:normal;color:#bbb">— optional</span></div>
+			<div style="display:flex;gap:8px">
+				<div style="flex:1">
+					<label class="mjoin-label" for="mjoin-ham-call">Callsign</label>
+					<input id="mjoin-ham-call" class="mjoin-input" type="text" maxlength="10" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" placeholder="e.g. K6DRK">
+				</div>
+				<div style="width:72px">
+					<label class="mjoin-label" for="mjoin-ham-ssid">SSID (1–15)</label>
+					<input id="mjoin-ham-ssid" class="mjoin-input" type="number" min="1" max="15" style="padding:7px 6px" placeholder="1–15">
+				</div>
 			</div>
 		</div>
 		<div id="mjoin-error"></div>
-		<button id="mjoin-cancel" style="width:100%;padding:9px;background:none;color:#555;border:1px solid #ccc;border-radius:5px;font-size:13px;cursor:pointer">Cancel</button>
+		<button id="mjoin-submit">Share Location</button>
+		<button id="mjoin-cancel" style="width:100%;padding:9px;background:none;color:#555;border:1px solid #ccc;border-radius:5px;font-size:13px;cursor:pointer;margin-top:6px">Cancel</button>
 	</div>
 </div>
 
@@ -1938,17 +2003,8 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 			<span>Location Sharing</span>
 			<button id="mchange-close">&times;</button>
 		</div>
-		<div style="margin-bottom:16px">
-			<div class="mjoin-label" style="margin-bottom:6px">Activity</div>
-			<div id="mchange-activity" style="display:flex;gap:6px;flex-wrap:wrap">
-				<button type="button" class="mjoin-chip" data-mode="0">Walk / Run</button>
-				<button type="button" class="mjoin-chip" data-mode="1">Cycle</button>
-				<button type="button" class="mjoin-chip" data-mode="2">Drive</button>
-				<button type="button" class="mjoin-chip" data-mode="3">Stationary</button>
-			</div>
-		</div>
 		<button id="mchange-stop">Stop Sharing</button>
-		<button id="mchange-cancel">Cancel</button>
+		<button id="mchange-cancel">Keep Sharing</button>
 	</div>
 </div>
 
@@ -2223,7 +2279,7 @@ new (L.Control.extend({
 			L.DomEvent.on(exitBtn, 'click', () => { location.href = location.pathname; });
 			L.DomEvent.disableClickPropagation(exitBtn);
 			const txt = L.DomUtil.create('span', '', d);
-			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.18.1+0 &copy; 2026 Doug Kaye (K6DRK)';
+			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.18.4+4 &copy; 2026 Doug Kaye (K6DRK)';
 		} else {
 			if (!isMobile) {
 				const exitBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
@@ -2241,8 +2297,8 @@ new (L.Control.extend({
 			}
 			const ftxt = L.DomUtil.create('span', '', d);
 			ftxt.innerHTML = isMobile
-				? 'MARS APRS v1.18.1+0 &copy; 2026 Doug Kaye (K6DRK)'
-				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.18.1+0 &copy; 2026 Doug Kaye (K6DRK)';
+				? 'MARS APRS v1.18.4+4 &copy; 2026 Doug Kaye (K6DRK)'
+				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.18.4+4 &copy; 2026 Doug Kaye (K6DRK)';
 			if (isMobile) d.style.fontSize = '10px';
 		}
 		return d;
@@ -2316,8 +2372,8 @@ const blinkTimers          = {};
 let   _blinkDuration       = 5000; // ms; overridden by blink_duration from ?json
 let   _histBlinkTimer      = null; // setInterval handle for history-dot blinking
 // Beacon settings; overridden from ?config mobile_beacons
-let _beaconIntervalMs = [60000, 30000, 15000, 120000]; // Walk, Cycle, Drive, Stationary
-let _beaconDistMi     = [0.2,   0.2,   0.2,   1.0];    // Walk, Cycle, Drive, Stationary
+let _beaconIntervalMs = [60000, 30000, 15000, 120000, 60000]; // Walk, Cycle, Drive, Stationary, Unknown
+let _beaconDistMi     = [0.2,   0.2,   0.2,   1.0,   0.2];   // Walk, Cycle, Drive, Stationary, Unknown
 const lastIgateBeacons     = {};	// callsign → lastBeacon timestamp (from igates.json)
 const igateFlashTimers     = {};	// callsign → setTimeout id for green blink
 const lastAidBeacons       = {};	// callsign → lastBeacon timestamp (from aidstations.json)
@@ -2822,13 +2878,22 @@ function triggerBlink(callsign) {
 	if (el) el.style.animation = 'blink-anim 0.4s steps(2,end) infinite';
 	const tipEl = markers[callsign]?.getTooltip()?.getElement();
 	if (tipEl) tipEl.style.animation = 'blink-anim 0.4s steps(2,end) infinite';
-	blinkHistoryLayers(callsign, true);
+	// Expand tooltip to show name while blinking
+	const m = markers[callsign];
+	if (m && !kiosk) {
+		const tid = m._trackerId || callsign;
+		const tname = m._trackerName || '';
+		if (tname) m.setTooltipContent(`${tid} ${tname}`);
+	}
 	blinkTimers[callsign] = setTimeout(() => {
 		if (item) item.classList.remove('blinking');
 		const e2 = markers[callsign]?.getElement();
 		if (e2) e2.style.animation = '';
 		const t2 = markers[callsign]?.getTooltip()?.getElement();
 		if (t2) t2.style.animation = '';
+		// Collapse tooltip back to ID only
+		if (markers[callsign] && !kiosk)
+			markers[callsign].setTooltipContent(markers[callsign]._trackerId || callsign);
 		blinkHistoryLayers(callsign, false);
 		delete blinkTimers[callsign];
 	}, _blinkDuration);
@@ -3105,12 +3170,23 @@ function updateDesktopLegend(trackers) {
 }
 
 function _modeIcon(mode, isMobile) {
-	const car = `<svg viewBox="0 0 20 14" width="13" height="9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M3 7L6 3H14L17 7"/><rect x="1" y="7" width="18" height="4.5" rx="1.2"/><circle cx="5.5" cy="12.5" r="1.5"/><circle cx="14.5" cy="12.5" r="1.5"/></svg>`;
-	const radio = `<svg viewBox="0 0 12 10" width="11" height="9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="vertical-align:middle"><circle cx="6" cy="9" r="1.1" fill="currentColor" stroke="none"/><path d="M3.5 7.5Q6 5 8.5 7.5"/><path d="M1 4.5Q6 0 11 4.5"/></svg>`;
-	if (mode === 'drive' || mode === 'drive_cycle') return car;
-	if (mode === 'cycle')      return '🚲';
-	if (mode === 'walk_run')   return '🏃';
-	if (mode === 'stationary') return '📍';
+	const s = 'vertical-align:middle';
+	const b = `fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"`;
+	// Running stick figure
+	const walk  = `<svg viewBox="0 0 10 14" width="8" height="11" ${b} style="${s}"><circle cx="5" cy="1.8" r="1.8" fill="currentColor" stroke="none"/><path d="M5 3.5L5 8M3.5 5.5L6.5 6.5M5 8L3 12M5 8L7 12"/></svg>`;
+	// Bicycle: two wheels + frame triangle + handlebar
+	const cycle = `<svg viewBox="0 0 14 10" width="12" height="9" ${b} style="${s}"><circle cx="2.5" cy="7" r="2.5"/><circle cx="11.5" cy="7" r="2.5"/><path d="M2.5 7L6.5 3L11.5 7M6.5 3L6.5 1L9.5 1"/></svg>`;
+	// Car profile using paths (no rect): roof slope + body bottom curve + filled wheel dots
+	const drive = `<svg viewBox="0 0 18 11" width="14" height="9" ${b} style="${s}"><path d="M1 8L1 6L4 6L6 3L12 3L14 6L17 6L17 8Q17 9.5 15.5 9.5L2.5 9.5Q1 9.5 1 8Z"/><circle cx="5" cy="9.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="13" cy="9.5" r="1.5" fill="currentColor" stroke="none"/></svg>`;
+	// Location pin: teardrop + inner dot
+	const pin   = `<svg viewBox="0 0 8 12" width="7" height="10" ${b} style="${s}"><path d="M4 11Q0.5 7 0.5 4A3.5 3.5 0 0 1 7.5 4Q7.5 7 4 11Z"/><circle cx="4" cy="4" r="1.2" fill="currentColor" stroke="none"/></svg>`;
+	// Radio/antenna waves (for fixed trackers)
+	const radio = `<svg viewBox="0 0 12 10" width="11" height="9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="${s}"><circle cx="6" cy="9" r="1.1" fill="currentColor" stroke="none"/><path d="M3.5 7.5Q6 5 8.5 7.5"/><path d="M1 4.5Q6 0 11 4.5"/></svg>`;
+	if (mode === 'drive' || mode === 'drive_cycle') return drive;
+	if (mode === 'cycle')      return cycle;
+	if (mode === 'walk_run')   return walk;
+	if (mode === 'stationary') return `<span style="${s}">📍</span>`;
+	if (mode === 'unknown')    return `<span style="${s}">?</span>`;
 	return isMobile ? '' : radio;
 }
 
@@ -3190,7 +3266,7 @@ function updateMap() {
 			// If we resumed a session whose mode wasn't saved in localStorage, infer it
 			// from the server's sharing_mode so the beacon interval self-corrects.
 			if (mobileToken && mobileCallsign) {
-				const _strToMode = { walk_run: 0, cycle: 1, drive: 2, stationary: 3, drive_cycle: 2 };
+				const _strToMode = { walk_run: 0, cycle: 1, drive: 2, stationary: 3, drive_cycle: 2, unknown: 4 };
 				const ours = trackers.find(t => t.callsign === mobileCallsign);
 				if (ours?.sharing_mode) {
 					const inferred = _strToMode[ours.sharing_mode];
@@ -3237,10 +3313,13 @@ function updateMap() {
 					markers[t.callsign]._mobile = t.mobile;
 					markers[t.callsign]._hamCallsign = t.ham_callsign || null;
 					markers[t.callsign]._carrier = t.carrier || null;
+					markers[t.callsign]._trackerId = t.id;
+					markers[t.callsign]._trackerName = t.name;
 					markers[t.callsign].setLatLng(latlng);
 					markers[t.callsign].setIcon(icon);
 					if (trackerPopups[t.callsign]) trackerPopups[t.callsign].setContent(popupHtml(t));
-					markers[t.callsign].setTooltipContent(kiosk ? (t.name || t.id) : t.id);
+					if (!blinkTimers[t.callsign])
+						markers[t.callsign].setTooltipContent(kiosk ? (t.name || t.id) : t.id);
 					// Redraw breadcrumb trail whenever the selected tracker moves or changes staleness color.
 					if ((moved || color !== prevColor) && t.callsign === selectedCallsign) showTrackerHistory(t.callsign, color);
 				} else {
@@ -3249,6 +3328,8 @@ function updateMap() {
 					m._mobile = t.mobile;
 					m._hamCallsign = t.ham_callsign || null;
 					m._carrier = t.carrier || null;
+					m._trackerId = t.id;
+					m._trackerName = t.name;
 					const popup = L.popup({ closeButton: true, autoPan: isMobile, autoPanPadding: [16, 16] })
 						.setContent(popupHtml(t));
 					trackerPopups[t.callsign] = popup;
@@ -3356,12 +3437,14 @@ function _applyBeaconConfig(bc) {
 		(bc.cycle_interval ?? 30)  * 1000,
 		(bc.drive_interval ?? 15)  * 1000,
 		(bc.stat_interval  ?? 120) * 1000,
+		(bc.walk_interval  ?? 60)  * 1000, // unknown: same as walk_run
 	];
 	_beaconDistMi = [
 		bc.walk_distance  ?? 0.2,
 		bc.cycle_distance ?? 0.2,
 		bc.drive_distance ?? 0.2,
 		bc.stat_distance  ?? 1.0,
+		bc.walk_distance  ?? 0.2,  // unknown: same as walk_run
 	];
 	// Restart the interval if sharing and the active-mode interval changed.
 	if (_beaconIntervalMs[_mobileActivityMode] !== prevIntervalMs) _restartMobileInterval();
@@ -3386,7 +3469,7 @@ function refreshMobileAbout() {
 	const rows = [
 		currentEventName ? { label: 'Event',   val: currentEventName } : null,
 		{ label: 'Org',     val: 'Marin Amateur Radio Society' },
-		{ label: 'Version', val: 'APRS Tracker Map · v1.18.1+0' },
+		{ label: 'Version', val: 'APRS Tracker Map · v1.18.4+4' },
 		mobileCallsign ? { label: 'Callsign', val: mobileCallsign } : null,
 		{ label: 'Map',     val: currentBgAttribution || '' },
 		{ label: 'Credit',  val: '&copy; 2026 Doug Kaye (K6DRK)' },
@@ -3700,6 +3783,20 @@ function applyIgates(igates) {
 		igateMarkers.push({ m, name: g.name, callsign: g.callsign || '', latlng, el: item });
 		item.addEventListener('click', () => onIgateClick(idx));
 		container.appendChild(item);
+		if (!isMobile) {
+			let _pop = null, _ct = null;
+			m.on('mouseover', function() {
+				clearTimeout(_ct);
+				const d = igateMarkers[idx];
+				const lastTs = d.callsign ? lastIgateBeacons[d.callsign] : null;
+				const html = `<b>${esc(d.name)}</b>`
+					+ (d.callsign ? `<br>${esc(d.callsign)}` : '')
+					+ (lastTs ? `<br><span style="color:#888;font-size:11px">Last beacon: ${relativeTime(lastTs)} ago</span>` : '');
+				if (!_pop) _pop = L.popup({ closeButton: false, autoPan: false, className: 'aprs-path-popup' });
+				_pop.setContent(html).setLatLng(m.getLatLng()).openOn(map);
+			});
+			m.on('mouseout', function() { _ct = setTimeout(() => { if (_pop) map.closePopup(_pop); }, 300); });
+		}
 	});
 
 	section.style.display = igateMarkers.length ? '' : 'none';
@@ -3748,6 +3845,20 @@ function applyAidStations(stations) {
 		aidMarkers.push({ m, name: g.name, callsign: g.callsign || '', latlng, el: item });
 		item.addEventListener('click', () => onAidClick(idx));
 		container.appendChild(item);
+		if (!isMobile && !kiosk) {
+			let _pop = null, _ct = null;
+			m.on('mouseover', function() {
+				clearTimeout(_ct);
+				const d = aidMarkers[idx];
+				const lastTs = d.callsign ? lastAidBeacons[d.callsign] : null;
+				const html = `<b>${esc(d.name)}</b>`
+					+ (d.callsign ? `<br>${esc(d.callsign)}` : '')
+					+ (lastTs ? `<br><span style="color:#888;font-size:11px">Last beacon: ${relativeTime(lastTs)} ago</span>` : '');
+				if (!_pop) _pop = L.popup({ closeButton: false, autoPan: false, className: 'aprs-path-popup' });
+				_pop.setContent(html).setLatLng(m.getLatLng()).openOn(map);
+			});
+			m.on('mouseout', function() { _ct = setTimeout(() => { if (_pop) map.closePopup(_pop); }, 300); });
+		}
 	});
 
 	section.style.display = aidMarkers.length ? '' : 'none';
@@ -3944,10 +4055,10 @@ function openAboutModal() {
 	const attrText = currentBgAttribution || '';
 	const rows = [
 		{ label: 'Organization', val: 'Marin Amateur Radio Society' },
-		{ label: 'Application',  val: 'APRS Tracker Map · v1.18.1+0' },
+		{ label: 'Application',  val: 'APRS Tracker Map · v1.18.4+4' },
 		currentEventName ? { label: 'Event', val: currentEventName } : null,
 		mobileCallsign ? { label: 'My Callsign', val: mobileCallsign } : null,
-		mobileCallsign ? { label: 'Activity', val: ['Walk / Run', 'Cycle', 'Drive', 'Stationary'][_mobileActivityMode] } : null,
+		mobileCallsign ? { label: 'Activity', val: ['Walk / Run', 'Cycle', 'Drive', 'Stationary', 'Unknown'][_mobileActivityMode] } : null,
 		{ label: 'Map Data',     val: attrText },
 		{ label: 'Copyright',    val: '&copy; 2026 Doug Kaye (K6DRK). All Rights Reserved.' },
 	].filter(Boolean);
@@ -4153,8 +4264,6 @@ function setShareLocBtnState(state) {
 }
 
 function openModeChangeModal() {
-	const chips = document.querySelectorAll('#mchange-activity .mjoin-chip');
-	chips.forEach(b => b.classList.toggle('mjoin-chip-sel', parseInt(b.dataset.mode, 10) === _mobileActivityMode));
 	document.getElementById('mchange-modal').style.display = 'flex';
 }
 
@@ -4166,26 +4275,6 @@ document.getElementById('mchange-close').addEventListener('click', closeModeChan
 document.getElementById('mchange-backdrop').addEventListener('click', closeModeChangeModal);
 document.getElementById('mchange-cancel').addEventListener('click', closeModeChangeModal);
 document.getElementById('mchange-stop').addEventListener('click', () => { closeModeChangeModal(); stopMobileTracking(); });
-document.getElementById('mchange-activity').addEventListener('click', e => {
-	const btn = e.target.closest('.mjoin-chip');
-	if (!btn || !mobileToken) return;
-	const newMode = parseInt(btn.dataset.mode, 10);
-	if (newMode === _mobileActivityMode) { closeModeChangeModal(); return; }
-	_mobileActivityMode = newMode;
-	document.querySelectorAll('#mchange-activity .mjoin-chip').forEach(b => b.classList.toggle('mjoin-chip-sel', b === btn));
-	try { const s = JSON.parse(localStorage.getItem('aprs_mobile_tracker') || '{}'); s.mode = newMode; localStorage.setItem('aprs_mobile_tracker', JSON.stringify(s)); } catch {}
-	const modes = ['walk_run','cycle','drive','stationary'];
-	fetch('index.php?mobile=update', {
-		method: 'POST', headers: {'Content-Type':'application/json'},
-		body: JSON.stringify({ token: mobileToken, sharing_mode: modes[newMode] })
-	}).catch(() => {});
-	// Restart the geolocation interval with new timing
-	if (_activeSendUpdate) {
-		clearInterval(_mobileInterval);
-		startMobileGeolocation();
-	}
-	closeModeChangeModal();
-});
 
 let _shareBlinkTimer = null;
 function blinkShareBtn() {
@@ -4204,9 +4293,13 @@ function blinkShareBtn() {
 
 function openMobileJoinModal() {
 	const savedName = localStorage.getItem('aprs_sharing_name') || '';
-	document.getElementById('mjoin-name').value  = savedName;
-	document.getElementById('mjoin-pin').value   = '';
+	document.getElementById('mjoin-name').value     = savedName;
+	document.getElementById('mjoin-pin').value      = '';
+	document.getElementById('mjoin-ham-call').value = '';
+	document.getElementById('mjoin-ham-ssid').value = '';
 	document.getElementById('mjoin-error').textContent = '';
+	const sub = document.getElementById('mjoin-submit');
+	sub.disabled = false; sub.textContent = 'Share Location';
 	document.getElementById('mobile-join-modal').style.display = 'flex';
 	(savedName ? document.getElementById('mjoin-pin') : document.getElementById('mjoin-name')).focus();
 }
@@ -4254,14 +4347,9 @@ document.getElementById('mjoin-cancel').addEventListener('click', closeMobileJoi
 document.getElementById('mjoin-name').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('mjoin-pin').focus(); });
 document.getElementById('mjoin-pin').addEventListener('keydown',  e => { if (e.key === 'Enter') submitMobileJoin(); });
 
-let _mjoinMode = 0; // 0=Walk/Run, 1=Cycle, 2=Drive, 3=Stationary
-document.getElementById('mjoin-activity').addEventListener('click', e => {
-	const btn = e.target.closest('.mjoin-chip');
-	if (!btn) return;
-	_mjoinMode = parseInt(btn.dataset.mode, 10);
-	document.querySelectorAll('#mjoin-activity .mjoin-chip').forEach(b => b.classList.toggle('mjoin-chip-sel', b === btn));
-	submitMobileJoin();
-});
+document.getElementById('mjoin-submit').addEventListener('click', submitMobileJoin);
+document.getElementById('mjoin-ham-call').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('mjoin-ham-ssid').focus(); });
+document.getElementById('mjoin-ham-ssid').addEventListener('keydown', e => { if (e.key === 'Enter') submitMobileJoin(); });
 
 function _collectWebDeviceInfo() {
 	const ua = navigator.userAgent;
@@ -4301,12 +4389,18 @@ function submitMobileJoin() {
 	const pin  = document.getElementById('mjoin-pin').value;
 	const errEl = document.getElementById('mjoin-error');
 	const cancelBtn = document.getElementById('mjoin-cancel');
+	const submitBtn = document.getElementById('mjoin-submit');
 	if (!name) { errEl.textContent = 'Please enter your name.'; return; }
 	cancelBtn.disabled = true;
+	submitBtn.disabled = true; submitBtn.textContent = 'Sharing…';
 	errEl.textContent = '';
+	const hamCall = document.getElementById('mjoin-ham-call').value.trim().toUpperCase();
+	const hamSsid = parseInt(document.getElementById('mjoin-ham-ssid').value, 10) || 0;
+	const joinBody = { name, pin, device_info: _collectWebDeviceInfo(), sharing_mode: 'unknown' };
+	if (hamCall) { joinBody.ham_root = hamCall; joinBody.ham_ssid = hamSsid; }
 	fetch('index.php?mobile=join', {
 		method: 'POST', headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name, pin, device_info: _collectWebDeviceInfo(), sharing_mode: ['walk_run','cycle','drive','stationary'][_mjoinMode] })
+		body: JSON.stringify(joinBody)
 	})
 	.then(r => r.json().then(d => ({ ok: r.ok, d })))
 	.then(({ ok, d }) => {
@@ -4314,13 +4408,16 @@ function submitMobileJoin() {
 			errEl.textContent = d.error === 'Incorrect PIN'
 				? 'Incorrect PIN. Please try again.'
 				: (d.error || 'Could not connect. Please try again.');
+			if (d.field === 'callsign') document.getElementById('mjoin-ham-call').focus();
+			if (d.field === 'ssid')    document.getElementById('mjoin-ham-ssid').focus();
 			cancelBtn.disabled = false;
+			submitBtn.disabled = false; submitBtn.textContent = 'Share Location';
 			return;
 		}
 		mobileToken = d.token; mobileId = d.id; mobileCallsign = d.callsign || null;
-			try { localStorage.setItem('aprs_mobile_tracker', JSON.stringify({ token: d.token, id: d.id, callsign: d.callsign || null, mode: _mjoinMode })); } catch {}
+			try { localStorage.setItem('aprs_mobile_tracker', JSON.stringify({ token: d.token, id: d.id, callsign: d.callsign || null, mode: 4 })); } catch {}
 			try { localStorage.setItem('aprs_sharing_name', name); } catch {}
-			_mobileActivityMode = _mjoinMode;
+			_mobileActivityMode = 4;
 		// Clear stale breadcrumbs for this callsign so old history doesn't linger
 		if (mobileCallsign && historyDots[mobileCallsign]) {
 			historyDots[mobileCallsign].forEach(dot => dot.remove());
@@ -4340,6 +4437,87 @@ let _mobileInterval = null;
 let _mobileActivityMode = 0; // 0=Walk/Run, 1=Cycle, 2=Drive, 3=Stationary
 let _mobileLastSentPos = null;
 let _activeSendUpdate = null; // reference to current session's sendUpdate, for interval restart
+
+// ── Auto activity-mode detection ───────────────────────────────────────────
+const _kAutoSpeedStationary   = 1.0;   // m/s
+const _kAutoSpeedWalkRun      = 4.5;
+const _kAutoSpeedCycle        = 11.0;
+const _kAutoGeneralWindow     = 15;    // consecutive GPS samples required
+const _kAutoStationaryWindow  = 20;
+const _kAutoStationaryMinSecs = 300;   // 5 minutes wall-clock for stationary
+const _kAutoStartupWindow     = 3;    // samples needed during startup phase
+const _kAutoStartupTotal      = 10;   // total samples that define startup phase
+
+let _autoLastMovementAt       = null;  // epoch ms of last sustained movement
+let _autoMovementAboveCount   = 0;    // consecutive above-threshold readings (noise guard)
+let _autoCandidateMode        = -1;
+let _autoCandidateCount     = 0;
+let _autoCandidateFirstSeen = null;
+let _autoStationaryTimer    = null;
+let _autoModeChanged        = false;   // send sharing_mode on next beacon
+let _autoTotalSamples       = 0;      // total since session start; drives startup fast-window
+
+function _autoRawMode(speedMs) {
+	if (speedMs <= _kAutoSpeedStationary) return 3;
+	if (speedMs <= _kAutoSpeedWalkRun)   return 0;
+	if (speedMs <= _kAutoSpeedCycle)     return 1;
+	return 2;
+}
+
+function _autoDetectFromSpeed(speedMs, accuracy) {
+	if (!mobileToken) return;
+	if (speedMs > _kAutoSpeedStationary && accuracy <= 20) {
+		_autoMovementAboveCount++;
+		if (_autoMovementAboveCount >= 3) _autoLastMovementAt = Date.now();
+	} else {
+		_autoMovementAboveCount = 0;
+	}
+	_autoTotalSamples++;
+	const inStartup = _autoTotalSamples <= _kAutoStartupTotal;
+	const candidate = _autoRawMode(speedMs);
+	if (candidate !== _autoCandidateMode) {
+		_autoCandidateMode = candidate;
+		_autoCandidateCount = 1;
+		_autoCandidateFirstSeen = Date.now();
+	} else {
+		_autoCandidateCount++;
+	}
+	if (_autoCandidateMode === _mobileActivityMode) return;
+	const isStationary = _autoCandidateMode === 3;
+	const windowNeeded = inStartup ? _kAutoStartupWindow :
+		(isStationary ? _kAutoStationaryWindow : _kAutoGeneralWindow);
+	if (_autoCandidateCount < windowNeeded) return;
+	if (!inStartup && isStationary) {
+		if ((Date.now() - _autoCandidateFirstSeen) / 1000 < _kAutoStationaryMinSecs) return;
+	}
+	_applyAutoMode(_autoCandidateMode);
+}
+
+function _checkStationaryByTime() {
+	if (!mobileToken || _mobileActivityMode === 3 || !_autoLastMovementAt) return;
+	const elapsed = (Date.now() - _autoLastMovementAt) / 1000;
+	const inStartup = _autoTotalSamples <= _kAutoStartupTotal;
+	if (elapsed >= (inStartup ? 90 : _kAutoStationaryMinSecs)) _applyAutoMode(3);
+}
+
+function _applyAutoMode(newMode) {
+	if (newMode === _mobileActivityMode) return;
+	_mobileActivityMode = newMode;
+	_autoModeChanged = true;
+	_restartMobileInterval();
+}
+
+function _resetAutoModeDetection() {
+	_autoCandidateMode = -1;
+	_autoCandidateCount = 0;
+	_autoCandidateFirstSeen = null;
+	_autoLastMovementAt = Date.now();
+	_autoMovementAboveCount = 0;
+	_autoModeChanged = false;
+	_autoTotalSamples = 0;
+	clearInterval(_autoStationaryTimer);
+	_autoStationaryTimer = null;
+}
 
 async function acquireWakeLock() {
 	if (!('wakeLock' in navigator)) return;
@@ -4395,13 +4573,18 @@ function stopDimTimer() {
 
 function startMobileGeolocation() {
 	if (mobileWatcher !== null) return;
+	_resetAutoModeDetection();
+	_autoStationaryTimer = setInterval(_checkStationaryByTime, 30000);
 	let sentFirst = false;
+	const _modeKeys = ['walk_run', 'cycle', 'drive', 'stationary', 'unknown'];
 	function sendUpdate() {
 		if (!mobileToken || !_mobileLastPos) return;
 		_mobileLastSentPos = { lat: _mobileLastPos.coords.latitude, lon: _mobileLastPos.coords.longitude };
+		const body = { token: mobileToken, lat: _mobileLastSentPos.lat, lon: _mobileLastSentPos.lon };
+		if (_autoModeChanged) { body.sharing_mode = _modeKeys[_mobileActivityMode]; _autoModeChanged = false; }
 		fetch('index.php?mobile=update', {
 			method: 'POST', headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ token: mobileToken, lat: _mobileLastSentPos.lat, lon: _mobileLastSentPos.lon })
+			body: JSON.stringify(body)
 		}).then(r => r.json().then(d => ({ status: r.status, d })))
 		  .then(({ status, d }) => {
 			if (status === 404) {
@@ -4413,6 +4596,10 @@ function startMobileGeolocation() {
 				clearMobileState();
 				showMobileAlert('Access Denied', 'Your location sharing session was ended by the administrator.');
 			} else {
+				if (d.set_mode) {
+					const m = { walk_run: 0, cycle: 1, drive: 2, stationary: 3, drive_cycle: 2 }[d.set_mode];
+					if (m !== undefined && m !== _mobileActivityMode) _applyAutoMode(m);
+				}
 				blinkShareBtn();
 			}
 		  }).catch(() => {});
@@ -4421,6 +4608,8 @@ function startMobileGeolocation() {
 	mobileWatcher = navigator.geolocation.watchPosition(
 		pos => {
 			_mobileLastPos = pos;
+			const speedMs = pos.coords.speed ?? -1;
+			if (speedMs >= 0) _autoDetectFromSpeed(speedMs, pos.coords.accuracy);
 			if (!sentFirst) { sentFirst = true; sendUpdate(); return; }
 			if (_mobileLastSentPos) {
 				const d = haversineDistance(_mobileLastSentPos.lat, _mobileLastSentPos.lon,
@@ -4456,9 +4645,11 @@ async function stopMobileTracking() {
 function clearMobileState() {
 	if (mobileWatcher !== null) { navigator.geolocation.clearWatch(mobileWatcher); mobileWatcher = null; }
 	if (_mobileInterval !== null) { clearInterval(_mobileInterval); _mobileInterval = null; }
+	clearInterval(_autoStationaryTimer); _autoStationaryTimer = null;
 	_mobileLastPos = null;
 	_mobileLastSentPos = null;
 	_activeSendUpdate = null;
+	_mobileActivityMode = 0;
 	mobileToken = null; mobileId = null;
 	releaseWakeLock();
 	stopDimTimer();
@@ -4667,13 +4858,8 @@ async function _loadMsgHistory() {
 			const _s = JSON.parse(localStorage.getItem('aprs_msg_session') || 'null');
 			if (_s) { _s.last_id = _msgLastId; localStorage.setItem('aprs_msg_session', JSON.stringify(_s)); }
 		} catch {}
-		// Fire one notification for the most recent unnotified inbound message (last 5 min)
-		const _cutoff = Math.floor(Date.now() / 1000) - 300;
-		const _unnotified = _msgLog.filter(m =>
-			!_msgNotifiedIds.has(m.id) && m.ts >= _cutoff && m.to === 'web' && m.from !== 'web'
-		);
-		for (const m of _unnotified) _msgNotifiedIds.add(m.id);
-		if (_unnotified.length) _showMsgModal(_unnotified[_unnotified.length - 1]);
+		// Mark all history as seen — modals only fire for messages arriving via poll after page load
+		for (const m of _msgLog) _msgNotifiedIds.add(m.id);
 		return true;
 	} catch {}
 	return true; // network error — keep token, polling will detect if truly gone
@@ -4683,8 +4869,11 @@ function _setSubscribedUI(subscribed) {
 	// msg-messaging-btn stays visible whenever messaging is enabled
 }
 
+let _msgUiInitialized = false;
 function _initMsgUI(enabled) {
 	if (!enabled) return;
+	if (_msgUiInitialized) return;
+	_msgUiInitialized = true;
 	_msgEnabled = true;
 	document.getElementById('msg-messaging-btn').style.display = '';
 	if (_msgIsSubscribed()) {
@@ -4903,8 +5092,8 @@ async function _pollMessages() {
 			d.messages.forEach(m => {
 				_msgLog.push(m);
 				if (_msgLog.length > 50) _msgLog.shift();
+				if (!_msgNotifiedIds.has(m.id)) _showMsgModal(m);
 				_msgNotifiedIds.add(m.id);
-				_showMsgModal(m);
 			});
 			_msgLastId = d.last_id;
 			try { const _s = JSON.parse(localStorage.getItem('aprs_msg_session') || 'null'); if (_s) { _s.last_id = _msgLastId; localStorage.setItem('aprs_msg_session', JSON.stringify(_s)); } } catch {}
@@ -4940,8 +5129,12 @@ function _playMsgTone() {
 
 let _msgQueue = [];   // queued incoming messages waiting to display
 let _msgModalOpen = false;
+// Suppress incoming modals briefly on autologin startup to avoid showing
+// messages that arrived while the Pi was offline (history-fail race condition).
+const _msgStartupTs = Date.now();
 
 function _showMsgModal(msg) {
+	if (window._aprsAutoMsgPw && Date.now() - _msgStartupTs < 8000) return;
 	_playMsgTone();
 	_msgQueue.push(msg);
 	if (!_msgModalOpen) _showNextMsgModal();

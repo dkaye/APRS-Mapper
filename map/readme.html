@@ -193,7 +193,7 @@
 <div id="content">
 <h1 id="mars-aprs-system">MARS APRS System</h1>
 <p><strong>Author:</strong> Doug Kaye (K6DRK) · <strong>Copyright:</strong> 2026 Doug Kaye. All Rights Reserved.</p>
-<p><strong>Version:</strong> Server &amp; Displays (v1.16.3); Mobile App (v1.18.1); iGates (v5.0)</p>
+<p><strong>Version:</strong> Server &amp; Displays (v1.18.4); Mobile App (v1.18.4); iGates (v5.0)</p>
 <hr />
 <h2 id="table-of-contents">Table of Contents</h2>
 <ol>
@@ -201,10 +201,10 @@
 <li><a href="#system-architecture">System Architecture</a></li>
 <li><a href="#netbird-vpn">NetBird VPN</a></li>
 <li><a href="#igates-v50">iGates (v5.0)</a></li>
-<li><a href="#aprs-server-v1163">APRS Server (v1.16.3)</a></li>
+<li><a href="#aprs-server-v1184">APRS Server (v1.18.4)</a></li>
 <li><a href="#cloudflare-tunnel">Cloudflare Tunnel</a></li>
-<li><a href="#display-pis-v1163">Display Pis (v1.16.3)</a></li>
-<li><a href="#mobile-apps-v1181">Mobile Apps (v1.18.1)</a></li>
+<li><a href="#display-pis-v1184">Display Pis (v1.18.4)</a></li>
+<li><a href="#mobile-apps-v1184">Mobile Apps (v1.18.4)</a></li>
 <li><a href="#app-architecture">Architecture</a> · <a href="#location-sharing-flow">Location Sharing Flow</a> · <a href="#building-distributing">Building &amp; Distributing</a> · <a href="#background-location">Background Location</a></li>
 <li><a href="#user-interfaces">User Interfaces</a></li>
 <li><a href="#backup-recovery-and-updates">Backup, Recovery and Updates</a></li>
@@ -259,18 +259,18 @@ forwarding or static public IP addresses.</p>
            ▼
 ┌──────────────────────────────────────┐     ┌──────────────────────────────┐
 │           APRS-IS Network            │◀────│  Mobile App  (iOS/Android)   │
-│         noam.aprs2.net:14580         │     │  Flutter v1.16.3               │
+│         noam.aprs2.net:14580         │     │  Flutter v1.18.4               │
 └────────────────┬─────────────────────┘     │  TCP 14580 (inject position) │
                  │ TCP 14580                 └──────────────┬───────────────┘
 ┌────────────────▼─────────────────────┐                    │ HTTPS (map + config + session)
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.16.3      │
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.18.4      │
 │  aprsDaemon.php → trackers.json      │◀───────────────────┘
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.16.3
+│  Display Pi  (×2)      │  Pi 4 · v1.18.4
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -444,7 +444,7 @@ igate-watchdog.sh  (cron, every minute)
 </table>
 <p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code></p>
 <hr />
-<h2 id="aprs-server-v1163">APRS Server (v1.16.3)</h2>
+<h2 id="aprs-server-v1184">APRS Server (v1.18.4)</h2>
 <p>The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
 APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
 NetBird monitor and WiFi credential manager. It is reachable at <code>marsaprs.org</code> via a
@@ -549,7 +549,7 @@ sudo systemctl start cloudflared
 <p>The tunnel token is obtained from the <strong>Cloudflare Zero Trust dashboard</strong>:
 <em>Networks → Tunnels → \&lt;tunnel&gt; → Configure → Install and run connector</em></p>
 <hr />
-<h2 id="display-pis-v1163">Display Pis (v1.16.3)</h2>
+<h2 id="display-pis-v1184">Display Pis (v1.18.4)</h2>
 <p>A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
 <code>marsaprs.org</code>. It is a read-only display device — no long-term local configuration or data storage.
 Two display Pis are in use: <strong>NetControl</strong> (operator screen) and <strong>BigTV</strong> (large audience
@@ -575,7 +575,7 @@ wifi-watchdog.sh  (checks WiFi every 30 s;
 <p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code> · VNC: <code>vnc://&lt;ip&gt;:5901</code></p>
 <p>For details on using the map, see <a href="https://marsaprs.org/userguide.html?back=/readme.html">USERGUIDE.MD</a>.</p>
 <hr />
-<h2 id="mobile-apps-v1181">Mobile Apps (v1.18.1)</h2>
+<h2 id="mobile-apps-v1184">Mobile Apps (v1.18.4)</h2>
 <p>Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.</p>
 <p><strong>Repository:</strong> <code>/Users/doug/aprs-map</code> (separate from this marsaprs repo)</p>
 <h3 id="app-architecture">App Architecture</h3>
@@ -701,6 +701,29 @@ App restart while sharing was active:
   → Attempts token reuse via MobileSession.update(); if stale, re-joins silently
   → Sharing resumes with same callsign and activity mode; snackbar notifies user
 </code></pre>
+<h3 id="smart-track">Smart Track</h3>
+<p>Smart Track is the automatic beacon-interval algorithm in both the native app and the web map. It monitors GPS speed and adjusts the upload frequency without any input from the user.</p>
+<p><strong>Speed thresholds:</strong></p>
+<table>
+<thead><tr><th>Mode</th><th>Speed</th><th>Interval</th></tr></thead>
+<tbody>
+<tr><td>Stationary</td><td>≤ 0.5 m/s (1.1 mph)</td><td>120 s</td></tr>
+<tr><td>Walk / Run</td><td>≤ 4.5 m/s (10 mph)</td><td>60 s</td></tr>
+<tr><td>Cycle</td><td>≤ 11.0 m/s (25 mph)</td><td>30 s</td></tr>
+<tr><td>Drive</td><td>&gt; 11.0 m/s</td><td>15 s</td></tr>
+</tbody>
+</table>
+<p><strong>Debounce — preventing false mode changes:</strong></p>
+<p>A mode switch only occurs after a run of consecutive GPS samples all agree on the new mode. The required run length:</p>
+<ul>
+<li>Walk/Run/Cycle/Drive: 15 consecutive samples</li>
+<li>Stationary: 20 consecutive samples, plus at least 5 minutes of wall-clock time since last movement</li>
+</ul>
+<p>A timer also fires every 30 seconds to catch the case where the device stops moving but GPS events stall. If no movement has been detected for 5 minutes (or 90 seconds during startup) the mode switches directly to stationary without waiting for GPS events.</p>
+<p><strong>Startup fast-window:</strong></p>
+<p>During the first 10 GPS readings of a new session, only 3 consecutive matching samples are needed to set the initial mode (instead of 15–20). This lets Smart Track make a confident initial guess within 30–60 seconds of starting rather than waiting several minutes. Once those 10 readings have been processed, the full debounce requirements apply.</p>
+<p><strong>Implementation:</strong></p>
+<p>The algorithm runs identically in <code>lib/map_screen.dart</code> (Flutter) and <code>index.php</code> (web JS). Key functions: <code>_processSpeedSample</code> / <code>_autoDetectFromSpeed</code> for sample-based detection; <code>_checkStationaryByTime</code> for the timer-based fallback.</p>
 <h3 id="building-distributing">Building &amp; Distributing</h3>
 <h4 id="ios">iOS</h4>
 <pre><code class="language-bash">cd /Users/doug/aprs-map
@@ -730,6 +753,76 @@ storeFile=&lt;absolute path to .jks or .p12&gt;
 <p><code>android/app/build.gradle.kts</code> reads this file automatically. If absent, the release build falls back to debug signing.</p>
 <p><strong><code>compileSdk</code> note:</strong> <code>objectbox_flutter_libs</code> in <code>~/.pub-cache</code> may hardcode <code>compileSdkVersion 31</code>. Patch it to <code>36</code> to match <code>build.gradle.kts</code>.</p>
 <p>To distribute: share the APK via Google Drive or email. Testers tap the download link, open the file with <strong>Package Installer</strong>, and if Android warns about an unknown source, tap <strong>More details</strong> → <strong>Install anyway</strong>.</p>
+<h4 id="google-play-store">Submitting to Google Play Store</h4>
+<p><strong>One-time setup:</strong></p>
+<ol>
+<li>Create a Google Play Developer account at <a href="https://play.google.com/console">play.google.com/console</a> ($25 one-time fee).</li>
+<li>Generate a signing keystore (only done once — never change it after first publish):
+<code>bash
+keytool -genkey -v -keystore ~/aprs-map-release.jks \
+  -alias aprs-map -keyalg RSA -keysize 2048 -validity 10000 \
+  -dname "CN=Doug Kaye, OU=MARS, O=W6SG, L=Marin, ST=CA, C=US"</code></li>
+<li>Create <code>android/key.properties</code> (gitignored — back up the passwords and <code>.jks</code> file securely):
+<code>storePassword=&lt;store-password&gt;
+keyPassword=&lt;key-password&gt;
+keyAlias=aprs-map
+storeFile=/Users/doug/aprs-map-release.jks</code></li>
+</ol>
+<p><strong>Each release:</strong></p>
+<ol>
+<li>Bump <code>version</code> in <code>pubspec.yaml</code> (e.g. <code>1.18.1+0</code> → <code>1.19.0+0</code> — the build number after <code>+</code> must increase with each upload).</li>
+<li>Build a signed App Bundle (AAB):
+<code>bash
+flutter build appbundle --release</code>
+Output: <code>build/app/outputs/bundle/release/app-release.aab</code></li>
+<li>In Play Console → <strong>Your app → Testing → Internal testing → Create new release</strong> → upload the <code>.aab</code>.</li>
+<li>After internal testing, promote through <strong>Closed testing → Open testing → Production</strong> using the <strong>Promote release</strong> button.</li>
+<li>Google typically reviews new production releases within 1–3 days.</li>
+</ol>
+<p><strong>Store listing assets required (one-time, update as needed):</strong></p>
+<ul>
+<li>Short description (80 chars), full description (4000 chars)</li>
+<li>At least 2 phone screenshots (minimum 320px on shortest side)</li>
+<li>Feature graphic: 1024 × 500 px PNG or JPG</li>
+<li>App icon: 512 × 512 px PNG (must match the launcher icon)</li>
+<li>Content rating questionnaire (set category to <strong>Utilities</strong> or <strong>Tools</strong>)</li>
+</ul>
+<h4 id="app-store-connect">Submitting to Apple App Store Connect</h4>
+<p><strong>One-time setup:</strong></p>
+<ol>
+<li>Enroll in the <strong>Apple Developer Program</strong> at <a href="https://developer.apple.com">developer.apple.com</a> ($99/year).</li>
+<li>In App Store Connect (<a href="https://appstoreconnect.apple.com">appstoreconnect.apple.com</a>) → <strong>Apps → + → New App</strong>:
+<ul>
+<li>Platform: iOS</li>
+<li>Bundle ID: <code>org.w6sg.aprsmap</code> (must match <code>ios/Runner.xcodeproj</code>)</li>
+<li>SKU: <code>aprsmap</code> (any unique string)</li>
+</ul></li>
+<li>In Xcode → <strong>Signing &amp; Capabilities</strong>: set Team to your Apple Developer account; let Xcode manage provisioning profiles automatically.</li>
+</ol>
+<p><strong>Each release:</strong></p>
+<ol>
+<li>Bump <code>version</code> in <code>pubspec.yaml</code> (build number after <code>+</code> must increase with each upload).</li>
+<li>Build the iOS app:
+<code>bash
+flutter build ios --release --no-codesign</code></li>
+<li>Open <code>ios/Runner.xcworkspace</code> in Xcode.</li>
+<li><strong>Product → Archive</strong>. When complete, the Organizer opens automatically.</li>
+<li>Click <strong>Distribute App → App Store Connect → Upload</strong>.</li>
+<li>In App Store Connect → <strong>Your app → TestFlight</strong>: the build appears within minutes; full App Review takes 5–30 minutes before testers can install it.</li>
+<li>To submit for <strong>App Store production review</strong>:
+<ul>
+<li>Go to <strong>Your app → App Store → + Version</strong></li>
+<li>Fill in "What's New", select the build, submit for review.</li>
+<li>Apple review typically takes 1–3 days.</li>
+</ul></li>
+</ol>
+<p><strong>Store listing assets required (one-time, update as needed):</strong></p>
+<ul>
+<li>App description, keywords, support URL, marketing URL</li>
+<li>Screenshots for iPhone 6.9" display (required) and iPad 13" (required if supporting iPad)</li>
+<li>App icon: 1024 × 1024 px PNG (no alpha channel)</li>
+<li>Privacy policy URL (required for apps that collect location data)</li>
+</ul>
 <h3 id="background-location">Background Location</h3>
 <p>Background location is implemented differently on each platform because of how each OS handles suspended processes.</p>
 <h4 id="android_1">Android</h4>
@@ -1021,8 +1114,7 @@ needed (and none is available — the script would be served by the very Pi bein
 <li>Insert the card into a Pi 4 and boot.</li>
 <li>Find the IP and SSH in.</li>
 <li>Download and run the install script:
-   <code>bash
-   bash &lt;(curl -fsSL https://marsaprs.org/display/install.sh) 2&gt;&amp;1 | tee install.log</code></li>
+   <code>bash &lt;(curl -fsSL https://marsaprs.org/display/install.sh) 2&gt;&amp;1 | tee install.log</code></li>
 <li><strong>Do not run <code>configure.sh</code></strong> — that step is done when deploying each device.</li>
 <li>Shut down: <code>sudo shutdown -h now</code></li>
 <li>Copy the SD card using <strong>Apple Pi Baker</strong> — this is the new display Pi master.</li>
@@ -1041,8 +1133,7 @@ needed (and none is available — the script would be served by the very Pi bein
 <li>Insert the card into a Pi Zero 2 W and boot.</li>
 <li>Find the IP and SSH in.</li>
 <li>Download and run the install script:
-   <code>bash
-   bash &lt;(curl -fsSL https://marsaprs.org/igate/install.sh) 2&gt;&amp;1 | tee install.log</code></li>
+   <code>bash &lt;(curl -fsSL https://marsaprs.org/igate/install.sh) 2&gt;&amp;1 | tee install.log</code></li>
 <li><strong>Do not run <code>configure.sh</code></strong> — that step is done when deploying each device.</li>
 <li>Shut down: <code>sudo shutdown -h now</code></li>
 <li>Copy the SD card using <strong>Apple Pi Baker</strong> — this is the new iGate master.</li>

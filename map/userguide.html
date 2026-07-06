@@ -192,7 +192,7 @@
 
 <div id="content">
 <h1 id="aprs-tracker-map-user-guide">APRS Tracker Map — User Guide</h1>
-<p><strong>Version 1.18.1 · July 1, 2026</strong></p>
+<p><strong>Version 1.18.4 · July 5, 2026</strong></p>
 <hr />
 <p>This document is a guide for users of the MARS APRS system. For technical details on the architecture and software see the <a href="https://marsaprs.org/readme.html?back=/userguide.html">README</a> file.</p>
 <h2 id="contents">Contents</h2>
@@ -371,7 +371,7 @@ A user with admin privileges can switch to a different default event, which all 
 <tbody>
 <tr>
 <td><strong>Share Location</strong> / <strong>Sharing</strong></td>
-<td>When not sharing: opens the location sharing dialog. When sharing (shown in green): opens a panel where you can switch activity mode or stop sharing. Only shown when the event administrator has enabled mobile tracking.</td>
+<td>When not sharing: opens the location sharing dialog. When sharing (shown in green): opens a panel to stop sharing. Only shown when the event administrator has enabled mobile tracking.</td>
 </tr>
 <tr>
 <td><strong>Save Map</strong></td>
@@ -403,20 +403,11 @@ A user with admin privileges can switch to a different default event, which all 
 <ol>
 <li>Tap <strong>Share Location</strong> in the drawer footer.</li>
 <li>Enter your first name (pre-filled if you have shared before) and the event PIN. Both are shown as plain text.</li>
-<li><em>Optional — Ham Radio Callsign:</em> If you are also transmitting via an APRS-capable ham radio, tap <strong>Ham Radio Callsign (optional)</strong> to expand the field and enter your base callsign (e.g., <code>W6SG</code>) and SSID (e.g., <code>4</code>). When set, you become a <strong>hybrid tracker</strong> — your position data comes from both the app and your radio, and your marker on the map is shown as a triangle. Leave this collapsed if you are using the app only.</li>
-<li>Tap an <strong>activity</strong> button — this immediately starts sharing and closes the dialog:
-<ul>
-<li><strong>Walk / Run</strong> — transmits every 60 seconds.</li>
-<li><strong>Cycle</strong> — transmits every 30 seconds, or immediately when you move ≥ 0.2 miles.</li>
-<li><strong>Drive</strong> — transmits every 15 seconds, or immediately when you move ≥ 0.2 miles.</li>
-<li><strong>Stationary</strong> — transmits every 2 minutes. Use when you are at a fixed post.</li>
-</ul>
-</li>
+<li><em>Optional — Ham Radio Callsign:</em> If you are also transmitting via an APRS-capable ham radio, tap <strong>Ham Radio Callsign?</strong> to expand the field and enter your base callsign (e.g., <code>W6SG</code>) and SSID (e.g., <code>4</code>). When set, you become a <strong>hybrid tracker</strong> — your position data comes from both the app and your radio, and your marker on the map is shown as a triangle. Leave this collapsed if you are using the app only.</li>
+<li>Tap <strong>Share Location</strong>. Sharing begins immediately at Walk/Run pace (60-second interval).</li>
 <li>A confirmation shows your assigned APRS callsign. Your name appears in the Trackers list and you are visible on the map.</li>
 </ol>
-<p>Beacon intervals and distance thresholds are configured by the event administrator and may differ from the defaults above.</p>
-<p><strong>Changing activity mode while sharing:</strong></p>
-<p>Tap the <strong>Sharing</strong> button (green) in the drawer footer. A panel appears with the activity mode buttons and a <strong>Stop Sharing</strong> button. Tap a different activity to switch modes immediately — your sharing session continues uninterrupted.</p>
+<p><strong>Smart Track</strong> — The app automatically adjusts the beacon frequency based on your GPS speed. After a few readings it detects whether you are stationary, walking/running, cycling, or driving, and switches to the appropriate interval without any action on your part: stationary (2 min) · walk/run (60 s) · cycle (30 s) · drive (15 s). Beacon intervals and distance thresholds are configured by the event administrator and may differ from these defaults.</p>
 <p><strong>Stopping:</strong></p>
 <p>Tap <strong>Sharing</strong> (green) in the drawer footer, then tap <strong>Stop Sharing</strong>.</p>
 <p><strong>Auto-resume:</strong> If you close and reopen the app while sharing was active, sharing resumes automatically with the same callsign and activity mode. A brief notification confirms it.</p>
@@ -640,19 +631,12 @@ in beyond its maximum, the map automatically zooms out to the highest level that
 <ol>
 <li>Tap <strong>Share Location</strong> at the bottom of the drawer.</li>
 <li>Enter your first name (pre-filled if you have shared before) and the event PIN. Both fields are shown as plain text.</li>
-<li>Tap an <strong>activity</strong> — this immediately starts sharing and closes the dialog:
-<ul>
-<li><strong>Walk / Run</strong> — transmits every 60 s</li>
-<li><strong>Cycle</strong> — transmits every 30 s, or immediately when you move ≥ 0.2 mi</li>
-<li><strong>Drive</strong> — transmits every 15 s, or immediately when you move ≥ 0.2 mi</li>
-<li><strong>Stationary</strong> — transmits every 2 min (use when at a fixed post)</li>
-</ul>
-</li>
-<li>A confirmation shows your assigned APRS callsign (e.g., <code>K6DRK-01</code>). You will appear in the Trackers list and be visible on the map. Your callsign is also shown in the <strong>Help</strong> panel while sharing is active.</li>
+<li>Optionally expand the <strong>Ham Radio</strong> section to enter your base callsign and SSID if you are also transmitting via an APRS ham radio.</li>
+<li>Tap <strong>Share Location</strong>. Sharing begins immediately at Walk/Run pace (60-second interval).</li>
+<li>A confirmation shows your assigned APRS callsign (e.g., <code>K6DRK-01</code>). You will appear in the Trackers list and be visible on the map. Your callsign is also shown in the <strong>About</strong> section of the drawer while sharing is active.</li>
 </ol>
-<p>Your position is transmitted at the chosen interval and appears on this map and on external APRS sites such as <a href="https://aprs.fi">aprs.fi</a> and CalTopo.</p>
-<p><strong>Changing activity mode while sharing:</strong></p>
-<p>Tap the <strong>Sharing</strong> button in the drawer footer. A panel appears with the activity buttons and a <strong>Stop Sharing</strong> button. Tap a different activity to switch modes immediately — your sharing session continues uninterrupted.</p>
+<p>Your position is transmitted at the current interval and appears on this map and on external APRS sites such as <a href="https://aprs.fi">aprs.fi</a> and CalTopo.</p>
+<p><strong>Smart Track</strong> — The map automatically adjusts the beacon frequency based on your GPS speed. After a few readings it detects whether you are stationary, walking/running, cycling, or driving, and switches to the appropriate interval: stationary (2 min) · walk/run (60 s) · cycle (30 s) · drive (15 s). Beacon intervals are configured by the event administrator and may differ from these defaults.</p>
 <p><strong>Stopping:</strong></p>
 <p>Tap <strong>Sharing</strong> in the drawer footer, then tap <strong>Stop Sharing</strong>.</p>
 <p><strong>Callsign persistence:</strong> The system remembers your device across sessions. If you stop sharing and start again you will be assigned the <strong>same callsign</strong> as before, so your track history is continuous.</p>

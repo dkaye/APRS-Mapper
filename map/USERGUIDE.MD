@@ -1,6 +1,6 @@
 # APRS Tracker Map — User Guide
 
-**Version 1.18.1 · July 1, 2026**
+**Version 1.18.4 · July 5, 2026**
 
 ---
 
@@ -162,7 +162,7 @@ The drawer footer has buttons:
 
 | Button | Action |
 |--------|--------|
-| **Share Location** / **Sharing** | When not sharing: opens the location sharing dialog. When sharing (shown in green): opens a panel where you can switch activity mode or stop sharing. Only shown when the event administrator has enabled mobile tracking. |
+| **Share Location** / **Sharing** | When not sharing: opens the location sharing dialog. When sharing (shown in green): opens a panel to stop sharing. Only shown when the event administrator has enabled mobile tracking. |
 | **Save Map** | Save the current map position and zoom as your personal default. |
 | **Reload Tiles** | Download fresh map tiles for the current view. See [Reload Tiles](#reload-tiles) below. |
 | **Help** | Opens a panel showing organization, app version and build number, event name, your assigned callsign (while sharing), map attribution, and copyright — with buttons for **Quick Start** (built-in guide), **User Guide**, and **Submit a Bug or Suggestion**. |
@@ -188,18 +188,11 @@ The key advantage of the native app over the web map is that **location sharing 
 
 1. Tap **Share Location** in the drawer footer.
 2. Enter your first name (pre-filled if you have shared before) and the event PIN. Both are shown as plain text.
-3. Tap an **activity** button — this immediately starts sharing and closes the dialog:
-   - **Walk / Run** — transmits every 60 seconds.
-   - **Cycle** — transmits every 30 seconds, or immediately when you move ≥ 0.2 miles.
-   - **Drive** — transmits every 15 seconds, or immediately when you move ≥ 0.2 miles.
-   - **Stationary** — transmits every 2 minutes. Use when you are at a fixed post.
-4. A confirmation shows your assigned APRS callsign. Your name appears in the Trackers list and you are visible on the map.
+3. *Optional — Ham Radio Callsign:* If you are also transmitting via an APRS-capable ham radio, tap **Ham Radio Callsign?** to expand the field and enter your base callsign (e.g., `W6SG`) and SSID (e.g., `4`). When set, you become a **hybrid tracker** — your position data comes from both the app and your radio, and your marker on the map is shown as a triangle. Leave this collapsed if you are using the app only.
+4. Tap **Share Location**. Sharing begins immediately.
+5. A confirmation shows your assigned APRS callsign. Your name appears in the Trackers list and you are visible on the map.
 
-Beacon intervals and distance thresholds are configured by the event administrator and may differ from the defaults above.
-
-**Changing activity mode while sharing:**
-
-Tap the **Sharing** button (green) in the drawer footer. A panel appears with the activity mode buttons and a **Stop Sharing** button. Tap a different activity to switch modes immediately — your sharing session continues uninterrupted.
+**Smart Track** — The app automatically adjusts the beacon frequency based on your GPS speed. Sharing starts in **unknown** (?) mode and within about 90 seconds Smart Track determines whether you are stationary, walking/running, cycling, or driving, and sets the appropriate interval: stationary (2 min) · walk/run (60 s) · cycle (30 s) · drive (15 s). No action is needed on your part. Beacon intervals and distance thresholds are configured by the event administrator and may differ from these defaults.
 
 **Stopping:**
 
@@ -300,6 +293,8 @@ time since its last beacon was received.
 
 **Marker shapes:** Regular trackers use the shape configured by the administrator (circle, square, diamond, etc.). Mobile participants sharing their location via the **Share Location** feature appear as a **rounded square** (both on the map and in the sidebar) to distinguish them from fixed APRS trackers.
 
+**Activity icons (mobile trackers):** A small icon appears next to each mobile tracker's name showing its current activity mode: a walking figure (walk/run), bicycle (cycle), car (drive), or pin (stationary). A **?** is shown briefly when a tracker first starts sharing, while Smart Track takes its initial GPS readings. This typically resolves within 90 seconds.
+
 When a tracker has not been heard for more than 5 minutes its sidebar entry shows **stale** in red instead of an elapsed time. Hovering over the marker on the map shows the actual elapsed time (e.g., ">2h 15m ago").
 
 The tracker's marker on the map and sidebar entry both update every 5 seconds.
@@ -390,18 +385,13 @@ Location sharing is available on:
 
 1. Tap **Share Location** at the bottom of the drawer.
 2. Enter your first name (pre-filled if you have shared before) and the event PIN. Both fields are shown as plain text.
-3. Tap an **activity** — this immediately starts sharing and closes the dialog:
-   - **Walk / Run** — transmits every 60 s
-   - **Cycle** — transmits every 30 s, or immediately when you move ≥ 0.2 mi
-   - **Drive** — transmits every 15 s, or immediately when you move ≥ 0.2 mi
-   - **Stationary** — transmits every 2 min (use when at a fixed post)
-4. A confirmation shows your assigned APRS callsign (e.g., `K6DRK-01`). You will appear in the Trackers list and be visible on the map. Your callsign is also shown in the **Help** panel while sharing is active.
+3. Optionally expand the **Ham Radio** section to enter your base callsign and SSID if you are also transmitting via an APRS ham radio.
+4. Tap **Share Location**. Sharing begins immediately.
+5. A confirmation shows your assigned APRS callsign (e.g., `K6DRK-01`). You will appear in the Trackers list and be visible on the map. Your callsign is also shown in the **About** section of the drawer while sharing is active.
 
-Your position is transmitted at the chosen interval and appears on this map and on external APRS sites such as [aprs.fi](https://aprs.fi) and CalTopo.
+Your position is transmitted at the current interval and appears on this map and on external APRS sites such as [aprs.fi](https://aprs.fi) and CalTopo.
 
-**Changing activity mode while sharing:**
-
-Tap the **Sharing** button in the drawer footer. A panel appears with the activity buttons and a **Stop Sharing** button. Tap a different activity to switch modes immediately — your sharing session continues uninterrupted.
+**Smart Track** — The map automatically adjusts the beacon frequency based on your GPS speed. Sharing starts in **unknown** (?) mode and within about 90 seconds Smart Track determines whether you are stationary, walking/running, cycling, or driving, and sets the appropriate interval: stationary (2 min) · walk/run (60 s) · cycle (30 s) · drive (15 s). Beacon intervals are configured by the event administrator and may differ from these defaults.
 
 **Stopping:**
 
