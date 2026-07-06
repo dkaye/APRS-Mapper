@@ -248,7 +248,7 @@ class BackgroundLocationService {
     await prefs.setInt(_kPrefActivityMode, mode);
   }
 
-  Future<void> changeActivityMode(int mode, Duration interval, double distMi, String sharingMode) async {
+  Future<void> changeActivityMode(int mode, Duration interval, double distMi, String sharingMode, {bool uploadNow = true}) async {
     _activityMode = mode;
     _distanceThresholdM = distMi * _kMiToM;
     _pendingSharingMode = sharingMode;
@@ -257,7 +257,14 @@ class BackgroundLocationService {
     await prefs.setInt(_kPrefIntervalMs, interval.inMilliseconds);
     await prefs.setDouble(_kPrefDistThreshold, distMi);
     updateInterval(interval); // reschedules heartbeat timer
-    if (_sharingActive) unawaited(_uploadNow()); // send new mode immediately
+    if (_sharingActive) {
+      if (uploadNow) {
+        unawaited(_uploadNow());
+      } else {
+        // Deferred: let server keep 'unknown' visible briefly, then send real mode
+        Future.delayed(const Duration(seconds: 15), () { if (_sharingActive) unawaited(_uploadNow()); });
+      }
+    }
   }
 
   Future<void> _saveSession(String name, String pin, {String hamRoot = '', int hamSsid = 0}) async {

@@ -81,6 +81,24 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   int _sharingActivityMode = -1; // mode index active during current share session; -1 if not sharing
   bool _shareBadgeOn = true;
 
+  // Auto activity-mode detection
+  int? _candidateAutoMode;
+  int _candidateSampleCount = 0;
+  DateTime? _candidateFirstSeen;
+  DateTime? _lastMovementAt;   // last time sustained movement was detected
+  int _movementAboveCount = 0; // consecutive above-threshold readings (guards against noise)
+  Timer? _stationaryCheckTimer;
+  int _totalSampleCount = 0;   // total since session start; drives startup fast-window
+  static const _kAutoSpeedStationary  = 1.0;
+  static const _kMovementConfirmSamples = 3; // consecutive above-threshold to confirm movement
+  static const _kAutoSpeedWalkRun     = 4.5;
+  static const _kAutoSpeedCycle       = 11.0;
+  static const _kAutoGeneralWindow    = 15;
+  static const _kAutoStationaryWindow = 20;
+  static const _kAutoStationaryMinSecs = 300;
+  static const _kAutoStartupWindow    = 3;   // samples needed during startup phase
+  static const _kAutoStartupTotal     = 10;  // total samples that define startup phase
+
   // Selection / blink
   String? _selectedId;
   int _selectionClickCount = 0;
@@ -247,8 +265,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             }
           }
         }
-        // Push updated settings to a running share session.
-        if (_isSharing && _sharingActivityMode >= 0) {
+        // Push updated settings to a running share session (not unknown mode — interval stays at walk_run default until Smart Track fires).
+        if (_isSharing && _sharingActivityMode >= 0 && _sharingActivityMode < 4) {
           if (newIntervals != null)
             _bgLocation.updateInterval(Duration(seconds: newIntervals[_sharingActivityMode]));
           if (newDistances != null)
@@ -279,6 +297,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _bgLocation.onSessionEnded = () {
       if (!mounted) return;
       setState(() { _isSharing = false; _sharingActivityMode = -1; });
+      _resetAutoModeDetection();
       showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -630,6 +649,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _poller.stop();
     _positionSub?.cancel();
+    _stationaryCheckTimer?.cancel();
     _blinkTimer?.cancel();
     _audioPlayer.dispose();
     _bgLocation.dispose();
@@ -930,9 +950,12 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     // background location). startTracking() owns the single GPS stream and
     // feeds all position events through positionStream.
     _positionSub?.cancel();
+    _stationaryCheckTimer?.cancel();
+    _stationaryCheckTimer = Timer.periodic(const Duration(seconds: 30), (_) => _checkStationaryByTime());
     final posStream = _bgLocation.positionStream;
     _positionSub = posStream.listen((pos) {
       _lastUserLatLng = LatLng(pos.latitude, pos.longitude);
+      _processSpeedSample(pos.speed, pos.accuracy);
     });
     _locationMarkerStream = const LocationMarkerDataStreamFactory()
         .fromGeolocatorPositionStream(stream: posStream);
@@ -968,6 +991,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     if (!mounted) return;
     if (resumed) {
       setState(() { _isSharing = true; _sharingActivityMode = _bgLocation.activityMode; });
+      _resetAutoModeDetection();
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Location sharing resumed'),
         duration: Duration(seconds: 3),
@@ -976,15 +1000,78 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
 
+  int _classifySpeedMs(double s) {
+    if (s <= _kAutoSpeedStationary) return 3;
+    if (s <= _kAutoSpeedWalkRun)   return 0;
+    if (s <= _kAutoSpeedCycle)     return 1;
+    return 2;
+  }
+
+  void _resetAutoModeDetection({bool fullReset = false}) {
+    _candidateAutoMode = null;
+    _candidateSampleCount = 0;
+    _candidateFirstSeen = null;
+    _lastMovementAt = null;
+    _movementAboveCount = 0;
+    if (fullReset) {
+      _totalSampleCount = 0;
+      _lastMovementAt = DateTime.now(); // arm the time-based check from session start
+    }
+  }
+
+  void _checkStationaryByTime() {
+    if (!_isSharing || _sharingActivityMode == 3 || _lastMovementAt == null) return;
+    final elapsed = DateTime.now().difference(_lastMovementAt!).inSeconds;
+    final inStartup = _totalSampleCount <= _kAutoStartupTotal;
+    if (elapsed >= (inStartup ? 90 : _kAutoStationaryMinSecs)) {
+      _changeActivityMode(3, silent: true);
+      _resetAutoModeDetection();
+    }
+  }
+
+  void _processSpeedSample(double speedMs, double accuracy) {
+    if (!_isSharing || _sharingActivityMode < 0 || speedMs < 0) return;
+    if (speedMs > _kAutoSpeedStationary && accuracy <= 20) {
+      _movementAboveCount++;
+      if (_movementAboveCount >= _kMovementConfirmSamples) _lastMovementAt = DateTime.now();
+    } else {
+      _movementAboveCount = 0;
+    }
+    _totalSampleCount++;
+    final inStartup = _totalSampleCount <= _kAutoStartupTotal;
+    final newMode = _classifySpeedMs(speedMs);
+    if (newMode == _candidateAutoMode) {
+      _candidateSampleCount++;
+    } else {
+      _candidateAutoMode = newMode;
+      _candidateSampleCount = 1;
+      _candidateFirstSeen = DateTime.now();
+    }
+    if (newMode == _sharingActivityMode) return;
+    final isStationary = newMode == 3;
+    final windowNeeded = inStartup ? _kAutoStartupWindow :
+        (isStationary ? _kAutoStationaryWindow : _kAutoGeneralWindow);
+    if (_candidateSampleCount < windowNeeded) return;
+    if (!inStartup && isStationary) {
+      if (DateTime.now().difference(_candidateFirstSeen!).inSeconds < _kAutoStationaryMinSecs) return;
+    }
+    _changeActivityMode(newMode, silent: true);
+    _resetAutoModeDetection();
+  }
+
   Future<void> _changeActivityMode(int newMode, {bool silent = false}) async {
     if (!_isSharing || newMode == _sharingActivityMode) return;
     const modeKeys = ['walk_run', 'cycle', 'drive', 'stationary'];
     final intervals = _beaconIntervalsSec.map((s) => Duration(seconds: s)).toList();
+    // When leaving 'unknown' for the first time, don't upload immediately — let the server keep
+    // 'unknown' visible until the next scheduled beacon so observers can see the '?' state.
+    final wasUnknown = _sharingActivityMode == 4;
     await _bgLocation.changeActivityMode(
       newMode,
       intervals[newMode],
       _beaconDistancesMi[newMode],
       modeKeys[newMode],
+      uploadNow: !wasUnknown,
     );
     if (!mounted) return;
     setState(() => _sharingActivityMode = newMode);
@@ -995,6 +1082,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     if (_isSharing) {
       await _bgLocation.stopSharing();
       if (mounted) setState(() => _isSharing = false);
+      _resetAutoModeDetection();
       return;
     }
     if (!mounted) return;
@@ -1050,8 +1138,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     final hamRootFocus = FocusNode();
     String? errorText;
     bool loading = false;
-    bool hamExpanded = savedHamRoot.isNotEmpty;
-    int activityMode = initialMode;
+    bool hamExpanded = false;
 
     await showDialog<void>(
       context: context,
@@ -1069,20 +1156,15 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
               setDialogState(() => errorText = 'Please enter the event PIN.');
               return;
             }
-            if (activityMode < 0) {
-              setDialogState(() => errorText = 'Please select an activity.');
-              return;
-            }
             setDialogState(() { loading = true; errorText = null; });
             await _ensureBackgroundPermissions();
             final intervals = _beaconIntervalsSec.map((s) => Duration(seconds: s)).toList();
-            const modeKeys = ['walk_run', 'cycle', 'drive', 'stationary'];
             final hamRoot = hamExpanded ? hamRootCtl.text.trim().toUpperCase() : '';
             final hamSsid = hamExpanded ? (int.tryParse(hamSsidCtl.text.trim()) ?? 0) : 0;
             if (hamExpanded && hamRoot.isNotEmpty) {
               // ITU/FCC callsign: 1–3 prefix chars (letters or digit), one area digit, 1–3 letter suffix
-              final _csRe = RegExp(r'^[A-Z0-9]{1,3}[0-9][A-Z]{1,3}$');
-              if (!_csRe.hasMatch(hamRoot)) {
+              final csRe = RegExp(r'^[A-Z0-9]{1,3}[0-9][A-Z]{1,3}$');
+              if (!csRe.hasMatch(hamRoot)) {
                 setDialogState(() { errorText = 'Enter a valid callsign (e.g. K6DRK or W6SG).'; loading = false; });
                 return;
               }
@@ -1094,17 +1176,18 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             final joinResult = await _bgLocation.startSharing(
               name: name,
               pin: pin,
-              interval: intervals[activityMode],
-              distanceThresholdMiles: _beaconDistancesMi[activityMode],
-              sharingMode: modeKeys[activityMode],
-              activityModeIndex: activityMode,
+              interval: intervals[0],
+              distanceThresholdMiles: _beaconDistancesMi[0],
+              sharingMode: 'unknown',
+              activityModeIndex: 4,
               hamRoot: hamRoot,
               hamSsid: hamSsid,
             );
             if (!ctx.mounted) return;
             if (joinResult == JoinResult.success) {
               Navigator.pop(ctx);
-              if (mounted) setState(() { _isSharing = true; _sharingActivityMode = activityMode; });
+              if (mounted) setState(() { _isSharing = true; _sharingActivityMode = 4; });
+              _resetAutoModeDetection(fullReset: true);
               await _showSharingStartedDialog(_bgLocation.callsign ?? '');
             } else if (joinResult == JoinResult.wrongPin) {
               setDialogState(() {
@@ -1133,16 +1216,19 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             title: const Text('Share Location'),
             insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
             contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+            actionsAlignment: MainAxisAlignment.center,
             content: SingleChildScrollView(
               child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
                   controller: nameCtl,
-                  decoration: const InputDecoration(
-                    labelText: 'Your First Name',
+                  decoration: InputDecoration(
+                    hintText: 'First Name',
+                    hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
                     isDense: true,
-                    contentPadding: EdgeInsets.symmetric(vertical: 8),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
                   ),
                   textCapitalization: TextCapitalization.sentences,
                   onSubmitted: (_) => pinFocus.requestFocus(),
@@ -1151,118 +1237,74 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 TextField(
                   controller: pinCtl,
                   focusNode: pinFocus,
-                  decoration: const InputDecoration(
-                    labelText: 'PIN',
+                  decoration: InputDecoration(
+                    hintText: 'PIN',
+                    hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
                     isDense: true,
-                    contentPadding: EdgeInsets.symmetric(vertical: 8),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
                   ),
                   keyboardType: TextInputType.number,
                   obscureText: true,
                   onSubmitted: (_) => submit(),
                 ),
-                const SizedBox(height: 6),
-                GestureDetector(
-                  onTap: () => setDialogState(() => hamExpanded = !hamExpanded),
-                  child: Row(children: [
-                    Icon(hamExpanded ? Icons.expand_less : Icons.expand_more,
-                        size: 16, color: Colors.blueGrey),
-                    const SizedBox(width: 4),
-                    Text('Ham Radio Callsign (optional)',
-                        style: TextStyle(fontSize: 12, color: Colors.blueGrey.shade700)),
-                  ]),
+                const SizedBox(height: 12),
+                Center(
+                  child: OutlinedButton(
+                    onPressed: () => setDialogState(() => hamExpanded = !hamExpanded),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      textStyle: const TextStyle(fontSize: 12),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text('Ham Radio Callsign?'),
+                  ),
                 ),
                 if (hamExpanded) ...[
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 10),
                   Row(children: [
                     Expanded(
                       flex: 3,
                       child: TextField(
                         controller: hamRootCtl,
                         focusNode: hamRootFocus,
-                        decoration: const InputDecoration(
-                          labelText: 'Callsign (e.g. K6DRK)',
+                        decoration: InputDecoration(
+                          hintText: 'Callsign',
+                          hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
                           isDense: true,
-                          contentPadding: EdgeInsets.symmetric(vertical: 8),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
                         ),
                         textCapitalization: TextCapitalization.characters,
                         onChanged: (v) {
                           final up = v.toUpperCase();
                           if (up != v) hamRootCtl.value = hamRootCtl.value.copyWith(text: up, selection: TextSelection.collapsed(offset: up.length));
                         },
+                        onSubmitted: (_) => FocusScope.of(ctx).requestFocus(hamRootFocus),
                       ),
                     ),
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 6),
-                      child: Text('–', style: TextStyle(fontSize: 18, color: Colors.grey)),
-                    ),
+                    const SizedBox(width: 8),
                     SizedBox(
-                      width: 52,
+                      width: 64,
                       child: TextField(
                         controller: hamSsidCtl,
-                        decoration: const InputDecoration(
-                          labelText: 'SSID',
-                          hintText: '1–15',
+                        decoration: InputDecoration(
+                          hintText: 'SSID 1–15',
+                          hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
                           isDense: true,
-                          contentPadding: EdgeInsets.symmetric(vertical: 8),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
                         ),
                         keyboardType: TextInputType.number,
+                        onSubmitted: (_) => submit(),
                       ),
                     ),
                   ]),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 3),
-                    child: Text('SSID 1–15',
-                        style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
-                  ),
                 ],
                 const SizedBox(height: 10),
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text('Activity', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    for (final entry in const [
-                      (0, 'Walk/Run'),
-                      (1, 'Cycle'),
-                      (2, 'Drive'),
-                      (3, 'Stationary'),
-                    ]) ...[
-                      if (entry.$1 > 0) const SizedBox(width: 5),
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () {
-                            setDialogState(() => activityMode = entry.$1);
-                            submit();
-                          },
-                          child: Container(
-                            height: 34,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: activityMode == entry.$1
-                                  ? Colors.blueGrey.shade700
-                                  : Colors.grey.shade200,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              entry.$2,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: activityMode == entry.$1 ? Colors.white : Colors.black54,
-                                fontWeight: activityMode == entry.$1 ? FontWeight.w600 : FontWeight.normal,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                if (errorText != null) ...[
-                  const SizedBox(height: 8),
+                if (errorText != null)
                   Text(errorText!, style: const TextStyle(color: Colors.red, fontSize: 13)),
-                ],
               ],
             ),
             ),
@@ -1272,8 +1314,30 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                   padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
                 )
-              else
-                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+              else ...[
+                OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    textStyle: const TextStyle(fontSize: 12),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: submit,
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    textStyle: const TextStyle(fontSize: 12),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    backgroundColor: Colors.blueGrey.shade700,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Share Location'),
+                ),
+              ],
             ],
           );
         },

@@ -73,9 +73,9 @@ class HelpScreen extends StatelessWidget {
               ]),
             ),
             _tip('Marker shapes show how a tracker\'s position is reported:'),
-            _indent('Circle (or other configured shape) — radio tracker via APRS radio and iGates.'),
-            _indent('Rounded square — mobile-only, sharing via this app with no ham radio.'),
-            _indent('Triangle — hybrid: both this app and a licensed ham radio simultaneously.'),
+            _shapeTip(_ShapeCircle(), 'Circle (or other configured shape) — radio tracker via APRS radio and iGates.'),
+            _shapeTip(_ShapeSquare(), 'Rounded square — mobile-only, sharing via this app with no ham radio.'),
+            _shapeTip(_ShapeTriangle(), 'Triangle — hybrid: both this app and a licensed ham radio simultaneously.'),
             _tip('In the sidebar: tap any Tracker, Aid/Rest Stop, or iGate to close the menu, center the map on it, and blink its marker.'),
             _tip('In the sidebar: long-press any Tracker, Aid/Rest Stop, or iGate to do the same and also zoom in.'),
             _tip('On the map: tap a marker to see its details. Long-press any marker to open Google Maps centered on that location.'),
@@ -102,15 +102,11 @@ class HelpScreen extends StatelessWidget {
           ]))),
             _tip('Enter your first name (pre-filled from your last session) and the event PIN — both shown as plain text.'),
             _tip('Optional: tap "Ham Radio Callsign" to enter your licensed ham callsign and SSID. This makes you a hybrid tracker — your position comes from both the app and your radio, and your marker appears as a triangle on the map.'),
-            _tip('Tap an activity to start sharing immediately:'),
-            _indent('Walk / Run — sends your position every 60 seconds.'),
-            _indent('Cycle — sends your position every 30 seconds, or immediately when you move ≥ 0.2 mile.'),
-            _indent('Drive — sends your position every 15 seconds, or immediately when you move ≥ 0.2 mile.'),
-            _indent('Stationary — sends your position every 2 minutes.'),
+            _tip('Tap Share Location to start. Sharing begins in unknown (?) mode while Smart Track takes its first GPS readings — typically within 90 seconds it determines your activity and sets the beacon interval automatically: walk/run (60 s), cycle (30 s), drive (15 s), or stationary (2 min). No selection needed.'),
             _tipWidget(Text.rich(TextSpan(children: [
               const TextSpan(text: 'While sharing, tap ', style: TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4)),
               WidgetSpan(child: Icon(Icons.share_location, size: 16, color: Colors.green[700]), alignment: PlaceholderAlignment.middle),
-              const TextSpan(text: ' Sharing to change your activity mode or stop.', style: TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4)),
+              const TextSpan(text: ' Sharing to stop.', style: TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4)),
             ]))),
             _tip('Your position keeps updating even with the screen locked or the app in the background so long as you don\'t stop the app.'),
             _tip('iOS only: if asked, tap "Change to Always Allow" to enable background tracking.'),
@@ -252,6 +248,23 @@ class HelpScreen extends StatelessWidget {
         ),
       );
 
+  Widget _shapeTip(Widget shape, String text) => Padding(
+        padding: const EdgeInsets.only(left: 14, bottom: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 3, right: 8),
+              child: shape,
+            ),
+            Expanded(
+              child: Text(text,
+                  style: const TextStyle(fontSize: 13, color: Color(0xFF555555), height: 1.4)),
+            ),
+          ],
+        ),
+      );
+
   Widget _fullGuideButton(BuildContext context) => Center(
         child: OutlinedButton.icon(
           onPressed: isOnline
@@ -270,4 +283,60 @@ class HelpScreen extends StatelessWidget {
           ),
         ),
       );
+}
+
+class _ShapeCircle extends StatelessWidget {
+  const _ShapeCircle();
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 11, height: 11,
+        decoration: BoxDecoration(
+          color: const Color(0xFF888888),
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 1.5),
+        ),
+      );
+}
+
+class _ShapeSquare extends StatelessWidget {
+  const _ShapeSquare();
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 11, height: 11,
+        decoration: BoxDecoration(
+          color: const Color(0xFF888888),
+          borderRadius: BorderRadius.circular(2),
+          border: Border.all(color: Colors.white, width: 1.5),
+        ),
+      );
+}
+
+class _ShapeTriangle extends StatelessWidget {
+  const _ShapeTriangle();
+  @override
+  Widget build(BuildContext context) => CustomPaint(
+        size: const Size(11, 11),
+        painter: _TrianglePainter(),
+      );
+}
+
+class _TrianglePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final fill = Paint()..color = const Color(0xFF888888);
+    final border = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    final path = Path()
+      ..moveTo(size.width / 2, 0)
+      ..lineTo(size.width, size.height)
+      ..lineTo(0, size.height)
+      ..close();
+    canvas.drawPath(path, fill);
+    canvas.drawPath(path, border);
+  }
+
+  @override
+  bool shouldRepaint(_TrianglePainter old) => false;
 }

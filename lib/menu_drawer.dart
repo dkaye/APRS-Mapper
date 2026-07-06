@@ -91,7 +91,6 @@ class _MenuDrawerState extends State<MenuDrawer> {
       setState(() => _expanded.contains(key) ? _expanded.remove(key) : _expanded.add(key));
 
   void _openSharingModal(BuildContext drawerCtx) {
-    const modes = [(0, 'Walk/Run'), (1, 'Cycle'), (2, 'Drive'), (3, 'Stationary')];
     showDialog<void>(
       context: drawerCtx,
       builder: (dlgCtx) {
@@ -100,48 +99,30 @@ class _MenuDrawerState extends State<MenuDrawer> {
           Navigator.pop(drawerCtx);
         }
         return AlertDialog(
-          title: const Text('Activity Mode'),
-          contentPadding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-          content: Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final entry in modes)
-                ChoiceChip(
-                  label: Text(entry.$2,
-                      style: TextStyle(
-                        color: widget.sharingActivityMode == entry.$1
-                            ? Colors.white
-                            : Colors.black54,
-                        fontWeight: widget.sharingActivityMode == entry.$1
-                            ? FontWeight.w600
-                            : FontWeight.normal,
-                      )),
-                  selected: widget.sharingActivityMode == entry.$1,
-                  selectedColor: Colors.blueGrey.shade700,
-                  backgroundColor: Colors.grey.shade200,
-                  showCheckmark: false,
-                  onSelected: (_) {
-                    if (widget.isSharing) {
-                      widget.onActivityModeChange?.call(entry.$1);
-                    } else {
-                      widget.onStartSharingWithMode?.call(entry.$1);
-                    }
-                    closeAll();
-                  },
-                ),
-            ],
-          ),
+          title: const Text('Location Sharing'),
+          actionsAlignment: MainAxisAlignment.center,
           actions: [
-            TextButton(
-              onPressed: () {
-                if (widget.isSharing) widget.onShareToggle?.call();
-                closeAll();
-              },
-              style: widget.isSharing
-                  ? TextButton.styleFrom(foregroundColor: Colors.red[700])
-                  : null,
-              child: Text(widget.isSharing ? 'Stop Sharing' : 'Cancel'),
+            OutlinedButton(
+              onPressed: closeAll,
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                textStyle: const TextStyle(fontSize: 12),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: const Text('Keep Sharing'),
+            ),
+            ElevatedButton(
+              onPressed: () { widget.onShareToggle?.call(); closeAll(); },
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                textStyle: const TextStyle(fontSize: 12),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                backgroundColor: Colors.red[700],
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Stop Sharing'),
             ),
           ],
         );
@@ -288,7 +269,7 @@ class _MenuDrawerState extends State<MenuDrawer> {
                                   ? '${widget.sharingName} (${widget.sharingCallsign})'
                                   : widget.sharingCallsign!),
                             if (widget.isSharing && widget.sharingActivityMode >= 0)
-                              _aboutRow('Activity', const ['Walk/Run', 'Cycle', 'Drive', 'Stationary'][widget.sharingActivityMode]),
+                              _aboutRow('Activity', const ['Walk/Run', 'Cycle', 'Drive', 'Stationary', 'Unknown'][widget.sharingActivityMode]),
                             _aboutRowWidget('Map Data', GestureDetector(
                               onTap: () => launchUrl(
                                 Uri.parse('https://www.openstreetmap.org/copyright'),
@@ -471,12 +452,20 @@ class _MenuDrawerState extends State<MenuDrawer> {
               'stationary'             => Icons.location_on,
               _                        => t.mobile ? null : Icons.rss_feed,
             };
+            final showUnknown = t.mobile && t.sharingMode == 'unknown';
             return Row(mainAxisSize: MainAxisSize.min, children: [
-              if (modeIcon != null) ...[
+              if (showUnknown) ...[
+                SizedBox(width: 11, height: 11,
+                    child: Center(child: Text('?',
+                        style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: color, height: 1.0)))),
+                const SizedBox(width: 3),
+              ] else if (modeIcon != null) ...[
                 Icon(modeIcon, size: 11, color: color),
                 const SizedBox(width: 3),
               ],
-              Text(label, style: TextStyle(fontSize: 11, color: color)),
+              SizedBox(width: 38, child: Text(label,
+                  textAlign: TextAlign.right,
+                  style: TextStyle(fontSize: 11, color: color))),
             ]);
           }),
         ]),
