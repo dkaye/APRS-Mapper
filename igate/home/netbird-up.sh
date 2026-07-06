@@ -15,4 +15,4 @@ sudo systemctl enable avahi-daemon
 sudo systemctl start avahi-daemon
 sudo systemctl enable --now systemd-timesyncd
 sudo timedatectl set-ntp true
-sudo /usr/bin/netbird up --enable-lazy-connection
+sudo /usr/bin/netbird up

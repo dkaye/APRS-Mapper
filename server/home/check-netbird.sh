@@ -15,7 +15,7 @@ if [[ "$RESPONSE" == "1" ]]; then
 	sudo systemctl start rpcbind.socket rpcbind.service avahi-daemon
 	sudo systemctl enable --now systemd-timesyncd
 	sudo timedatectl set-ntp true
-	sudo /usr/bin/netbird up --enable-lazy-connection
+	sudo /usr/bin/netbird up
 elif [[ "$RESPONSE" == "0" ]]; then
 	echo "Disabling NetBird"
 	sudo /usr/bin/netbird down

@@ -137,7 +137,7 @@ GET https://marsaprs.org/netbird/?hostname=$HOSTNAME
 ```
 
 Response `1` enables NetBird (starts rpcbind, avahi-daemon, systemd-timesyncd, NTP,
-then `netbird up --enable-lazy-connection`).
+then `netbird up`).
 Response `0` disables NetBird (brings it down, stops and disables the above services).
 
 Log: `/tmp/checknetbird.log`
