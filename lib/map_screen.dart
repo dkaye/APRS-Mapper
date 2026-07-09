@@ -1,3 +1,6 @@
+/// Root widget for the APRS Tracker Map app.
+/// Hosts the WebView map, the JS↔Dart bridge, the native tracker/breadcrumb overlay,
+/// and the Share Location flow (join → track → leave).
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
@@ -430,15 +433,23 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                     final text = controller.text.trim();
                     if (text.isEmpty) return;
                     Navigator.pop(ctx);
-                    setState(() {
-                      _msgLog.add((label: 'Me', text: text, isMe: true, time: DateTime.now()));
-                      if (_msgLog.length > 30) _msgLog.removeAt(0);
-                    });
-                    await _bgLocation.session.sendMessage(text);
-                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      content: Text('Message Sent'),
-                      duration: Duration(seconds: 3),
-                    ));
+                    final error = await _bgLocation.session.sendMessage(text);
+                    if (error == null) {
+                      setState(() {
+                        _msgLog.add((label: 'Me', text: text, isMe: true, time: DateTime.now()));
+                        if (_msgLog.length > 30) _msgLog.removeAt(0);
+                      });
+                      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text('Message Sent'),
+                        duration: Duration(seconds: 3),
+                      ));
+                    } else {
+                      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text(error),
+                        backgroundColor: Colors.red[700],
+                        duration: const Duration(seconds: 5),
+                      ));
+                    }
                   },
                 ),
               ]),
@@ -618,15 +629,23 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                   final text = replyController.text.trim();
                   if (text.isEmpty) return;
                   Navigator.pop(ctx);
-                  setState(() {
-                    _msgLog.add((label: 'Me', text: text, isMe: true, time: DateTime.now()));
-                    if (_msgLog.length > 30) _msgLog.removeAt(0);
-                  });
-                  await _bgLocation.session.sendMessage(text);
-                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                    content: Text('Message Sent'),
-                    duration: Duration(seconds: 3),
-                  ));
+                  final error = await _bgLocation.session.sendMessage(text);
+                  if (error == null) {
+                    setState(() {
+                      _msgLog.add((label: 'Me', text: text, isMe: true, time: DateTime.now()));
+                      if (_msgLog.length > 30) _msgLog.removeAt(0);
+                    });
+                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('Message Sent'),
+                      duration: Duration(seconds: 3),
+                    ));
+                  } else {
+                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      content: Text(error),
+                      backgroundColor: Colors.red[700],
+                      duration: const Duration(seconds: 5),
+                    ));
+                  }
                 },
                 child: const Text('Send'),
               ),
@@ -1038,6 +1057,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       _movementAboveCount = 0;
     }
     _totalSampleCount++;
+    if (accuracy > 20) return;
     final inStartup = _totalSampleCount <= _kAutoStartupTotal;
     final newMode = _classifySpeedMs(speedMs);
     if (newMode == _candidateAutoMode) {

@@ -1,3 +1,5 @@
+/// HTTP client for the mobile participant session API:
+/// join, update (position upload), leave, poll, message, and msghistory endpoints.
 import 'dart:convert';
 import 'dart:io' show Platform;
 import 'dart:math';
@@ -190,18 +192,23 @@ class MobileSession {
     return [];
   }
 
-  Future<bool> sendMessage(String text) async {
+  Future<String?> sendMessage(String text) async {
     final t = token;
-    if (t == null) return false;
+    if (t == null) return 'Not connected';
     try {
       final response = await http.post(
         Uri.parse('${MapConfig.serverBaseUrl}/index.php?mobile=message'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'token': t, 'text': text}),
       ).timeout(const Duration(seconds: 8));
-      return response.statusCode == 200;
+      if (response.statusCode == 200) return null;
+      try {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        return data['message'] as String? ?? 'Failed to send message';
+      } catch (_) {}
+      return 'Failed to send message';
     } catch (_) {}
-    return false;
+    return 'Failed to send message';
   }
 
   /// Validates the event password with the server.
