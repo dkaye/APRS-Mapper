@@ -1,3 +1,5 @@
+/// Flutter Map layer that renders fixed-position map markers for aid stations
+/// and iGates, with optional APRS callsign labels.
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';

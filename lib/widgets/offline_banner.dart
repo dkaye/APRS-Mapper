@@ -1,3 +1,5 @@
+/// Banner widget shown at the top of the map when the server is unreachable.
+/// Disappears automatically when connectivity is restored.
 import 'dart:async';
 import 'package:flutter/material.dart';
 

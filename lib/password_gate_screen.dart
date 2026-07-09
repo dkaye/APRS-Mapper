@@ -1,3 +1,5 @@
+/// Full-screen password entry form shown when the event requires authentication
+/// before the map is accessible.
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;

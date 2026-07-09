@@ -1,3 +1,5 @@
+/// View displayed when location permissions have been denied, with instructions
+/// for re-enabling them in the device Settings app.
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 

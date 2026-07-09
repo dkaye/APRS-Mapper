@@ -1,3 +1,5 @@
+/// Screen displayed while a file download is in progress, with an animated
+/// progress indicator and cancel option.
 import 'dart:async';
 import 'dart:math' show cos, pi, pow;
 import 'package:flutter/material.dart';

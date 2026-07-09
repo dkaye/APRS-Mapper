@@ -1,3 +1,6 @@
+/// Low-level APRS-IS TCP client used during kiosk mode.
+/// Connects to noam.aprs2.net:14580, sends the login handshake, and
+/// yields raw APRS packet lines to the caller via a Stream.
 import 'dart:io';
 
 class AprsClient {

@@ -1,3 +1,4 @@
+/// App-wide constants: server base URL and key API endpoint paths.
 class MapConfig {
   // marsaprs web root — map/ syncs directly to /var/www/html/, so no subdirectory
   static const String serverBaseUrl = 'https://marsaprs.org';

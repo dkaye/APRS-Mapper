@@ -1,3 +1,6 @@
+/// GPS location service that runs in the foreground (Android) and background (iOS/Android).
+/// Uploads position to the server via heartbeat timer and distance-triggered beaconing.
+/// Owns the single Geolocator stream shared with the map's blue-dot layer.
 import 'dart:async';
 import 'dart:io' show Platform;
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';

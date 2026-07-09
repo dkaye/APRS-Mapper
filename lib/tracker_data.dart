@@ -1,3 +1,5 @@
+/// Data model for a single tracker's state: callsign, name, position,
+/// breadcrumb history, color, and mobile/hybrid flags.
 import 'package:latlong2/latlong.dart';
 
 class TrackerData {

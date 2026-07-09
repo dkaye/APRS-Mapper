@@ -1,3 +1,5 @@
+/// Small widget that displays the current Smart Track activity mode icon
+/// (Walk/Run, Cycle, Drive, Stationary, or Unknown).
 import 'package:flutter/material.dart';
 
 class ModeIndicator extends StatelessWidget {

@@ -1,3 +1,5 @@
+/// Polls the server periodically to detect connectivity loss and restoration.
+/// Notifies listeners so the UI can show the offline banner.
 import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;

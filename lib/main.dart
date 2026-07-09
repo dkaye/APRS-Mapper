@@ -1,3 +1,5 @@
+/// App entry point. Initializes Flutter, requests Android foreground-service
+/// permissions, and launches MapScreen.
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';

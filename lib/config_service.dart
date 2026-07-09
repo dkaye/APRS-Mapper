@@ -1,3 +1,5 @@
+/// Singleton that fetches, caches, and exposes the remote event configuration
+/// from the server's ?config endpoint. Notifies listeners on change.
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;

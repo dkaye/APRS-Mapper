@@ -1,3 +1,4 @@
+/// CustomPainter that draws directional chevron arrows along breadcrumb trail polylines on the native map overlay.
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 

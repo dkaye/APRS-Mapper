@@ -1,3 +1,5 @@
+/// Native Flutter sidebar drawer with collapsible sections for tracker list,
+/// courses, aid stations, and iGates. Footer provides Share Location, Help, and About.
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';

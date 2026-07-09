@@ -1,3 +1,5 @@
+/// Polls the server's ?config endpoint and parses the event configuration
+/// into strongly-typed Dart objects (backgrounds, courses, trackers, etc.).
 import 'map_config.dart';
 
 class BackgroundLayer {

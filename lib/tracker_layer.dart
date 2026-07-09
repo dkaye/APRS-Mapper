@@ -1,3 +1,5 @@
+/// Native Flutter Map overlay that renders tracker markers (squares for mobile,
+/// circles for radio) and breadcrumb trails with directional arrows.
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'tracker_data.dart';

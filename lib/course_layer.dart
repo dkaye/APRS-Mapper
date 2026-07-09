@@ -1,3 +1,5 @@
+/// Flutter Map layer that fetches GPX/KML/GeoJSON course files from the server
+/// in parallel and renders them as color-coded polylines on the map.
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';

@@ -1,3 +1,6 @@
+/// Android foreground service isolate entry point for flutter_foreground_task.
+/// Beaconing is handled entirely by the main isolate; this file exists only
+/// to satisfy the foreground service requirement and keep the process alive.
 import 'dart:async';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
