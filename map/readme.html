@@ -193,7 +193,7 @@
 <div id="content">
 <h1 id="mars-aprs-system">MARS APRS System</h1>
 <p><strong>Author:</strong> Doug Kaye (K6DRK) · <strong>Copyright:</strong> 2026 Doug Kaye. All Rights Reserved.</p>
-<p><strong>Version:</strong> Server &amp; Displays (v1.18.4); Mobile App (v1.18.4); iGates (v5.0)</p>
+<p><strong>Version:</strong> Server &amp; Displays (v1.18.5); Mobile App (v1.18.5); iGates (v5.0)</p>
 <hr />
 <h2 id="table-of-contents">Table of Contents</h2>
 <ol>
@@ -201,12 +201,14 @@
 <li><a href="#system-architecture">System Architecture</a></li>
 <li><a href="#netbird-vpn">NetBird VPN</a></li>
 <li><a href="#igates-v50">iGates (v5.0)</a></li>
-<li><a href="#aprs-server-v1184">APRS Server (v1.18.4)</a></li>
+<li><a href="#aprs-server-v1185">APRS Server (v1.18.5)</a></li>
 <li><a href="#cloudflare-tunnel">Cloudflare Tunnel</a></li>
-<li><a href="#display-pis-v1184">Display Pis (v1.18.4)</a></li>
-<li><a href="#mobile-apps-v1184">Mobile Apps (v1.18.4)</a></li>
-<li><a href="#app-architecture">Architecture</a> · <a href="#location-sharing-flow">Location Sharing Flow</a> · <a href="#building-distributing">Building &amp; Distributing</a> · <a href="#background-location">Background Location</a></li>
+<li><a href="#display-pis-v1185">Display Pis (v1.18.5)</a></li>
+<li><a href="#mobile-apps-v1185">Mobile Apps (v1.18.5)</a></li>
+<li><a href="#app-architecture">Architecture</a> · <a href="#location-sharing-flow">Location Sharing Flow</a> · <a href="#smart-track">Smart Track</a> · <a href="#building-distributing">Building &amp; Distributing</a> · <a href="#background-location">Background Location</a></li>
 <li><a href="#user-interfaces">User Interfaces</a></li>
+<li><a href="#analyzer">Analyzer</a></li>
+<li><a href="#analyzer-architecture">Architecture</a> · <a href="#analyzer-authentication">Authentication</a> · <a href="#beacon-recording">Beacon Recording</a> · <a href="#map--controls">Map &amp; Controls</a> · <a href="#analyzer-key-files">Key Files</a> · <a href="#analyzer-services">Services</a> · <a href="#analyzer-api-endpoints">API Endpoints</a></li>
 <li><a href="#backup-recovery-and-updates">Backup, Recovery and Updates</a></li>
 <li><a href="#server-pi">Server Pi</a> · <a href="#display-pis">Display Pis</a> · <a href="#igates">iGates</a></li>
 <li><a href="#log-rotation">Log Rotation</a></li>
@@ -259,18 +261,18 @@ forwarding or static public IP addresses.</p>
            ▼
 ┌──────────────────────────────────────┐     ┌──────────────────────────────┐
 │           APRS-IS Network            │◀────│  Mobile App  (iOS/Android)   │
-│         noam.aprs2.net:14580         │     │  Flutter v1.18.4               │
+│         noam.aprs2.net:14580         │     │  Flutter v1.18.5               │
 └────────────────┬─────────────────────┘     │  TCP 14580 (inject position) │
                  │ TCP 14580                 └──────────────┬───────────────┘
 ┌────────────────▼─────────────────────┐                    │ HTTPS (map + config + session)
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.18.4      │
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.18.5      │
 │  aprsDaemon.php → trackers.json      │◀───────────────────┘
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.18.4
+│  Display Pi  (×2)      │  Pi 4 · v1.18.5
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -444,7 +446,7 @@ igate-watchdog.sh  (cron, every minute)
 </table>
 <p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code></p>
 <hr />
-<h2 id="aprs-server-v1184">APRS Server (v1.18.4)</h2>
+<h2 id="aprs-server-v1185">APRS Server (v1.18.5)</h2>
 <p>The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
 APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
 NetBird monitor and WiFi credential manager. It is reachable at <code>marsaprs.org</code> via a
@@ -512,7 +514,7 @@ wifi/index.php  (credential editor)
 </tr>
 <tr>
 <td><code>mobile_trackers.json</code></td>
-<td>Active mobile participant sessions (token, callsign, last update, <code>pending_msgs</code> queue)</td>
+<td>Active mobile participant sessions (token, callsign, last update, <code>pending_msgs</code> queue, <code>aprs_lat</code>/<code>aprs_lon</code>/<code>aprs_ts</code> for APRS-IS dedup)</td>
 </tr>
 <tr>
 <td><code>events/&lt;E&gt;/messages.json</code></td>
@@ -549,7 +551,7 @@ sudo systemctl start cloudflared
 <p>The tunnel token is obtained from the <strong>Cloudflare Zero Trust dashboard</strong>:
 <em>Networks → Tunnels → \&lt;tunnel&gt; → Configure → Install and run connector</em></p>
 <hr />
-<h2 id="display-pis-v1184">Display Pis (v1.18.4)</h2>
+<h2 id="display-pis-v1185">Display Pis (v1.18.5)</h2>
 <p>A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
 <code>marsaprs.org</code>. It is a read-only display device — no long-term local configuration or data storage.
 Two display Pis are in use: <strong>NetControl</strong> (operator screen) and <strong>BigTV</strong> (large audience
@@ -568,14 +570,23 @@ aprs-monitor.sh   (polls marsaprs.org every 30 s;
 wifi-watchdog.sh  (checks WiFi every 30 s;
                    calls wifi-restored.sh on reconnect)
 </code></pre>
-<p><strong>Autostart:</strong> Chromium launches at boot via <code>~/start-kiosk.sh</code>, called from the LXDE autostart file (<code>~/.config/lxsession/rpd-x/autostart</code>). The wrapper reads <code>~/autologin.txt</code>, sets cursor size via <code>XCURSOR_SIZE=48</code>, and passes <code>--user-data-dir=/tmp/chromium</code> to keep Chromium cache/state in RAM (tmpfs).</p>
-<p><strong>Operator auto-login:</strong> If <code>~/autologin.txt</code> exists, <code>start-kiosk.sh</code> appends <code>?autologin</code> to the URL; if line 1 contains an operator name, it also appends <code>&amp;operator=&lt;name&gt;</code> for automatic messaging subscription. The server handles <code>?autologin</code> by setting a PHP session for the current event and redirecting to the clean URL, with messaging credentials embedded as JS globals for auto-subscribe.</p>
-<p><strong>Cursor size:</strong> 48 px via <code>XCURSOR_SIZE=48</code> in <code>start-kiosk.sh</code> (applied before Chromium), reinforced by <code>~/.Xresources</code> (<code>Xcursor.size: 48</code>) loaded via <code>@xrdb</code> in the LXDE autostart.</p>
-<p><strong>SD card I/O:</strong> Chromium profile to <code>/tmp/chromium</code> (tmpfs); journald <code>Storage=volatile</code> keeps journal entries in RAM. Both configured via <code>files.tar.gz</code> and <code>install.sh</code>.</p>
+<p><strong>Autostart:</strong> Chromium launches at boot via <code>~/start-kiosk.sh</code>, called from the LXDE
+autostart file (<code>~/.config/lxsession/rpd-x/autostart</code>). The wrapper reads <code>~/autologin.txt</code>,
+sets cursor size via <code>XCURSOR_SIZE=48</code>, and passes <code>--user-data-dir=/tmp/chromium</code> to keep
+Chromium cache/state in RAM (tmpfs).</p>
+<p><strong>Operator auto-login:</strong> If <code>~/autologin.txt</code> exists, <code>start-kiosk.sh</code> appends <code>?autologin</code>
+to the URL; if line 1 contains an operator name, it also appends <code>&amp;operator=&lt;name&gt;</code> for
+automatic messaging subscription. The server handles <code>?autologin</code> by setting a PHP session
+for the current event and redirecting to the clean URL, with messaging credentials embedded
+as JS globals for auto-subscribe.</p>
+<p><strong>Cursor size:</strong> 48 px via <code>XCURSOR_SIZE=48</code> in <code>start-kiosk.sh</code> (applied before Chromium),
+reinforced by <code>~/.Xresources</code> (<code>Xcursor.size: 48</code>) loaded via <code>@xrdb</code> in the LXDE autostart.</p>
+<p><strong>SD card I/O:</strong> Chromium profile to <code>/tmp/chromium</code> (tmpfs); journald <code>Storage=volatile</code>
+keeps journal entries in RAM. Both configured via <code>files.tar.gz</code> and <code>install.sh</code>.</p>
 <p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code> · VNC: <code>vnc://&lt;ip&gt;:5901</code></p>
 <p>For details on using the map, see <a href="https://marsaprs.org/userguide.html?back=/readme.html">USERGUIDE.MD</a>.</p>
 <hr />
-<h2 id="mobile-apps-v1184">Mobile Apps (v1.18.4)</h2>
+<h2 id="mobile-apps-v1185">Mobile Apps (v1.18.5)</h2>
 <p>Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.</p>
 <p><strong>Repository:</strong> <code>/Users/doug/aprs-map</code> (separate from this marsaprs repo)</p>
 <h3 id="app-architecture">App Architecture</h3>
@@ -616,15 +627,15 @@ wifi-watchdog.sh  (checks WiFi every 30 s;
 </tr>
 <tr>
 <td><code>lib/help_screen.dart</code></td>
-<td>Built-in Help page; displayed on first launch and accessible from the drawer footer</td>
+<td>Built-in Quick Start guide; displayed on first launch; accessible via Help → Quick Start in the drawer footer</td>
 </tr>
 <tr>
 <td><code>lib/menu_drawer.dart</code></td>
-<td>Native Flutter sidebar drawer (trackers, courses, about, share, save, help, exit)</td>
+<td>Native Flutter sidebar drawer; Help footer button shows modal (app info + Quick Start/User Guide/ticket buttons)</td>
 </tr>
 <tr>
 <td><code>lib/tracker_layer.dart</code></td>
-<td>Native map marker overlay; <strong>squares</strong> for mobile-only participants, <strong>triangles</strong> for hybrid (app + ham radio), <strong>circles</strong> for fixed radio trackers; ID label next to each dot</td>
+<td>Native map marker overlay; squares for mobile, circles for fixed; ID label next to each dot</td>
 </tr>
 <tr>
 <td><code>lib/arrow_painter.dart</code></td>
@@ -673,8 +684,7 @@ wifi-watchdog.sh  (checks WiFi every 30 s;
 <pre><code>User taps Share Location
   → _ensureBackgroundPermissions()     (Android: notification + battery opt;
                                         iOS: verify Always location permission)
-  → User selects activity: Walk/Run (60 s) · Cycle (30 s) · Drive (15 s) · Stationary (2 min)
-  → MobileSession.join()               POST ?mobile=join {name, pin, sharing_mode}
+  → MobileSession.join()               POST ?mobile=join {name, pin, sharing_mode: &quot;unknown&quot;}
       ← {token, callsign, passcode}    e.g. callsign=K6DRK-01
   → BackgroundLocationService.startTracking()
       → Geolocator.getPositionStream() (single stream; AppleSettings on iOS with
@@ -702,28 +712,56 @@ App restart while sharing was active:
   → Sharing resumes with same callsign and activity mode; snackbar notifies user
 </code></pre>
 <h3 id="smart-track">Smart Track</h3>
-<p>Smart Track is the automatic beacon-interval algorithm in both the native app and the web map. It monitors GPS speed and adjusts the upload frequency without any input from the user.</p>
+<p>Smart Track is the automatic beacon-interval algorithm in the native app (iOS/Android), Apple Watch app, and web map. It monitors GPS speed and adjusts the upload frequency without any input from the user.</p>
+<p><strong>Unknown (?) mode — startup phase:</strong></p>
+<p>Every session begins in <strong>unknown</strong> mode (shown as <strong>?</strong> in the web sidebar). The app joins the server with <code>sharing_mode: "unknown"</code> and stays in this phase until Smart Track collects enough GPS readings to make a confident initial determination — typically within 90 seconds. When the mode is first set, the app waits 15 seconds before sending the first real-mode beacon so the sidebar briefly shows <strong>?</strong> before the actual activity icon appears.</p>
 <p><strong>Speed thresholds:</strong></p>
 <table>
-<thead><tr><th>Mode</th><th>Speed</th><th>Interval</th></tr></thead>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Speed</th>
+<th>Interval</th>
+</tr>
+</thead>
 <tbody>
-<tr><td>Stationary</td><td>≤ 0.5 m/s (1.1 mph)</td><td>120 s</td></tr>
-<tr><td>Walk / Run</td><td>≤ 4.5 m/s (10 mph)</td><td>60 s</td></tr>
-<tr><td>Cycle</td><td>≤ 11.0 m/s (25 mph)</td><td>30 s</td></tr>
-<tr><td>Drive</td><td>&gt; 11.0 m/s</td><td>15 s</td></tr>
+<tr>
+<td>Stationary</td>
+<td>≤ 1.0 m/s (2.2 mph)</td>
+<td>120 s</td>
+</tr>
+<tr>
+<td>Walk / Run</td>
+<td>≤ 4.5 m/s (10 mph)</td>
+<td>60 s</td>
+</tr>
+<tr>
+<td>Cycle</td>
+<td>≤ 11.0 m/s (25 mph)</td>
+<td>30 s</td>
+</tr>
+<tr>
+<td>Drive</td>
+<td>&gt; 11.0 m/s</td>
+<td>15 s</td>
+</tr>
 </tbody>
 </table>
 <p><strong>Debounce — preventing false mode changes:</strong></p>
-<p>A mode switch only occurs after a run of consecutive GPS samples all agree on the new mode. The required run length:</p>
-<ul>
-<li>Walk/Run/Cycle/Drive: 15 consecutive samples</li>
-<li>Stationary: 20 consecutive samples, plus at least 5 minutes of wall-clock time since last movement</li>
-</ul>
+<p>A mode switch only occurs after a run of consecutive GPS samples all agree on the new mode. The required run length:
+- Walk/Run/Cycle/Drive: 15 consecutive samples
+- Stationary: 20 consecutive samples, plus at least 5 minutes of wall-clock time since last movement</p>
 <p>A timer also fires every 30 seconds to catch the case where the device stops moving but GPS events stall. If no movement has been detected for 5 minutes (or 90 seconds during startup) the mode switches directly to stationary without waiting for GPS events.</p>
 <p><strong>Startup fast-window:</strong></p>
 <p>During the first 10 GPS readings of a new session, only 3 consecutive matching samples are needed to set the initial mode (instead of 15–20). This lets Smart Track make a confident initial guess within 30–60 seconds of starting rather than waiting several minutes. Once those 10 readings have been processed, the full debounce requirements apply.</p>
+<p><strong>GPS noise defense:</strong></p>
+<p>Two mechanisms prevent GPS jitter from causing false mode transitions:</p>
+<ol>
+<li><strong>Accuracy gate:</strong> Any GPS reading with horizontal accuracy worse than 20 m is excluded when updating the last-movement timestamp. A brief poor-fix cannot reset the stationary timer.</li>
+<li><strong>Movement confirmation guard:</strong> Three consecutive readings must all exceed the stationary threshold (&gt; 1.0 m/s with accuracy ≤ 20 m) before the last-movement timestamp is updated. A single speed spike from GPS noise cannot prevent the stationary timer from eventually firing.</li>
+</ol>
 <p><strong>Implementation:</strong></p>
-<p>The algorithm runs identically in <code>lib/map_screen.dart</code> (Flutter) and <code>index.php</code> (web JS). Key functions: <code>_processSpeedSample</code> / <code>_autoDetectFromSpeed</code> for sample-based detection; <code>_checkStationaryByTime</code> for the timer-based fallback.</p>
+<p>The algorithm runs identically in <code>lib/map_screen.dart</code> (Flutter iOS/Android), <code>Sources/BeaconService.swift</code> (Apple Watch), and <code>index.php</code> (web JS). Key functions: <code>_processSpeedSample</code> / <code>processSpeedSample</code> / <code>_autoDetectFromSpeed</code> for sample-based detection; <code>_checkStationaryByTime</code> / <code>checkStationaryByTime</code> for the timer-based fallback.</p>
 <h3 id="building-distributing">Building &amp; Distributing</h3>
 <h4 id="ios">iOS</h4>
 <pre><code class="language-bash">cd /Users/doug/aprs-map
@@ -753,76 +791,68 @@ storeFile=&lt;absolute path to .jks or .p12&gt;
 <p><code>android/app/build.gradle.kts</code> reads this file automatically. If absent, the release build falls back to debug signing.</p>
 <p><strong><code>compileSdk</code> note:</strong> <code>objectbox_flutter_libs</code> in <code>~/.pub-cache</code> may hardcode <code>compileSdkVersion 31</code>. Patch it to <code>36</code> to match <code>build.gradle.kts</code>.</p>
 <p>To distribute: share the APK via Google Drive or email. Testers tap the download link, open the file with <strong>Package Installer</strong>, and if Android warns about an unknown source, tap <strong>More details</strong> → <strong>Install anyway</strong>.</p>
-<h4 id="google-play-store">Submitting to Google Play Store</h4>
+<h4 id="submitting-to-google-play-store">Submitting to Google Play Store</h4>
 <p><strong>One-time setup:</strong></p>
 <ol>
 <li>Create a Google Play Developer account at <a href="https://play.google.com/console">play.google.com/console</a> ($25 one-time fee).</li>
 <li>Generate a signing keystore (only done once — never change it after first publish):
-<code>bash
-keytool -genkey -v -keystore ~/aprs-map-release.jks \
-  -alias aprs-map -keyalg RSA -keysize 2048 -validity 10000 \
-  -dname "CN=Doug Kaye, OU=MARS, O=W6SG, L=Marin, ST=CA, C=US"</code></li>
+   <code>bash
+   keytool -genkey -v -keystore ~/aprs-map-release.jks \
+     -alias aprs-map -keyalg RSA -keysize 2048 -validity 10000 \
+     -dname "CN=Doug Kaye, OU=MARS, O=W6SG, L=Marin, ST=CA, C=US"</code></li>
 <li>Create <code>android/key.properties</code> (gitignored — back up the passwords and <code>.jks</code> file securely):
-<code>storePassword=&lt;store-password&gt;
-keyPassword=&lt;key-password&gt;
-keyAlias=aprs-map
-storeFile=/Users/doug/aprs-map-release.jks</code></li>
+   <code>storePassword=&lt;store-password&gt;
+   keyPassword=&lt;key-password&gt;
+   keyAlias=aprs-map
+   storeFile=/Users/doug/aprs-map-release.jks</code></li>
 </ol>
 <p><strong>Each release:</strong></p>
 <ol>
 <li>Bump <code>version</code> in <code>pubspec.yaml</code> (e.g. <code>1.18.1+0</code> → <code>1.19.0+0</code> — the build number after <code>+</code> must increase with each upload).</li>
 <li>Build a signed App Bundle (AAB):
-<code>bash
-flutter build appbundle --release</code>
-Output: <code>build/app/outputs/bundle/release/app-release.aab</code></li>
-<li>In Play Console → <strong>Your app → Testing → Internal testing → Create new release</strong> → upload the <code>.aab</code>.</li>
-<li>After internal testing, promote through <strong>Closed testing → Open testing → Production</strong> using the <strong>Promote release</strong> button.</li>
+   <code>bash
+   flutter build appbundle --release</code>
+   Output: <code>build/app/outputs/bundle/release/app-release.aab</code></li>
+<li>In Play Console → <strong>Your app</strong> → <strong>Testing → Internal testing</strong> → <strong>Create new release</strong> → upload the <code>.aab</code>.</li>
+<li>After internal testing, promote the release through <strong>Closed testing → Open testing → Production</strong> using the <strong>Promote release</strong> button.</li>
 <li>Google typically reviews new production releases within 1–3 days.</li>
 </ol>
-<p><strong>Store listing assets required (one-time, update as needed):</strong></p>
-<ul>
-<li>Short description (80 chars), full description (4000 chars)</li>
-<li>At least 2 phone screenshots (minimum 320px on shortest side)</li>
-<li>Feature graphic: 1024 × 500 px PNG or JPG</li>
-<li>App icon: 512 × 512 px PNG (must match the launcher icon)</li>
-<li>Content rating questionnaire (set category to <strong>Utilities</strong> or <strong>Tools</strong>)</li>
-</ul>
-<h4 id="app-store-connect">Submitting to Apple App Store Connect</h4>
+<p><strong>Store listing assets required (one-time, update as needed):</strong>
+- Short description (80 chars), full description (4000 chars)
+- At least 2 phone screenshots (minimum 320px on shortest side)
+- Feature graphic: 1024 × 500 px PNG or JPG
+- App icon: 512 × 512 px PNG (must match the launcher icon)
+- Content rating questionnaire (set category to <strong>Utilities</strong> or <strong>Tools</strong>)</p>
+<h4 id="submitting-to-apple-app-store-connect">Submitting to Apple App Store Connect</h4>
 <p><strong>One-time setup:</strong></p>
 <ol>
 <li>Enroll in the <strong>Apple Developer Program</strong> at <a href="https://developer.apple.com">developer.apple.com</a> ($99/year).</li>
-<li>In App Store Connect (<a href="https://appstoreconnect.apple.com">appstoreconnect.apple.com</a>) → <strong>Apps → + → New App</strong>:
-<ul>
+<li>In App Store Connect (<a href="https://appstoreconnect.apple.com">appstoreconnect.apple.com</a>) → <strong>Apps</strong> → <strong>+</strong> → <strong>New App</strong>:</li>
 <li>Platform: iOS</li>
 <li>Bundle ID: <code>org.w6sg.aprsmap</code> (must match <code>ios/Runner.xcodeproj</code>)</li>
 <li>SKU: <code>aprsmap</code> (any unique string)</li>
-</ul></li>
 <li>In Xcode → <strong>Signing &amp; Capabilities</strong>: set Team to your Apple Developer account; let Xcode manage provisioning profiles automatically.</li>
 </ol>
 <p><strong>Each release:</strong></p>
 <ol>
 <li>Bump <code>version</code> in <code>pubspec.yaml</code> (build number after <code>+</code> must increase with each upload).</li>
 <li>Build the iOS app:
-<code>bash
-flutter build ios --release --no-codesign</code></li>
+   <code>bash
+   flutter build ios --release --no-codesign</code></li>
 <li>Open <code>ios/Runner.xcworkspace</code> in Xcode.</li>
 <li><strong>Product → Archive</strong>. When complete, the Organizer opens automatically.</li>
 <li>Click <strong>Distribute App → App Store Connect → Upload</strong>.</li>
 <li>In App Store Connect → <strong>Your app → TestFlight</strong>: the build appears within minutes; full App Review takes 5–30 minutes before testers can install it.</li>
-<li>To submit for <strong>App Store production review</strong>:
-<ul>
+<li>To submit for <strong>App Store production review</strong>:</li>
 <li>Go to <strong>Your app → App Store → + Version</strong></li>
 <li>Fill in "What's New", select the build, submit for review.</li>
 <li>Apple review typically takes 1–3 days.</li>
-</ul></li>
 </ol>
-<p><strong>Store listing assets required (one-time, update as needed):</strong></p>
-<ul>
-<li>App description, keywords, support URL, marketing URL</li>
-<li>Screenshots for iPhone 6.9" display (required) and iPad 13" (required if supporting iPad)</li>
-<li>App icon: 1024 × 1024 px PNG (no alpha channel)</li>
-<li>Privacy policy URL (required for apps that collect location data)</li>
-</ul>
+<p><strong>Store listing assets required (one-time, update as needed):</strong>
+- App description, keywords, support URL, marketing URL
+- Screenshots for iPhone 6.9" display (required) and iPad 13" (required if supporting iPad)
+- App icon: 1024 × 1024 px PNG (no alpha channel)
+- Privacy policy URL (required for apps that collect location data)</p>
 <h3 id="background-location">Background Location</h3>
 <p>Background location is implemented differently on each platform because of how each OS handles suspended processes.</p>
 <h4 id="android_1">Android</h4>
@@ -879,7 +909,7 @@ flutter build ios --release --no-codesign</code></li>
 <p><strong>Why both platforms use server-side APRS injection:</strong> Both iOS and Android POST position data to <code>?mobile=update</code> rather than sending raw TCP packets directly to APRS-IS. On iOS, <code>NSURLSession</code>-based HTTP is explicitly supported for background network tasks while raw <code>dart:io Socket</code> TCP connections are not reliable in background. Unifying Android to the same path keeps all beaconing logic in the main isolate, makes <code>background_task_handler.dart</code> a no-op, and simplifies the overall architecture.</p>
 <hr />
 <h2 id="user-interfaces">User Interfaces</h2>
-<p>Five browser-based interfaces run on <code>marsaprs.org</code>. All are served by Apache on the server
+<p>Six browser-based interfaces run on <code>marsaprs.org</code>. All are served by Apache on the server
 Pi, accessible at <code>https://marsaprs.org/&lt;path&gt;</code>.</p>
 <table>
 <thead>
@@ -902,6 +932,12 @@ Pi, accessible at <code>https://marsaprs.org/&lt;path&gt;</code>.</p>
 <td><code>/admin/</code></td>
 <td>Password</td>
 <td>Event configuration, tracker list, course and aid station management</td>
+</tr>
+<tr>
+<td><strong>Analyzer</strong></td>
+<td><code>/analyzer/</code></td>
+<td>Event Password</td>
+<td>Beacon recording, playback, and analysis for the current event</td>
 </tr>
 <tr>
 <td><strong>NetBird Monitor</strong></td>
@@ -937,6 +973,13 @@ IDs, GPX/KML/GeoJSON course overlays, aid station and iGate locations (with opti
 callsign), map default view, and background tile layers. Supports multiple named events;
 switching events is instant.
 See <a href="#admin-interface">Appendix — Server — Admin Interface</a> for full details.</p>
+<p><strong>Analyzer</strong> — Requires the event password to view. A Flask/gunicorn web app served at
+<code>/analyzer/</code> via Apache mod_proxy. Runs <code>analyzer-daemon</code> to record APRS beacons from
+APRS-IS into a local SQLite database for the current event. Displays recorded beacons on
+an interactive Leaflet map with controls for filtering by tracker and iGate, toggling radio
+vs. cellular beacons and course overlays, adjusting the auto-refresh rate (30 s–5 min per
+client), and scrubbing a time-range slider. Daemon start/stop requires the admin password;
+data erasure requires the admin password and two confirmation steps.</p>
 <p><strong>NetBird Monitor</strong> — Password-protected. Page that polls all registered Pi devices every 60 seconds (default; adjustable) over
 the NetBird VPN and shows online/offline/enabling/disabled status. Includes an SSH terminal
 for online devices. See <a href="#netbird-status-monitor">Supporting Systems — NetBird Status Monitor</a>
@@ -948,26 +991,60 @@ Pis nightly. Auto-saves on every change; no manual save step.</p>
 <hr />
 <h2 id="messaging-system">Messaging System</h2>
 <p>The messaging system allows web operators to exchange text messages with active mobile tracker participants in real time. It is enabled by setting <code>messaging_password</code> in the event's <code>event.yaml</code> (via the Admin page).</p>
-<h3 id="messaging-data-storage">Data Storage</h3>
+<h3 id="data-storage">Data Storage</h3>
 <table>
-<thead><tr><th>File</th><th>Location</th><th>Purpose</th></tr></thead>
+<thead>
+<tr>
+<th>File</th>
+<th>Location</th>
+<th>Purpose</th>
+</tr>
+</thead>
 <tbody>
-<tr><td><code>messages.json</code></td><td><code>events/&lt;EventName&gt;/</code></td><td>Persistent log of all messages (both directions)</td></tr>
-<tr><td><code>web_sessions.json</code></td><td><code>/run/aprs/</code> (RAM disk)</td><td>Active web operator sessions; cleared on server reboot</td></tr>
-<tr><td><code>pending_msgs</code></td><td>field in <code>mobile_trackers.json</code></td><td>Queue of undelivered messages for each mobile participant</td></tr>
+<tr>
+<td><code>messages.json</code></td>
+<td><code>events/&lt;EventName&gt;/</code></td>
+<td>Persistent log of all messages (both directions)</td>
+</tr>
+<tr>
+<td><code>web_sessions.json</code></td>
+<td><code>/run/aprs/</code> (RAM disk)</td>
+<td>Active web operator sessions; cleared on server reboot</td>
+</tr>
+<tr>
+<td><code>pending_msgs</code></td>
+<td>field in <code>mobile_trackers.json</code></td>
+<td>Queue of undelivered messages for each mobile participant</td>
+</tr>
 </tbody>
 </table>
-<h3 id="messaging-web-operator-flow">Web Operator Flow</h3>
+<p><strong><code>messages.json</code> entry format:</strong></p>
+<pre><code class="language-json">{
+  &quot;id&quot;: 5,
+  &quot;ts&quot;: 1750000000,
+  &quot;from&quot;: &quot;web&quot;,
+  &quot;from_label&quot;: &quot;Net Control&quot;,
+  &quot;to&quot;: &quot;K6DRK-03&quot;,
+  &quot;to_label&quot;: &quot;Alice&quot;,
+  &quot;text&quot;: &quot;Check in at Aid 3&quot;,
+  &quot;broadcast&quot;: false
+}
+</code></pre>
+<p>Direction: <code>from: "web"</code> = operator → tracker; <code>from: &lt;callsign&gt;</code> = tracker → web (with <code>to: "web"</code>).</p>
+<h3 id="web-operator-flow">Web Operator Flow</h3>
 <ol>
-<li>Operator clicks the Messages button → POST <code>?messaging=subscribe {name, password}</code> → receives token</li>
-<li>Operator right-clicks a tracker in the sidebar → compose modal (pre-addressed) → POST <code>?messaging=send</code></li>
+<li>Operator clicks the <strong>Messaging</strong> button (shown when not yet subscribed) → subscribe modal → POST <code>?messaging=subscribe {name, password}</code> → receives token; button changes to <strong>Broadcast</strong></li>
+<li>Operator right-clicks a tracker in the sidebar → compose modal (pre-addressed to that tracker) → POST <code>?messaging=send</code></li>
 <li>Server appends to <code>messages.json</code> and queues the message in the tracker's <code>pending_msgs</code></li>
 <li>Operator polls <code>?messaging=poll?web_token=...&amp;since_id=N</code> every 5 seconds</li>
 <li>When a mobile tracker sends a reply, it appears in the poll response → notification modal</li>
 </ol>
-<p>The incoming notification modal shows the full conversation thread (12 px) above the new message (15 px) in a 480 px-wide window. History load fires at most one modal per page load (the most recent unnotified message).</p>
+<p>The incoming notification modal shows the full conversation thread (12 px) above the new message (15 px, slightly larger) in a 480 px-wide window. History load fires at most one modal per page load (the most recent unnotified message).</p>
+<p>The compose modal footer has two links:
+- <strong>Change my name</strong> — inline panel; POSTs to <code>?messaging=rename</code>; updates display name for future messages.
+- <strong>Disable messaging</strong> — clears the token and localStorage entry, stops the poll timer, resets the UI to the Messaging button (unsubscribed state).</p>
 <p><strong>Auto-subscribe for Display Pi operators:</strong> When <code>window._aprsAutoMsgPw</code> is embedded in the page (via <code>?autologin&amp;operator=&lt;name&gt;</code> → PHP session → HTML <code>&lt;script&gt;</code> tag), <code>_autoSubscribe()</code> runs silently on page load. The token is stored only in memory (not localStorage), so removing line 1 from <code>~/autologin.txt</code> and rebooting the Pi cleanly unsubscribes.</p>
-<h3 id="messaging-mobile-participant-flow">Mobile Participant Flow</h3>
+<h3 id="mobile-participant-flow">Mobile Participant Flow</h3>
 <ol>
 <li>Messages queued in <code>pending_msgs</code> are delivered in the <code>?mobile=update</code> response body</li>
 <li>A separate <code>?mobile=poll</code> call runs every 30 seconds as a lightweight check</li>
@@ -975,6 +1052,303 @@ Pis nightly. Auto-saves on every change; no manual save step.</p>
 <li>Flutter shows a sound + dialog; tap <strong>Reply</strong> to POST <code>?mobile=message {token, text}</code></li>
 <li>On the next update or poll, <code>ack_ids</code> are sent to remove delivered messages from <code>pending_msgs</code></li>
 </ol>
+<hr />
+<h2 id="analyzer">Analyzer</h2>
+<p>The Analyzer is a separate Flask web application served at <code>/analyzer/</code> that records APRS beacons into a local SQLite database during an event and provides an interactive playback and analysis map. It is the only interface that preserves a historical record of all positions received — the main map only retains the 10 most recent breadcrumbs per tracker. The Analyzer is intended for post-event analysis, coverage review, and real-time monitoring of beacon reception quality.</p>
+<h3 id="analyzer-architecture">Analyzer Architecture</h3>
+<pre><code>APRS-IS (noam.aprs2.net:14580)
+      │ TCP  (filtered to tracked callsigns)
+      ▼
+aprs_daemon.py  ──writes──▶  aprs.db  (SQLite)
+                                   │
+                             flask_app.py  ◀── browser polls on auto-refresh timer
+                                   │
+                             gunicorn  (127.0.0.1:5001, 2 workers)
+                                   │
+                          Apache mod_proxy  (/analyzer/ → 5001)
+</code></pre>
+<p>Two systemd services work together:</p>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th>Unit file</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>analyzer</code></td>
+<td><code>analyzer.service</code></td>
+<td>gunicorn serving <code>flask_app:app</code></td>
+</tr>
+<tr>
+<td><code>analyzer-daemon</code></td>
+<td><code>analyzer-daemon.service</code></td>
+<td><code>aprs_daemon.py</code> recording beacons to SQLite</td>
+</tr>
+</tbody>
+</table>
+<p><code>analyzer-daemon</code> is controlled from the Analyzer UI — it does not start automatically at boot. The <code>analyzer</code> (web app) service starts at boot and is always available even when no recording is taking place.</p>
+<p><code>flask_app.py</code> uses <code>ProxyFix(app.wsgi_app, x_prefix=1)</code> so that the <code>/analyzer/</code> path prefix is correctly stripped before routing.</p>
+<h3 id="analyzer-authentication">Analyzer Authentication</h3>
+<p>Two independent HMAC-SHA256 cookie-based auth levels, each valid for 24 hours:</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Cookie name</th>
+<th>Password source</th>
+<th>Required for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>View</td>
+<td><code>analyzer_view_auth</code></td>
+<td>Event password in <code>event.yaml</code> (<code>mobile.messaging_password</code>)</td>
+<td>All pages and API calls</td>
+</tr>
+<tr>
+<td>Admin</td>
+<td><code>analyzer_admin_auth</code></td>
+<td>Admin password in <code>admin/password.txt</code></td>
+<td>Daemon start/stop; Erase All Data</td>
+</tr>
+</tbody>
+</table>
+<p>On page load, the UI calls <code>GET /api/check_admin</code> to determine whether the admin cookie is already valid. If so, password modals are skipped for daemon and flush operations for the remainder of the 24-hour window — even across daemon restarts and page reloads. Both cookies are <code>httponly</code> and <code>SameSite=Lax</code>.</p>
+<h3 id="beacon-recording">Beacon Recording</h3>
+<p><code>aprs_daemon.py</code> connects to <code>noam.aprs2.net:14580</code> with an APRS-IS filter string built from all callsigns in the current event's configuration (trackers from <code>config.yaml</code>, mobile participants from <code>mobile_trackers.json</code>). It is managed by <code>analyzer-daemon.service</code> and controlled from the Analyzer UI by users with the admin password.</p>
+<p><strong>What is recorded:</strong> For each received packet that matches a tracked callsign: callsign, latitude, longitude, Unix timestamp, receiving station (iGate), and the full APRS path string. Stored in the <code>beacons</code> table of <code>aprs.db</code> (SQLite), keyed to the current event by <code>event_id</code>.</p>
+<p><strong>Deduplication:</strong> Consecutive beacons for the same callsign at the same position within a short interval are collapsed during the <code>get_ordered_deduplicated_beacons()</code> query so they don't clutter the playback trail.</p>
+<p><strong>Aid stations as iGates:</strong> Aid stations and rest stops that have an APRS callsign configured in the Admin UI are treated as iGates on the Analyzer map — their coordinates are loaded from <code>config.yaml</code>, their received packets are displayed with red receiver lines, and they appear as map markers alongside regular iGates.</p>
+<p><strong>Data persistence:</strong> Beacon data is never deleted automatically. It persists across daemon restarts, page reloads, and server reboots until an operator explicitly uses <strong>Erase All Data</strong> (admin password + two-step confirmation). The SQLite database is excluded from the deploy rsync so a new deployment never wipes event data.</p>
+<h3 id="map-controls">Map &amp; Controls</h3>
+<p>The Analyzer map is a Leaflet map using the same tile backgrounds configured in the event. All recorded beacons for the current event are loaded on page load and re-fetched on every auto-refresh cycle.</p>
+<p><strong>Beacon rendering:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Beacon type</th>
+<th>Color</th>
+<th>Line</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Radio (via iGate)</td>
+<td>Red dot</td>
+<td>Red line from beacon → iGate</td>
+</tr>
+<tr>
+<td>Cellular (mobile participant)</td>
+<td>Green dot</td>
+<td>Green line between consecutive positions</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Show Full Path</strong> extends radio receiver lines through all intermediate digipeaters in the APRS path, not just the final iGate. When a single iGate is selected, lines route to that iGate/digipeater specifically.</p>
+<p><strong>Name labels</strong> (Show Names checkbox, default on): Each tracker's name is displayed in a black-on-white label at its last known position. iGate and aid station names are shown as permanent Leaflet tooltips on their map markers.</p>
+<p><strong>Controls modal</strong> (gear icon, lower-left corner):</p>
+<p><em>Left column — Display</em></p>
+<table>
+<thead>
+<tr>
+<th>Control</th>
+<th>Function</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Show All Times</td>
+<td>Toggle time tooltip visibility on all beacon dots</td>
+</tr>
+<tr>
+<td>Show Full Path</td>
+<td>Draw lines through all digipeaters, not just the final iGate</td>
+</tr>
+<tr>
+<td>Show Radio Beacons 🔴</td>
+<td>Show/hide all radio (APRS) beacon dots and lines</td>
+</tr>
+<tr>
+<td>Show Cellular Beacons 🟢</td>
+<td>Show/hide all cellular (mobile app) beacon dots and lines</td>
+</tr>
+<tr>
+<td>Show Courses</td>
+<td>Toggle GPX/KML/GeoJSON course overlays</td>
+</tr>
+<tr>
+<td>Show Names</td>
+<td>Toggle name labels for trackers, iGates, and aid stations</td>
+</tr>
+<tr>
+<td>Auto-Refresh</td>
+<td>Slider: poll interval from 30 s to 5 min (per-client; does not affect recording)</td>
+</tr>
+<tr>
+<td>Beacon Time Range</td>
+<td>Two sliders: trim the displayed beacon window by index; each slider shows the actual date and time of the first/last beacon in range</td>
+</tr>
+</tbody>
+</table>
+<p><em>Right column — Filtering</em></p>
+<table>
+<thead>
+<tr>
+<th>Control</th>
+<th>Function</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Trackers</td>
+<td>Multi-select list of all tracked callsigns. Hybrid trackers (mobile + ham radio) appear as a single entry; selecting one shows both callsign streams. ⌘/Ctrl+click for multiple.</td>
+</tr>
+<tr>
+<td>IGates</td>
+<td>Multi-select list of iGates and digipeaters. Filtering to one iGate shows only beacons received by that station.</td>
+</tr>
+<tr>
+<td>Cellular Carrier</td>
+<td>Multi-select: All · AT&amp;T · Comcast · Space Exploration · T-Mobile · Verizon · Other. Filters cellular beacons by the carrier stored in <code>device_info.carrier</code> in <code>mobile_trackers.json</code>. Radio beacons are unaffected.</td>
+</tr>
+</tbody>
+</table>
+<p><em>Footer buttons</em></p>
+<table>
+<thead>
+<tr>
+<th>Button</th>
+<th>Function</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Save Map Position</td>
+<td>Saves the current map center and zoom to <code>localStorage</code> as the default view for this event</td>
+</tr>
+<tr>
+<td>Erase All Data…</td>
+<td>Deletes all beacon rows for the current event from SQLite (requires admin password + two-step confirmation)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="analyzer-key-files">Analyzer Key Files</h3>
+<p>All files live under <code>/home/pi/analyzer/</code> on the server Pi.</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/flask_app.py</code></td>
+<td>Flask application: routes, auth, config loading, beacon enrichment, template rendering</td>
+</tr>
+<tr>
+<td><code>src/aprs_daemon.py</code></td>
+<td>APRS-IS listener; inserts beacons into SQLite; reads tracker list from <code>config.yaml</code> and <code>mobile_trackers.json</code></td>
+</tr>
+<tr>
+<td><code>src/aprs_db.py</code></td>
+<td>SQLite wrapper: event management, beacon insert, ordered/deduplicated beacon fetch, recording time range queries</td>
+</tr>
+<tr>
+<td><code>src/aprs.db</code></td>
+<td>SQLite database; excluded from deploys</td>
+</tr>
+<tr>
+<td><code>src/templates/event_map.html</code></td>
+<td>Main map page (Leaflet + controls modal + all JS filtering/drawing logic)</td>
+</tr>
+<tr>
+<td><code>src/templates/login.html</code></td>
+<td>Event-password login form</td>
+</tr>
+</tbody>
+</table>
+<p>Configuration is read live from <code>/var/www/html/admin/config.yaml</code> (the active event symlink) and <code>/var/www/html/mobile_trackers.json</code> on every page load — no restart needed when the event or tracker list changes.</p>
+<h3 id="analyzer-services">Analyzer Services</h3>
+<pre><code class="language-bash"># Flask web app (always on)
+sudo systemctl status analyzer
+sudo systemctl restart analyzer
+sudo journalctl -u analyzer -f
+
+# Beacon recording daemon (started/stopped from the UI)
+sudo systemctl status analyzer-daemon
+sudo systemctl start analyzer-daemon
+sudo systemctl stop analyzer-daemon
+sudo journalctl -u analyzer-daemon -f
+</code></pre>
+<p>Logs: <code>/var/log/analyzer/analyzer.log</code> and <code>/var/log/analyzer/daemon.log</code></p>
+<p>The daemon restarts automatically on failure (30 s delay, 5 retries per 5 minutes). The web app restarts automatically on failure (10 s delay).</p>
+<h3 id="analyzer-api-endpoints">Analyzer API Endpoints</h3>
+<p>All endpoints except <code>/login</code> require a valid view cookie (<code>analyzer_view_auth</code>). Admin endpoints additionally require a valid admin cookie (<code>analyzer_admin_auth</code>) <strong>or</strong> the admin password in the request body.</p>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Method</th>
+<th>Auth</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/</code></td>
+<td>GET</td>
+<td>View</td>
+<td>Redirect to current event URL</td>
+</tr>
+<tr>
+<td><code>/event/&lt;name&gt;</code></td>
+<td>GET</td>
+<td>View</td>
+<td>Main map page for the named event; always redirects to the current yaml event</td>
+</tr>
+<tr>
+<td><code>/login</code></td>
+<td>GET / POST</td>
+<td>None</td>
+<td>Login form; POST with <code>password</code> sets view cookie and redirects to <code>/</code></td>
+</tr>
+<tr>
+<td><code>/api/event_beacons/&lt;name&gt;</code></td>
+<td>GET</td>
+<td>View</td>
+<td>All deduplicated beacons for the named event as JSON</td>
+</tr>
+<tr>
+<td><code>/api/check_admin</code></td>
+<td>GET</td>
+<td>View</td>
+<td>Returns <code>{"ok": true}</code> if the admin cookie is valid</td>
+</tr>
+<tr>
+<td><code>/api/daemon</code></td>
+<td>GET</td>
+<td>View</td>
+<td>Returns <code>{"running": true/false}</code> — current daemon status</td>
+</tr>
+<tr>
+<td><code>/api/daemon</code></td>
+<td>POST</td>
+<td>Admin</td>
+<td><code>{"action": "start"\|"stop"}</code> — starts or stops <code>analyzer-daemon</code>; stamps admin cookie on success</td>
+</tr>
+<tr>
+<td><code>/api/flush</code></td>
+<td>POST</td>
+<td>Admin</td>
+<td><code>{"password": "..."}</code> — deletes all beacon rows for the current event; stamps admin cookie on success</td>
+</tr>
+</tbody>
+</table>
 <hr />
 <h2 id="backup-recovery-and-updates">Backup, Recovery and Updates</h2>
 <h3 id="server-pi">Server Pi</h3>
@@ -1114,7 +1488,8 @@ needed (and none is available — the script would be served by the very Pi bein
 <li>Insert the card into a Pi 4 and boot.</li>
 <li>Find the IP and SSH in.</li>
 <li>Download and run the install script:
-   <code>bash &lt;(curl -fsSL https://marsaprs.org/display/install.sh) 2&gt;&amp;1 | tee install.log</code></li>
+   <code>bash
+   bash &lt;(curl -fsSL https://marsaprs.org/display/install.sh) 2&gt;&amp;1 | tee install.log</code></li>
 <li><strong>Do not run <code>configure.sh</code></strong> — that step is done when deploying each device.</li>
 <li>Shut down: <code>sudo shutdown -h now</code></li>
 <li>Copy the SD card using <strong>Apple Pi Baker</strong> — this is the new display Pi master.</li>
@@ -1133,7 +1508,8 @@ needed (and none is available — the script would be served by the very Pi bein
 <li>Insert the card into a Pi Zero 2 W and boot.</li>
 <li>Find the IP and SSH in.</li>
 <li>Download and run the install script:
-   <code>bash &lt;(curl -fsSL https://marsaprs.org/igate/install.sh) 2&gt;&amp;1 | tee install.log</code></li>
+   <code>bash
+   bash &lt;(curl -fsSL https://marsaprs.org/igate/install.sh) 2&gt;&amp;1 | tee install.log</code></li>
 <li><strong>Do not run <code>configure.sh</code></strong> — that step is done when deploying each device.</li>
 <li>Shut down: <code>sudo shutdown -h now</code></li>
 <li>Copy the SD card using <strong>Apple Pi Baker</strong> — this is the new iGate master.</li>
@@ -1653,7 +2029,7 @@ symlink to the active event's file. <code>aprsDaemon.php</code> and <code>index.
   root: K6DRK                # base APRS callsign; participants get &lt;root&gt;-01, -02, etc.
   messaging_password: zippy  # enables Messages button on web map; omit to disable messaging
 </code></pre>
-<p>When <code>enabled</code> is true, any visitor on a mobile device sees a <strong>Share Location</strong> button in the drawer footer. Participants enter their name and the PIN; the server assigns a unique callsign (<code>&lt;root&gt;-NN</code>) and a session token. Position updates are injected directly into the APRS-IS network, so mobile participants appear on this map and on external APRS sites (aprs.fi, CalTopo) exactly like any other tracker. Session state is stored in <code>mobile_trackers.json</code>.</p>
+<p>When <code>enabled</code> is true, any visitor on a mobile device sees a <strong>Share Location</strong> button in the drawer footer. Participants enter their name (pre-filled from localStorage on return visits) and the PIN (both shown as plain text), then tap <strong>Share Location</strong> to start sharing in <strong>unknown</strong> (?) mode. <strong>Smart Track</strong> automatically determines the activity and adjusts the beacon interval based on GPS speed within ~90 seconds (see <a href="#smart-track">Smart Track</a>). The button changes to <strong>Sharing</strong> while active; tapping it opens a panel to stop sharing. The server assigns a unique callsign (<code>&lt;root&gt;-NN</code>) and a session token. Position updates are injected directly into the APRS-IS network, so mobile participants appear on this map and on external APRS sites (aprs.fi, CalTopo) exactly like any other tracker. Session state is stored in <code>mobile_trackers.json</code>.</p>
 <hr />
 <h3 id="server">Server</h3>
 <h4 id="requirements">Requirements</h4>
@@ -1686,6 +2062,7 @@ config.yaml → events/Dipsea 2026/event.yaml   (symlink)
 beacon positions per tracker. Pruned when a tracker is removed from the config. Also pruned for a mobile participant's callsign when they start a new session (<code>?mobile=join</code>), so stale breadcrumbs from a prior session never appear.</p>
 <p><strong>Startup ordering note:</strong> <code>loadMobileSessions()</code> must run before <code>readTrackerHistoryFile()</code> at daemon startup. <code>loadMobileSessions()</code> calls <code>unset($trackerHistory[$cs])</code> for any callsign not yet in <code>$trackers</code>; if history were loaded first, all mobile callsigns would be cleared (they are absent from <code>$trackers</code> until <code>loadMobileSessions()</code> adds them). Running sessions load first makes the <code>unset()</code> calls harmless (the array is still empty).</p>
 <p><strong>Minimum-distance filter:</strong> Before appending a new breadcrumb, the daemon computes the haversine distance from the previous breadcrumb. If the new position is within 30.48 m (100 feet), it is discarded — <code>lastUpdate</code> is still updated (so the tracker doesn't appear stale), but no new breadcrumb is added and <code>trackers.json</code> position fields are not changed. This filter applies to both regular and mobile trackers and covers both web and native-app clients, since both read the same server-side files.</p>
+<p><strong>APRS-IS injection deduplication:</strong> <code>?mobile=update</code> now gates each call to <code>injectAprsPacket()</code> with a server-side dedup check. The last injected position and timestamp (<code>aprs_lat</code>, <code>aprs_lon</code>, <code>aprs_ts</code>) are stored per tracker in <code>mobile_trackers.json</code>. A new packet is injected only when the tracker has moved ≥ 30 m from the last injected position <strong>or</strong> ≥ 5 minutes have elapsed since the last injection (heartbeat). This does not affect what is stored, displayed, or returned to clients — every <code>?mobile=update</code> is still processed fully; only the outbound TCP connection to <code>noam.aprs2.net</code> is skipped when the position hasn't changed meaningfully.</p>
 <h4 id="running-the-daemon">Running the Daemon</h4>
 <p><strong>Direct (foreground):</strong></p>
 <pre><code class="language-bash">php aprsDaemon.php
@@ -1794,37 +2171,12 @@ if ((time() - $lastWriteTime) &gt; 180) {
 <p><strong>Sidebar sections (desktop):</strong> Each section header has a visibility checkbox (show/hide map
 objects) and a click-to-collapse toggle. Sidebar width is adjustable by dragging the divider;
 width is saved in <code>localStorage</code>.</p>
+<p><strong>Desktop lower-right corner controls:</strong> On non-touch screens, two Leaflet controls appear in the lower-right corner of the map (above the zoom controls):
+- <strong>↺ Reset Map</strong> — resets the map view, clears breadcrumbs and the Origin marker (same as the sidebar Reset Map button).
+- <strong>⊕ My Location</strong> — requests the browser's geolocation and pans to the result; blinks while locating; shows an error tooltip if geolocation fails or times out (8 s timeout).</p>
 <p><strong>Mobile drawer:</strong> Sections are collapsible accordions. Visibility checkboxes work the same
-as desktop. Footer buttons: Reset Map, Save Map, Admin, User Guide, Kiosk Mode, Clients, and (when <code>mobile.enabled</code>) Share Location / Stop Sharing. The <strong>About</strong> section of the drawer shows the user's assigned APRS callsign while sharing is active. The floating reset button (↺) pinned to the map also closes the drawer if it is open before recentering.</p>
-<p><strong>Tracker marker shapes:</strong> Three distinct shapes communicate how a tracker's position is reported.</p>
-<table>
-<thead>
-<tr>
-<th>Shape</th>
-<th>Tracker type</th>
-<th>How position is reported</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>Circle</strong> (or configured shape)</td>
-<td>Radio tracker</td>
-<td>APRS radio transmissions received by iGates; defined in <code>config.yaml</code></td>
-</tr>
-<tr>
-<td><strong>Rounded square</strong></td>
-<td>Mobile tracker</td>
-<td>Flutter app only; GPS injected to APRS-IS under a MARSQQ-NN callsign; no ham radio</td>
-</tr>
-<tr>
-<td><strong>Triangle</strong></td>
-<td>Hybrid tracker</td>
-<td>Flutter app <em>and</em> a licensed ham radio callsign; position data may come from either source, whichever is more recent</td>
-</tr>
-</tbody>
-</table>
-<p>The shape is determined from <code>t.mobile</code> and <code>t.ham_callsign</code> in the <code>?json</code> tracker payload. In <code>index.php</code>, the icon is selected as: <code>t.mobile &amp;&amp; t.ham_callsign ? 'triangle' : t.mobile ? 'square' : trackerStyle.icon</code>. The sidebar dot uses <code>border-radius: 3px</code> for squares, a CSS clip-path for triangles, and <code>50%</code> for circles. In the native Flutter app, each marker also shows the <strong>tracker ID</strong> as a text label directly next to the dot on the map.</p>
-<p><strong>Hybrid tracker details:</strong> A hybrid participant runs the Flutter app <em>and</em> transmits via ham radio (a separate physical device). Both signals reach APRS-IS independently. The system displays a single map entry for the participant: the <code>?json</code> endpoint merges the two data sources, preferring the more-recently-updated position. Breadcrumb history is drawn from both the injection callsign and the ham callsign combined. In the admin participant list, a hybrid tracker occupies two rows — one for the mobile/app row (injection callsign MARSQQ-NN, non-editable) and one for the radio row (the ham callsign, editable). The triangle icon appears in the sidebar and on the map; the ham callsign is shown in the sidebar entry alongside the participant's name.</p>
+as desktop. Footer buttons: Save Map, Admin, User Guide, Kiosk Mode, Clients, and (when <code>mobile.enabled</code>) Share Location / Sharing. The <strong>About</strong> section of the drawer shows the user's assigned APRS callsign while sharing is active. The floating reset button (↺) pinned to the map also closes the drawer if it is open before recentering.</p>
+<p><strong>Mobile tracker markers:</strong> Mobile participants (sharing via Share Location) are rendered as <strong>rounded squares</strong> on both the map and in the sidebar, distinguishing them from regular APRS trackers (which use the configured icon shape). The shape is determined by <code>t.mobile</code> in the tracker JSON. In <code>index.php</code>, the icon is selected as <code>t.mobile ? 'square' : trackerStyle.icon</code>; the sidebar dot gets <code>border-radius: 3px</code> for mobile and <code>50%</code> for others. In the native Flutter app, each marker also shows the <strong>tracker ID</strong> as a text label directly next to the dot on the map.</p>
 <p><strong>Tracker clicks (desktop — three-click cycle):</strong>
 1. Blink tracker + show beacon history (up to 10 positions as dots + dashed polyline with directional arrows; trail auto-refreshes as tracker moves)
 2. Zoom to tracker's last position (zoom 15)
@@ -1870,7 +2222,8 @@ are updated; all other config sections are left unchanged by polls.</p>
 <p>Open <code>https://marsaprs.org/admin/</code>. Password stored in <code>admin/password.txt</code>. Session lasts
 12 hours.</p>
 <p><strong>Editable sections:</strong> Trackers (callsign, ID, name), Tracker Style (icon, color), Map
-Default View, Default Section Visibility, Backgrounds, Courses, Aid Stations, iGates, Legend, Mobile Tracking (enabled, PIN, root callsign; participant list with rename/block/remove).</p>
+Default View, Default Section Visibility, Backgrounds, Courses, Aid Stations, iGates, Legend, Mobile Tracking (enabled, PIN, root callsign; messaging password; participant list with rename/block/remove), Beacon Settings (upload interval and distance threshold per activity mode).</p>
+<p><strong>Messages modal:</strong> The 💬 Messages button opens a modal showing the full message thread for the current event, with Export (.txt) and <strong>Clear Thread</strong> buttons. Clear Thread deletes <code>messages.json</code> after a two-click confirmation (click once to arm, click again within 4 seconds to confirm).</p>
 <p><strong>Tracker Δ column:</strong> Each tracker row shows a read-only Δ field — the minimum interval
 between consecutive beacons in the last 10 received, displayed as M:SS. Shows <code>—</code> until at
 least 2 beacons have been received. The column refreshes automatically every 30 seconds;
@@ -2057,6 +2410,11 @@ for <code>?json</code>, <code>?config</code>, and <code>?history</code>.</p>
 <td>Poll for new messages directed to web operators. Params: <code>web_token</code>, <code>since_id</code>. Returns <code>{messages, last_id}</code>.</td>
 </tr>
 <tr>
+<td><code>?messaging=rename</code></td>
+<td>POST</td>
+<td>Update operator's display name. Body: <code>{web_token, name}</code>. Updates <code>web_sessions.json</code> and returns <code>{ok}</code>.</td>
+</tr>
+<tr>
 <td><code>?autologin</code></td>
 <td>GET</td>
 <td>Set a PHP session for the current event (no password required); if <code>operator</code> param is set, also sets the operator name in session. Redirects to clean URL.</td>
@@ -2158,6 +2516,16 @@ for <code>?json</code>, <code>?config</code>, and <code>?history</code>.</p>
 <td><code>?togglelock</code></td>
 <td>POST</td>
 <td>Lock or unlock an event (requires password)</td>
+</tr>
+<tr>
+<td><code>?messages</code></td>
+<td>GET</td>
+<td>Return the full <code>messages.json</code> log for the current event as JSON.</td>
+</tr>
+<tr>
+<td><code>?delete_messages</code></td>
+<td>GET</td>
+<td>Delete <code>messages.json</code> for the current event. Used by the "Clear Thread" button in the Messages modal.</td>
 </tr>
 </tbody>
 </table>
@@ -2278,20 +2646,21 @@ sudo chmod -R g+w /var/www/html/events/
 10 4 * * * sudo reboot
 </code></pre>
 <h4 id="kiosk-autostart">Kiosk Autostart</h4>
-<p>LXDE autostart (<code>/home/pi/.config/lxsession/rpd-x/autostart</code>) calls <code>~/start-kiosk.sh</code> rather than launching Chromium directly:</p>
+<p>LXDE autostart (<code>/home/pi/.config/lxsession/rpd-x/autostart</code>) calls <code>~/start-kiosk.sh</code>
+rather than launching Chromium directly:</p>
 <pre><code>@xrdb -merge ~/.Xresources
 @/home/pi/start-kiosk.sh
 </code></pre>
 <p><code>~/start-kiosk.sh</code> handles URL construction (auto-login), cursor size, and Chromium launch:</p>
 <pre><code class="language-bash">#!/bin/bash
-URL="https://marsaprs.org/"
+URL=&quot;https://marsaprs.org/&quot;
 if [ -f ~/autologin.txt ]; then
     mapfile -t lines &lt; ~/autologin.txt
-    operator="${lines[0]:-}"
-    URL="https://marsaprs.org/?autologin"
-    if [ -n "$operator" ]; then
-        enc_op=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$operator")
-        URL="${URL}&amp;operator=${enc_op}"
+    operator=&quot;${lines[0]:-}&quot;
+    URL=&quot;https://marsaprs.org/?autologin&quot;
+    if [ -n &quot;$operator&quot; ]; then
+        enc_op=$(python3 -c &quot;import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))&quot; &quot;$operator&quot;)
+        URL=&quot;${URL}&amp;operator=${enc_op}&quot;
     fi
 fi
 export XCURSOR_SIZE=48
@@ -2300,7 +2669,7 @@ exec chromium --password-store=basic --kiosk --noerrdialogs --disable-infobars \
     --disable-dev-shm-usage --incognito \
     --disable-features=BlockInsecurePrivateNetworkRequests \
     --user-data-dir=/tmp/chromium \
-    "$URL"
+    &quot;$URL&quot;
 </code></pre>
 <h4 id="useful-commands">Useful Commands</h4>
 <pre><code class="language-bash"># Check all services

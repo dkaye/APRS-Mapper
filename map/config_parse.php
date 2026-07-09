@@ -61,8 +61,8 @@ function parseConfigYaml($filename) {
 
 		if ($section === null) continue;
 
-		// List-item start: "  - key: value"
-		if (preg_match('/^\s+-\s+(\w+)\s*:\s*(.*)$/', $line, $m)) {
+		// List-item start: "  - key: value" or "- key: value" (column 0)
+		if (preg_match('/^\s*-\s+(\w+)\s*:\s*(.*)$/', $line, $m)) {
 			if ($item !== null) $result[$section][] = $item;
 			$item = [trim($m[1]) => yamlScalar(trim($m[2]))];
 			continue;

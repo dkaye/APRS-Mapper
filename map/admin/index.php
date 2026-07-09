@@ -1,7 +1,5 @@
 <?php
 ini_set('display_errors', '0');
-ini_set('session.gc_maxlifetime', 43200); // 12 hours — keeps session alive until browser closes
-session_start();
 /**
  * MARS APRS Map Admin
  *
@@ -44,9 +42,8 @@ function aprs_admin_log(string $action, array $ctx = []): void {
        ?? $_SERVER['REMOTE_ADDR']
        ?? '-';
     $ts  = (new DateTime('now', new DateTimeZone('America/Los_Angeles')))->format('Y-m-d H:i:s T');
-    $who = isset($_SESSION['aprs_log_name']) && $_SESSION['aprs_log_name'] !== ''
-         ? preg_replace('/[^A-Za-z0-9 _\-\.]/', '', $_SESSION['aprs_log_name'])
-         : '';
+    $raw = $_COOKIE['admin_logname'] ?? '';
+    $who = $raw !== '' ? preg_replace('/[^A-Za-z0-9 _\-\.]/', '', $raw) : '';
     $extra = $who !== '' ? " user=$who" : '';
     foreach ($ctx as $k => $v) $extra .= " $k=$v";
     @file_put_contents('/var/log/aprs-admin/aprs-admin.log',
@@ -83,25 +80,31 @@ if (file_exists($configPath)) {
 require_once __DIR__ . '/config_yaml.php';
 
 // ── Authentication ────────────────────────────────────────────────────────────
+// Uses signed cookies (no PHP sessions) so auth persists 24 hours regardless
+// of the system cron that purges PHP session files every ~24 minutes.
 
-$storedPass = file_exists($passwordFile) ? trim(file_get_contents($passwordFile)) : '';
+$storedPass    = file_exists($passwordFile) ? trim(file_get_contents($passwordFile)) : '';
+$__cookieSecs  = 86400;
+$__authCookie  = 'admin_auth';
+$__nameCookie  = 'admin_logname';
+$__cookieVal   = hash_hmac('sha256', $storedPass, 'marsaprs_admin_k6drk');
+$__cookieOpts  = ['expires' => time() + $__cookieSecs, 'path' => '/', 'samesite' => 'Lax', 'httponly' => true];
 
 // Logout
 if (isset($_GET['logout'])) {
-    session_destroy();
+    setcookie($__authCookie, '', ['expires' => 1, 'path' => '/', 'samesite' => 'Lax', 'httponly' => true]);
+    setcookie($__nameCookie, '', ['expires' => 1, 'path' => '/', 'samesite' => 'Lax', 'httponly' => true]);
     header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
     exit;
 }
 
 // Login form POST
 $loginError = '';
-if (!isset($_SESSION['aprs_admin_authed'])
-        && $_SERVER['REQUEST_METHOD'] === 'POST'
-        && isset($_POST['pw'])) {
+$authed = isset($_COOKIE[$__authCookie]) && $storedPass !== '' && hash_equals($__cookieVal, $_COOKIE[$__authCookie]);
+if (!$authed && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pw'])) {
     if ($storedPass !== '' && $_POST['pw'] === $storedPass) {
-        $_SESSION['aprs_admin_authed'] = true;
-        $_SESSION['stats_auth']        = true;
-        $_SESSION['aprs_log_name']     = trim($_POST['logname'] ?? '');
+        setcookie($__authCookie, $__cookieVal, $__cookieOpts);
+        setcookie($__nameCookie, trim($_POST['logname'] ?? ''), $__cookieOpts);
         aprs_admin_log('login');
         $redir = $_POST['next'] ?? '';
         if (!$redir || !preg_match('/^\/[a-zA-Z0-9\/_\-\.?=&%]*$/', $redir) || strpos($redir, '//') !== false) {
@@ -112,9 +115,6 @@ if (!isset($_SESSION['aprs_admin_authed'])
     }
     $loginError = 'Incorrect password';
 }
-
-$authed = (isset($_SESSION['aprs_admin_authed']) && $_SESSION['aprs_admin_authed'] === true)
-       || (isset($_SESSION['stats_auth'])        && $_SESSION['stats_auth']        === true);
 
 if (!$authed) {
     if (isset($_GET['load']) || isset($_GET['save']) || isset($_GET['savetrackers']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['alllocationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib']) || isset($_GET['beacondeltas']) || isset($_GET['togglelock']) || isset($_GET['mobiletrackers']) || isset($_GET['removemobile']) || isset($_GET['removemobilebulk']) || isset($_GET['blockmobile']) || isset($_GET['renamemobile']) || isset($_GET['resetbeacons']) || isset($_GET['setdisplayid']) || isset($_GET['seteventpassword']) || isset($_GET['backup']) || isset($_GET['restore']) || isset($_GET['setmode'])) {
@@ -136,7 +136,7 @@ if (!$authed) {
 
 // ── Update log name from localStorage (fires on every page load via JS) ──────
 if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['updatename'])) {
-    $_SESSION['aprs_log_name'] = preg_replace('/[^A-Za-z0-9 _\-\.]/', '', trim($_POST['logname'] ?? ''));
+    setcookie($__nameCookie, preg_replace('/[^A-Za-z0-9 _\-\.]/', '', trim($_POST['logname'] ?? '')), $__cookieOpts);
     respondJson(['ok' => true]);
 }
 
@@ -3172,6 +3172,17 @@ function buildIgateRow(g) {
     fields.appendChild(fieldLabel('Lat',      'f-ilat',      g.lat,      '120px', { type: 'number', step: 'any' }));
     fields.appendChild(fieldLabel('Lon',      'f-ilon',      g.lon,      '130px', { type: 'number', step: 'any' }));
     attachLatLonPaste(fields.querySelector('.f-ilat'), fields.querySelector('.f-ilon'));
+    // Digipeater checkbox
+    const digiLabel = document.createElement('label');
+    digiLabel.style.cssText = 'white-space:nowrap;font-size:13px;cursor:pointer;align-self:center';
+    const digiCb = document.createElement('input');
+    digiCb.type = 'checkbox';
+    digiCb.className = 'f-idigipeater';
+    digiCb.checked = !!g.digipeater;
+    digiCb.addEventListener('change', () => markDirty(true));
+    digiLabel.appendChild(digiCb);
+    digiLabel.appendChild(document.createTextNode(' Digi'));
+    fields.appendChild(digiLabel);
     row.appendChild(fields);
     row.appendChild(makeDeleteBtn());
     return row;
@@ -3724,6 +3735,8 @@ function collectConfig() {
             lon:  parseFloat(row.querySelector('.f-ilon').value)
         };
         if (ics) ig.callsign = ics;
+        const digiCb = row.querySelector('.f-idigipeater');
+        if (digiCb && digiCb.checked) ig.digipeater = true;
         igates.push(ig);
     });
 

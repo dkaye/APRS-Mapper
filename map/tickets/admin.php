@@ -1,4 +1,11 @@
 <?php
+/**
+ * admin.php — MARS APRS Tracker Map tickets system admin panel
+ *
+ * Password-protected interface for event staff to manage support tickets
+ * submitted by participants. Allows viewing, updating status, and deleting
+ * tickets stored in tickets.json on the server.
+ */
 ini_set('display_errors', '0');
 ini_set('session.gc_maxlifetime', 43200);
 session_start();
@@ -79,18 +86,18 @@ function esc(string $s): string {
 
 function statusBadge(string $status): string {
     $colors = [
-        'Open'        => '#c0392b',
-        'In Progress' => '#b7770d',
-        'Resolved'    => '#1a7a3c',
-        "Won't Fix"   => '#666',
-        'Duplicate'   => '#666',
+        'Open'       => '#c0392b',
+        'Testing'    => '#1a6fa8',
+        'Resolved'   => '#1a7a3c',
+        "Won't Fix"  => '#666',
+        'Duplicate'  => '#666',
     ];
     $bg = $colors[$status] ?? '#555';
     $s  = esc($status);
     return "<span class=\"badge\" style=\"background:{$bg}\">{$s}</span>";
 }
 
-const VALID_STATUSES = ['Open', 'In Progress', 'Resolved', "Won't Fix", 'Duplicate'];
+const VALID_STATUSES = ['Open', 'Testing', 'Resolved', "Won't Fix", 'Duplicate'];
 
 // ── File helpers ──────────────────────────────────────────────────────────────
 
@@ -101,6 +108,39 @@ function isImageFile(string $fname): bool {
 
 function ticketFileUrl(string $ticketId, string $fname): string {
     return 'uploads/' . rawurlencode($ticketId) . '/' . rawurlencode($fname);
+}
+
+function ticketUrl(string $id, string $token): string {
+    $proto = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host  = $_SERVER['HTTP_HOST'] ?? 'marsaprs.org';
+    return "{$proto}://{$host}/tickets/?id={$id}&token={$token}";
+}
+
+function sendCommentNotification(array $ticket, string $commentText): void {
+    $email = $ticket['email'] ?? '';
+    if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) return;
+    $token = $ticket['token'] ?? '';
+    if ($token === '') return;
+    $host    = $_SERVER['HTTP_HOST'] ?? 'marsaprs.org';
+    $id      = $ticket['id'];
+    $from    = 'noreply@' . $host;
+    $subject = "Update on ticket {$id} — MARS APRS";
+    $body    = implode("\n", [
+        "There is an update on your ticket {$id}:",
+        "  " . ($ticket['summary'] ?? ''),
+        "",
+        $commentText,
+        "",
+        "View your ticket and add comments:",
+        "  " . ticketUrl($id, $token),
+    ]);
+    $headers = implode("\r\n", [
+        "From: MARS APRS Support <{$from}>",
+        "Reply-To: {$from}",
+        "Content-Type: text/plain; charset=UTF-8",
+        "X-Mailer: PHP/" . PHP_VERSION,
+    ]);
+    @mail($email, $subject, $body, $headers);
 }
 
 function deleteTicketUploads(string $ticketId): void {
@@ -197,6 +237,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['delete'])) {
         deleteTicketUploads($id);
     }
     header('Location: admin');
+    exit;
+}
+
+// ── POST: admin adds comment ──────────────────────────────────────────────────
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['addcomment'])) {
+    $id     = strtoupper(trim($_POST['id']   ?? ''));
+    $text   = substr(trim($_POST['text'] ?? ''), 0, 2000);
+    $notify = !empty($_POST['notify']);
+    if (preg_match('/^TKT-\d{4}$/', $id) && $text !== '') {
+        $tickets = loadTickets($ticketsFile);
+        foreach ($tickets as &$t) {
+            if ($t['id'] === $id) {
+                if (!isset($t['comments'])) $t['comments'] = [];
+                $t['comments'][] = ['ts' => time(), 'author' => 'admin', 'name' => 'Admin', 'text' => $text];
+                $t['updated'] = time();
+                saveTickets($ticketsFile, $tickets);
+                if ($notify) sendCommentNotification($t, $text);
+                break;
+            }
+        }
+        unset($t);
+    }
+    header('Location: admin?id=' . urlencode($id) . '&saved=1');
     exit;
 }
 
@@ -374,6 +438,19 @@ tbody tr:hover { background:#f0f4f8; }
     border:1px solid #e0b0b0;border-radius:4px;font-size:14px;font-weight:bold;cursor:pointer;
 }
 .del-ticket-btn:hover { background:#fdf0f0;border-color:#c0392b; }
+.thread { margin:18px 0 0; }
+.thread-msg { display:flex;gap:10px;margin-bottom:12px; }
+.thread-msg.mine { flex-direction:row-reverse; }
+.thread-bubble { max-width:78%;padding:8px 12px;border-radius:10px;font-size:13px;line-height:1.5;white-space:pre-wrap; }
+.thread-msg.theirs .thread-bubble { background:#eef2f7; }
+.thread-msg.mine   .thread-bubble { background:#dceeff; }
+.thread-meta { font-size:11px;color:#999;margin-top:3px; }
+.thread-msg.mine .thread-meta { text-align:right; }
+.comment-form { margin-top:18px;padding-top:14px;border-top:1px solid #eee; }
+.comment-form h3 { font-size:13px;font-weight:bold;color:#555;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px; }
+.comment-form textarea { width:100%;padding:8px 10px;border:1px solid #ccc;border-radius:4px;font-size:14px;font-family:inherit;resize:vertical; }
+.comment-form textarea:focus { outline:none;border-color:#2980b9; }
+.comment-form-row { display:flex;align-items:center;justify-content:space-between;margin-top:8px;flex-wrap:wrap;gap:8px; }
 .copy-btn {
     background:none;border:none;cursor:pointer;color:#bbb;font-size:13px;
     padding:1px 5px;border-radius:3px;vertical-align:middle;margin-left:6px;
@@ -431,6 +508,11 @@ history.replaceState({}, '', 'admin?id=<?= esc($detailTicket['id']) ?>');
         <?php endif; ?>
         <tr><td>Name</td><td><?= esc($detailTicket['name']) ?></td></tr>
         <tr><td>Email</td><td><?php if ($detailTicket['email'] !== ''): ?><span id="cp-email"><?= esc($detailTicket['email']) ?></span><button class="copy-btn" onclick="copyField('cp-email',this)" title="Copy">&#x2398;</button><?php else: ?><span style="color:#bbb">—</span><?php endif; ?></td></tr>
+        <?php
+            $_proto   = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+            $_checkUrl = $_proto . '://' . $_SERVER['HTTP_HOST'] . rtrim(dirname($_SERVER['PHP_SELF']), '/') . '/?check=' . urlencode($detailTicket['id']);
+        ?>
+        <tr><td>Status URL</td><td><span id="cp-status-url" style="font-size:13px;color:#555"><?= esc($_checkUrl) ?></span><button class="copy-btn" onclick="copyField('cp-status-url',this)" title="Copy">&#x2398;</button></td></tr>
         <tr><td>Platform</td><td><?= esc($detailTicket['platform']) ?></td></tr>
         <tr><td>Version</td><td><?= $detailTicket['version'] !== '' ? esc($detailTicket['version']) : '<span style="color:#bbb">—</span>' ?></td></tr>
         <tr><td>Type</td><td><?= esc($detailTicket['type']) ?></td></tr>
@@ -459,6 +541,56 @@ history.replaceState({}, '', 'admin?id=<?= esc($detailTicket['id']) ?>');
         <tr><td>Response</td><td><div class="tkt-desc"><?= esc($detailTicket['admin_response']) ?></div></td></tr>
         <?php endif; ?>
     </table>
+
+    <?php
+    $comments      = $detailTicket['comments'] ?? [];
+    $adminResponse = trim($detailTicket['admin_response'] ?? '');
+    $hasContent    = !empty($comments) || $adminResponse !== '';
+    $hasEmail      = ($detailTicket['email'] ?? '') !== '';
+    $hasToken      = ($detailTicket['token'] ?? '') !== '';
+    if ($hasContent): ?>
+    <div class="thread">
+    <?php if ($adminResponse !== '' && empty(array_filter($comments, fn($c) => $c['author'] === 'admin'))): ?>
+        <div class="thread-msg mine">
+            <div>
+                <div class="thread-bubble"><?= esc($adminResponse) ?></div>
+                <div class="thread-meta">Admin response</div>
+            </div>
+        </div>
+    <?php endif; ?>
+    <?php foreach ($comments as $c):
+        $isAdmin = $c['author'] === 'admin';
+        $label   = $isAdmin ? 'Admin' : esc($c['name'] ?? 'Submitter');
+        $ts      = date('M j g:i A', (int)($c['ts'] ?? 0));
+    ?>
+        <div class="thread-msg <?= $isAdmin ? 'mine' : 'theirs' ?>">
+            <div>
+                <div class="thread-bubble"><?= esc($c['text']) ?></div>
+                <div class="thread-meta"><?= $label ?> · <?= esc($ts) ?></div>
+            </div>
+        </div>
+    <?php endforeach; ?>
+    </div>
+    <?php endif; ?>
+
+    <div class="comment-form">
+        <h3>Add Comment</h3>
+        <form method="POST" action="admin?addcomment">
+            <input type="hidden" name="id" value="<?= esc($detailTicket['id']) ?>">
+            <textarea name="text" rows="3" maxlength="2000" placeholder="Add a comment visible to the submitter…"></textarea>
+            <div class="comment-form-row">
+                <?php if ($hasEmail && $hasToken): ?>
+                <label style="font-size:13px;display:flex;align-items:center;gap:6px;cursor:pointer">
+                    <input type="checkbox" name="notify" value="1" checked>
+                    Email submitter (<?= esc($detailTicket['email']) ?>)
+                </label>
+                <?php else: ?>
+                <span style="font-size:12px;color:#aaa"><?= $hasEmail ? 'No comment link — ticket predates this feature' : 'No email on file' ?></span>
+                <?php endif; ?>
+                <button type="submit" class="save-btn" style="padding:7px 18px">Add Comment</button>
+            </div>
+        </form>
+    </div>
 
     <form method="POST" action="admin?update">
         <input type="hidden" name="id" value="<?= esc($detailTicket['id']) ?>">
@@ -505,7 +637,12 @@ $uploadSize = totalUploadsSize();
 ?>
 <div class="card">
     <h2 style="display:flex;justify-content:space-between;align-items:baseline">
-        <span>All Tickets (<?= count($tickets) ?>)</span>
+        <span style="display:flex;align-items:center;gap:16px">
+            <span id="tickets-title">All Tickets (<?= count($tickets) ?>)</span>
+            <label style="font-size:13px;font-weight:normal;color:#555;cursor:pointer;display:flex;align-items:center;gap:5px">
+                <input type="checkbox" id="active-filter"> Only Active Tickets
+            </label>
+        </span>
         <?php if ($uploadSize > 0): ?>
         <span style="font-size:12px;color:#999;font-weight:normal">📎 <?= formatSize($uploadSize) ?> uploads</span>
         <?php endif; ?>
@@ -643,6 +780,47 @@ $managerEmail = $cfg['manager_email'] ?? '';
     }
 
     sort(); // apply default sort on load
+
+    // "Only Active Tickets" filter
+    var filterCb = document.getElementById('active-filter');
+    var titleEl  = document.getElementById('tickets-title');
+    if (filterCb) {
+        var ACTIVE = ['open', 'testing'];
+        var allRows = Array.from(tbody.querySelectorAll('tr'));
+        var total   = allRows.length;
+
+        function countByStatus(statuses) {
+            return allRows.filter(function(r) {
+                return statuses.indexOf((r.children[6].dataset.sort || '').toLowerCase()) !== -1;
+            }).length;
+        }
+
+        function buildCounts() {
+            var nOpen    = countByStatus(['open']);
+            var nTesting = countByStatus(['testing']);
+            var parts = [total + ' total', nOpen + ' open'];
+            if (nTesting) parts.push(nTesting + ' testing');
+            return parts.join(', ');
+        }
+
+        function applyFilter() {
+            var active = filterCb.checked;
+            allRows.forEach(function(r) {
+                var status = (r.children[6].dataset.sort || '').toLowerCase();
+                r.style.display = (!active || ACTIVE.indexOf(status) !== -1) ? '' : 'none';
+            });
+            if (titleEl) {
+                var label = active ? 'Active Tickets' : 'All Tickets';
+                titleEl.textContent = label + ' (' + buildCounts() + ')';
+            }
+        }
+        try { if (localStorage.getItem('tickets_active_filter') === '1') filterCb.checked = true; } catch {}
+        filterCb.addEventListener('change', function() {
+            try { localStorage.setItem('tickets_active_filter', filterCb.checked ? '1' : '0'); } catch {}
+            applyFilter();
+        });
+        applyFilter(); // set counts on load
+    }
 })();
 
 function toggleResolvedVer(status) {

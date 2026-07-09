@@ -15,7 +15,7 @@
  *   ?config  Map/background/course/tracker config from config.yaml (ETag-cached)
  */
 
-define('WEB_VERSION', '1.18.4+5');
+define('WEB_VERSION', '1.18.5+5');
 
 $trackerStatusFilename = 'trackers.json';
 
@@ -425,6 +425,12 @@ if (isset($_GET['messaging'])) {
 		$webToken = trim($_GET['web_token'] ?? '');
 		$sinceId  = (int)($_GET['since_id'] ?? 0);
 		if (!$validateWebToken($webToken)) { http_response_code(403); echo json_encode(['error' => 'Not subscribed']); exit; }
+		$modifyJsonFile($webSessionsFile, function($data) use ($webToken) {
+			foreach ($data as &$s) {
+				if (!empty($s['token']) && hash_equals($s['token'], $webToken)) { $s['ts'] = time(); break; }
+			}
+			return $data;
+		});
 		$msgs = []; $lastId = $sinceId;
 		if ($messagesFile && file_exists($messagesFile)) {
 			$fh = fopen($messagesFile, 'r');
@@ -875,6 +881,22 @@ if (isset($_GET['mobile'])) {
 			$trackers = isset($d['trackers']) ? $d['trackers'] : $d;
 			foreach ($trackers as $t) { if (!empty($t['token']) && hash_equals($t['token'], $token)) { $found = $t; break; } } }
 		if (!$found) { http_response_code(404); echo json_encode(['error' => 'Token not found']); exit; }
+		$webSessionsFile = '/run/aprs/web_sessions.json';
+		$hasActiveReceiver = false;
+		if (file_exists($webSessionsFile)) {
+			$fh = fopen($webSessionsFile, 'r');
+			if ($fh) {
+				flock($fh, LOCK_SH); $sessions = json_decode(stream_get_contents($fh), true) ?: []; flock($fh, LOCK_UN); fclose($fh);
+				foreach ($sessions as $s) {
+					if (!empty($s['ts']) && (time() - (int)$s['ts']) < 60) { $hasActiveReceiver = true; break; }
+				}
+			}
+		}
+		if (!$hasActiveReceiver) {
+			http_response_code(503);
+			echo json_encode(['error' => 'no_receivers', 'message' => 'No one is currently monitoring messages. Try again later.']);
+			exit;
+		}
 		$cfgReal = realpath('config.yaml');
 		$messagesFile = $cfgReal ? dirname($cfgReal) . '/messages.json' : null;
 		$msgId = null;
@@ -928,31 +950,34 @@ $_lon  = isset($_m['lon'])  ? (float)$_m['lon']  : -122.0;
 $_zoom = isset($_m['zoom']) ? (int)$_m['zoom']   : 10;
 
 // ── Event password gate ───────────────────────────────────────────────────────
+// Uses signed cookies (no PHP sessions) so the auth persists a full 24 hours
+// regardless of the system cron that purges PHP session files every ~24 minutes.
 if ($_eventPw !== '') {
-    $__sessionDays = 30;
-    ini_set('session.gc_maxlifetime', $__sessionDays * 86400);
-    session_set_cookie_params(['lifetime' => $__sessionDays * 86400, 'samesite' => 'Lax']);
-    session_start();
-    $_sessionKey = 'map_auth_' . hash('sha256', $_eventPw);
-    $_pwError    = false;
+    $__cookieSecs  = 86400; // 24 hours
+    $__cookieName  = 'map_auth';
+    $__opCookie    = 'map_op';
+    $__cookieVal   = hash_hmac('sha256', $_eventPw, 'marsaprs_auth_k6drk');
+    $__isAuthed    = isset($_COOKIE[$__cookieName]) && hash_equals($__cookieVal, $_COOKIE[$__cookieName]);
+    $__cookieOpts  = ['expires' => time() + $__cookieSecs, 'path' => '/', 'samesite' => 'Lax', 'httponly' => true];
+    $_pwError      = false;
     // Auto-authenticate via ?autologin parameter (Display Pi kiosk)
     if (isset($_GET['autologin'])) {
-        $_SESSION[$_sessionKey] = true;
+        setcookie($__cookieName, $__cookieVal, $__cookieOpts);
         if (!empty($_GET['operator'])) {
-            $_SESSION[$_sessionKey . '_op'] = trim($_GET['operator']);
+            setcookie($__opCookie, trim($_GET['operator']), $__cookieOpts);
         }
         header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
         exit;
     }
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['map_event_pw'])) {
         if ($_POST['map_event_pw'] === $_eventPw) {
-            $_SESSION[$_sessionKey] = true;
+            setcookie($__cookieName, $__cookieVal, $__cookieOpts);
             header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
             exit;
         }
         $_pwError = true;
     }
-    if (empty($_SESSION[$_sessionKey])) {
+    if (!$__isAuthed) {
         $esc = fn($s) => htmlspecialchars($s, ENT_QUOTES, 'UTF-8');
         ?><!DOCTYPE html>
 <html lang="en">
@@ -995,7 +1020,7 @@ button:hover{background:#2471a3}
     }
 }
 
-$_autoOp    = isset($_sessionKey) ? ($_SESSION[$_sessionKey . '_op'] ?? null) : null;
+$_autoOp    = isset($__opCookie) ? ($_COOKIE[$__opCookie] ?? null) : null;
 $_autoMsgPw = ($_autoOp && !empty(trim($_cfg['messaging_password'] ?? '')))
               ? trim($_cfg['messaging_password']) : null;
 $_clientIp = trim($_SERVER['HTTP_CF_CONNECTING_IP']
@@ -1187,18 +1212,18 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 .section-divider { border: none; border-top: 1px solid #ccc; margin: 6px 0 4px; }
 
 .legend-item {
-    display: flex; align-items: center; gap: 7px;
+    display: flex; align-items: center;
     padding: 2px 4px; border-radius: 4px; cursor: default; margin-bottom: 1px;
 }
 .legend-item.clickable { cursor: pointer; }
 .legend-item.clickable:hover { background: #e0e0e0; }
 .legend-item.selected  { background: #d0e8ff; }
-.legend-dot  { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #333; flex-shrink: 0; }
+.legend-dot  { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #333; flex-shrink: 0; margin-right: 7px; }
 .legend-text { font-size: 13px; line-height: 1.3; flex: 1; }
 .legend-id   { }
 .legend-name { color: #444; }
 .legend-sub  { font-size: 11px; color: #888; }
-.legend-time { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 40px; text-align: right; flex-shrink: 0; }
+.legend-time { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; margin-left: 3px; }
 
 .sidebar-item {
     display: flex; justify-content: space-between; align-items: center;
@@ -1432,16 +1457,16 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 
     /* tracker rows */
     .m-legend-item {
-        display: flex; align-items: center; gap: 8px;
+        display: flex; align-items: center;
         padding: 0 10px; min-height: 26px;
         cursor: pointer; user-select: none; -webkit-user-select: none;
     }
     .m-legend-item:active   { background: #f0f6ff; }
     .m-legend-item.selected { background: #e8f2ff; }
-    .m-dot  { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid #333; flex-shrink: 0; }
-    .m-id   { font-size: 12px; min-width: 22px; }
+    .m-dot  { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid #333; flex-shrink: 0; margin-right: 8px; }
+    .m-id   { font-size: 12px; min-width: 22px; margin-right: 8px; }
     .m-name { font-size: 12px; flex: 1; color: #222; }
-    .m-time { font-size: 10px; color: #888; white-space: nowrap; font-variant-numeric: tabular-nums; min-width: 52px; text-align: right; }
+    .m-time { font-size: 10px; color: #888; white-space: nowrap; font-variant-numeric: tabular-nums; margin-left: 3px; }
 
     /* course rows */
     .m-course-row {
@@ -2279,7 +2304,7 @@ new (L.Control.extend({
 			L.DomEvent.on(exitBtn, 'click', () => { location.href = location.pathname; });
 			L.DomEvent.disableClickPropagation(exitBtn);
 			const txt = L.DomUtil.create('span', '', d);
-			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.18.4+5 &copy; 2026 Doug Kaye (K6DRK)';
+			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.18.5+5 &copy; 2026 Doug Kaye (K6DRK)';
 		} else {
 			if (!isMobile) {
 				const exitBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
@@ -2297,8 +2322,8 @@ new (L.Control.extend({
 			}
 			const ftxt = L.DomUtil.create('span', '', d);
 			ftxt.innerHTML = isMobile
-				? 'MARS APRS v1.18.4+5 &copy; 2026 Doug Kaye (K6DRK)'
-				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.18.4+5 &copy; 2026 Doug Kaye (K6DRK)';
+				? 'MARS APRS v1.18.5+5 &copy; 2026 Doug Kaye (K6DRK)'
+				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.18.5+5 &copy; 2026 Doug Kaye (K6DRK)';
 			if (isMobile) d.style.fontSize = '10px';
 		}
 		return d;
@@ -2881,9 +2906,7 @@ function triggerBlink(callsign) {
 	// Expand tooltip to show name while blinking
 	const m = markers[callsign];
 	if (m && !kiosk) {
-		const tid = m._trackerId || callsign;
-		const tname = m._trackerName || '';
-		if (tname) m.setTooltipContent(`${tid} ${tname}`);
+		m.setTooltipContent(m._trackerName || m._trackerId || callsign);
 	}
 	blinkTimers[callsign] = setTimeout(() => {
 		if (item) item.classList.remove('blinking');
@@ -2891,9 +2914,11 @@ function triggerBlink(callsign) {
 		if (e2) e2.style.animation = '';
 		const t2 = markers[callsign]?.getTooltip()?.getElement();
 		if (t2) t2.style.animation = '';
-		// Collapse tooltip back to ID only
-		if (markers[callsign] && !kiosk)
-			markers[callsign].setTooltipContent(markers[callsign]._trackerId || callsign);
+		// Collapse tooltip back to resting label
+		if (markers[callsign] && !kiosk) {
+			const _m = markers[callsign];
+			_m.setTooltipContent(_m._trackerName || _m._trackerId || callsign);
+		}
 		blinkHistoryLayers(callsign, false);
 		delete blinkTimers[callsign];
 	}, _blinkDuration);
@@ -3149,7 +3174,7 @@ function updateDesktopLegend(trackers) {
 			item.className = 'legend-item clickable';
 			item.innerHTML = `<span class="legend-dot"></span>`
 			               + `<span class="legend-text"><span class="legend-id">${t.id}</span> <span class="legend-name">${t.name}</span></span>`
-			               + `<span class="legend-mode" style="font-size:11px;margin-right:2px;filter:grayscale(1) brightness(0.5)"></span>`
+			               + `<span class="legend-mode" style="font-size:11px;filter:grayscale(1) brightness(0.5)"></span>`
 			               + `<span class="legend-time">${t.lat===null?'—':(t.color||'red')==='red'?'stale':t.time}</span>`;
 		}
 		const color = t.color || 'red';
@@ -3209,7 +3234,7 @@ function updateMobileLegend(trackers) {
 			item.className = 'm-legend-item';
 			item.innerHTML = `<span class="m-dot"></span><span class="m-id">${t.id}</span>`
 			               + `<span class="m-name">${t.name}</span>`
-			               + `<span class="m-mode" style="font-size:10px;margin-right:2px;filter:grayscale(1) brightness(0.5)"></span>`
+			               + `<span class="m-mode" style="filter:grayscale(1) brightness(0.5)"></span>`
 			               + `<span class="m-time">${t.lat===null?'—':(t.color||'red')==='red'?'stale':t.time}</span>`;
 			let pressTimer = null, didLongPress = false, _lpX = 0, _lpY = 0;
 			item.addEventListener('touchstart', e => {
@@ -3319,7 +3344,7 @@ function updateMap() {
 					markers[t.callsign].setIcon(icon);
 					if (trackerPopups[t.callsign]) trackerPopups[t.callsign].setContent(popupHtml(t));
 					if (!blinkTimers[t.callsign])
-						markers[t.callsign].setTooltipContent(kiosk ? (t.name || t.id) : t.id);
+						markers[t.callsign].setTooltipContent(t.name || t.id);
 					// Redraw breadcrumb trail whenever the selected tracker moves or changes staleness color.
 					if ((moved || color !== prevColor) && t.callsign === selectedCallsign) showTrackerHistory(t.callsign, color);
 				} else {
@@ -3357,7 +3382,7 @@ function updateMap() {
 						});
 						m.on('mouseout', scheduleClose);
 					}
-					m.bindTooltip(kiosk ? (t.name || t.id) : t.id, {
+					m.bindTooltip(t.name || t.id, {
 						permanent: true, direction: 'right',
 						className: 'tracker-label', offset: [sz + 2, 0]
 					});
@@ -3469,7 +3494,7 @@ function refreshMobileAbout() {
 	const rows = [
 		currentEventName ? { label: 'Event',   val: currentEventName } : null,
 		{ label: 'Org',     val: 'Marin Amateur Radio Society' },
-		{ label: 'Version', val: 'APRS Tracker Map · v1.18.4+5' },
+		{ label: 'Version', val: 'APRS Tracker Map · v1.18.5+5' },
 		mobileCallsign ? { label: 'Callsign', val: mobileCallsign } : null,
 		{ label: 'Map',     val: currentBgAttribution || '' },
 		{ label: 'Credit',  val: '&copy; 2026 Doug Kaye (K6DRK)' },
@@ -4055,7 +4080,7 @@ function openAboutModal() {
 	const attrText = currentBgAttribution || '';
 	const rows = [
 		{ label: 'Organization', val: 'Marin Amateur Radio Society' },
-		{ label: 'Application',  val: 'APRS Tracker Map · v1.18.4+5' },
+		{ label: 'Application',  val: 'APRS Tracker Map · v1.18.5+5' },
 		currentEventName ? { label: 'Event', val: currentEventName } : null,
 		mobileCallsign ? { label: 'My Callsign', val: mobileCallsign } : null,
 		mobileCallsign ? { label: 'Activity', val: ['Walk / Run', 'Cycle', 'Drive', 'Stationary', 'Unknown'][_mobileActivityMode] } : null,

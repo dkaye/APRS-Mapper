@@ -13,6 +13,7 @@ set -euo pipefail
 
 SERVER_DIR="$(cd "$(dirname "$0")" && pwd)"
 MAP_DIR="$(cd "$SERVER_DIR/../map" && pwd)"
+ANALYZER_DIR="$(cd "$SERVER_DIR/../analyzer" && pwd)"
 REMOTE="aprs-pi"
 REMOTE_DIR="/var/www/html/server"
 
@@ -44,6 +45,16 @@ rsync -a --delete "$SERVER_DIR/systemd/"     "$REMOTE:$STAGING/systemd/"
 rsync -a --delete "$SERVER_DIR/apache/"      "$REMOTE:$STAGING/apache/"
 rsync -a --delete "$SERVER_DIR/cloudflared/" "$REMOTE:$STAGING/cloudflared/"
 rsync -a --delete "$SERVER_DIR/etc/"         "$REMOTE:$STAGING/etc/"
+ssh "$REMOTE" "mkdir -p $STAGING/home/analyzer/src"
+rsync -a --delete \
+    --exclude='.DS_Store' \
+    --exclude='__pycache__/' \
+    --exclude='*.pyc' \
+    --exclude='aprs.db' \
+    --exclude='latest_packets.json' \
+    --exclude='heartbeat.txt' \
+    "$ANALYZER_DIR/src/"          "$REMOTE:$STAGING/home/analyzer/src/"
+rsync -a "$ANALYZER_DIR/requirements.txt" "$REMOTE:$STAGING/home/analyzer/requirements.txt"
 
 # Bundle the map web app as the base www content, then overlay server-specific
 # subdirs (netbird/, admin/, wifi/) on top. No git clone needed on fresh install.
@@ -55,6 +66,7 @@ rsync -a --delete \
     --exclude='*.md' \
     --exclude='*.py' \
     --exclude='trackers.json' \
+    --exclude='mobile_trackers.json' \
     --exclude='aprs-daemon.service' \
     --exclude='aprs-daemon.sh' \
     --exclude='backup-from-pi.sh' \
@@ -84,6 +96,7 @@ scp "$SERVER_DIR/install.sh" "$REMOTE:$REMOTE_DIR/install.sh"
 echo "Updating live web root..."
 ssh "$REMOTE" "rsync -a \
         --exclude='trackers.json' \
+        --exclude='mobile_trackers.json' \
         --exclude='config.yaml' \
         --exclude='events/' \
         --exclude='netbird/addresses.yaml' \
@@ -95,6 +108,33 @@ ssh "$REMOTE" "rsync -a \
     sudo chown pi:www-data /var/www/html/netbird/addresses.yaml 2>/dev/null || true && \
     sudo chmod 664 /var/www/html/netbird/addresses.yaml 2>/dev/null || true && \
     sudo systemctl start aprs-daemon"
+
+echo "Updating Apache config..."
+ssh "$REMOTE" "sudo rsync -a $STAGING/apache/ /etc/apache2/sites-available/ && \
+    sudo a2enmod proxy proxy_http 2>/dev/null || true && \
+    sudo systemctl reload apache2"
+
+echo "Deploying analyzer..."
+ssh "$REMOTE" "rsync -a \
+        --exclude='aprs.db' \
+        --exclude='latest_packets.json' \
+        --exclude='heartbeat.txt' \
+        $STAGING/home/analyzer/ /home/pi/analyzer/ && \
+    sudo cp $STAGING/systemd/analyzer.service /etc/systemd/system/analyzer.service && \
+    sudo cp $STAGING/systemd/analyzer-daemon.service /etc/systemd/system/analyzer-daemon.service && \
+    sudo chgrp www-data /home/pi/analyzer/src && \
+    sudo chmod g+w /home/pi/analyzer/src && \
+    sudo touch /home/pi/analyzer/src/aprs.db && \
+    sudo chown www-data:www-data /home/pi/analyzer/src/aprs.db && \
+    python3 -m venv /home/pi/analyzer/venv && \
+    /home/pi/analyzer/venv/bin/pip install -q -r /home/pi/analyzer/requirements.txt && \
+    sudo mkdir -p /var/log/analyzer && \
+    sudo chown www-data:www-data /var/log/analyzer && \
+    sudo systemctl daemon-reload && \
+    sudo systemctl enable analyzer analyzer-daemon && \
+    sudo systemctl restart analyzer analyzer-daemon && \
+    echo 'www-data ALL=(root) NOPASSWD: /usr/bin/systemctl start analyzer-daemon, /usr/bin/systemctl stop analyzer-daemon, /usr/bin/systemctl is-active analyzer-daemon' | sudo tee /etc/sudoers.d/021_www-data-analyzer > /dev/null && \
+    sudo chmod 440 /etc/sudoers.d/021_www-data-analyzer"
 
 echo ""
 echo "Done. Files live at:"

@@ -12,7 +12,7 @@ set -euo pipefail
 SRC="$(cd "$(dirname "$0")" && pwd)/"
 DST="pi@192.168.0.180:/var/www/html/"
 
-rsync -avz --delete --omit-dir-times --no-perms \
+rsync -avz --omit-dir-times --no-perms \
   --exclude='.DS_Store' \
   --exclude='.git/' \
   --exclude='*.MD' \
@@ -28,6 +28,10 @@ rsync -avz --delete --omit-dir-times --no-perms \
   --exclude='aprs-daemon.sh' \
   --exclude='temp/' \
   --exclude='events/' \
+  --exclude='tickets/tickets.json' \
+  --exclude='tickets/config.json' \
+  --exclude='tickets/versions.json' \
+  --exclude='TKT-*/' \
   --exclude='pi-tools/' \
   --exclude='sync-to-pi.sh' \
   --exclude='netbird/' \
@@ -39,6 +43,3 @@ rsync -avz --delete --omit-dir-times --no-perms \
   --exclude='tests/' \
   --exclude='vendor/' \
   "$SRC" "$DST"
-
-# Ensure mobile_trackers.json exists and is writable by www-data
-ssh pi@192.168.0.180 "touch /var/www/html/mobile_trackers.json && sudo chown www-data:www-data /var/www/html/mobile_trackers.json && sudo chmod 664 /var/www/html/mobile_trackers.json"

@@ -179,6 +179,7 @@ function buildConfigYaml($cfg, $history = []) {
         if (!empty($g['callsign'])) $L[] = '    callsign: ' . ys($g['callsign']);
         $L[] = '    lat: '  . (is_numeric($g['lat'] ?? '') ? (float)$g['lat'] : 0);
         $L[] = '    lon: '  . (is_numeric($g['lon'] ?? '') ? (float)$g['lon'] : 0);
+        if (!empty($g['digipeater'])) $L[] = '    digipeater: true';
     }
     $L[] = '';
     $mob = $cfg['mobile'] ?? [];

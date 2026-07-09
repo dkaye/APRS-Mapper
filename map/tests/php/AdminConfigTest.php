@@ -1,4 +1,5 @@
 <?php
+/** Tests for admin config YAML read/write operations in admin/config_yaml.php. */
 use PHPUnit\Framework\TestCase;
 
 class AdminConfigTest extends TestCase

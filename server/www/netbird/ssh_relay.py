@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 """
+ssh_relay.py — MARS APRS NetBird Monitor
+
+Paramiko-based SSH relay spawned by ssh_stream.php via proc_open.
+Opens a PTY shell to the target device over the NetBird VPN and bridges
+stdin/stdout as base64-encoded SSE lines for the browser xterm.js terminal.
+"""
+"""
 ssh_relay.py — MARS APRS NetBird
 
 Paramiko PTY relay. Reads SSH channel output, base64-encodes each chunk to

@@ -1,4 +1,12 @@
 <?php
+/**
+ * index.php — K6DRK iGate v5.0 dashboard home page
+ *
+ * Entry point for the iGate web UI. Shows system status, Direwolf state,
+ * and a summary of recent APRS activity. Redirects to igate.php for
+ * detailed packet logs.
+ * Based on the Direwolf APRS Web Dashboard (PC7MM / PD3RFR / IZ7BOJ).
+ */
 // This file is part of the Direwolf APRS Web Dashboard as available at https://github.com/PC7MM/Direwolf-APRS-Web-Dashboard
 // Developed by Michael PC7MM and Richard PD3RFR as an extension of https://github.com/IZ7BOJ/direwolf_webstat and https://github.com/IZ7BOJ/APRS_dashboard as developed by Alfredo IZ7BOJ
 // See config.php for adjustable parameters and see https://www.youtube.com/watch?v=7bMf7rWCfnE for more information

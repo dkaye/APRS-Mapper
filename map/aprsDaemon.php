@@ -287,8 +287,9 @@ function syncMobilePositionHistory() {
 	$fh = @fopen($mobileTrackersFile, 'r');
 	if (!$fh) return;
 	flock($fh, LOCK_SH); $c = stream_get_contents($fh); flock($fh, LOCK_UN); fclose($fh);
+	$_mt = json_decode($c, true) ?: [];
 	$changed = false;
-	foreach (json_decode($c, true) ?: [] as $t) {
+	foreach (isset($_mt['trackers']) ? $_mt['trackers'] : $_mt as $t) {
 		$cs  = $t['callsign'] ?? null;
 		$lat = $t['aprs_lat'] ?? null;
 		$lon = $t['aprs_lon'] ?? null;
@@ -298,16 +299,13 @@ function syncMobilePositionHistory() {
 		if (!isset($trackerHistory[$cs])) $trackerHistory[$cs] = [];
 		$lastCrumb = $trackerHistory[$cs][0] ?? null;
 		if ($lastCrumb !== null && $lastCrumb['ts'] >= $ts) continue;  // already recorded
-		$moved  = ($lastCrumb === null) || haversineMeters($lastCrumb['lat'], $lastCrumb['lon'], $lat, $lon) >= MIN_MOVE_METRES;
-		$useLat = $moved ? $lat : $lastCrumb['lat'];
-		$useLon = $moved ? $lon : $lastCrumb['lon'];
-		if ($moved) {
-			foreach ($trackers as &$tr) {
-				if ($tr['callsign'] === $cs) { $tr['lat'] = $lat; $tr['lon'] = $lon; $tr['lastUpdate'] = $ts; break; }
-			}
-			unset($tr);
+		$moved = ($lastCrumb === null) || haversineMeters($lastCrumb['lat'], $lastCrumb['lon'], $lat, $lon) >= MIN_MOVE_METRES;
+		if (!$moved) continue;  // tracker hasn't moved — preserve existing breadcrumbs
+		foreach ($trackers as &$tr) {
+			if ($tr['callsign'] === $cs) { $tr['lat'] = $lat; $tr['lon'] = $lon; $tr['lastUpdate'] = $ts; break; }
 		}
-		array_unshift($trackerHistory[$cs], ['lat' => $useLat, 'lon' => $useLon, 'path' => 'TCPIP*', 'ts' => $ts]);
+		unset($tr);
+		array_unshift($trackerHistory[$cs], ['lat' => $lat, 'lon' => $lon, 'path' => 'TCPIP*', 'ts' => $ts]);
 		if (count($trackerHistory[$cs]) > 10) array_pop($trackerHistory[$cs]);
 		$changed = true;
 	}
@@ -418,7 +416,7 @@ function loadMobileSessions() {
 	$mobileMtime = $mtime;
 	$fh = @fopen($mobileTrackersFile, 'r');
 	$data = [];
-	if ($fh) { flock($fh, LOCK_SH); $c = stream_get_contents($fh); flock($fh, LOCK_UN); fclose($fh); $data = json_decode($c, true) ?: []; }
+	if ($fh) { flock($fh, LOCK_SH); $c = stream_get_contents($fh); flock($fh, LOCK_UN); fclose($fh); $_mt = json_decode($c, true) ?: []; $data = isset($_mt['trackers']) ? $_mt['trackers'] : $_mt; }
 	$now = time();
 	$newSessions = [];
 	$hamSessions = [];  // ham_callsign → {id, name} for hybrid trackers
@@ -641,11 +639,9 @@ while (TRUE) {
 							if (!isset($trackerHistory[$callsign])) $trackerHistory[$callsign] = [];
 							$lastCrumb = $trackerHistory[$callsign][0] ?? null;
 							$moved = ($lastCrumb === null) || haversineMeters($lastCrumb['lat'], $lastCrumb['lon'], $lat, $lon) >= MIN_MOVE_METRES;
-							if ($moved) { $trackers[$key]["lat"]=$lat; $trackers[$key]["lon"]=$lon; }
-							// Always record timestamp (needed for beacon-interval delta); lat/lon only updated when moved.
-							$useLat = $moved ? $lat : ($lastCrumb['lat'] ?? $lat);
-							$useLon = $moved ? $lon : ($lastCrumb['lon'] ?? $lon);
-							array_unshift($trackerHistory[$callsign], ['lat'=>$useLat,'lon'=>$useLon,'path'=>$aprsPath,'ts'=>time()]);
+							if (!$moved) break;  // tracker hasn't moved — preserve existing breadcrumbs
+							$trackers[$key]["lat"]=$lat; $trackers[$key]["lon"]=$lon;
+							array_unshift($trackerHistory[$callsign], ['lat'=>$lat,'lon'=>$lon,'path'=>$aprsPath,'ts'=>time()]);
 							if (count($trackerHistory[$callsign]) > 10) array_pop($trackerHistory[$callsign]);
 							writeTrackerHistoryFile();
 						}

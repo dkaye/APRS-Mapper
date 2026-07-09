@@ -1,4 +1,11 @@
 <?php
+/**
+ * index.php — MARS APRS Tracker Map participant ticket submission form
+ *
+ * Public-facing page where event participants can submit support requests,
+ * report technical issues, or ask questions during an event. Ticket data is
+ * stored in tickets.json and version info is read from versions.json.
+ */
 ini_set('display_errors', '0');
 
 $ticketsFile  = __DIR__ . '/tickets.json';
@@ -169,6 +176,117 @@ function processUploads(string $ticketId): array {
     return $saved;
 }
 
+function generateToken(): string {
+    return bin2hex(random_bytes(16));
+}
+
+function ticketUrl(string $id, string $token): string {
+    $proto = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host  = $_SERVER['HTTP_HOST'] ?? 'marsaprs.org';
+    return "{$proto}://{$host}/tickets/?id={$id}&token={$token}";
+}
+
+function sendSubmitterConfirmation(array $ticket): void {
+    $email = $ticket['email'] ?? '';
+    if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) return;
+    $token = $ticket['token'] ?? '';
+    if ($token === '') return;
+    $host    = $_SERVER['HTTP_HOST'] ?? 'marsaprs.org';
+    $id      = $ticket['id'];
+    $from    = 'noreply@' . $host;
+    $subject = "Ticket {$id} received — MARS APRS";
+    $body    = implode("\n", [
+        "Thank you for submitting a ticket.",
+        "",
+        "  ID:      {$id}",
+        "  Summary: " . ($ticket['summary'] ?? ''),
+        "  Status:  Open",
+        "",
+        "You can view your ticket status and add comments here:",
+        "  " . ticketUrl($id, $token),
+        "",
+        "You'll receive an email when there is an update.",
+    ]);
+    $headers = implode("\r\n", [
+        "From: MARS APRS Support <{$from}>",
+        "Reply-To: {$from}",
+        "Content-Type: text/plain; charset=UTF-8",
+        "X-Mailer: PHP/" . PHP_VERSION,
+    ]);
+    @mail($email, $subject, $body, $headers);
+}
+
+function notifyAdminOfComment(array $ticket, string $adminEmail): void {
+    if ($adminEmail === '' || !filter_var($adminEmail, FILTER_VALIDATE_EMAIL)) return;
+    $proto    = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host     = $_SERVER['HTTP_HOST'] ?? 'marsaprs.org';
+    $id       = $ticket['id'];
+    $adminUrl = "{$proto}://{$host}/tickets/admin?id={$id}";
+    $from     = 'noreply@' . $host;
+    $subject  = "New comment on ticket {$id} — MARS APRS";
+    $latest   = !empty($ticket['comments']) ? end($ticket['comments']) : null;
+    $name     = $ticket['name'] ?? 'Submitter';
+    $body     = implode("\n", [
+        "{$name} added a comment on ticket {$id}: " . ($ticket['summary'] ?? ''),
+        "",
+        $latest ? $latest['text'] : '',
+        "",
+        "View ticket: {$adminUrl}",
+    ]);
+    $headers = implode("\r\n", [
+        "From: MARS APRS Tickets <{$from}>",
+        "Reply-To: {$from}",
+        "Content-Type: text/plain; charset=UTF-8",
+        "X-Mailer: PHP/" . PHP_VERSION,
+    ]);
+    @mail($adminEmail, $subject, $body, $headers);
+}
+
+// ── Token-based ticket view (?id=TKT-xxxx&token=...) ─────────────────────────
+$tokenTicket    = null;
+$tokenError     = '';
+$tokenCommented = false;
+if (isset($_GET['id'], $_GET['token'])) {
+    $reqId    = strtoupper(trim($_GET['id']));
+    $reqToken = trim($_GET['token']);
+    $tokenCommented = isset($_GET['commented']);
+    if (preg_match('/^TKT-\d{4}$/', $reqId) && preg_match('/^[0-9a-f]{32}$/', $reqToken)) {
+        foreach (loadTickets($ticketsFile) as $t) {
+            if ($t['id'] === $reqId && ($t['token'] ?? '') === $reqToken) {
+                $tokenTicket = $t;
+                break;
+            }
+        }
+        if (!$tokenTicket) $tokenError = 'Invalid or expired ticket link.';
+    } else {
+        $tokenError = 'Invalid ticket link.';
+    }
+}
+
+// ── POST: submitter adds comment ──────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['comment'])) {
+    $id  = strtoupper(trim($_POST['id']    ?? ''));
+    $tok = trim($_POST['token'] ?? '');
+    $txt = substr(trim($_POST['text'] ?? ''), 0, 2000);
+    if (preg_match('/^TKT-\d{4}$/', $id) && preg_match('/^[0-9a-f]{32}$/', $tok) && $txt !== '') {
+        $tickets = loadTickets($ticketsFile);
+        foreach ($tickets as &$t) {
+            if ($t['id'] === $id && ($t['token'] ?? '') === $tok) {
+                if (!isset($t['comments'])) $t['comments'] = [];
+                $t['comments'][] = ['ts' => time(), 'author' => 'submitter', 'name' => $t['name'], 'text' => $txt];
+                $t['updated'] = time();
+                saveTickets($ticketsFile, $tickets);
+                $cfg = loadConfig($configFile);
+                if (!empty($cfg['manager_email'])) notifyAdminOfComment($t, $cfg['manager_email']);
+                break;
+            }
+        }
+        unset($t);
+    }
+    header("Location: ?id={$id}&token={$tok}&commented=1");
+    exit;
+}
+
 // ── Status check (?check=TKT-xxxx) ───────────────────────────────────────────
 
 $checkId     = '';
@@ -215,35 +333,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_GET['check'])) {
     } elseif ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
         $formError = 'Please enter a valid email address.';
     } else {
-        $tickets = loadTickets($ticketsFile);
-        $now     = time();
-        $id      = nextTicketId($tickets);
-        $files   = processUploads($id);
-        $ticket  = [
-            'id'             => $id,
-            'created'        => $now,
-            'updated'        => $now,
-            'name'           => $name,
-            'email'          => $email,
-            'platform'       => $platform,
-            'version'        => $version,
-            'type'           => $type,
-            'summary'        => $summary,
-            'description'    => $desc,
-            'status'           => 'Open',
-            'admin_response'   => '',
-            'resolved_version' => '',
-            'files'            => $files,
-        ];
-        $tickets[] = $ticket;
-        if (saveTickets($ticketsFile, $tickets)) {
-            $submitted = $ticket;
-            $cfg = loadConfig($configFile);
-            if (!empty($cfg['manager_email'])) {
-                sendTicketNotification($ticket, $cfg['manager_email']);
+        $tickets   = loadTickets($ticketsFile);
+        $submitKey = substr(preg_replace('/[^0-9a-f]/i', '', trim($_POST['submit_key'] ?? '')), 0, 32);
+        // Deduplicate: if this submit_key was already saved recently, return that ticket.
+        if ($submitKey !== '') {
+            foreach ($tickets as $t) {
+                if (($t['submit_key'] ?? '') === $submitKey && ($t['created'] ?? 0) > time() - 300) {
+                    $submitted = $t;
+                    break;
+                }
             }
-        } else {
-            $formError = 'Could not save your ticket — please try again.';
+        }
+        if (!$submitted) {
+            $now    = time();
+            $id     = nextTicketId($tickets);
+            $files  = processUploads($id);
+            $token  = $email !== '' ? generateToken() : '';
+            $ticket = [
+                'id'               => $id,
+                'created'          => $now,
+                'updated'          => $now,
+                'name'             => $name,
+                'email'            => $email,
+                'platform'         => $platform,
+                'version'          => $version,
+                'type'             => $type,
+                'summary'          => $summary,
+                'description'      => $desc,
+                'status'           => 'Open',
+                'admin_response'   => '',
+                'resolved_version' => '',
+                'files'            => $files,
+                'token'            => $token,
+                'submit_key'       => $submitKey,
+                'comments'         => [],
+            ];
+            $tickets[] = $ticket;
+            if (saveTickets($ticketsFile, $tickets)) {
+                $submitted = $ticket;
+                if ($token !== '') sendSubmitterConfirmation($ticket);
+                $cfg = loadConfig($configFile);
+                if (!empty($cfg['manager_email'])) {
+                    sendTicketNotification($ticket, $cfg['manager_email']);
+                }
+            } else {
+                $formError = 'Could not save your ticket — please try again.';
+            }
         }
     }
 }
@@ -252,11 +387,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !isset($_GET['check'])) {
 
 function statusBadge(string $status): string {
     $colors = [
-        'Open'        => '#c0392b',
-        'In Progress' => '#b7770d',
-        'Resolved'    => '#1a7a3c',
-        'Won\'t Fix'  => '#666',
-        'Duplicate'   => '#666',
+        'Open'       => '#c0392b',
+        'Testing'    => '#1a6fa8',
+        'Resolved'   => '#1a7a3c',
+        'Won\'t Fix' => '#666',
+        'Duplicate'  => '#666',
     ];
     $bg = $colors[$status] ?? '#555';
     $s  = esc($status);
@@ -311,6 +446,7 @@ body { font-family: arial, helvetica, sans-serif; font-size: 14px; background: #
     cursor: pointer; margin-top: 8px;
 }
 .submit-btn:hover { background: #1f6da0; }
+.submit-btn:disabled { background: #7fb3d3; cursor: not-allowed; }
 .error {
     background: #fff0f0; border: 1px solid #f5c6c6; border-radius: 4px;
     padding: 9px 13px; color: #c0392b; font-size: 13px; margin-bottom: 18px;
@@ -361,6 +497,33 @@ body { font-family: arial, helvetica, sans-serif; font-size: 14px; background: #
 @media (max-width: 500px) {
     .card { padding: 20px 16px 24px; }
 }
+.thread { margin: 18px 0 0; }
+.thread-msg { display: flex; gap: 10px; margin-bottom: 14px; }
+.thread-msg.mine { flex-direction: row-reverse; }
+.thread-bubble {
+    max-width: 78%; padding: 9px 12px; border-radius: 10px;
+    font-size: 13px; line-height: 1.5; white-space: pre-wrap;
+}
+.thread-msg.theirs .thread-bubble { background: #eef2f7; }
+.thread-msg.mine   .thread-bubble { background: #dceeff; }
+.thread-meta { font-size: 11px; color: #999; margin-top: 3px; }
+.thread-msg.mine .thread-meta { text-align: right; }
+.comment-form { margin-top: 18px; padding-top: 14px; border-top: 1px solid #eee; }
+.comment-form textarea {
+    width: 100%; padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px;
+    font-size: 14px; font-family: inherit; resize: vertical;
+}
+.comment-form textarea:focus { outline: none; border-color: #2980b9; }
+.comment-submit {
+    margin-top: 8px; padding: 8px 20px; background: #2980b9; color: #fff;
+    border: none; border-radius: 4px; font-size: 14px; font-weight: bold;
+    cursor: pointer;
+}
+.comment-submit:hover { background: #1f6da0; }
+.comment-success {
+    background: #f0fff4; border: 1px solid #a3d9b1; border-radius: 4px;
+    padding: 9px 13px; color: #1a7a3c; font-size: 13px; margin-bottom: 14px;
+}
 </style>
 </head>
 <body>
@@ -373,12 +536,91 @@ body { font-family: arial, helvetica, sans-serif; font-size: 14px; background: #
 </div>
 <div id="wrap">
 
-<?php if ($submitted): ?>
+<?php if ($tokenTicket): ?>
+<!-- ── Token-based ticket view ── -->
+<div class="card">
+    <h2>Ticket <?= esc($tokenTicket['id']) ?></h2>
+    <?php if ($tokenCommented): ?>
+    <div class="comment-success">Your comment has been added.</div>
+    <?php endif; ?>
+    <table class="tkt-table">
+        <tr><td>Status</td><td><?= statusBadge($tokenTicket['status']) ?><?php if (!empty($tokenTicket['resolved_version'])): ?> <span style="font-size:13px;color:#555;margin-left:6px">in v<?= esc($tokenTicket['resolved_version']) ?></span><?php endif; ?></td></tr>
+        <tr><td>Submitted</td><td><?= esc(date('M j, Y', $tokenTicket['created'])) ?></td></tr>
+        <tr><td>Summary</td><td><?= esc($tokenTicket['summary']) ?></td></tr>
+        <tr><td>Description</td><td><div class="tkt-desc"><?= esc($tokenTicket['description']) ?></div></td></tr>
+        <?php if (!empty($tokenTicket['files'])): ?>
+        <tr><td>Files</td><td><div class="file-grid">
+            <?php foreach ($tokenTicket['files'] as $fname):
+                $url = esc(ticketFileUrl($tokenTicket['id'], $fname)); ?>
+            <?php if (isImageFile($fname)): ?>
+                <a href="<?= $url ?>" target="_blank"><img src="<?= $url ?>" class="file-thumb" alt="<?= esc($fname) ?>"></a>
+            <?php else: ?>
+                <a href="<?= $url ?>" target="_blank" class="file-doc">📄 <?= esc($fname) ?></a>
+            <?php endif; ?>
+            <?php endforeach; ?>
+        </div></td></tr>
+        <?php endif; ?>
+    </table>
+    <?php
+    $comments     = $tokenTicket['comments'] ?? [];
+    $adminResponse = trim($tokenTicket['admin_response'] ?? '');
+    // Show admin_response as an admin bubble if no structured comment mirrors it
+    $hasAnyContent = !empty($comments) || $adminResponse !== '';
+    if ($hasAnyContent): ?>
+    <div class="thread">
+    <?php if ($adminResponse !== '' && empty(array_filter($comments, fn($c) => $c['author'] === 'admin'))): ?>
+        <div class="thread-msg theirs">
+            <div>
+                <div class="thread-bubble"><?= esc($adminResponse) ?></div>
+                <div class="thread-meta">Admin</div>
+            </div>
+        </div>
+    <?php endif; ?>
+    <?php foreach ($comments as $c):
+        $mine  = $c['author'] === 'submitter';
+        $label = $mine ? 'You' : 'Admin';
+        $ts    = date('M j g:i A', (int)($c['ts'] ?? 0));
+    ?>
+        <div class="thread-msg <?= $mine ? 'mine' : 'theirs' ?>">
+            <div>
+                <div class="thread-bubble"><?= esc($c['text']) ?></div>
+                <div class="thread-meta"><?= esc($label) ?> · <?= esc($ts) ?></div>
+            </div>
+        </div>
+    <?php endforeach; ?>
+    </div>
+    <?php endif; ?>
+    <div class="comment-form">
+        <form method="POST" action="?comment">
+            <input type="hidden" name="id"    value="<?= esc($tokenTicket['id']) ?>">
+            <input type="hidden" name="token" value="<?= esc($tokenTicket['token'] ?? '') ?>">
+            <div class="field" style="margin-bottom:0">
+                <label for="f-comment">Add a Comment</label>
+                <textarea id="f-comment" name="text" rows="4" maxlength="2000"
+                    placeholder="Add additional information or ask a follow-up question…"></textarea>
+            </div>
+            <button type="submit" class="comment-submit">Send</button>
+        </form>
+    </div>
+</div>
+
+<?php elseif ($tokenError !== '' && isset($_GET['id'])): ?>
+<div class="card">
+    <h2>Invalid Link</h2>
+    <p style="color:#666;margin-bottom:18px"><?= esc($tokenError) ?></p>
+    <div class="check-link"><a href="?">Submit a new ticket</a></div>
+</div>
+
+<?php elseif ($submitted): ?>
 <!-- ── Confirmation ── -->
 <div class="card">
     <h2>Ticket submitted</h2>
     <div class="success-id"><?= esc($submitted['id']) ?></div>
+    <?php if (!empty($submitted['token']) && $submitted['email'] !== ''): ?>
+    <p class="success-note">A confirmation email with a link to view and comment on your ticket has been sent to <strong><?= esc($submitted['email']) ?></strong>.</p>
+    <?php else: ?>
     <p class="success-note">Save this ticket ID — you can use it to check the status of your report.</p>
+    <?php endif; ?>
     <table class="tkt-table">
         <tr><td>Summary</td><td><?= esc($submitted['summary']) ?></td></tr>
         <tr><td>Platform</td><td><?= esc($submitted['platform']) ?></td></tr>
@@ -451,18 +693,29 @@ body { font-family: arial, helvetica, sans-serif; font-size: 14px; background: #
     <div class="check-link"><a href="?">Submit a new ticket</a></div>
 </div>
 
-<?php else: ?>
+<?php
+else:
+    $formSubmitKey = bin2hex(random_bytes(8));
+?>
 <!-- ── Submit form ── -->
 <div class="card">
     <h2>Submit a Bug Report or Feature Request</h2>
     <?php if ($formError): ?>
         <div class="error"><?= esc($formError) ?></div>
     <?php endif; ?>
-    <form method="POST" action="" enctype="multipart/form-data">
+    <form id="ticket-form" method="POST" action="" enctype="multipart/form-data">
+        <input type="hidden" name="submit_key" value="<?= esc($formSubmitKey) ?>">
+        <?php
+        $defName     = $_POST['name']     ?? $_GET['name']     ?? '';
+        $defPlatform = $_POST['platform'] ?? $_GET['platform'] ?? '';
+        $defVersion  = $_POST['version']  ?? $_GET['version']  ?? '';
+        $validPlatformsCheck = ['iOS', 'Android', 'iOS and Android', 'Web'];
+        if (!in_array($defPlatform, $validPlatformsCheck, true)) $defPlatform = '';
+        ?>
         <div class="field">
             <label for="f-name">Your Name <span style="color:#c0392b">*</span></label>
             <input type="text" id="f-name" name="name" required maxlength="80"
-                value="<?= esc($_POST['name'] ?? '') ?>">
+                value="<?= esc($defName) ?>">
         </div>
         <div class="field">
             <label for="f-email">Email <span style="color:#999;font-weight:normal;text-transform:none">(optional)</span></label>
@@ -474,7 +727,7 @@ body { font-family: arial, helvetica, sans-serif; font-size: 14px; background: #
             <select id="f-platform" name="platform" required>
                 <option value="">— select —</option>
                 <?php foreach (['iOS', 'Android', 'iOS and Android', 'Web'] as $p): ?>
-                    <option value="<?= esc($p) ?>"<?= (($_POST['platform'] ?? '') === $p) ? ' selected' : '' ?>><?= esc($p) ?></option>
+                    <option value="<?= esc($p) ?>"<?= ($defPlatform === $p) ? ' selected' : '' ?>><?= esc($p) ?></option>
                 <?php endforeach; ?>
             </select>
         </div>
@@ -482,7 +735,7 @@ body { font-family: arial, helvetica, sans-serif; font-size: 14px; background: #
             <label for="f-version">App Version</label>
             <?php
             $versions   = loadVersions($versionsFile);
-            $postVer    = $_POST['version'] ?? '';
+            $postVer    = $defVersion;
             $isOther    = $postVer !== '' && $postVer !== '__other__' && !in_array($postVer, $versions, true);
             $selectVal  = $isOther ? '__other__' : $postVer;
             $otherVal   = $isOther ? $postVer : ($_POST['version_other'] ?? '');
@@ -542,5 +795,15 @@ body { font-family: arial, helvetica, sans-serif; font-size: 14px; background: #
 <?php endif; ?>
 
 </div>
+<script>
+(function () {
+    var form = document.getElementById('ticket-form');
+    if (!form) return;
+    form.addEventListener('submit', function () {
+        var btn = form.querySelector('button[type=submit]');
+        if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
+    });
+})();
+</script>
 </body>
 </html>

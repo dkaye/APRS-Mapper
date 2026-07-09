@@ -1,4 +1,12 @@
 <?php
+/**
+ * index.php — MARS APRS NetBird host-status query endpoint
+ *
+ * Lightweight REST endpoint that checks whether a given hostname is enabled
+ * in the NetBird VPN via addresses.yaml. Returns 1 (enabled), 0 (disabled),
+ * or -1 (unknown). No authentication required — used by the mobile app and
+ * the admin UI to gate remote operations.
+ */
 // ── Host status query — no auth required ─────────────────────────────────────
 // GET /netbird/?hostname=K6DRK-10  →  1 (enabled), 0 (disabled), -1 (unknown)
 // Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD

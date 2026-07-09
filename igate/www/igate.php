@@ -1,4 +1,11 @@
 <?php
+/**
+ * igate.php — K6DRK iGate v5.0 main iGate status and packet log page
+ *
+ * Displays live Direwolf packet activity, heard stations, and RF statistics
+ * for the iGate. Pulled from Direwolf logs and the local packet database.
+ * Based on the Direwolf APRS Web Dashboard (PC7MM / PD3RFR / IZ7BOJ).
+ */
 // This file is part of the Direwolf APRS Web Dashboard as available at https://github.com/PC7MM/Direwolf-APRS-Web-Dashboard
 // Developed by Michael PC7MM and Richard PD3RFR as an extension of https://github.com/IZ7BOJ/direwolf_webstat and https://github.com/IZ7BOJ/APRS_dashboard as developed by Alfredo IZ7BOJ
 // See config.php for adjustable parameters and see https://www.youtube.com/watch?v=7bMf7rWCfnE for more information

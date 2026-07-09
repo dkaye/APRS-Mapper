@@ -1,4 +1,5 @@
 <?php
+/** PHPUnit bootstrap: defines constants and requires shared source files for test isolation. */
 define('APRS_DAEMON_INCLUDE_ONLY', true);
 
 $repoRoot = dirname(__DIR__, 3);

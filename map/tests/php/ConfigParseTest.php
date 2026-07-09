@@ -1,4 +1,5 @@
 <?php
+/** Tests for config.yaml parsing and validation logic in config_parse.php. */
 use PHPUnit\Framework\TestCase;
 
 class ConfigParseTest extends TestCase

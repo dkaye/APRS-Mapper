@@ -2,7 +2,7 @@
 
 **Author:** Doug Kaye (K6DRK) · **Copyright:** 2026 Doug Kaye. All Rights Reserved.
 
-**Version:** Server & Displays (v1.18.4); Mobile App (v1.18.4); iGates (v5.0)
+**Version:** Server & Displays (v1.18.5); Mobile App (v1.18.5); iGates (v5.0)
 
 ---
 
@@ -12,24 +12,26 @@
 2. [System Architecture](#system-architecture)
 3. [NetBird VPN](#netbird-vpn)
 4. [iGates (v5.0)](#igates-v50)
-5. [APRS Server (v1.18.4)](#aprs-server-v1184)
+5. [APRS Server (v1.18.5)](#aprs-server-v1185)
    - [Cloudflare Tunnel](#cloudflare-tunnel)
-6. [Display Pis (v1.18.4)](#display-pis-v1184)
-7. [Mobile Apps (v1.18.4)](#mobile-apps-v1184)
+6. [Display Pis (v1.18.5)](#display-pis-v1185)
+7. [Mobile Apps (v1.18.5)](#mobile-apps-v1185)
    - [Architecture](#app-architecture) · [Location Sharing Flow](#location-sharing-flow) · [Smart Track](#smart-track) · [Building & Distributing](#building-distributing) · [Background Location](#background-location)
 8. [User Interfaces](#user-interfaces)
-9. [Backup, Recovery and Updates](#backup-recovery-and-updates)
+9. [Analyzer](#analyzer)
+   - [Architecture](#analyzer-architecture) · [Authentication](#analyzer-authentication) · [Beacon Recording](#beacon-recording) · [Map & Controls](#map--controls) · [Key Files](#analyzer-key-files) · [Services](#analyzer-services) · [API Endpoints](#analyzer-api-endpoints)
+10. [Backup, Recovery and Updates](#backup-recovery-and-updates)
    - [Server Pi](#server-pi) · [Display Pis](#display-pis) · [iGates](#igates)
-10. [Log Rotation](#log-rotation)
-11. [Building & Deploying Devices](#building-deploying-devices)
+11. [Log Rotation](#log-rotation)
+12. [Building & Deploying Devices](#building-deploying-devices)
     - [NetBird Setup Keys](#netbird-setup-keys) · [APRS Server](#aprs-server) · [Display Pis & iGates](#display-pis-igates)
-12. [Creating New Master Images](#creating-new-master-images)
+13. [Creating New Master Images](#creating-new-master-images)
     - [APRS Server](#aprs-server_1) · [Display Pis](#display-pis_1) · [iGates](#igates_1)
-13. [Supporting Systems](#supporting-systems)
+14. [Supporting Systems](#supporting-systems)
     - [NetBird Status Monitor](#netbird-status-monitor) · [WiFi Manager](#wifi-manager)
-14. [Appendix](#appendix)
+15. [Appendix](#appendix)
     - [File Formats](#file-formats) · [Server](#server) · [Display Pi](#display-pi) · [iGate](#igate) · [Pi-Tools](#pi-tools)
-15. [Testing](#testing)
+16. [Testing](#testing)
 
 ---
 
@@ -71,18 +73,18 @@ APRS Radio (144.39 MHz)
            ▼
 ┌──────────────────────────────────────┐     ┌──────────────────────────────┐
 │           APRS-IS Network            │◀────│  Mobile App  (iOS/Android)   │
-│         noam.aprs2.net:14580         │     │  Flutter v1.18.4               │
+│         noam.aprs2.net:14580         │     │  Flutter v1.18.5               │
 └────────────────┬─────────────────────┘     │  TCP 14580 (inject position) │
                  │ TCP 14580                 └──────────────┬───────────────┘
 ┌────────────────▼─────────────────────┐                    │ HTTPS (map + config + session)
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.18.4      │
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.18.5      │
 │  aprsDaemon.php → trackers.json      │◀───────────────────┘
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.18.4
+│  Display Pi  (×2)      │  Pi 4 · v1.18.5
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -187,7 +189,7 @@ Log: `/var/log/direwolf/watchdog.log`
 
 ---
 
-## APRS Server (v1.18.4)
+## APRS Server (v1.18.5)
 
 The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
 APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
@@ -273,7 +275,7 @@ The tunnel token is obtained from the **Cloudflare Zero Trust dashboard**:
 
 ---
 
-## Display Pis (v1.18.4)
+## Display Pis (v1.18.5)
 
 A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
 `marsaprs.org`. It is a read-only display device — no long-term local configuration or data storage.
@@ -320,7 +322,7 @@ For details on using the map, see [USERGUIDE.MD](https://marsaprs.org/userguide.
 
 ---
 
-## Mobile Apps (v1.18.4)
+## Mobile Apps (v1.18.5)
 
 Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.
 
@@ -601,13 +603,14 @@ Samsung One UI is particularly aggressive — users must also set the app to **U
 
 ## User Interfaces
 
-Five browser-based interfaces run on `marsaprs.org`. All are served by Apache on the server
+Six browser-based interfaces run on `marsaprs.org`. All are served by Apache on the server
 Pi, accessible at `https://marsaprs.org/<path>`.
 
 | Interface | URL | Access | Purpose |
 |-----------|-----|--------|---------|
 | **Map** | `/` | Public | Live tracker positions on an interactive Leaflet map |
 | **Map Admin** | `/admin/` | Password | Event configuration, tracker list, course and aid station management |
+| **Analyzer** | `/analyzer/` | Event Password | Beacon recording, playback, and analysis for the current event |
 | **NetBird Monitor** | `/netbird/` | Password | Real-time health status of all Pi devices |
 | **NetBird Admin** | `/netbird/admin.php` | Password | Add/remove devices, enable/disable, SSH terminal |
 | **WiFi Manager** | `/wifi/` | Password | Edit the shared WiFi credential list distributed to all Pis |
@@ -627,6 +630,14 @@ IDs, GPX/KML/GeoJSON course overlays, aid station and iGate locations (with opti
 callsign), map default view, and background tile layers. Supports multiple named events;
 switching events is instant.
 See [Appendix — Server — Admin Interface](#admin-interface) for full details.
+
+**Analyzer** — Requires the event password to view. A Flask/gunicorn web app served at
+`/analyzer/` via Apache mod_proxy. Runs `analyzer-daemon` to record APRS beacons from
+APRS-IS into a local SQLite database for the current event. Displays recorded beacons on
+an interactive Leaflet map with controls for filtering by tracker and iGate, toggling radio
+vs. cellular beacons and course overlays, adjusting the auto-refresh rate (30 s–5 min per
+client), and scrubbing a time-range slider. Daemon start/stop requires the admin password;
+data erasure requires the admin password and two confirmation steps.
 
 **NetBird Monitor** — Password-protected. Page that polls all registered Pi devices every 60 seconds (default; adjustable) over
 the NetBird VPN and shows online/offline/enabling/disabled status. Includes an SSH terminal
@@ -691,6 +702,155 @@ The compose modal footer has two links:
 3. Both paths may return the same message before an ack is sent; `_deliveredMsgIds` (a `Set<int>` in `background_location.dart`) deduplicates at the Flutter layer
 4. Flutter shows a sound + dialog; tap **Reply** to POST `?mobile=message {token, text}`
 5. On the next update or poll, `ack_ids` are sent to remove delivered messages from `pending_msgs`
+
+---
+
+## Analyzer
+
+The Analyzer is a separate Flask web application served at `/analyzer/` that records APRS beacons into a local SQLite database during an event and provides an interactive playback and analysis map. It is the only interface that preserves a historical record of all positions received — the main map only retains the 10 most recent breadcrumbs per tracker. The Analyzer is intended for post-event analysis, coverage review, and real-time monitoring of beacon reception quality.
+
+### Analyzer Architecture
+
+```
+APRS-IS (noam.aprs2.net:14580)
+      │ TCP  (filtered to tracked callsigns)
+      ▼
+aprs_daemon.py  ──writes──▶  aprs.db  (SQLite)
+                                   │
+                             flask_app.py  ◀── browser polls on auto-refresh timer
+                                   │
+                             gunicorn  (127.0.0.1:5001, 2 workers)
+                                   │
+                          Apache mod_proxy  (/analyzer/ → 5001)
+```
+
+Two systemd services work together:
+
+| Service | Unit file | Purpose |
+|---------|-----------|---------|
+| `analyzer` | `analyzer.service` | gunicorn serving `flask_app:app` |
+| `analyzer-daemon` | `analyzer-daemon.service` | `aprs_daemon.py` recording beacons to SQLite |
+
+`analyzer-daemon` is controlled from the Analyzer UI — it does not start automatically at boot. The `analyzer` (web app) service starts at boot and is always available even when no recording is taking place.
+
+`flask_app.py` uses `ProxyFix(app.wsgi_app, x_prefix=1)` so that the `/analyzer/` path prefix is correctly stripped before routing.
+
+### Analyzer Authentication
+
+Two independent HMAC-SHA256 cookie-based auth levels, each valid for 24 hours:
+
+| Level | Cookie name | Password source | Required for |
+|-------|-------------|-----------------|-------------|
+| View | `analyzer_view_auth` | Event password in `event.yaml` (`mobile.messaging_password`) | All pages and API calls |
+| Admin | `analyzer_admin_auth` | Admin password in `admin/password.txt` | Daemon start/stop; Erase All Data |
+
+On page load, the UI calls `GET /api/check_admin` to determine whether the admin cookie is already valid. If so, password modals are skipped for daemon and flush operations for the remainder of the 24-hour window — even across daemon restarts and page reloads. Both cookies are `httponly` and `SameSite=Lax`.
+
+### Beacon Recording
+
+`aprs_daemon.py` connects to `noam.aprs2.net:14580` with an APRS-IS filter string built from all callsigns in the current event's configuration (trackers from `config.yaml`, mobile participants from `mobile_trackers.json`). It is managed by `analyzer-daemon.service` and controlled from the Analyzer UI by users with the admin password.
+
+**What is recorded:** For each received packet that matches a tracked callsign: callsign, latitude, longitude, Unix timestamp, receiving station (iGate), and the full APRS path string. Stored in the `beacons` table of `aprs.db` (SQLite), keyed to the current event by `event_id`.
+
+**Deduplication:** Consecutive beacons for the same callsign at the same position within a short interval are collapsed during the `get_ordered_deduplicated_beacons()` query so they don't clutter the playback trail.
+
+**Aid stations as iGates:** Aid stations and rest stops that have an APRS callsign configured in the Admin UI are treated as iGates on the Analyzer map — their coordinates are loaded from `config.yaml`, their received packets are displayed with red receiver lines, and they appear as map markers alongside regular iGates.
+
+**Data persistence:** Beacon data is never deleted automatically. It persists across daemon restarts, page reloads, and server reboots until an operator explicitly uses **Erase All Data** (admin password + two-step confirmation). The SQLite database is excluded from the deploy rsync so a new deployment never wipes event data.
+
+### Map & Controls
+
+The Analyzer map is a Leaflet map using the same tile backgrounds configured in the event. All recorded beacons for the current event are loaded on page load and re-fetched on every auto-refresh cycle.
+
+**Beacon rendering:**
+
+| Beacon type | Color | Line |
+|-------------|-------|------|
+| Radio (via iGate) | Red dot | Red line from beacon → iGate |
+| Cellular (mobile participant) | Green dot | Green line between consecutive positions |
+
+**Show Full Path** extends radio receiver lines through all intermediate digipeaters in the APRS path, not just the final iGate. When a single iGate is selected, lines route to that iGate/digipeater specifically.
+
+**Name labels** (Show Names checkbox, default on): Each tracker's name is displayed in a black-on-white label at its last known position. iGate and aid station names are shown as permanent Leaflet tooltips on their map markers.
+
+**Controls modal** (gear icon, lower-left corner):
+
+*Left column — Display*
+
+| Control | Function |
+|---------|----------|
+| Show All Times | Toggle time tooltip visibility on all beacon dots |
+| Show Full Path | Draw lines through all digipeaters, not just the final iGate |
+| Show Radio Beacons 🔴 | Show/hide all radio (APRS) beacon dots and lines |
+| Show Cellular Beacons 🟢 | Show/hide all cellular (mobile app) beacon dots and lines |
+| Show Courses | Toggle GPX/KML/GeoJSON course overlays |
+| Show Names | Toggle name labels for trackers, iGates, and aid stations |
+| Auto-Refresh | Slider: poll interval from 30 s to 5 min (per-client; does not affect recording) |
+| Beacon Time Range | Two sliders: trim the displayed beacon window by index; each slider shows the actual date and time of the first/last beacon in range |
+
+*Right column — Filtering*
+
+| Control | Function |
+|---------|----------|
+| Trackers | Multi-select list of all tracked callsigns. Hybrid trackers (mobile + ham radio) appear as a single entry; selecting one shows both callsign streams. ⌘/Ctrl+click for multiple. |
+| IGates | Multi-select list of iGates and digipeaters. Filtering to one iGate shows only beacons received by that station. |
+| Cellular Carrier | Multi-select: All · AT&T · Comcast · Space Exploration · T-Mobile · Verizon · Other. Filters cellular beacons by the carrier stored in `device_info.carrier` in `mobile_trackers.json`. Radio beacons are unaffected. |
+
+*Footer buttons*
+
+| Button | Function |
+|--------|----------|
+| Save Map Position | Saves the current map center and zoom to `localStorage` as the default view for this event |
+| Erase All Data… | Deletes all beacon rows for the current event from SQLite (requires admin password + two-step confirmation) |
+
+### Analyzer Key Files
+
+All files live under `/home/pi/analyzer/` on the server Pi.
+
+| File | Purpose |
+|------|---------|
+| `src/flask_app.py` | Flask application: routes, auth, config loading, beacon enrichment, template rendering |
+| `src/aprs_daemon.py` | APRS-IS listener; inserts beacons into SQLite; reads tracker list from `config.yaml` and `mobile_trackers.json` |
+| `src/aprs_db.py` | SQLite wrapper: event management, beacon insert, ordered/deduplicated beacon fetch, recording time range queries |
+| `src/aprs.db` | SQLite database; excluded from deploys |
+| `src/templates/event_map.html` | Main map page (Leaflet + controls modal + all JS filtering/drawing logic) |
+| `src/templates/login.html` | Event-password login form |
+
+Configuration is read live from `/var/www/html/admin/config.yaml` (the active event symlink) and `/var/www/html/mobile_trackers.json` on every page load — no restart needed when the event or tracker list changes.
+
+### Analyzer Services
+
+```bash
+# Flask web app (always on)
+sudo systemctl status analyzer
+sudo systemctl restart analyzer
+sudo journalctl -u analyzer -f
+
+# Beacon recording daemon (started/stopped from the UI)
+sudo systemctl status analyzer-daemon
+sudo systemctl start analyzer-daemon
+sudo systemctl stop analyzer-daemon
+sudo journalctl -u analyzer-daemon -f
+```
+
+Logs: `/var/log/analyzer/analyzer.log` and `/var/log/analyzer/daemon.log`
+
+The daemon restarts automatically on failure (30 s delay, 5 retries per 5 minutes). The web app restarts automatically on failure (10 s delay).
+
+### Analyzer API Endpoints
+
+All endpoints except `/login` require a valid view cookie (`analyzer_view_auth`). Admin endpoints additionally require a valid admin cookie (`analyzer_admin_auth`) **or** the admin password in the request body.
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/` | GET | View | Redirect to current event URL |
+| `/event/<name>` | GET | View | Main map page for the named event; always redirects to the current yaml event |
+| `/login` | GET / POST | None | Login form; POST with `password` sets view cookie and redirects to `/` |
+| `/api/event_beacons/<name>` | GET | View | All deduplicated beacons for the named event as JSON |
+| `/api/check_admin` | GET | View | Returns `{"ok": true}` if the admin cookie is valid |
+| `/api/daemon` | GET | View | Returns `{"running": true/false}` — current daemon status |
+| `/api/daemon` | POST | Admin | `{"action": "start"\|"stop"}` — starts or stops `analyzer-daemon`; stamps admin cookie on success |
+| `/api/flush` | POST | Admin | `{"password": "..."}` — deletes all beacon rows for the current event; stamps admin cookie on success |
 
 ---
 

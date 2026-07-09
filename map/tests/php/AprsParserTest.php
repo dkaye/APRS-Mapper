@@ -1,4 +1,5 @@
 <?php
+/** Tests for raw APRS packet parsing utilities. */
 use PHPUnit\Framework\TestCase;
 
 class AprsParserTest extends TestCase

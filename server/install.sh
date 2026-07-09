@@ -83,6 +83,12 @@ sudo mkdir -p /etc/cloudflared
 sudo rsync -a "$TMP/cloudflared/" /etc/cloudflared/
 ok "Server files applied"
 
+# ── Analyzer Python environment ───────────────────────────────────────────────
+msg "Setting up Analyzer Python environment"
+python3 -m venv /home/pi/analyzer/venv
+/home/pi/analyzer/venv/bin/pip install -q -r /home/pi/analyzer/requirements.txt
+ok "Analyzer packages installed"
+
 # ── Daemon scripts permissions ────────────────────────────────────────────────
 sudo chmod +x /usr/local/bin/aprs-daemon.sh \
               /usr/local/bin/wifi-watchdog.sh \
@@ -93,19 +99,22 @@ sudo rm -f /var/www/html/index.html
 
 # ── Web root permissions ──────────────────────────────────────────────────────
 msg "Configuring web root permissions"
-sudo chown -R www-data:www-data /var/www/html
-sudo chmod -R 755 /var/www/html
-# Allow www-data to write runtime data files
-sudo chmod 664 /var/www/html/netbird/addresses.yaml 2>/dev/null || true
-sudo chown pi:www-data /var/www/html/netbird/addresses.yaml 2>/dev/null || true
-# pi user needs write access for git pulls and config edits
-sudo chown pi:www-data /var/www/html
-sudo chmod 775 /var/www/html
+# pi owns (for deployment via rsync/scp), www-data is group (for Apache/PHP writes)
+sudo chown -R pi:www-data /var/www/html
+# dirs: 775 (both pi and www-data can create/delete files); files: 664 (both can write)
+sudo find /var/www/html -type d -exec chmod 775 {} +
+sudo find /var/www/html -type f -exec chmod 664 {} +
+# config.yaml is a static symlink → admin/config.yaml; PHP manages admin/config.yaml
+# (www-data can always unlink/recreate admin/config.yaml because pi:www-data owns the dir)
+if [ ! -L /var/www/html/config.yaml ]; then
+    ln -sf ../events/placeholder/event.yaml /var/www/html/admin/config.yaml 2>/dev/null || true
+    sudo ln -sf admin/config.yaml /var/www/html/config.yaml
+fi
 ok "Web root permissions set"
 
 # ── Apache ────────────────────────────────────────────────────────────────────
 msg "Configuring Apache"
-sudo a2enmod rewrite ssl php8.4 headers
+sudo a2enmod rewrite ssl php8.4 headers proxy proxy_http
 sudo a2ensite 000-default
 sudo a2dissite 000-default-le-ssl 2>/dev/null || true
 sudo systemctl enable apache2
@@ -128,13 +137,15 @@ fi
 
 # ── Systemd services ──────────────────────────────────────────────────────────
 msg "Enabling systemd services"
-sudo mkdir -p /var/log/aprs-daemon /var/log/netbird-poller /var/log/aprs-admin /var/log/aprs-backup /run/aprs-daemon
-sudo chown www-data:www-data /var/log/aprs-daemon /var/log/netbird-poller /var/log/aprs-admin /run/aprs-daemon
+sudo mkdir -p /var/log/aprs-daemon /var/log/netbird-poller /var/log/aprs-admin /var/log/aprs-backup /var/log/analyzer /run/aprs-daemon
+sudo chown www-data:www-data /var/log/aprs-daemon /var/log/netbird-poller /var/log/aprs-admin /var/log/analyzer /run/aprs-daemon
 sudo chown root:root /var/log/aprs-backup
 sudo systemctl daemon-reload
 sudo systemctl enable aprs-daemon.service
 sudo systemctl enable wifi-watchdog.service
 sudo systemctl enable netbird-poller.service
+sudo systemctl enable analyzer.service
+sudo systemctl enable analyzer-daemon.service
 ok "Services enabled (start on next reboot)"
 
 # ── Crontab ───────────────────────────────────────────────────────────────────
@@ -160,6 +171,8 @@ echo "pi ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/010_pi-nopasswd > /d
 sudo chmod 440 /etc/sudoers.d/010_pi-nopasswd
 echo "www-data ALL=(pi) NOPASSWD: /usr/bin/php /home/pi/update-wifi.php *" | sudo tee /etc/sudoers.d/020_www-data-wifi > /dev/null
 sudo chmod 440 /etc/sudoers.d/020_www-data-wifi
+echo "www-data ALL=(root) NOPASSWD: /usr/bin/systemctl start analyzer-daemon, /usr/bin/systemctl stop analyzer-daemon, /usr/bin/systemctl is-active analyzer-daemon" | sudo tee /etc/sudoers.d/021_www-data-analyzer > /dev/null
+sudo chmod 440 /etc/sudoers.d/021_www-data-analyzer
 ok "Passwordless sudo configured"
 
 # ── SSH hardening ─────────────────────────────────────────────────────────────

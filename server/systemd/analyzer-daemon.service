@@ -1,0 +1,30 @@
+# APRS Analyzer Daemon — listens to APRS-IS and records beacons to SQLite
+#
+# Install: sudo cp analyzer-daemon.service /etc/systemd/system/
+#          sudo systemctl daemon-reload
+#          sudo systemctl enable analyzer-daemon
+#          sudo systemctl start analyzer-daemon
+
+[Unit]
+Description=APRS Analyzer Daemon
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/home/pi/analyzer/src
+
+ExecStart=/home/pi/analyzer/venv/bin/python3 -u aprs_daemon.py
+
+Restart=on-failure
+RestartSec=30
+
+StandardOutput=append:/var/log/analyzer/daemon.log
+StandardError=append:/var/log/analyzer/daemon.log
+
+[Install]
+WantedBy=multi-user.target

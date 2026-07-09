@@ -1,4 +1,5 @@
 <?php
+/** Tests for the bundled Spyc YAML library parsing edge cases. */
 use PHPUnit\Framework\TestCase;
 
 class YamlLibTest extends TestCase

@@ -192,7 +192,7 @@
 
 <div id="content">
 <h1 id="aprs-tracker-map-user-guide">APRS Tracker Map — User Guide</h1>
-<p><strong>Version 1.18.4 · July 5, 2026</strong></p>
+<p><strong>Version 1.18.5 · July 9, 2026</strong></p>
 <hr />
 <p>This document is a guide for users of the MARS APRS system. For technical details on the architecture and software see the <a href="https://marsaprs.org/readme.html?back=/userguide.html">README</a> file.</p>
 <h2 id="contents">Contents</h2>
@@ -253,6 +253,7 @@
 <li><a href="#uploading-a-new-file">Uploading a new file</a></li>
 </ul>
 </li>
+<li><a href="#analyzer">Analyzer</a></li>
 <li><a href="#netbird-status-monitor">NetBird Status Monitor</a></li>
 <li><a href="#accessing-the-monitor">Accessing the Monitor</a></li>
 <li><a href="#status-page">Status Page</a><ul>
@@ -354,10 +355,6 @@ A user with admin privileges can switch to a different default event, which all 
 <td><strong>iGates</strong></td>
 <td><strong>Tap</strong> to close the drawer, center the map, and blink the marker. <strong>Long-press</strong> to do the same and also zoom in.</td>
 </tr>
-<tr>
-<td><strong>About</strong></td>
-<td>Organization, app version and build number, event name, your assigned callsign (while sharing), map attribution, and copyright.</td>
-</tr>
 </tbody>
 </table>
 <p>The drawer footer has buttons:</p>
@@ -383,7 +380,7 @@ A user with admin privileges can switch to a different default event, which all 
 </tr>
 <tr>
 <td><strong>Help</strong></td>
-<td>Open the built-in Help page. Works offline.</td>
+<td>Opens a panel showing organization, app version and build number, event name, your assigned callsign (while sharing), map attribution, and copyright — with buttons for <strong>Quick Start</strong> (built-in guide), <strong>User Guide</strong>, and <strong>Submit a Bug or Suggestion</strong>.</td>
 </tr>
 <tr>
 <td><strong>Exit</strong></td>
@@ -404,10 +401,10 @@ A user with admin privileges can switch to a different default event, which all 
 <li>Tap <strong>Share Location</strong> in the drawer footer.</li>
 <li>Enter your first name (pre-filled if you have shared before) and the event PIN. Both are shown as plain text.</li>
 <li><em>Optional — Ham Radio Callsign:</em> If you are also transmitting via an APRS-capable ham radio, tap <strong>Ham Radio Callsign?</strong> to expand the field and enter your base callsign (e.g., <code>W6SG</code>) and SSID (e.g., <code>4</code>). When set, you become a <strong>hybrid tracker</strong> — your position data comes from both the app and your radio, and your marker on the map is shown as a triangle. Leave this collapsed if you are using the app only.</li>
-<li>Tap <strong>Share Location</strong>. Sharing begins immediately at Walk/Run pace (60-second interval).</li>
+<li>Tap <strong>Share Location</strong>. Sharing begins immediately.</li>
 <li>A confirmation shows your assigned APRS callsign. Your name appears in the Trackers list and you are visible on the map.</li>
 </ol>
-<p><strong>Smart Track</strong> — The app automatically adjusts the beacon frequency based on your GPS speed. After a few readings it detects whether you are stationary, walking/running, cycling, or driving, and switches to the appropriate interval without any action on your part: stationary (2 min) · walk/run (60 s) · cycle (30 s) · drive (15 s). Beacon intervals and distance thresholds are configured by the event administrator and may differ from these defaults.</p>
+<p><strong>Smart Track</strong> — The app automatically adjusts the beacon frequency based on your GPS speed. Sharing starts in <strong>unknown</strong> (?) mode and within about 90 seconds Smart Track determines whether you are stationary, walking/running, cycling, or driving, and sets the appropriate interval: stationary (2 min) · walk/run (60 s) · cycle (30 s) · drive (15 s). No action is needed on your part. Beacon intervals and distance thresholds are configured by the event administrator and may differ from these defaults.</p>
 <p><strong>Stopping:</strong></p>
 <p>Tap <strong>Sharing</strong> (green) in the drawer footer, then tap <strong>Stop Sharing</strong>.</p>
 <p><strong>Auto-resume:</strong> If you close and reopen the app while sharing was active, sharing resumes automatically with the same callsign and activity mode. A brief notification confirms it.</p>
@@ -456,6 +453,8 @@ A user with admin privileges can switch to a different default event, which all 
 <li><strong>Distance scale</strong> — a small scale bar in the lower-right corner shows the current map
   scale. <strong>Click (or tap) the scale</strong> to switch between imperial (miles / feet) and metric
   (kilometers / meters). Your choice stays in effect as you pan and zoom.</li>
+<li><strong>My Location</strong> (⊕, desktop only) — a crosshair button in the lower-right corner of the map. Click it to pan the map to your current location. It blinks while locating; if your browser denies location access or the request times out, a brief explanation appears above the button.</li>
+<li><strong>Reset Map</strong> (↺, desktop only) — a circular arrow button just above the My Location button. Resets the map to its default view, clears breadcrumbs, and clears the Origin marker. Same as the Reset Map button in the sidebar footer.</li>
 </ul>
 <h3 id="sidebar-l">Sidebar (L)</h3>
 <p>The sidebar on the left lists all sections. Each section header has two controls:</p>
@@ -506,12 +505,12 @@ expanding the section.</p>
 <td>Same as Aid Stations. Hidden if none are configured.</td>
 </tr>
 <tr>
-<td><strong>About</strong></td>
-<td>Version, organization, and map attribution. Shows your assigned APRS callsign while you are sharing your location.</td>
+<td><strong>Help</strong></td>
+<td>Version, organization, and map attribution. Shows your assigned APRS callsign while you are sharing your location. Also contains buttons for the User Guide and to submit a bug or suggestion.</td>
 </tr>
 </tbody>
 </table>
-<p>The footer of the drawer contains action buttons: <strong>Reset Map</strong>, <strong>Save Map</strong>, <strong>Admin</strong>, <strong>User Guide</strong>, <strong>Kiosk Mode</strong>, <strong>Clients</strong>, and (when enabled by the administrator) <strong>Share Location</strong> / <strong>Sharing</strong>.</p>
+<p>The footer of the drawer contains action buttons arranged in a grid: <strong>Help</strong>, <strong>Save Map</strong>, <strong>Kiosk Mode</strong>, <strong>Admin</strong>, and (when enabled by the administrator) <strong>Share Location</strong> / <strong>Sharing</strong>. When subscribed to messaging, a <strong>Broadcast</strong> button also appears.</p>
 <p>The <strong>Trackers</strong> section is open by default when the drawer is first displayed.</p>
 <hr />
 <h3 id="tracker-list-ls">Tracker List (L,S)</h3>
@@ -539,29 +538,8 @@ time since its last beacon was received.</p>
 </tr>
 </tbody>
 </table>
-<p><strong>Marker shapes:</strong> The shape of a tracker marker tells you how that participant's position is being reported.</p>
-<table>
-<thead>
-<tr>
-<th>Shape</th>
-<th>Meaning</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>Circle</strong> (or configured shape)</td>
-<td><strong>Radio tracker</strong> — position reported by an APRS radio transmitter received by iGates. The administrator configures the shape (circle, square, diamond, etc.) for all radio trackers.</td>
-</tr>
-<tr>
-<td><strong>Rounded square</strong></td>
-<td><strong>Mobile tracker</strong> — participant sharing via the APRS app (iPhone or Android) with no ham radio. GPS position is sent over the internet to the APRS network.</td>
-</tr>
-<tr>
-<td><strong>Triangle</strong></td>
-<td><strong>Hybrid tracker</strong> — participant using <em>both</em> the app and a licensed ham radio transmitter simultaneously. The map shows a single entry using whichever position source is more recent. The participant's ham callsign is shown alongside their name in the sidebar.</td>
-</tr>
-</tbody>
-</table>
+<p><strong>Marker shapes:</strong> Regular trackers use the shape configured by the administrator (circle, square, diamond, etc.). Mobile participants sharing their location via the <strong>Share Location</strong> feature appear as a <strong>rounded square</strong> (both on the map and in the sidebar) to distinguish them from fixed APRS trackers.</p>
+<p><strong>Activity icons (mobile trackers):</strong> A small icon appears next to each mobile tracker's name showing its current activity mode: a walking figure (walk/run), bicycle (cycle), car (drive), or pin (stationary). A <strong>?</strong> is shown briefly when a tracker first starts sharing, while Smart Track takes its initial GPS readings. This typically resolves within 90 seconds.</p>
 <p>When a tracker has not been heard for more than 5 minutes its sidebar entry shows <strong>stale</strong> in red instead of an elapsed time. Hovering over the marker on the map shows the actual elapsed time (e.g., "&gt;2h 15m ago").</p>
 <p>The tracker's marker on the map and sidebar entry both update every 5 seconds.</p>
 <h4 id="clicking-a-tracker-l">Clicking a tracker (L)</h4>
@@ -632,11 +610,11 @@ in beyond its maximum, the map automatically zooms out to the highest level that
 <li>Tap <strong>Share Location</strong> at the bottom of the drawer.</li>
 <li>Enter your first name (pre-filled if you have shared before) and the event PIN. Both fields are shown as plain text.</li>
 <li>Optionally expand the <strong>Ham Radio</strong> section to enter your base callsign and SSID if you are also transmitting via an APRS ham radio.</li>
-<li>Tap <strong>Share Location</strong>. Sharing begins immediately at Walk/Run pace (60-second interval).</li>
+<li>Tap <strong>Share Location</strong>. Sharing begins immediately.</li>
 <li>A confirmation shows your assigned APRS callsign (e.g., <code>K6DRK-01</code>). You will appear in the Trackers list and be visible on the map. Your callsign is also shown in the <strong>About</strong> section of the drawer while sharing is active.</li>
 </ol>
 <p>Your position is transmitted at the current interval and appears on this map and on external APRS sites such as <a href="https://aprs.fi">aprs.fi</a> and CalTopo.</p>
-<p><strong>Smart Track</strong> — The map automatically adjusts the beacon frequency based on your GPS speed. After a few readings it detects whether you are stationary, walking/running, cycling, or driving, and switches to the appropriate interval: stationary (2 min) · walk/run (60 s) · cycle (30 s) · drive (15 s). Beacon intervals are configured by the event administrator and may differ from these defaults.</p>
+<p><strong>Smart Track</strong> — The map automatically adjusts the beacon frequency based on your GPS speed. Sharing starts in <strong>unknown</strong> (?) mode and within about 90 seconds Smart Track determines whether you are stationary, walking/running, cycling, or driving, and sets the appropriate interval: stationary (2 min) · walk/run (60 s) · cycle (30 s) · drive (15 s). Beacon intervals are configured by the event administrator and may differ from these defaults.</p>
 <p><strong>Stopping:</strong></p>
 <p>Tap <strong>Sharing</strong> in the drawer footer, then tap <strong>Stop Sharing</strong>.</p>
 <p><strong>Callsign persistence:</strong> The system remembers your device across sessions. If you stop sharing and start again you will be assigned the <strong>same callsign</strong> as before, so your track history is continuous.</p>
@@ -647,32 +625,31 @@ in beyond its maximum, the map automatically zooms out to the highest level that
 <li>If an administrator ends your session remotely, you will see a notification and the button will return to <strong>Share Location</strong>.</li>
 <li>Starting a new session with the same callsign automatically clears any old breadcrumb dots from your previous session.</li>
 </ul>
-<p><strong>Web map (browser):</strong></p>
-<ul>
-<li>A red <strong>Sharing</strong> badge appears in the upper-right corner of the map while you are sharing, and blinks briefly each time a beacon is sent.</li>
-<li>The screen stays on while you are sharing (the browser's Wake Lock prevents sleep). The screen dims after 30 seconds of no interaction to save battery; tap anywhere to restore full brightness.</li>
-<li>If the browser is sent to the background or the screen locks, position updates will stop.</li>
-</ul>
-<p><strong>Native iOS/Android app:</strong></p>
-<ul>
-<li>Location sharing continues in the background while the screen is locked. You do not need to keep the app in the foreground.</li>
-<li><strong>Android:</strong> When you first tap Share Location, the app may ask for permission to show notifications and to run without battery restrictions. Grant both — they are required for the app to keep running in the background when the screen is off. A notification ("APRS Map — Sharing your location") will appear in the notification bar while sharing is active; this confirms the background service is running. To confirm the notification is visible, wake the screen and swipe down from the top.</li>
-<li><strong>iOS:</strong> When you first tap Share Location, iOS may ask to upgrade your location permission from "While Using" to "Always". Tap <strong>Change to Always Allow</strong> — this is required for the app to send your location while the screen is locked.</li>
-</ul>
+<p><strong>Web map (browser):</strong>
+- A red <strong>Sharing</strong> badge appears in the upper-right corner of the map while you are sharing, and blinks briefly each time a beacon is sent.
+- The screen stays on while you are sharing (the browser's Wake Lock prevents sleep). The screen dims after 30 seconds of no interaction to save battery; tap anywhere to restore full brightness.
+- If the browser is sent to the background or the screen locks, position updates will stop.</p>
+<p><strong>Native iOS/Android app:</strong>
+- Location sharing continues in the background while the screen is locked. You do not need to keep the app in the foreground.
+- <strong>Android:</strong> When you first tap Share Location, the app may ask for permission to show notifications and to run without battery restrictions. Grant both — they are required for the app to keep running in the background when the screen is off. A notification ("APRS Map — Sharing your location") will appear in the notification bar while sharing is active; this confirms the background service is running. To confirm the notification is visible, wake the screen and swipe down from the top.
+- <strong>iOS:</strong> When you first tap Share Location, iOS may ask to upgrade your location permission from "While Using" to "Always". Tap <strong>Change to Always Allow</strong> — this is required for the app to send your location while the screen is locked.</p>
 <hr />
-<h3 id="messaging-ls">Messaging (L, S)</h3>
+<h3 id="messaging-l-s">Messaging (L, S)</h3>
 <p>When the event administrator has enabled messaging, net control operators can exchange real-time text messages with active mobile tracker participants.</p>
 <h4 id="for-operators-web-map">For Operators (web map)</h4>
 <p>An <strong>Operator</strong> is any web user who has subscribed to the messaging channel for the current event.</p>
 <p><strong>Subscribing:</strong></p>
 <ol>
-<li>Click the <strong>Messages</strong> (💬) button in the map toolbar. The button only appears when messaging is enabled for the current event.</li>
-<li>Enter your <strong>name</strong> (shown to mobile participants) and the <strong>messaging password</strong> (provided by the event administrator).</li>
-<li>Click <strong>Subscribe</strong>. The button becomes active and you will start receiving messages.</li>
+<li>Click the <strong>Messaging</strong> button in the sidebar (it appears when messaging is enabled for the current event and you are not yet subscribed).</li>
+<li>Enter your <strong>name</strong> (shown to mobile participants when you send a message) and the <strong>messaging password</strong> (provided by the event administrator).</li>
+<li>Click <strong>Subscribe</strong>. The Messaging button is replaced by a <strong>Broadcast</strong> button, and you will start receiving messages.</li>
 </ol>
 <p>Your subscription is remembered in the browser. On future visits you will be re-subscribed automatically without re-entering the password.</p>
 <p><strong>Sending a message to a mobile tracker:</strong></p>
 <p>Right-click (or Ctrl+click) a tracker entry in the sidebar. A compose window opens pre-addressed to that participant, showing the recent conversation thread above the text field. Type up to 280 characters and click <strong>Send</strong>.</p>
+<p>The compose window footer also has two options:
+- <strong>Change my name</strong> — update the name shown to mobile participants for future messages.
+- <strong>Disable messaging</strong> — unsubscribe and clear your session. The Messaging button reappears so you can re-subscribe later.</p>
 <p><strong>Receiving messages:</strong></p>
 <p>When a mobile tracker sends a message, a notification window appears showing the sender's name and message text. The recent conversation thread is shown in smaller text above the new message (which appears slightly larger for easy spotting). Click <strong>Reply</strong> to compose a response, or <strong>Close</strong> to dismiss.</p>
 <p><strong>Operator auto-login (Display Pis without keyboards):</strong></p>
@@ -681,7 +658,11 @@ in beyond its maximum, the map automatically zooms out to the highest level that
 <h4 id="for-mobile-tracker-participants-native-app">For Mobile Tracker Participants (native app)</h4>
 <p>While sharing your location, messaging is available from the drawer.</p>
 <p><strong>Receiving messages:</strong></p>
-<p>Incoming messages play a sound and show a pop-up dialog with the sender's name and text. Tap <strong>Reply</strong> to respond directly from the notification, or <strong>Close</strong> to dismiss.</p>
+<p>Incoming messages play a three-repeat tone and show a pop-up dialog with the sender's name and text. Tap <strong>Reply</strong> to respond directly from the notification, or <strong>Close</strong> to dismiss.</p>
+<p><strong>When the app is in the background:</strong>
+- <strong>Android</strong> — the app is brought to the foreground automatically (if "Draw over other apps" permission has been granted), and the message dialog opens. A notification also appears in case the app cannot surface immediately.
+- <strong>iOS</strong> — a notification banner appears. Tap it to open the app; the message dialog opens automatically when the app comes to the foreground.</p>
+<p>In both cases, if multiple messages arrived while backgrounded, the dialogs open in sequence when you return to the app.</p>
 <p><strong>Sending messages:</strong></p>
 <p>Tap the <strong>Message</strong> (💬) button in the drawer footer (visible while sharing). A compose window opens showing the recent conversation thread, scrolled to the most recent message. Type up to 280 characters and tap <strong>Send</strong>.</p>
 <hr />
@@ -704,7 +685,8 @@ in beyond its maximum, the map automatically zooms out to the highest level that
 <li>Clear any tracker history dots (breadcrumbs).</li>
 <li>Clear the Origin marker.</li>
 </ul>
-<p>On mobile, the <strong>Reset Map</strong> button in the drawer footer and the circular reset icon (↺) that floats on the map both work the same way. Either one closes the drawer if it is open, recenters the map, and clears history dots and the Origin marker.</p>
+<p>On <strong>desktop</strong>, there is also a ↺ Reset Map button in the lower-right corner of the map (above the zoom controls) as an alternative to the sidebar button.</p>
+<p>On <strong>mobile</strong>, the <strong>Reset Map</strong> button in the drawer footer and the circular reset icon (↺) that floats on the map both work the same way. Either one closes the drawer if it is open, recenters the map, and clears history dots and the Origin marker.</p>
 <hr />
 <h3 id="save-map-ls">Save Map (L,S)</h3>
 <p>Click <strong>Save Map</strong> in the sidebar to save the current map position and zoom level as your
@@ -747,10 +729,11 @@ simplified display layout, which is designed for the publicly viewable display:<
 <li><strong>Save as Default Event</strong> — Saves the full configuration to the server and makes it the
   default event for all users. It will be displayed for all users who subsequently load the website.</li>
 </ul>
-<p>There are three additional buttons in the header of the Admin page:</p>
+<p>There are four additional buttons in the header of the Admin page:</p>
 <ul>
 <li><strong>Exit</strong> (far right of the header) leaves the admin page without saving.</li>
 <li><strong>Sign Out</strong> ends your admin session.</li>
+<li><strong>💬 Messages</strong> — opens a modal showing the full message log for the current event. An <strong>Export</strong> button saves the thread as a <code>.txt</code> file. A <strong>Clear Thread</strong> button (red-tinted) deletes the message log after a two-click confirmation: click once to arm ("Confirm Delete?" appears) and click again within 4 seconds to delete. The button resets automatically if you don't confirm in time.</li>
 <li><strong>Load...</strong> presents a list of previously saved events from which you can choose. Loading an event has no effect on other users. In order to set the default event, use Save as Default Event.</li>
 </ul>
 <hr />
@@ -1006,9 +989,7 @@ recognized, as are N/S/E/W direction letters.</p>
 </tr>
 </tbody>
 </table>
-<p>Below the settings is the <strong>active participant list</strong>, which refreshes automatically. Each row shows the participant's name, assigned callsign, and the time of their last position update.</p>
-<p><strong>Hybrid participants</strong> — participants who joined with a ham radio callsign — occupy <em>two rows</em> in this list: a <strong>mobile row</strong> (showing the app injection callsign, e.g., MARSQQ-01) and a <strong>radio row</strong> (showing the ham callsign, e.g., W6SG-4). On the map and in the public sidebar they appear as a single triangle-marker entry. The radio row's beacon interval (Δ) and last-heard time reflect the ham radio signal; the mobile row reflects the app beacons.</p>
-<p>Three actions are available per row:</p>
+<p>Below the settings is the <strong>active participant list</strong>, which refreshes automatically. Each row shows the participant's name, assigned callsign, and the time of their last position update. Three actions are available per row:</p>
 <table>
 <thead>
 <tr>
@@ -1094,6 +1075,74 @@ the admin password and toggles the lock state. A locked event (🔒, shown in re
 be overwritten by Save or Save as Default Event without entering the admin password first.
 Use this to protect a production event from accidental edits while still allowing it to be
 loaded and previewed.</p>
+<hr />
+<h2 id="analyzer">Analyzer</h2>
+<p>The Analyzer is a separate web page at <code>marsaprs.org/analyzer/</code> for recording and reviewing APRS beacon data from an event. It is intended for use by net control operators. Access requires the event password.</p>
+<h3 id="accessing-the-analyzer">Accessing the Analyzer</h3>
+<p>Navigate to <code>https://marsaprs.org/analyzer/</code>. You will be prompted for the event password. After entering the correct password, you are taken directly to the current event's analyzer map. Your session remains active for 24 hours.</p>
+<h3 id="analyzer-map">Analyzer Map</h3>
+<p>The analyzer map looks similar to the main map and inherits the same map background and starting position that you last used on the main map. The map updates automatically at the configured refresh rate (see below).</p>
+<h3 id="controls">Controls</h3>
+<p>Click <strong>Controls</strong> in the lower-left corner of the map to open the controls modal.</p>
+<h4 id="recording">Recording</h4>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Collect Data</strong></td>
+<td>Check to start recording APRS beacons into the analyzer database; uncheck to stop. Starting and stopping requires the admin password.</td>
+</tr>
+<tr>
+<td><strong>Started</strong></td>
+<td>The date and time data collection began for the current event.</td>
+</tr>
+<tr>
+<td><strong>Stopped</strong></td>
+<td>The date and time data collection was most recently stopped (shown only when the daemon is not running).</td>
+</tr>
+</tbody>
+</table>
+<h4 id="display">Display</h4>
+<table>
+<thead>
+<tr>
+<th>Checkbox</th>
+<th>Default</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Show Radio Beacons</strong></td>
+<td>✓</td>
+<td>Show beacons from radio (APRS) trackers on the map</td>
+</tr>
+<tr>
+<td><strong>Show Cellular Beacons</strong></td>
+<td>✓</td>
+<td>Show beacons from mobile (cellular) participants</td>
+</tr>
+<tr>
+<td><strong>Show Courses</strong></td>
+<td>✓</td>
+<td>Overlay the event course routes on the map</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Auto-Refresh</strong> — A slider sets how often the map automatically refreshes beacon data, from 30 seconds to 5 minutes. The default is 1 minute. This setting is per-browser and remembered across sessions.</p>
+<h4 id="trackers-and-igates">Trackers and iGates</h4>
+<p>Two multi-select lists let you filter the displayed beacons by tracker and by receiving iGate. Select <strong>All</strong> (the default) to show beacons from all trackers or through all iGates. Select individual entries to narrow the view.</p>
+<h4 id="time-range">Time Range</h4>
+<p>Two sliders set the start and end of the time window displayed on the map. Drag the sliders to focus on a specific portion of the event.</p>
+<h4 id="save-map-position">Save Map Position</h4>
+<p>Click <strong>Save Map Position</strong> to save the current map center and zoom as your personal default for the Analyzer. This is stored per-browser and does not affect other users or the main map.</p>
+<h4 id="erase-all-data">Erase All Data</h4>
+<p>Click <strong>Erase All Data…</strong> to permanently delete all recorded beacons for the current event. This requires the admin password and two confirmation steps. <strong>This cannot be undone.</strong></p>
 <hr />
 <h2 id="netbird-status-monitor-ls">NetBird Status Monitor (L,S)</h2>
 <p>The NetBird Status Monitor is a separate tool for tracking the online/offline state of the

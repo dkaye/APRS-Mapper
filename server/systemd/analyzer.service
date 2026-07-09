@@ -1,0 +1,36 @@
+# APRS Analyzer — systemd service unit
+#
+# Install: sudo cp analyzer.service /etc/systemd/system/
+#          sudo systemctl daemon-reload
+#          sudo systemctl enable analyzer
+#          sudo systemctl start analyzer
+
+[Unit]
+Description=APRS Analyzer Flask App
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/home/pi/analyzer/src
+
+ExecStart=/home/pi/analyzer/venv/bin/gunicorn \
+    --workers 2 \
+    --bind 127.0.0.1:5001 \
+    --access-logfile - \
+    --error-logfile - \
+    flask_app:app
+
+Restart=on-failure
+RestartSec=10
+
+LogsDirectory=analyzer
+StandardOutput=append:/var/log/analyzer/analyzer.log
+StandardError=append:/var/log/analyzer/analyzer.log
+
+[Install]
+WantedBy=multi-user.target

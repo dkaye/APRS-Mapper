@@ -28,7 +28,9 @@ echo ""
 # ── System update ────────────────────────────────────────────────────────────
 msg "Updating system packages"
 sudo apt-get update -y
-sudo apt-get upgrade -y
+sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+    -o Dpkg::Options::="--force-confdef" \
+    -o Dpkg::Options::="--force-confold" || true
 ok "System up to date"
 
 # ── SPI (required for TFT display) ───────────────────────────────────────────
@@ -77,6 +79,7 @@ ok "Watchdog running"
 # ── Build Direwolf from source ────────────────────────────────────────────────
 msg "Building Direwolf (this takes a few minutes)"
 cd /home/pi
+rm -rf direwolf
 git clone https://github.com/wb2osz/direwolf
 cd direwolf
 mkdir build && cd build
@@ -97,11 +100,13 @@ ok "Python libraries installed"
 # ── Clone direwatch ───────────────────────────────────────────────────────────
 msg "Cloning direwatch"
 cd /home/pi
+rm -rf direwatch
 git clone https://github.com/craigerl/direwatch.git
 ok "Direwatch cloned"
 
 # ── Web dashboard ─────────────────────────────────────────────────────────────
 msg "Installing web dashboard"
+rm -rf /home/pi/Direwolf-APRS-Web-Dashboard
 git clone https://github.com/PC7MM/Direwolf-APRS-Web-Dashboard \
     /home/pi/Direwolf-APRS-Web-Dashboard
 sudo mkdir -p /var/www/html
@@ -160,6 +165,12 @@ if [ -f "$TMP/etc/logrotate.d/aprs" ]; then
     sudo cp "$TMP/etc/logrotate.d/aprs" /etc/logrotate.d/aprs
     ok "Logrotate configured"
 fi
+
+# ── Journald volatile storage (reduces SD card writes) ────────────────────────
+sudo mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nStorage=volatile\n' | sudo tee /etc/systemd/journald.conf.d/volatile.conf > /dev/null
+sudo systemctl restart systemd-journald
+ok "Journald configured for volatile (RAM) storage"
 
 # ── Lighttpd (web server) ─────────────────────────────────────────────────────
 msg "Configuring lighttpd"
@@ -239,7 +250,7 @@ ok "Cleanup done"
 chmod +x /home/pi/configure.sh
 msg "Installation complete"
 echo ""
-read -rp "Run configure.sh now to set callsign, location, and NetBird key? [y/N]: " RUN_CONFIGURE
+read -rp "Run configure.sh now to set callsign, location, and NetBird key? [y/N]: " RUN_CONFIGURE < /dev/tty || RUN_CONFIGURE=""
 if [[ "${RUN_CONFIGURE,,}" == "y" ]]; then
     /home/pi/configure.sh
 else

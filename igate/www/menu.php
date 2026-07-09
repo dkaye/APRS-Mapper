@@ -1,4 +1,12 @@
 <?php
+/**
+ * menu.php — K6DRK iGate v5.0 navigation menu partial
+ *
+ * Renders the top navigation bar included on every iGate dashboard page.
+ * Highlights the active tab and links to igate.php, system.php, and
+ * any other dashboard sections.
+ * Based on the Direwolf APRS Web Dashboard (PC7MM / PD3RFR / IZ7BOJ).
+ */
 // This file is part of the Direwolf APRS Web Dashboard as available at https://github.com/PC7MM/Direwolf-APRS-Web-Dashboard
 // Developed by Michael PC7MM and Richard PD3RFR as an extension of https://github.com/IZ7BOJ/direwolf_webstat and https://github.com/IZ7BOJ/APRS_dashboard as developed by Alfredo IZ7BOJ
 // See config.php for adjustable parameters and see https://www.youtube.com/watch?v=7bMf7rWCfnE for more information

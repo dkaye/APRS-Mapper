@@ -1,6 +1,6 @@
 # APRS Tracker Map — User Guide
 
-**Version 1.18.4 · July 5, 2026**
+**Version 1.18.5 · July 9, 2026**
 
 ---
 
@@ -54,6 +54,7 @@ This document is a guide for users of the MARS APRS system. For technical detail
   - [Manage Course Files](#manage-course-files)
     - [Adding a course to the current event](#adding-a-course-to-the-current-event)
     - [Uploading a new file](#uploading-a-new-file)
+- [Analyzer](#analyzer)
 - [NetBird Status Monitor](#netbird-status-monitor)
   - [Accessing the Monitor](#accessing-the-monitor)
   - [Status Page](#status-page)
@@ -796,6 +797,58 @@ the admin password and toggles the lock state. A locked event (🔒, shown in re
 be overwritten by Save or Save as Default Event without entering the admin password first.
 Use this to protect a production event from accidental edits while still allowing it to be
 loaded and previewed.
+
+---
+
+## Analyzer
+
+The Analyzer is a separate web page at `marsaprs.org/analyzer/` for recording and reviewing APRS beacon data from an event. It is intended for use by net control operators. Access requires the event password.
+
+### Accessing the Analyzer
+
+Navigate to `https://marsaprs.org/analyzer/`. You will be prompted for the event password. After entering the correct password, you are taken directly to the current event's analyzer map. Your session remains active for 24 hours.
+
+### Analyzer Map
+
+The analyzer map looks similar to the main map and inherits the same map background and starting position that you last used on the main map. The map updates automatically at the configured refresh rate (see below).
+
+### Controls
+
+Click **Controls** in the lower-left corner of the map to open the controls modal.
+
+#### Recording
+
+| Field | Description |
+|-------|-------------|
+| **Collect Data** | Check to start recording APRS beacons into the analyzer database; uncheck to stop. Starting and stopping requires the admin password. |
+| **Started** | The date and time data collection began for the current event. |
+| **Stopped** | The date and time data collection was most recently stopped (shown only when the daemon is not running). |
+
+#### Display
+
+| Checkbox | Default | Effect |
+|----------|---------|--------|
+| **Show Radio Beacons** | ✓ | Show beacons from radio (APRS) trackers on the map |
+| **Show Cellular Beacons** | ✓ | Show beacons from mobile (cellular) participants |
+| **Show Courses** | ✓ | Overlay the event course routes on the map |
+
+**Auto-Refresh** — A slider sets how often the map automatically refreshes beacon data, from 30 seconds to 5 minutes. The default is 1 minute. This setting is per-browser and remembered across sessions.
+
+#### Trackers and iGates
+
+Two multi-select lists let you filter the displayed beacons by tracker and by receiving iGate. Select **All** (the default) to show beacons from all trackers or through all iGates. Select individual entries to narrow the view.
+
+#### Time Range
+
+Two sliders set the start and end of the time window displayed on the map. Drag the sliders to focus on a specific portion of the event.
+
+#### Save Map Position
+
+Click **Save Map Position** to save the current map center and zoom as your personal default for the Analyzer. This is stored per-browser and does not affect other users or the main map.
+
+#### Erase All Data
+
+Click **Erase All Data…** to permanently delete all recorded beacons for the current event. This requires the admin password and two confirmation steps. **This cannot be undone.**
 
 ---
 
