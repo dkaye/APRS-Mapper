@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — MARS APRS Tracker</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: arial, helvetica, sans-serif; font-size: 14px; background: #eef0f3; color: #222; }
+#hdr {
+    background: #2c3e50; color: #fff;
+    padding: 12px 24px;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+}
+#hdr-text h1 { font-size: 17px; font-weight: bold; }
+#hdr-text p  { font-size: 12px; color: #8aafc8; margin-top: 2px; }
+.hdr-btn {
+    padding: 6px 14px; background: #fff; color: #2c3e50;
+    border: none; border-radius: 4px; font-size: 13px; font-weight: bold;
+    cursor: pointer; text-decoration: none; white-space: nowrap; flex-shrink: 0;
+}
+.hdr-btn:hover { background: #d0dce8; }
+#wrap { max-width: 680px; margin: 32px auto; padding: 0 16px 60px; }
+.card {
+    background: #fff; border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.12);
+    padding: 28px 32px; margin-bottom: 20px;
+}
+h2 { font-size: 18px; color: #2c3e50; margin-bottom: 20px; }
+h3 { font-size: 14px; color: #2c3e50; margin: 22px 0 8px; }
+p  { line-height: 1.65; color: #444; margin-bottom: 10px; }
+ul { padding-left: 20px; margin-bottom: 10px; }
+li { line-height: 1.65; color: #444; margin-bottom: 4px; }
+.updated { font-size: 12px; color: #888; margin-bottom: 24px; }
+a  { color: #2980b9; text-decoration: none; }
+a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div id="hdr">
+    <div id="hdr-text">
+        <h1>MARS APRS Tracker</h1>
+        <p>Marin Amateur Radio Society</p>
+    </div>
+    <a href="/" class="hdr-btn">Back to Map</a>
+</div>
+
+<div id="wrap">
+<div class="card">
+    <h2>Privacy Policy</h2>
+    <p class="updated">Effective date: July 3, 2026</p>
+
+    <p>This privacy policy describes how the MARS APRS Tracker application and website
+    (marsaprs.org) collect, use, and share information.</p>
+
+    <h3>Information We Collect</h3>
+    <p>When you use the Share Location feature, the app collects:</p>
+    <ul>
+        <li><strong>Display name</strong> — the name you enter when joining a session</li>
+        <li><strong>GPS location</strong> — latitude and longitude, transmitted at regular intervals while sharing is active</li>
+        <li><strong>Activity mode</strong> — your selected activity (Walk/Run, Cycle, Drive, or Stationary)</li>
+        <li><strong>Device information</strong> — app version, operating system, device model, and screen size, used for diagnostics and display in the operator console</li>
+        <li><strong>Ham radio callsign</strong> — if you optionally enter one; validated against the FCC Universal Licensing System database</li>
+    </ul>
+    <p>If you submit a bug report or feedback ticket, we collect your name, email address (optional), and the information you provide in the report.</p>
+
+    <h3>How We Use Your Information</h3>
+    <ul>
+        <li>Your location and name are displayed on the live tracker map and in the operator console, visible to other event participants and operators</li>
+        <li>Your location is broadcast over the APRS radio network (Automatic Packet Reporting System) as part of normal event operations</li>
+        <li>Device information is used by operators to assist with technical support</li>
+        <li>Bug report information is used to diagnose and resolve issues with the app</li>
+    </ul>
+
+    <h3>Data Retention</h3>
+    <ul>
+        <li>Location sharing sessions without a permanent device identifier are removed after 24 hours of inactivity</li>
+        <li>Sessions linked to a device are removed after 30 days of inactivity</li>
+        <li>APRS position packets transmitted to the public APRS-IS network are subject to that network's own retention policies, outside our control</li>
+        <li>Bug report tickets are retained indefinitely for our records</li>
+    </ul>
+
+    <h3>Information Sharing</h3>
+    <p>We do not sell or share your personal information with third parties for advertising or commercial purposes.</p>
+    <p>Your location data is shared with other participants in the same event session as part of the intended function of the app. Position data is also injected into the public APRS radio and internet networks as part of normal amateur radio operations.</p>
+    <p>Ham radio callsigns are public information by nature of FCC licensing.</p>
+
+    <h3>Location Data</h3>
+    <p>Location sharing is entirely opt-in. You must actively tap "Share Location" and select an activity to begin transmitting your position. You can stop sharing at any time from within the app. The app requests background location permission on iOS and Android solely to continue transmitting your position while the app is not in the foreground — this permission is used only while you have an active sharing session.</p>
+
+    <h3>Children's Privacy</h3>
+    <p>This app is intended for use at organized amateur radio and community events. We do not knowingly collect personal information from children under 13.</p>
+
+    <h3>Contact</h3>
+    <p>Questions about this privacy policy can be sent to
+    <a href="mailto:info@marsaprs.org">info@marsaprs.org</a>.</p>
+</div>
+</div>
+
+</body>
+</html>
