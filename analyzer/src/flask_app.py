@@ -2,20 +2,19 @@
 flask_app.py — MARS APRS Analyzer
 
 Flask web application served at /analyzer/ via Apache mod_proxy → gunicorn.
-Provides the event map UI, cookie-based authentication (view + admin levels),
+Provides the event map UI, user authentication (marsaprs_session cookie),
 daemon start/stop API, data flush API, and live beacon JSON endpoint.
 """
 import time
 import os
 import json
 import yaml
-import hmac
-import hashlib
 import subprocess
 import xml.etree.ElementTree as ET
-from flask import Flask, jsonify, request, redirect, url_for, render_template, make_response
+from flask import Flask, jsonify, request, redirect, render_template, make_response, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
 from aprs_db import aprs_db_connection
+from auth_db import has_permission, require_permission, current_user
 
 BASE_DIR             = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE            = os.path.join(BASE_DIR, 'latest_packets.json')
@@ -23,50 +22,8 @@ CONFIG_YAML          = '/var/www/html/admin/config.yaml'
 TRACKERS_JSON        = '/var/www/html/trackers.json'
 MOBILE_TRACKERS_JSON = '/var/www/html/mobile_trackers.json'
 WEB_ROOT             = '/var/www/html'
-PASSWORD_FILE        = '/var/www/html/admin/password.txt'
-COOKIE_KEY           = 'marsaprs_admin_k6drk'
-VIEW_COOKIE_KEY      = 'marsaprs_analyzer_view_k6drk'
-ADMIN_COOKIE_KEY     = 'marsaprs_analyzer_admin_k6drk'
 GPX_NS               = 'http://www.topografix.com/GPX/1/1'
 
-
-def get_event_password():
-    try:
-        with open(CONFIG_YAML) as f:
-            return yaml.safe_load(f).get('event_password', '') or ''
-    except Exception:
-        return ''
-
-
-def check_view_auth():
-    ep = get_event_password()
-    if not ep:
-        return True  # no event password configured → open access
-    expected = hmac.new(VIEW_COOKIE_KEY.encode(), ep.encode(), hashlib.sha256).hexdigest()
-    return hmac.compare_digest(request.cookies.get('analyzer_view_auth', ''), expected)
-
-
-def check_admin_auth():
-    """Return True if the request carries a valid 24-hour admin auth cookie."""
-    try:
-        stored = open(PASSWORD_FILE).read().strip()
-    except Exception:
-        return True
-    if not stored:
-        return True
-    expected = hmac.new(ADMIN_COOKIE_KEY.encode(), stored.encode(), hashlib.sha256).hexdigest()
-    return hmac.compare_digest(request.cookies.get('analyzer_admin_auth', ''), expected)
-
-
-def _stamp_admin_cookie(resp):
-    """Attach a 24-hour admin auth cookie to resp."""
-    try:
-        stored = open(PASSWORD_FILE).read().strip()
-    except Exception:
-        stored = ''
-    token = hmac.new(ADMIN_COOKIE_KEY.encode(), stored.encode(), hashlib.sha256).hexdigest()
-    resp.set_cookie('analyzer_admin_auth', token, max_age=86400, httponly=True, samesite='Lax')
-    return resp
 
 
 def parse_gpx(path):
@@ -273,6 +230,13 @@ def load_config():
     carriers_map = {cs: entry['device_info']['carrier']
                     for cs, entry in mobile_reg.items()
                     if entry.get('device_info', {}).get('carrier')}
+    # Persist any newly seen carriers to DB so they survive mobile_trackers.json cleanup
+    for cs, carrier in carriers_map.items():
+        db.save_tracker_carrier(cs, carrier)
+    # Fill in carriers for callsigns no longer in mobile_trackers.json
+    for cs, carrier in db.get_all_tracker_carriers().items():
+        if cs not in carriers_map and carrier:
+            carriers_map[cs] = carrier
     return event_name, trackers, igates, digipeaters, mobile_callsigns, tracker_options, carriers_map
 
 
@@ -284,25 +248,9 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_prefix=1)
 
 @app.before_request
 def require_auth():
-    if request.path.endswith('/login'):
-        return None
-    if not check_view_auth():
-        return redirect(url_for('login'))
-
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    error = None
-    if request.method == 'POST':
-        password = request.form.get('password', '')
-        ep = get_event_password()
-        if not ep or password == ep:
-            token = hmac.new(VIEW_COOKIE_KEY.encode(), ep.encode(), hashlib.sha256).hexdigest() if ep else 'open'
-            resp = make_response(redirect(url_for('hello_world')))
-            resp.set_cookie('analyzer_view_auth', token, max_age=86400, httponly=True, samesite='Lax')
-            return resp
-        error = 'Incorrect password.'
-    return render_template('login.html', error=error)
+    resp = require_permission('analyzer.view')
+    if resp is not None:
+        return resp
 
 
 @app.route('/api/event_beacons/<event_name>')
@@ -313,25 +261,15 @@ def event_beacon_json(event_name):
 
 @app.route('/api/check_admin')
 def check_admin_api():
-    return jsonify({'ok': check_admin_auth()})
+    return jsonify({'ok': has_permission('analyzer.admin')})
 
 
 @app.route('/api/daemon', methods=['GET', 'POST'])
 def daemon_api():
-    stamp_cookie = False
     if request.method == 'POST':
-        if not check_admin_auth():
-            data      = request.get_json(silent=True) or {}
-            submitted = data.get('password', '')
-            try:
-                stored = open(PASSWORD_FILE).read().strip()
-            except Exception:
-                stored = ''
-            if stored and submitted != stored:
-                return jsonify({'error': 'Incorrect password'}), 403
-        else:
-            data = request.get_json(silent=True) or {}
-        stamp_cookie = True
+        if not has_permission('analyzer.admin'):
+            return jsonify({'error': 'Missing permission: analyzer.admin'}), 403
+        data   = request.get_json(silent=True) or {}
         action = data.get('action', '')
         if action in ('start', 'stop'):
             subprocess.run(['sudo', 'systemctl', action, 'analyzer-daemon'],
@@ -345,35 +283,22 @@ def daemon_api():
     except Exception:
         current_event = ''
     rec = db.get_event_recording_times(current_event) if current_event else None
-    resp = make_response(jsonify({
+    return jsonify({
         'running':         running,
         'recording_start': rec['first'] if rec else None,
         'recording_last':  rec['last']  if rec else None,
-    }))
-    if stamp_cookie:
-        _stamp_admin_cookie(resp)
-    return resp
+    })
 
 
 @app.route('/api/flush', methods=['POST'])
 def flush_api():
-    if not check_admin_auth():
-        data      = request.get_json(silent=True) or {}
-        submitted = data.get('password', '')
-        try:
-            stored = open(PASSWORD_FILE).read().strip()
-        except Exception:
-            stored = ''
-        if stored and submitted != stored:
-            return jsonify({'error': 'Incorrect password'}), 403
-
+    if not has_permission('analyzer.admin'):
+        return jsonify({'error': 'Missing permission: analyzer.admin'}), 403
     yaml_event, _, _, _, _, _, _ = load_config()
     if not yaml_event:
         return jsonify({'error': 'No current event'}), 400
     deleted = db.delete_event_beacons(yaml_event)
-    resp = make_response(jsonify({'deleted': deleted}))
-    _stamp_admin_cookie(resp)
-    return resp
+    return jsonify({'deleted': deleted})
 
 
 @app.route('/event/<event_name>')
@@ -424,14 +349,20 @@ def show_event_map(event_name):
     event_igates      = dict(sorted(event_igates.items(),      key=lambda x: x[1]['name'].lower()))
     event_digipeaters = dict(sorted(event_digipeaters.items(), key=lambda x: x[1]['name'].lower()))
 
+    # Stored names from DB as fallback for removed/renamed trackers
+    historical_names = db.get_all_tracker_names()
+
+    user = current_user()
     return render_template(
         'event_map.html',
         event_name=event_name,
+        username=user['username'] if user else '',
         beacon_list=beacons_json,
         igates=event_igates,
         digipeaters=event_digipeaters,
         trackers=tracker_options,
         mobile_callsigns_json=json.dumps(list(mobile_callsigns)),
+        historical_names_json=json.dumps(historical_names),
         carriers_json=json.dumps(carriers_map),
         start_time=start_time,
         end_time=end_time,
@@ -442,6 +373,7 @@ def show_event_map(event_name):
         map_zoom=map_cfg['zoom'],
         recording_start=rec['first'] if rec else None,
         recording_last=rec['last']  if rec else None,
+        analyzer_admin=has_permission('analyzer.admin'),
     )
 
 

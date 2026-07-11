@@ -42,8 +42,8 @@ function aprs_admin_log(string $action, array $ctx = []): void {
        ?? $_SERVER['REMOTE_ADDR']
        ?? '-';
     $ts  = (new DateTime('now', new DateTimeZone('America/Los_Angeles')))->format('Y-m-d H:i:s T');
-    $raw = $_COOKIE['admin_logname'] ?? '';
-    $who = $raw !== '' ? preg_replace('/[^A-Za-z0-9 _\-\.]/', '', $raw) : '';
+    $u   = function_exists('current_user') ? current_user() : null;
+    $who = $u ? $u['username'] : '';
     $extra = $who !== '' ? " user=$who" : '';
     foreach ($ctx as $k => $v) $extra .= " $k=$v";
     @file_put_contents('/var/log/aprs-admin/aprs-admin.log',
@@ -80,65 +80,26 @@ if (file_exists($configPath)) {
 require_once __DIR__ . '/config_yaml.php';
 
 // ── Authentication ────────────────────────────────────────────────────────────
-// Uses signed cookies (no PHP sessions) so auth persists 24 hours regardless
-// of the system cron that purges PHP session files every ~24 minutes.
 
-$storedPass    = file_exists($passwordFile) ? trim(file_get_contents($passwordFile)) : '';
-$__cookieSecs  = 86400;
-$__authCookie  = 'admin_auth';
-$__nameCookie  = 'admin_logname';
-$__cookieVal   = hash_hmac('sha256', $storedPass, 'marsaprs_admin_k6drk');
-$__cookieOpts  = ['expires' => time() + $__cookieSecs, 'path' => '/', 'samesite' => 'Lax', 'httponly' => true];
+require_once '/var/www/html/auth/auth.php';
 
 // Logout
 if (isset($_GET['logout'])) {
-    setcookie($__authCookie, '', ['expires' => 1, 'path' => '/', 'samesite' => 'Lax', 'httponly' => true]);
-    setcookie($__nameCookie, '', ['expires' => 1, 'path' => '/', 'samesite' => 'Lax', 'httponly' => true]);
-    header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
+    destroy_session();
+    header('Location: /auth/login.php');
     exit;
 }
 
-// Login form POST
-$loginError = '';
-$authed = isset($_COOKIE[$__authCookie]) && $storedPass !== '' && hash_equals($__cookieVal, $_COOKIE[$__authCookie]);
-if (!$authed && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pw'])) {
-    if ($storedPass !== '' && $_POST['pw'] === $storedPass) {
-        setcookie($__authCookie, $__cookieVal, $__cookieOpts);
-        setcookie($__nameCookie, trim($_POST['logname'] ?? ''), $__cookieOpts);
-        aprs_admin_log('login');
-        $redir = $_POST['next'] ?? '';
-        if (!$redir || !preg_match('/^\/[a-zA-Z0-9\/_\-\.?=&%]*$/', $redir) || strpos($redir, '//') !== false) {
-            $redir = strtok($_SERVER['REQUEST_URI'], '?');
-        }
-        header('Location: ' . $redir);
-        exit;
-    }
-    $loginError = 'Incorrect password';
+require_permission('admin.view');
+$canEdit = has_permission('admin.edit');
+
+// Block all mutating POST requests for view-only users
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$canEdit) {
+    respondError('Missing permission: admin.edit', 403);
 }
 
-if (!$authed) {
-    if (isset($_GET['load']) || isset($_GET['save']) || isset($_GET['savetrackers']) || isset($_GET['versions']) || isset($_GET['saveversion']) || isset($_GET['loadversion']) || isset($_GET['deleteversion']) || isset($_GET['locationfiles']) || isset($_GET['alllocationfiles']) || isset($_GET['upload']) || isset($_GET['renamefile']) || isset($_GET['deletefile']) || isset($_GET['setactiveevent']) || isset($_GET['bglib']) || isset($_GET['beacondeltas']) || isset($_GET['togglelock']) || isset($_GET['mobiletrackers']) || isset($_GET['removemobile']) || isset($_GET['removemobilebulk']) || isset($_GET['blockmobile']) || isset($_GET['renamemobile']) || isset($_GET['resetbeacons']) || isset($_GET['setdisplayid']) || isset($_GET['seteventpassword']) || isset($_GET['backup']) || isset($_GET['restore']) || isset($_GET['setmode'])) {
-        header('Content-Type: application/json');
-        http_response_code(401);
-        echo json_encode(['error' => 'Session expired — reload and log in again']);
-        exit;
-    }
-    $next = '';
-    if (isset($_GET['next'])) {
-        $n = $_GET['next'];
-        if (preg_match('/^\/[a-zA-Z0-9\/_\-\.?=&%]*$/', $n) && strpos($n, '//') === false) {
-            $next = $n;
-        }
-    }
-    renderLogin($loginError, $next);
-    exit;
-}
-
-// ── Update log name from localStorage (fires on every page load via JS) ──────
-if ($authed && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['updatename'])) {
-    setcookie($__nameCookie, preg_replace('/[^A-Za-z0-9 _\-\.]/', '', trim($_POST['logname'] ?? '')), $__cookieOpts);
-    respondJson(['ok' => true]);
-}
+// $storedPass kept for event-lock operations (togglelock, seteventpassword, etc.)
+$storedPass = file_exists($passwordFile) ? trim(file_get_contents($passwordFile)) : '';
 
 // ── Helper: remove history entries for deleted callsigns ─────────────────────
 function pruneTrackerHistory($histPath, array $keepCallsigns) {
@@ -385,6 +346,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['save'])) {
     respondJson(['ok' => true]);
 }
 
+// ── AJAX: quick-patch blink_duration / breadcrumb_count without a full save ──
+
+function _qpatch($yaml, $key, $intVal) {
+    $pat = '/^' . preg_quote($key, '/') . ':\s*\S*/m';
+    if (preg_match($pat, $yaml)) {
+        return preg_replace($pat, "$key: $intVal", $yaml, 1);
+    }
+    // Key absent — insert right after the event: line so it stays in the event block
+    $patched = preg_replace('/^(event:\s*\S.*)$/m', "$1\n$key: $intVal", $yaml, 1, $c);
+    return $c ? $patched : "$key: $intVal\n$yaml";
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['quicksave'])) {
+    $body = json_decode(file_get_contents('php://input'), true);
+    if (!is_array($body)) respondError('Invalid request body', 400);
+    $bd = array_key_exists('blink_duration',   $body) ? max(0, min(10,  (int)$body['blink_duration']))   : null;
+    $bc = array_key_exists('breadcrumb_count', $body) ? max(0, min(100, (int)$body['breadcrumb_count'])) : null;
+    if ($bd === null && $bc === null) respondJson(['ok' => true]);
+    if (!file_exists($configPath)) respondError('No config.yaml — save a full config first', 404);
+    $yaml = file_get_contents($configPath);
+    if ($bd !== null) $yaml = _qpatch($yaml, 'blink_duration',   $bd);
+    if ($bc !== null) $yaml = _qpatch($yaml, 'breadcrumb_count', $bc);
+    if (file_put_contents($configPath, $yaml, LOCK_EX) === false) respondError('Cannot write config.yaml');
+    respondJson(['ok' => true]);
+}
+
 // ── AJAX: save tracker data only (bypasses event lock) ───────────────────────
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['savetrackers'])) {
@@ -442,6 +429,7 @@ if (isset($_GET['versions'])) {
 // ── AJAX: save a named event ─────────────────────────────────────────────────
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['saveversion'])) {
+    if (!has_permission('admin.set_default')) respondError('Missing permission: admin.set_default', 403);
     $body = file_get_contents('php://input');
     $data = json_decode($body, true);
     if (!is_array($data) || !isset($data['name']) || !isset($data['cfg'])) {
@@ -597,6 +585,7 @@ if (isset($_GET['loadversion'])) {
 // ── AJAX: delete a named event ───────────────────────────────────────────────
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['deleteversion'])) {
+    if (!has_permission('admin.delete_event')) respondError('Missing permission: admin.delete_event', 403);
     $body = file_get_contents('php://input');
     $data = json_decode($body, true);
     $name = trim($data['name'] ?? '');
@@ -1034,6 +1023,7 @@ if (isset($_GET['mobiletrackers'])) {
                 'lat'        => $tr['lat'] ?? null,
                 'lon'        => $tr['lon'] ?? null,
                 'delta'      => $radioDeltas[$ham] ?? null,
+                'joined_at'  => isset($t['created']) ? $now - (int)$t['created'] : null,
             ];
         }
 
@@ -1276,103 +1266,6 @@ if (isset($_GET['delete_messages'])) {
     }
     respondJson(['ok' => true]);
 }
-
-// ── Login form ────────────────────────────────────────────────────────────────
-
-function renderLogin($error = '', $next = '') { ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>MARS APRS Map Admin</title>
-<style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body {
-    font-family: arial, helvetica, sans-serif; font-size: 14px;
-    background: #eef0f3; min-height: 100vh;
-    display: flex; flex-direction: column;
-}
-#hdr {
-    background: #2c3e50; color: #fff;
-    padding: 10px 20px;
-}
-#hdr h1 { font-size: 16px; font-weight: bold; }
-#content {
-    flex: 1; display: flex; align-items: center; justify-content: center;
-    padding: 40px 20px;
-}
-.card {
-    background: #fff; border-radius: 8px;
-    box-shadow: 0 2px 10px rgba(0,0,0,.12);
-    padding: 32px 36px; width: 100%; max-width: 300px;
-}
-.card h2 { font-size: 15px; color: #333; margin-bottom: 20px; }
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 16px; }
-.field label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: .04em; }
-.field input {
-    padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px;
-    font-size: 14px; font-family: inherit;
-}
-.field input:focus { outline: none; border-color: #2980b9; }
-.btn-row { display: flex; gap: 10px; margin-top: 4px; }
-.submit-btn {
-    flex: 1; padding: 9px; background: #2980b9; color: #fff;
-    border: none; border-radius: 4px; font-size: 14px;
-    font-weight: bold; cursor: pointer;
-}
-.submit-btn:hover { background: #1f6da0; }
-.cancel-btn {
-    flex: 1; padding: 9px; background: #f0f0f0; color: #555;
-    border: 1px solid #ccc; border-radius: 4px; font-size: 14px;
-    font-weight: bold; cursor: pointer; text-decoration: none;
-    text-align: center;
-}
-.cancel-btn:hover { background: #e0e0e0; }
-.error {
-    background: #fff0f0; border: 1px solid #f5c6c6; border-radius: 4px;
-    padding: 8px 12px; color: #c0392b; font-size: 13px; margin-bottom: 14px;
-}
-</style>
-</head>
-<body>
-<div id="hdr"><h1>MARS APRS Map Admin</h1></div>
-<div id="content">
-    <div class="card">
-        <h2>Sign in</h2>
-        <?php if ($error): ?>
-            <div class="error"><?= htmlspecialchars($error) ?></div>
-        <?php endif; ?>
-        <form method="POST" id="login-form">
-            <?php if ($next): ?><input type="hidden" name="next" value="<?= htmlspecialchars($next) ?>"><?php endif; ?>
-            <div class="field">
-                <label for="logname">Your name for logging</label>
-                <input type="text" id="logname" name="logname" autocomplete="name" placeholder="e.g. Doug">
-            </div>
-            <div class="field">
-                <label for="pw">Password</label>
-                <input type="password" id="pw" name="pw" autocomplete="current-password">
-            </div>
-            <div class="btn-row">
-                <button type="submit" class="submit-btn">Sign In</button>
-                <a href="../" class="cancel-btn">Cancel</a>
-            </div>
-        </form>
-        <script>
-        (function() {
-            var n = document.getElementById('logname');
-            var saved = localStorage.getItem('aprs_log_name');
-            if (saved) { n.value = saved; document.getElementById('pw').focus(); }
-            else n.focus();
-            document.getElementById('login-form').addEventListener('submit', function() {
-                if (n.value.trim()) localStorage.setItem('aprs_log_name', n.value.trim());
-            });
-        })();
-        </script>
-    </div>
-</div>
-</body>
-</html>
-<?php }
 
 // ── YAML serialiser (functions live in config_yaml.php, loaded at top) ───────
 
@@ -1744,13 +1637,20 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
     </div>
     <div id="hdr-right">
         <span id="status"></span>
+        <?php if ($canEdit): ?>
         <button class="sec-btn" onclick="doNew()">New</button>
         <button class="sec-btn" onclick="doUpdate()">Update</button>
+        <?php endif; ?>
         <button class="sec-btn" onclick="location.href='?logout'">Sign out</button>
+        <?php if ($canEdit): ?>
         <button class="sec-btn" onclick="doLoadModal()">Load…</button>
         <button class="sec-btn" onclick="doSave()">Save</button>
-        <button class="sec-btn" onclick="doSaveAs()">Save as Default Event</button>
-        <button class="sec-btn" onclick="location.href='/netbird/'">NetBird</button>
+        <?php if (has_permission('admin.set_default')): ?><button class="sec-btn" onclick="doSaveAs()">Save as Default Event</button><?php endif; ?>
+        <?php endif; ?>
+        <?php if (has_permission('netbird.view')): ?><button class="sec-btn" onclick="location.href='/netbird/'">NetBird</button><?php endif; ?>
+        <?php if (has_permission('analyzer.view')): ?><button class="sec-btn" onclick="location.href='/analyzer/'">Analyzer</button><?php endif; ?>
+        <?php if (has_permission('tickets.manage')): ?><button class="sec-btn" onclick="location.href='/tickets/admin.php'">Tickets</button><?php endif; ?>
+        <?php if (has_permission('users.manage')): ?><button class="sec-btn" onclick="location.href='/auth/users.php'">Users</button><?php endif; ?>
         <button class="sec-btn" onclick="location.href='../'">Exit</button>
     </div>
 </div>
@@ -1760,39 +1660,63 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 
     <!-- ── Event ── -->
     <div class="section">
-        <div class="sec-title"><span>Event</span><div class="sec-io-btns"><button type="button" class="io-btn" title="Export entire event" onclick="showExportMenu(this,'event')">↓</button><button type="button" class="io-btn" title="Import entire event from YAML or CSV" onclick="importSection('event')">↑</button></div></div>
+        <div class="sec-title"><span>Event</span><?php if ($canEdit): ?><div class="sec-io-btns"><button type="button" class="io-btn" title="Export entire event" onclick="showExportMenu(this,'event')">↓</button><button type="button" class="io-btn" title="Import entire event from YAML or CSV" onclick="importSection('event')">↑</button></div><?php endif; ?></div>
         <div class="sec-body">
             <div class="map-field" style="width:100%;max-width:500px">
                 <label for="f-event">Event Name</label>
+                <?php if ($canEdit): ?>
                 <div style="display:flex;gap:8px;align-items:center">
                     <input type="text" id="f-event" style="flex:1" placeholder="e.g. Marin Ultra Challenge 2026" oninput="markDirty()">
                     <button type="button" id="btn-backup" class="add-btn" onclick="doBackup()" style="white-space:nowrap">Backup</button>
                     <button type="button" id="btn-restore" class="add-btn" onclick="doRestore()" style="display:none;white-space:nowrap">Restore</button>
                 </div>
+                <?php else: ?>
+                <input type="text" id="f-event" style="width:100%;background:#f5f5f5;cursor:default;color:#555" readonly tabindex="-1">
+                <?php endif; ?>
             </div>
             <div class="map-field" style="width:100%;max-width:500px;margin-top:12px">
-                <label for="f-event-password">Event Password <span style="font-weight:400;color:#999;font-size:11px">(leave blank for no password)</span></label>
+                <label for="f-event-password">Event Password</label>
+                <?php if ($canEdit): ?>
                 <input type="text" id="f-event-password" style="width:100%" placeholder="e.g. marathon2026" autocomplete="off" oninput="markDirty()">
+                <?php else: ?>
+                <input type="text" id="f-event-password" style="width:100%;background:#f5f5f5;cursor:default;color:#555" readonly tabindex="-1">
+                <?php endif; ?>
             </div>
             <div class="map-field" style="width:100%;max-width:500px;margin-top:12px">
-                <label for="f-messaging-password">Messaging Password <span style="font-weight:400;color:#999;font-size:11px">(leave blank to disable messaging)</span></label>
+                <label for="f-messaging-password">Messaging Password</label>
+                <?php if ($canEdit): ?>
                 <div style="display:flex;gap:8px;align-items:center">
                     <input type="text" id="f-messaging-password" style="flex:1" placeholder="e.g. netcontrol2026" autocomplete="off" oninput="markDirty()">
                     <button type="button" class="btn" onclick="openMsgThread()" title="View message thread">💬 Messages</button>
                 </div>
+                <?php else: ?>
+                <input type="text" id="f-messaging-password" style="width:100%;background:#f5f5f5;cursor:default;color:#555" readonly tabindex="-1">
+                <?php endif; ?>
             </div>
+            <?php if ($canEdit): ?>
             <div class="map-field" style="width:100%;max-width:500px;margin-top:12px">
                 <label for="f-blink-duration">Blink Duration &nbsp;<span id="f-blink-duration-val" style="font-weight:400;color:#555;font-size:13px">5s</span></label>
                 <div style="display:flex;align-items:center;gap:10px;margin-top:4px">
                     <span style="color:#999;font-size:12px">0s</span>
                     <input type="range" id="f-blink-duration" min="0" max="10" step="1" value="5" style="flex:1"
-                           oninput="document.getElementById('f-blink-duration-val').textContent=this.value+'s';markDirty()">
+                           oninput="document.getElementById('f-blink-duration-val').textContent=this.value+'s';quickSaveVisuals()">
                     <span style="color:#999;font-size:12px">10s</span>
                 </div>
             </div>
+            <div class="map-field" style="width:100%;max-width:500px;margin-top:12px">
+                <label for="f-breadcrumb-count">Breadcrumb Count &nbsp;<span id="f-breadcrumb-count-val" style="font-weight:400;color:#555;font-size:13px">100</span></label>
+                <div style="display:flex;align-items:center;gap:10px;margin-top:4px">
+                    <span style="color:#999;font-size:12px">Off</span>
+                    <input type="range" id="f-breadcrumb-count" min="0" max="100" step="1" value="100" style="flex:1"
+                           oninput="document.getElementById('f-breadcrumb-count-val').textContent=bcSliderLabel(+this.value);quickSaveVisuals()">
+                    <span style="color:#999;font-size:12px">100</span>
+                </div>
+            </div>
+            <?php endif; ?>
         </div>
     </div>
 
+    <?php if ($canEdit): ?>
     <!-- ── Legend ── -->
     <div class="section">
         <div class="sec-title">Legend</div>
@@ -1803,33 +1727,23 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
             </div>
         </div>
     </div>
+    <?php endif; // canEdit ?>
 
     <!-- ── Trackers ── -->
     <div class="section">
+        <?php if ($canEdit): ?>
         <div class="sec-title"><span>Trackers</span><span id="delta-refresh-time" style="font-size:0.75rem;font-weight:400;color:#888;margin-left:10px"></span><div class="sec-io-btns"><input type="checkbox" id="mt-sel-all" title="Select all mobile trackers" style="display:none;margin-right:2px;cursor:pointer"><button type="button" id="mt-bulk-remove" class="io-btn" style="display:none" title="Remove selected mobile trackers">Remove (0)</button><button type="button" class="io-btn" title="Export trackers" onclick="showExportMenu(this,'trackers')">↓</button><button type="button" class="io-btn" title="Import trackers from YAML or CSV" onclick="importSection('trackers')">↑</button><button type="button" class="io-btn" title="Refresh mobile tracker list" onclick="loadMobileTrackers()" style="margin-left:4px">↻</button><button type="button" id="update-trackers-btn" class="sec-btn" style="margin-left:6px;background:#1565c0;color:#fff;border-color:#0d47a1" onclick="doUpdateTrackers()" title="Save tracker list — works even when event is locked">Update Tracker Data</button></div></div>
+        <?php else: ?>
+        <div class="sec-title"><span>Trackers</span><span id="delta-refresh-time" style="font-size:0.75rem;font-weight:400;color:#888;margin-left:10px"></span><div class="sec-io-btns"><button type="button" class="io-btn" title="Refresh mobile tracker list" onclick="loadMobileTrackers()" style="margin-left:4px">↻</button></div></div>
+        <?php endif; ?>
         <div class="sec-body">
             <!-- APRS trackers -->
             <div id="trackers-list"></div>
+            <?php if ($canEdit): ?>
             <button class="add-btn" onclick="addTracker()">+ Add Tracker</button>
 
-            <!-- Tracker Style -->
-            <div style="margin-top:14px;padding-top:12px;border-top:1px solid #e8e8e8">
-                <div style="font-size:12px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px">Tracker Style</div>
-                <div style="display:flex;align-items:flex-end;gap:24px;flex-wrap:wrap">
-                    <div class="field-label">
-                        <span>Icon</span>
-                        <div class="icon-picker" id="tracker-icon-picker"></div>
-                        <input type="hidden" id="f-tracker-icon" value="circle">
-                    </div>
-                    <div class="field-label">
-                        <span>Label Color</span>
-                        <input type="color" id="f-tracker-label-color" value="#000000"
-                            style="width:36px;height:28px;padding:1px;border:1px solid #555;border-radius:3px;cursor:pointer;background:none;display:block"
-                            oninput="markDirty()">
-                    </div>
-                </div>
-            </div>
-
+            <?php endif; // canEdit ?>
+            <?php if ($canEdit): ?>
             <!-- Mobile tracking settings -->
             <div style="margin-top:14px;padding-top:12px;border-top:1px solid #e8e8e8">
                 <div style="font-size:12px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px">Mobile Tracking</div>
@@ -1934,9 +1848,11 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
                     </div>
                 </div>
             </div>
+            <?php endif; // canEdit ?>
         </div>
     </div>
 
+    <?php if ($canEdit): ?>
     <!-- ── Section Visibility ── -->
     <div class="section">
         <div class="sec-title">Default Section Visibility</div>
@@ -1984,25 +1900,27 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
             <button class="add-btn" onclick="addBackground()">+ Add Background</button>
         </div>
     </div>
+    <?php endif; // canEdit ?>
 
     <!-- ── Aid/Rest Stops ── -->
     <div class="section">
-        <div class="sec-title"><span>Aid/Rest Stops</span><div class="sec-io-btns"><button type="button" class="io-btn" title="Export aid stations" onclick="showExportMenu(this,'aidstations')">↓</button><button type="button" class="io-btn" title="Import aid stations from YAML, GPX, KML, or GeoJSON" onclick="importGeoSection('aidstations')">↑</button></div></div>
+        <div class="sec-title"><span>Aid/Rest Stops</span><?php if ($canEdit): ?><div class="sec-io-btns"><button type="button" class="io-btn" title="Export aid stations" onclick="showExportMenu(this,'aidstations')">↓</button><button type="button" class="io-btn" title="Import aid stations from YAML, GPX, KML, or GeoJSON" onclick="importGeoSection('aidstations')">↑</button></div><?php endif; ?></div>
         <div class="sec-body">
             <div id="aidstations-list"></div>
-            <button class="add-btn" onclick="addAid()">+ Add Aid/Rest Stop</button>
+            <?php if ($canEdit): ?><button class="add-btn" onclick="addAid()">+ Add Aid/Rest Stop</button><?php endif; ?>
         </div>
     </div>
 
     <!-- ── iGates ── -->
     <div class="section">
-        <div class="sec-title"><span>iGates</span><div class="sec-io-btns"><button type="button" class="io-btn" title="Export iGates" onclick="showExportMenu(this,'igates')">↓</button><button type="button" class="io-btn" title="Import iGates from YAML, GPX, KML, or GeoJSON" onclick="importGeoSection('igates')">↑</button></div></div>
+        <div class="sec-title"><span>iGates</span><?php if ($canEdit): ?><div class="sec-io-btns"><button type="button" class="io-btn" title="Export iGates" onclick="showExportMenu(this,'igates')">↓</button><button type="button" class="io-btn" title="Import iGates from YAML, GPX, KML, or GeoJSON" onclick="importGeoSection('igates')">↑</button></div><?php endif; ?></div>
         <div class="sec-body">
             <div id="igates-list"></div>
-            <button class="add-btn" onclick="addIgate()">+ Add iGate</button>
+            <?php if ($canEdit): ?><button class="add-btn" onclick="addIgate()">+ Add iGate</button><?php endif; ?>
         </div>
     </div>
 
+    <?php if ($canEdit): ?>
     <!-- ── Courses ── -->
     <div class="section">
         <div class="sec-title"><span>Courses</span><div class="sec-io-btns"><button type="button" class="io-btn" title="Export courses" onclick="showExportMenu(this,'courses')">↓</button><button type="button" class="io-btn" title="Import courses from YAML, CSV, or location file" onclick="importCoursesSection()">↑</button></div></div>
@@ -2012,12 +1930,15 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
             <button class="add-btn" onclick="doManageLocationFiles()" style="margin-left:6px">Manage Location Files…</button>
         </div>
     </div>
+    <?php endif; // canEdit ?>
 
     <div id="footer">
+        <?php if ($canEdit): ?>
         <button class="sec-btn" onclick="doNew()">New</button>
         <button class="sec-btn" onclick="doUpdate()">Update</button>
         <button class="sec-btn" onclick="doSave()">Save</button>
-        <button class="sec-btn" onclick="doSaveAs()">Save as Default Event</button>
+        <?php endif; ?>
+        <?php if (has_permission('admin.set_default')): ?><button class="sec-btn" onclick="doSaveAs()">Save as Default Event</button><?php endif; ?>
     </div>
 </div>
 
@@ -2025,6 +1946,8 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 
 <script>
 'use strict';
+
+const canEdit = <?= $canEdit ? 'true' : 'false' ?>;
 
 // ── Dirty tracking ────────────────────────────────────────────────────────────
 
@@ -2035,6 +1958,33 @@ let originalConfig   = null;
 let currentFilename  = '';
 let currentEventName = '';
 const serverActiveEvent = <?= json_encode($currentFilename) ?>;
+
+let _qsTimer = null;
+function quickSaveVisuals() {
+    clearTimeout(_qsTimer);
+    _qsTimer = setTimeout(() => {
+        const bd = parseInt(document.getElementById('f-blink-duration').value,    10);
+        const bc = bcSliderToCount(parseInt(document.getElementById('f-breadcrumb-count').value, 10));
+        fetch('?quicksave', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ blink_duration: bd, breadcrumb_count: bc })
+        }).catch(() => {});
+    }, 400);
+}
+
+function bcSliderToCount(pos) {
+    if (pos === 0) return 0;
+    return Math.max(1, Math.round(Math.pow(pos / 100, 2) * 100));
+}
+function bcCountToSlider(count) {
+    if (!count) return 0;
+    return Math.round(Math.sqrt(Math.min(count, 100) / 100) * 100);
+}
+function bcSliderLabel(pos) {
+    const n = bcSliderToCount(pos);
+    return n === 0 ? 'Off' : String(n);
+}
 
 function resetBeaconMode(mode, defInterval, defDistance) {
     document.getElementById('mobile-' + mode + '-interval').value = defInterval;
@@ -2073,19 +2023,20 @@ let isNewMode = false;
 
 function setNewMode(newMode) {
     isNewMode = newMode;
-    document.getElementById('btn-backup').style.display  = newMode ? 'none' : '';
-    document.getElementById('btn-restore').style.display = newMode ? ''     : 'none';
+    const backup  = document.getElementById('btn-backup');
+    const restore = document.getElementById('btn-restore');
+    if (backup)  backup.style.display  = newMode ? 'none' : '';
+    if (restore) restore.style.display = newMode ? ''     : 'none';
 }
 
 function doNew() {
     if (isDirty && !confirm('You have unsaved changes. Start a new event anyway?')) return;
     populateForm({
-        event: '', event_password: '', messaging_password: '', blink_duration: 5, legend: '',
+        event: '', event_password: '', messaging_password: '', blink_duration: 5, breadcrumb_count: 100, legend: '',
         map: { lat: '', lon: '', zoom: '' },
         section_visibility: { trackers: true, courses: true, aidstations: true, igates: true, backgrounds: true },
         trackers: [], courses: [], aidstations: [], igates: [], backgrounds: [],
-        mobile: { enabled: false, pin: '', root: '' },
-        tracker_style: {}
+        mobile: { enabled: false, pin: '', root: '' }
     });
     setCurrentEvent('', '');
     originalConfig   = null;
@@ -2362,37 +2313,46 @@ function applyBeaconDeltas(deltas) {
     if (el) el.textContent = 'Δ refreshed ' + ts;
 }
 
-function buildTrackerRow(t) {
-    const GCOLS = '20px 52px 90px 110px 50px 1fr 66px 148px';
+function buildTrackerRow(t, readOnly = false) {
+    const GCOLS = readOnly ? '52px 90px 110px 50px 1fr 66px 80px' : '20px 52px 90px 110px 50px 1fr 66px 148px';
     const row = document.createElement('div');
     row.className = 'list-row';
     row.style.cssText = `display:grid;grid-template-columns:${GCOLS};align-items:center;gap:6px;padding:4px 4px;margin-bottom:0;border-bottom:1px solid #f0f0f0;border-radius:0`;
 
-    const rtCb = document.createElement('input'); // col 1: checkbox (visual match with hybrid radio rows)
-    rtCb.type = 'checkbox'; rtCb.className = 'rt-cb';
-    rtCb.style.cssText = 'cursor:pointer';
-    row.appendChild(rtCb);
+    if (!readOnly) {
+        const rtCb = document.createElement('input'); // col 1: checkbox (visual match with hybrid radio rows)
+        rtCb.type = 'checkbox'; rtCb.className = 'rt-cb';
+        rtCb.style.cssText = 'cursor:pointer';
+        row.appendChild(rtCb);
+    }
 
-    const idInp = document.createElement('input');
-    idInp.type = 'text'; idInp.className = 'f-id'; idInp.value = t.id || '';
-    idInp.maxLength = 16; idInp.placeholder = 'ID';
-    idInp.style.cssText = 'width:100%;font-size:12px;font-family:monospace;font-weight:600;padding:2px 4px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box';
-    idInp.addEventListener('input', () => markDirty(true));
-    row.appendChild(idInp);
+    if (readOnly) {
+        const mkSpan = (val, css) => { const s = document.createElement('span'); s.textContent = val || ''; s.style.cssText = css; return s; };
+        row.appendChild(mkSpan(t.id,       'font-size:12px;font-family:monospace;font-weight:600;color:#444;padding:2px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'));
+        row.appendChild(mkSpan(t.callsign, 'font-family:monospace;font-size:12px;color:#666;padding:2px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'));
+        row.appendChild(mkSpan(t.name,     'font-size:13px;color:#444;padding:2px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'));
+    } else {
+        const idInp = document.createElement('input');
+        idInp.type = 'text'; idInp.className = 'f-id'; idInp.value = t.id || '';
+        idInp.maxLength = 16; idInp.placeholder = 'ID';
+        idInp.style.cssText = 'width:100%;font-size:12px;font-family:monospace;font-weight:600;padding:2px 4px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box';
+        idInp.addEventListener('input', () => markDirty(true));
+        row.appendChild(idInp);
 
-    const csInp = document.createElement('input');
-    csInp.type = 'text'; csInp.className = 'f-cs'; csInp.value = t.callsign || '';
-    csInp.maxLength = 9; csInp.placeholder = 'Callsign';
-    csInp.style.cssText = 'width:100%;font-family:monospace;font-size:12px;padding:2px 4px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;text-transform:uppercase';
-    csInp.addEventListener('input', e => { e.target.value = e.target.value.toUpperCase(); markDirty(true); });
-    row.appendChild(csInp);
+        const csInp = document.createElement('input');
+        csInp.type = 'text'; csInp.className = 'f-cs'; csInp.value = t.callsign || '';
+        csInp.maxLength = 9; csInp.placeholder = 'Callsign';
+        csInp.style.cssText = 'width:100%;font-family:monospace;font-size:12px;padding:2px 4px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;text-transform:uppercase';
+        csInp.addEventListener('input', e => { e.target.value = e.target.value.toUpperCase(); markDirty(true); });
+        row.appendChild(csInp);
 
-    const nameInp = document.createElement('input');
-    nameInp.type = 'text'; nameInp.className = 'f-name'; nameInp.value = t.name || '';
-    nameInp.maxLength = 20; nameInp.placeholder = 'Name';
-    nameInp.style.cssText = 'width:100%;font-size:13px;padding:3px 6px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box';
-    nameInp.addEventListener('input', () => markDirty(true));
-    row.appendChild(nameInp);
+        const nameInp = document.createElement('input');
+        nameInp.type = 'text'; nameInp.className = 'f-name'; nameInp.value = t.name || '';
+        nameInp.maxLength = 20; nameInp.placeholder = 'Name';
+        nameInp.style.cssText = 'width:100%;font-size:13px;padding:3px 6px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box';
+        nameInp.addEventListener('input', () => markDirty(true));
+        row.appendChild(nameInp);
+    }
 
     const deltaDisp = document.createElement('div');
     deltaDisp.className = 'f-delta';
@@ -2400,56 +2360,40 @@ function buildTrackerRow(t) {
     deltaDisp.textContent = '—';
     row.appendChild(deltaDisp);
 
-    const rtRadioLabel = document.createElement('span'); // col 6: "Radio" label
+    const rtRadioLabel = document.createElement('span'); // "Radio" label
     rtRadioLabel.textContent = 'Radio';
     rtRadioLabel.style.cssText = 'font-size:11px;color:#666;white-space:nowrap';
     row.appendChild(rtRadioLabel);
 
-    const radioAgeSpan = document.createElement('span'); // col 7: age (filled by applyBeaconDeltas)
+    const radioAgeSpan = document.createElement('span'); // age (filled by applyBeaconDeltas)
     radioAgeSpan.className = 'f-radio-age';
     radioAgeSpan.style.cssText = 'color:#888;font-size:12px;white-space:nowrap;text-align:right';
     row.appendChild(radioAgeSpan);
 
-    // col 8: Info + Remove (aligned with other rows via flex, using .btn class not .del-btn)
+    // Info [+ Remove]
     const rtInfoBtn = document.createElement('button');
     rtInfoBtn.type = 'button'; rtInfoBtn.className = 'btn rt-info-btn'; rtInfoBtn.textContent = 'Info';
     rtInfoBtn.addEventListener('click', () => showRadioInfoModal({ham_callsign: t.callsign, name: t.name}, rtInfoBtn._rdData ?? null));
-    const rtRemoveBtn = document.createElement('button');
-    rtRemoveBtn.type = 'button'; rtRemoveBtn.className = 'btn'; rtRemoveBtn.textContent = 'Remove';
-    rtRemoveBtn.addEventListener('click', () => { row.remove(); markDirty(true); });
     const rtActDiv = document.createElement('div');
     rtActDiv.style.cssText = 'display:flex;align-items:center;gap:4px;flex-shrink:0';
-    rtRemoveBtn.style.marginLeft = 'auto';
-    rtActDiv.appendChild(rtInfoBtn); rtActDiv.appendChild(rtRemoveBtn);
+    if (readOnly) {
+        rtActDiv.appendChild(rtInfoBtn);
+    } else {
+        const rtRemoveBtn = document.createElement('button');
+        rtRemoveBtn.type = 'button'; rtRemoveBtn.className = 'btn'; rtRemoveBtn.textContent = 'Remove';
+        rtRemoveBtn.addEventListener('click', () => { row.remove(); markDirty(true); });
+        rtRemoveBtn.style.marginLeft = 'auto';
+        rtActDiv.appendChild(rtInfoBtn); rtActDiv.appendChild(rtRemoveBtn);
+    }
     row.appendChild(rtActDiv);
     return row;
 }
 
 // ── Tracker style (global) ────────────────────────────────────────────────────
 
-function initTrackerStyleSection(style) {
-    const picker = document.getElementById('tracker-icon-picker');
-    picker.innerHTML = '';
-    const cur = style?.icon || 'circle';
-    TRACKER_ICONS.forEach(ic => {
-        const btn = document.createElement('button');
-        btn.type = 'button'; btn.title = ic.label; btn.dataset.icon = ic.id;
-        btn.className = 'icon-btn' + (cur === ic.id ? ' active' : '');
-        btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg"><g fill="#444" stroke="#222" stroke-width="1.2" stroke-linejoin="round">${ic.path}</g></svg>`;
-        btn.addEventListener('click', () => {
-            picker.querySelectorAll('.icon-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            document.getElementById('f-tracker-icon').value = ic.id;
-            markDirty();
-        });
-        picker.appendChild(btn);
-    });
-    document.getElementById('f-tracker-icon').value       = cur;
-    document.getElementById('f-tracker-label-color').value = style?.label_color || '#000000';
-}
 
 function appendTracker(t, attach) {
-    const row = buildTrackerRow(t);
+    const row = buildTrackerRow(t, !canEdit);
     document.getElementById('trackers-list').appendChild(row);
     if (attach) attach(row);
 }
@@ -3160,36 +3104,36 @@ function setMsg(el, text, ok) {
 
 // ── iGate rows ────────────────────────────────────────────────────────────────
 
-function buildIgateRow(g) {
+function buildIgateRow(g, readOnly = false) {
     const row     = document.createElement('div');
     row.className = 'list-row';
-    row.draggable = true;
-    row.appendChild(makeDragHandle());
+    if (!readOnly) { row.draggable = true; row.appendChild(makeDragHandle()); }
     const fields  = document.createElement('div');
     fields.className = 'row-fields';
     fields.appendChild(fieldLabel('Name',     'f-iname',     g.name,     '150px'));
     fields.appendChild(fieldLabel('Callsign', 'f-icallsign', g.callsign, '110px'));
     fields.appendChild(fieldLabel('Lat',      'f-ilat',      g.lat,      '120px', { type: 'number', step: 'any' }));
     fields.appendChild(fieldLabel('Lon',      'f-ilon',      g.lon,      '130px', { type: 'number', step: 'any' }));
-    attachLatLonPaste(fields.querySelector('.f-ilat'), fields.querySelector('.f-ilon'));
+    if (!readOnly) attachLatLonPaste(fields.querySelector('.f-ilat'), fields.querySelector('.f-ilon'));
+    if (readOnly) fields.querySelectorAll('input').forEach(inp => { inp.readOnly = true; inp.tabIndex = -1; inp.style.cssText += ';background:#f5f5f5;cursor:default;color:#555'; });
     // Digipeater checkbox
     const digiLabel = document.createElement('label');
-    digiLabel.style.cssText = 'white-space:nowrap;font-size:13px;cursor:pointer;align-self:center';
+    digiLabel.style.cssText = 'white-space:nowrap;font-size:13px;align-self:center' + (readOnly ? ';cursor:default' : ';cursor:pointer');
     const digiCb = document.createElement('input');
     digiCb.type = 'checkbox';
     digiCb.className = 'f-idigipeater';
     digiCb.checked = !!g.digipeater;
-    digiCb.addEventListener('change', () => markDirty(true));
+    if (readOnly) { digiCb.disabled = true; } else { digiCb.addEventListener('change', () => markDirty(true)); }
     digiLabel.appendChild(digiCb);
     digiLabel.appendChild(document.createTextNode(' Digi'));
     fields.appendChild(digiLabel);
     row.appendChild(fields);
-    row.appendChild(makeDeleteBtn());
+    if (!readOnly) row.appendChild(makeDeleteBtn());
     return row;
 }
 
 function appendIgate(g, attach) {
-    const row = buildIgateRow(g);
+    const row = buildIgateRow(g, !canEdit);
     document.getElementById('igates-list').appendChild(row);
     if (attach) attach(row);
 }
@@ -3212,15 +3156,15 @@ async function loadMobileTrackers() {
         trackers = await r.json();
     } catch (e) { console.error('[mobiletrackers]', e); return; }
 
-    const GCOLS = '20px 52px 90px 110px 50px 1fr 54px 66px 148px';
+    const GCOLS = canEdit ? '20px 52px 90px 110px 50px 1fr 54px 66px 148px' : '52px 90px 110px 50px 1fr 54px 66px 80px';
 
     // ── Wire bulk controls in sec-title ────────────────────────────────────
-    const selAll  = document.getElementById('mt-sel-all');
-    const bulkBtn = document.getElementById('mt-bulk-remove');
+    const selAll  = canEdit ? document.getElementById('mt-sel-all')  : null;
+    const bulkBtn = canEdit ? document.getElementById('mt-bulk-remove') : null;
 
     if (!trackers.length) {
-        selAll.style.display = 'none';
-        bulkBtn.style.display = 'none';
+        if (selAll)  selAll.style.display  = 'none';
+        if (bulkBtn) bulkBtn.style.display = 'none';
         const empty = document.createElement('div');
         empty.dataset.mobile = '1';
         empty.style.cssText = 'padding:8px 4px;color:#999;font-style:italic;font-size:13px';
@@ -3229,16 +3173,9 @@ async function loadMobileTrackers() {
         return;
     }
 
-    selAll.style.display = '';
-    // Reset handlers each reload to avoid stacking listeners
-    const newSelAll  = selAll.cloneNode(true);
-    const newBulkBtn = bulkBtn.cloneNode(true);
-    selAll.replaceWith(newSelAll);
-    bulkBtn.replaceWith(newBulkBtn);
-    const selAllEl  = document.getElementById('mt-sel-all');
-    const bulkBtnEl = document.getElementById('mt-bulk-remove');
-
+    let selAllEl = null, bulkBtnEl = null;
     const updateBulkBtn = () => {
+        if (!selAllEl || !bulkBtnEl) return;
         const checkedIds = new Set([...listEl.querySelectorAll('input.mt-cb:checked')].map(cb => cb.dataset.id));
         const n = checkedIds.size;
         bulkBtnEl.style.display = n ? '' : 'none';
@@ -3246,11 +3183,21 @@ async function loadMobileTrackers() {
         selAllEl.indeterminate = n > 0 && n < trackers.length;
         selAllEl.checked = (n === trackers.length && n > 0);
     };
-    selAllEl.addEventListener('change', () => {
-        listEl.querySelectorAll('input.mt-cb').forEach(cb => cb.checked = selAllEl.checked);
-        updateBulkBtn();
-    });
-    bulkBtnEl.addEventListener('click', () => removeMobileTrackersBulk(listEl, updateBulkBtn));
+    if (canEdit && selAll) {
+        selAll.style.display = '';
+        // Reset handlers each reload to avoid stacking listeners
+        const newSelAll  = selAll.cloneNode(true);
+        const newBulkBtn = bulkBtn.cloneNode(true);
+        selAll.replaceWith(newSelAll);
+        bulkBtn.replaceWith(newBulkBtn);
+        selAllEl  = document.getElementById('mt-sel-all');
+        bulkBtnEl = document.getElementById('mt-bulk-remove');
+        selAllEl.addEventListener('change', () => {
+            listEl.querySelectorAll('input.mt-cb').forEach(cb => cb.checked = selAllEl.checked);
+            updateBulkBtn();
+        });
+        bulkBtnEl.addEventListener('click', () => removeMobileTrackersBulk(listEl, updateBulkBtn));
+    }
 
     // ── Helpers ────────────────────────────────────────────────────────────
     const carSvg = `<svg viewBox="0 0 20 14" width="13" height="9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M3 7L6 3H14L17 7"/><rect x="1" y="7" width="18" height="4.5" rx="1.2"/><circle cx="5.5" cy="12.5" r="1.5"/><circle cx="14.5" cy="12.5" r="1.5"/></svg>`;
@@ -3266,7 +3213,7 @@ async function loadMobileTrackers() {
     const hdr = document.createElement('div');
     hdr.dataset.mobile = '1';
     hdr.style.cssText = `display:grid;grid-template-columns:${GCOLS};align-items:center;gap:6px;padding:2px 4px 4px;border-bottom:1px solid #ddd;margin-bottom:2px`;
-    ['', 'ID', 'Callsign', 'Name', 'Δ', 'Client', 'Joined', '', ''].forEach(label => {
+    (canEdit ? ['', 'ID', 'Callsign', 'Name', 'Δ', 'Client', 'Joined', 'Heard', ''] : ['ID', 'Callsign', 'Name', 'Δ', 'Client', 'Joined', 'Heard', '']).forEach(label => {
         const th = document.createElement('span');
         th.textContent = label;
         th.style.cssText = 'font-size:10px;font-weight:600;color:#999;text-transform:uppercase;letter-spacing:.04em';
@@ -3295,6 +3242,12 @@ async function loadMobileTrackers() {
             inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } });
             return inp;
         };
+        const makeNameSpan = () => {
+            const span = document.createElement('span');
+            span.textContent = t.name;
+            span.style.cssText = 'font-size:13px;color:#444;padding:2px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+            return span;
+        };
 
         // cb and rCb are declared here so they can reference each other in handlers
         let cb = null, rCb = null;
@@ -3307,47 +3260,63 @@ async function loadMobileTrackers() {
             // No border-bottom on radio row: visually joins with its mobile row below
             rRow.style.cssText = ROW_STYLE.replace('border-bottom:1px solid #f0f0f0', 'border-bottom:none');
 
-            // [checkbox — linked to mobile row's cb]
-            rCb = document.createElement('input');
-            rCb.type = 'checkbox'; rCb.className = 'mt-cb'; rCb.dataset.id = t.id;
-            rCb.addEventListener('change', () => { if (cb) cb.checked = rCb.checked; updateBulkBtn(); });
-            rRow.appendChild(rCb);
+            // [checkbox — linked to mobile row's cb; edit mode only]
+            if (canEdit) {
+                rCb = document.createElement('input');
+                rCb.type = 'checkbox'; rCb.className = 'mt-cb'; rCb.dataset.id = t.id;
+                rCb.addEventListener('change', () => { if (cb) cb.checked = rCb.checked; updateBulkBtn(); });
+                rRow.appendChild(rCb);
+            }
 
-            // [display ID — editable; changes sidebar/map label without affecting server communication]
-            const dispInp = document.createElement('input');
-            dispInp.type = 'text'; dispInp.value = t.display_id || t.id; dispInp.maxLength = 16;
-            dispInp.title = 'Display label (overrides ' + t.id + ' in sidebar and map)';
-            dispInp.style.cssText = 'width:100%;font-size:12px;font-family:monospace;font-weight:600;padding:2px 4px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box';
-            const saveDispId = async () => {
-                const val = dispInp.value.trim() || t.id;
-                dispInp.value = val;
-                const r2 = await fetch('?setdisplayid', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:t.id, display_id:val}) });
-                dispInp.style.borderColor = r2.ok ? '#ddd' : '#c0392b';
-                if (r2.ok) t.display_id = val === t.id ? null : val;
-            };
-            dispInp.addEventListener('blur', saveDispId);
-            dispInp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); dispInp.blur(); } });
-            rRow.appendChild(dispInp);
+            // [display ID]
+            if (canEdit) {
+                const dispInp = document.createElement('input');
+                dispInp.type = 'text'; dispInp.value = t.display_id || t.id; dispInp.maxLength = 16;
+                dispInp.title = 'Display label (overrides ' + t.id + ' in sidebar and map)';
+                dispInp.style.cssText = 'width:100%;font-size:12px;font-family:monospace;font-weight:600;padding:2px 4px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box';
+                const saveDispId = async () => {
+                    const val = dispInp.value.trim() || t.id;
+                    dispInp.value = val;
+                    const r2 = await fetch('?setdisplayid', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:t.id, display_id:val}) });
+                    dispInp.style.borderColor = r2.ok ? '#ddd' : '#c0392b';
+                    if (r2.ok) t.display_id = val === t.id ? null : val;
+                };
+                dispInp.addEventListener('blur', saveDispId);
+                dispInp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); dispInp.blur(); } });
+                rRow.appendChild(dispInp);
+            } else {
+                const s = document.createElement('span');
+                s.textContent = t.display_id || t.id;
+                s.style.cssText = 'font-size:12px;font-family:monospace;font-weight:600;color:#444;padding:2px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+                rRow.appendChild(s);
+            }
 
-            // [ham callsign — editable]
-            const hamInp = document.createElement('input');
-            hamInp.type = 'text'; hamInp.value = t.ham_callsign || ''; hamInp.maxLength = 9;
-            hamInp.placeholder = 'e.g. W6SG-4';
-            hamInp.style.cssText = 'width:100%;font-family:monospace;font-size:12px;padding:2px 4px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;text-transform:uppercase';
-            hamInp.title = 'Ham radio callsign (received from APRS-IS)';
-            const saveHam = async () => {
-                hamInp.value = hamInp.value.trim().toUpperCase();
-                const val = hamInp.value;
-                const r2 = await fetch('?sethamcallsign', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:t.id, ham_callsign:val}) });
-                hamInp.style.borderColor = r2.ok ? '#ddd' : '#c0392b';
-                if (r2.ok) t.ham_callsign = val || null;
-            };
-            hamInp.addEventListener('blur', saveHam);
-            hamInp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); hamInp.blur(); } });
-            rRow.appendChild(hamInp);
+            // [ham callsign]
+            if (canEdit) {
+                const hamInp = document.createElement('input');
+                hamInp.type = 'text'; hamInp.value = t.ham_callsign || ''; hamInp.maxLength = 9;
+                hamInp.placeholder = 'e.g. W6SG-4';
+                hamInp.style.cssText = 'width:100%;font-family:monospace;font-size:12px;padding:2px 4px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;text-transform:uppercase';
+                hamInp.title = 'Ham radio callsign (received from APRS-IS)';
+                const saveHam = async () => {
+                    hamInp.value = hamInp.value.trim().toUpperCase();
+                    const val = hamInp.value;
+                    const r2 = await fetch('?sethamcallsign', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:t.id, ham_callsign:val}) });
+                    hamInp.style.borderColor = r2.ok ? '#ddd' : '#c0392b';
+                    if (r2.ok) t.ham_callsign = val || null;
+                };
+                hamInp.addEventListener('blur', saveHam);
+                hamInp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); hamInp.blur(); } });
+                rRow.appendChild(hamInp);
+            } else {
+                const s = document.createElement('span');
+                s.textContent = t.ham_callsign || '';
+                s.style.cssText = 'font-family:monospace;font-size:12px;color:#666;padding:2px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+                rRow.appendChild(s);
+            }
 
-            // [name — editable; on the radio row for hybrid trackers]
-            rRow.appendChild(makeNameInp());
+            // [name — on the radio row for hybrid trackers]
+            rRow.appendChild(canEdit ? makeNameInp() : makeNameSpan());
 
             // [radio delta]
             const rDeltaSpan = document.createElement('span');
@@ -3361,8 +3330,11 @@ async function loadMobileTrackers() {
             radioLabel.style.cssText = 'font-size:11px;color:#666;white-space:nowrap';
             rRow.appendChild(radioLabel);
 
-            // [joined — blank for radio row]
-            rRow.appendChild(document.createElement('span'));
+            // [joined — session start time for hybrid radio row]
+            const rJoinedSpan = document.createElement('span');
+            rJoinedSpan.textContent = rd && rd.joined_at != null ? fmtAge(rd.joined_at) : '';
+            rJoinedSpan.style.cssText = 'color:#888;font-size:12px;white-space:nowrap;justify-self:end;text-align:right';
+            rRow.appendChild(rJoinedSpan);
 
             // [radio age]
             const rAgeSpan = document.createElement('span');
@@ -3371,13 +3343,18 @@ async function loadMobileTrackers() {
             rRow.appendChild(rAgeSpan);
 
             // [Info + Remove]
-            const rRemoveBtn = makeBtn('Remove', async () => {
-                if (!confirm('Remove ham callsign ' + (t.ham_callsign || '') + ' from this tracker?')) return;
-                const r2 = await fetch('?sethamcallsign', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:t.id, ham_callsign:''}) });
-                if (r2.ok) loadMobileTrackers();
-            });
-            rRemoveBtn.style.marginLeft = 'auto';
-            rRow.appendChild(makeActDiv(makeBtn('Info', () => showRadioInfoModal(t, rd)), rRemoveBtn));
+            const rInfoBtn = makeBtn('Info', () => showRadioInfoModal(t, rd));
+            if (canEdit) {
+                const rRemoveBtn = makeBtn('Remove', async () => {
+                    if (!confirm('Remove ham callsign ' + (t.ham_callsign || '') + ' from this tracker?')) return;
+                    const r2 = await fetch('?sethamcallsign', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:t.id, ham_callsign:''}) });
+                    if (r2.ok) loadMobileTrackers();
+                });
+                rRemoveBtn.style.marginLeft = 'auto';
+                rRow.appendChild(makeActDiv(rInfoBtn, rRemoveBtn));
+            } else {
+                rRow.appendChild(makeActDiv(rInfoBtn));
+            }
 
             listEl.appendChild(rRow);
         }
@@ -3388,19 +3365,37 @@ async function loadMobileTrackers() {
         row.dataset.mobile = '1';
         row.style.cssText = ROW_STYLE;
 
-        // [checkbox — linked to radio row's rCb for hybrid trackers]
-        cb = document.createElement('input');
-        cb.type = 'checkbox'; cb.className = 'mt-cb'; cb.dataset.id = t.id;
-        cb.addEventListener('change', () => { if (rCb) rCb.checked = cb.checked; updateBulkBtn(); });
-        row.appendChild(cb);
+        // [checkbox — linked to radio row's rCb for hybrid trackers; edit mode only]
+        if (canEdit) {
+            cb = document.createElement('input');
+            cb.type = 'checkbox'; cb.className = 'mt-cb'; cb.dataset.id = t.id;
+            cb.addEventListener('change', () => { if (rCb) rCb.checked = cb.checked; updateBulkBtn(); });
+            row.appendChild(cb);
+        }
 
-        // [system ID — shown only for non-hybrid; hybrid has display_id on the radio row above]
+        // [display ID — editable for non-hybrid cellular; hybrid has this on the radio row above]
         if (!isHybrid) {
-            const idLabel = document.createElement('span');
-            idLabel.textContent = t.id;
-            idLabel.title = 'System ID (fixed — used by app to identify itself)';
-            idLabel.style.cssText = 'font-size:12px;font-family:monospace;font-weight:600;color:#444;padding:2px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
-            row.appendChild(idLabel);
+            if (canEdit) {
+                const dispInp = document.createElement('input');
+                dispInp.type = 'text'; dispInp.value = t.display_id || t.id; dispInp.maxLength = 16;
+                dispInp.title = 'Display label (overrides ' + t.id + ' in sidebar and map)';
+                dispInp.style.cssText = 'width:100%;font-size:12px;font-family:monospace;font-weight:600;padding:2px 4px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box';
+                const saveDispId = async () => {
+                    const val = dispInp.value.trim() || t.id;
+                    dispInp.value = val;
+                    const r2 = await fetch('?setdisplayid', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:t.id, display_id:val}) });
+                    dispInp.style.borderColor = r2.ok ? '#ddd' : '#c0392b';
+                    if (r2.ok) t.display_id = val === t.id ? null : val;
+                };
+                dispInp.addEventListener('blur', saveDispId);
+                dispInp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); dispInp.blur(); } });
+                row.appendChild(dispInp);
+            } else {
+                const s = document.createElement('span');
+                s.textContent = t.display_id || t.id;
+                s.style.cssText = 'font-size:12px;font-family:monospace;font-weight:600;color:#444;padding:2px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+                row.appendChild(s);
+            }
         } else {
             row.appendChild(document.createElement('span'));
         }
@@ -3412,20 +3407,25 @@ async function loadMobileTrackers() {
         csLabel.style.cssText = 'font-family:monospace;font-size:12px;color:#666;padding:2px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
         row.appendChild(csLabel);
 
-        // [name — editable for non-hybrid only; hybrid name is on the radio row above]
-        row.appendChild(isHybrid ? document.createElement('span') : makeNameInp());
+        // [name — non-hybrid only; hybrid name is on the radio row above]
+        row.appendChild(isHybrid ? document.createElement('span') : (canEdit ? makeNameInp() : makeNameSpan()));
 
         // [delta — mobile delta; clickable to reset]
         const deltaVal = isHybrid ? t.mobile_delta : t.delta;
         const deltaSpan = document.createElement('span');
-        deltaSpan.title = 'Min beacon interval · Click to reset';
-        deltaSpan.style.cssText = 'font-size:12px;white-space:nowrap;cursor:pointer';
+        deltaSpan.style.cssText = 'font-size:12px;white-space:nowrap';
         const setDelta = v => { deltaSpan.textContent = fmtDelta(v); deltaSpan.style.color = v != null ? '#555' : '#bbb'; };
         setDelta(deltaVal);
-        deltaSpan.addEventListener('click', async () => {
-            setDelta(null);
-            await fetch('?resetbeacons', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:t.id}) });
-        });
+        if (canEdit) {
+            deltaSpan.title = 'Min beacon interval · Click to reset';
+            deltaSpan.style.cursor = 'pointer';
+            deltaSpan.addEventListener('click', async () => {
+                setDelta(null);
+                await fetch('?resetbeacons', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:t.id}) });
+            });
+        } else {
+            deltaSpan.title = 'Min beacon interval';
+        }
         row.appendChild(deltaSpan);
 
         // [info — device info + mode icon]
@@ -3450,15 +3450,17 @@ async function loadMobileTrackers() {
             const isPending = !!t.pending_mode;
             modeEl.innerHTML = displayMode ? (modeIcons[displayMode] || '?') : '○';
             if (isPending) {
-                modeEl.style.cssText = 'font-size:12px;flex-shrink:0;cursor:pointer;padding:1px 3px;border-radius:3px;outline:1px dashed #e67e22';
-                modeEl.title = 'Pending: ' + (modeLabels[t.pending_mode] || t.pending_mode) + ' · Click to change';
+                modeEl.style.cssText = 'font-size:12px;flex-shrink:0;padding:1px 3px;border-radius:3px;outline:1px dashed #e67e22' + (canEdit ? ';cursor:pointer' : '');
+                modeEl.title = 'Pending: ' + (modeLabels[t.pending_mode] || t.pending_mode) + (canEdit ? ' · Click to change' : '');
             } else {
-                modeEl.style.cssText = 'font-size:12px;filter:grayscale(1) brightness(0.5);flex-shrink:0;cursor:pointer;padding:1px 3px;border-radius:3px';
-                modeEl.title = displayMode ? ((modeLabels[displayMode] || '') + ' · Click to change') : 'Set activity mode · Click to change';
+                modeEl.style.cssText = 'font-size:12px;filter:grayscale(1) brightness(0.5);flex-shrink:0;padding:1px 3px;border-radius:3px' + (canEdit ? ';cursor:pointer' : '');
+                modeEl.title = canEdit ? (displayMode ? ((modeLabels[displayMode] || '') + ' · Click to change') : 'Set activity mode · Click to change') : (modeLabels[displayMode] || '');
             }
-            modeEl.addEventListener('mouseenter', () => modeEl.style.background = '#e8f0fe');
-            modeEl.addEventListener('mouseleave', () => modeEl.style.background = '');
-            modeEl.addEventListener('click', e => { e.stopPropagation(); showSetModeModal(t, modeEl); });
+            if (canEdit) {
+                modeEl.addEventListener('mouseenter', () => modeEl.style.background = '#e8f0fe');
+                modeEl.addEventListener('mouseleave', () => modeEl.style.background = '');
+                modeEl.addEventListener('click', e => { e.stopPropagation(); showSetModeModal(t, modeEl); });
+            }
             infoDiv.appendChild(modeEl);
         }
         if (t.blocked) {
@@ -3471,7 +3473,7 @@ async function loadMobileTrackers() {
         const joinedSpan = document.createElement('span');
         joinedSpan.textContent = fmtSession(t.joined_at);
         joinedSpan.title = 'Time since this tracker first connected this session';
-        joinedSpan.style.cssText = 'color:#888;font-size:12px;white-space:nowrap;text-align:right';
+        joinedSpan.style.cssText = 'color:#888;font-size:12px;white-space:nowrap;justify-self:end;text-align:right';
         row.appendChild(joinedSpan);
 
         // [age — mobile age]
@@ -3483,8 +3485,10 @@ async function loadMobileTrackers() {
         // [buttons]
         const actEls = [];
         if (t.device_info && Object.keys(t.device_info).length) actEls.push(makeBtn('Info', () => showDeviceInfoModal(t)));
-        actEls.push(makeBtn(t.blocked ? 'Unblock' : 'Block', () => toggleBlockMobileTracker(t.id, !t.blocked)));
-        actEls.push(makeBtn('Remove', () => removeMobileTracker(t.id, row, listEl)));
+        if (canEdit) {
+            actEls.push(makeBtn(t.blocked ? 'Unblock' : 'Block', () => toggleBlockMobileTracker(t.id, !t.blocked)));
+            actEls.push(makeBtn('Remove', () => removeMobileTracker(t.id, row, listEl)));
+        }
         row.appendChild(makeActDiv(...actEls));
         listEl.appendChild(row);
     });
@@ -3641,25 +3645,25 @@ function showRadioInfoModal(t, rd) {
 
 // ── Aid/Rest Stop rows ──────────────────────────────────────────────────────────
 
-function buildAidRow(g) {
+function buildAidRow(g, readOnly = false) {
     const row     = document.createElement('div');
     row.className = 'list-row';
-    row.draggable = true;
-    row.appendChild(makeDragHandle());
+    if (!readOnly) { row.draggable = true; row.appendChild(makeDragHandle()); }
     const fields  = document.createElement('div');
     fields.className = 'row-fields';
     fields.appendChild(fieldLabel('Name',     'f-aname',     g.name,     '150px'));
     fields.appendChild(fieldLabel('Callsign', 'f-acallsign', g.callsign, '110px'));
     fields.appendChild(fieldLabel('Lat',      'f-alat',      g.lat,      '120px', { type: 'number', step: 'any' }));
     fields.appendChild(fieldLabel('Lon',      'f-alon',      g.lon,      '130px', { type: 'number', step: 'any' }));
-    attachLatLonPaste(fields.querySelector('.f-alat'), fields.querySelector('.f-alon'));
+    if (!readOnly) attachLatLonPaste(fields.querySelector('.f-alat'), fields.querySelector('.f-alon'));
+    if (readOnly) fields.querySelectorAll('input').forEach(inp => { inp.readOnly = true; inp.tabIndex = -1; inp.style.cssText += ';background:#f5f5f5;cursor:default;color:#555'; });
     row.appendChild(fields);
-    row.appendChild(makeDeleteBtn());
+    if (!readOnly) row.appendChild(makeDeleteBtn());
     return row;
 }
 
 function appendAid(g, attach) {
-    const row = buildAidRow(g);
+    const row = buildAidRow(g, !canEdit);
     document.getElementById('aidstations-list').appendChild(row);
     if (attach) attach(row);
 }
@@ -3675,11 +3679,6 @@ function collectConfig() {
         const cs = row.querySelector('.f-cs')?.value.trim() || '';
         trackers.push({ callsign: cs, id: row.querySelector('.f-id')?.value.trim() || '', name: row.querySelector('.f-name')?.value.trim() || '' });
     });
-
-    const tracker_style = {
-        icon:        document.getElementById('f-tracker-icon').value || 'circle',
-        label_color: document.getElementById('f-tracker-label-color').value
-    };
 
     const map = {
         lat:  parseFloat(document.getElementById('map-lat').value),
@@ -3767,39 +3766,48 @@ function collectConfig() {
     };
     const event_password       = document.getElementById('f-event-password').value.trim();
     const messaging_password   = document.getElementById('f-messaging-password').value.trim();
-    const blink_duration = parseInt(document.getElementById('f-blink-duration').value, 10);
-    return { event: document.getElementById('f-event').value.trim(), event_password, messaging_password, blink_duration, legend: document.getElementById('f-legend').value, tracker_style, trackers, map, backgrounds, background_url, courses, aidstations, igates, section_visibility, mobile, offline_map };
+    const blink_duration    = parseInt(document.getElementById('f-blink-duration').value, 10);
+    const breadcrumb_count  = bcSliderToCount(parseInt(document.getElementById('f-breadcrumb-count').value, 10));
+    return { event: document.getElementById('f-event').value.trim(), event_password, messaging_password, blink_duration, breadcrumb_count, legend: document.getElementById('f-legend').value, trackers, map, backgrounds, background_url, courses, aidstations, igates, section_visibility, mobile, offline_map };
 }
 
 // ── Populate form from a config object ───────────────────────────────────────
 
 function populateForm(cfg) {
-    document.getElementById('f-event').value          = cfg.event          || '';
-    document.getElementById('f-event-password').value     = cfg.event_password     || '';
-    document.getElementById('f-messaging-password').value = cfg.messaging_password || '';
+    const $v = (id, v) => { const el = document.getElementById(id); if (el) el.value = v ?? ''; };
+    const $c = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+    const $t = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? ''; };
+
+    $v('f-event',              cfg.event);
+    $v('f-event-password',     cfg.event_password);
+    $v('f-messaging-password', cfg.messaging_password);
     const _bd = cfg.blink_duration ?? 5;
-    document.getElementById('f-blink-duration').value = _bd;
-    document.getElementById('f-blink-duration-val').textContent = _bd + 's';
-    document.getElementById('f-legend').value          = cfg.legend         || '';
-    initTrackerStyleSection(cfg.tracker_style || {});
+    $v('f-blink-duration', _bd); $t('f-blink-duration-val', _bd + 's');
+    const _bc = cfg.breadcrumb_count ?? 100;
+    const _bcs = bcCountToSlider(_bc);
+    $v('f-breadcrumb-count', _bcs); $t('f-breadcrumb-count-val', _bc === 0 ? 'Off' : String(_bc));
+    $v('f-legend', cfg.legend);
     const sv = cfg.section_visibility || {};
-    document.getElementById('sv-trackers').checked    = sv.trackers    !== false;
-    document.getElementById('sv-courses').checked     = sv.courses     !== false;
-    document.getElementById('sv-aidstations').checked = sv.aidstations !== false;
-    document.getElementById('sv-igates').checked      = sv.igates      !== false;
-    document.getElementById('sv-backgrounds').checked = sv.backgrounds !== false;
+    $c('sv-trackers',    sv.trackers    !== false);
+    $c('sv-courses',     sv.courses     !== false);
+    $c('sv-aidstations', sv.aidstations !== false);
+    $c('sv-igates',      sv.igates      !== false);
+    $c('sv-backgrounds', sv.backgrounds !== false);
 
     document.getElementById('trackers-list').innerHTML = '';
     (cfg.trackers || []).forEach(t => appendTracker(t));
     dragAdder['trackers-list'] = initDrag('trackers-list');
 
-    document.getElementById('map-lat').value  = cfg.map?.lat  ?? '';
-    document.getElementById('map-lon').value  = cfg.map?.lon  ?? '';
-    document.getElementById('map-zoom').value = cfg.map?.zoom ?? '';
+    $v('map-lat',  cfg.map?.lat);
+    $v('map-lon',  cfg.map?.lon);
+    $v('map-zoom', cfg.map?.zoom);
 
-    document.getElementById('backgrounds-list').innerHTML = '';
-    (cfg.backgrounds || []).forEach(b => appendBg(b));
-    dragAdder['backgrounds-list'] = initDrag('backgrounds-list');
+    const bgList = document.getElementById('backgrounds-list');
+    if (bgList) {
+        bgList.innerHTML = '';
+        (cfg.backgrounds || []).forEach(b => appendBg(b));
+        dragAdder['backgrounds-list'] = initDrag('backgrounds-list');
+    }
 
     document.getElementById('aidstations-list').innerHTML = '';
     (cfg.aidstations || []).forEach(g => appendAid(g));
@@ -3809,14 +3817,17 @@ function populateForm(cfg) {
     (cfg.igates || []).forEach(g => appendIgate(g));
     dragAdder['igates-list'] = initDrag('igates-list');
 
-    document.getElementById('courses-list').innerHTML = '';
-    (cfg.courses || []).forEach(c => appendCourse(c));
-    dragAdder['courses-list'] = initDrag('courses-list');
+    const courseList = document.getElementById('courses-list');
+    if (courseList) {
+        courseList.innerHTML = '';
+        (cfg.courses || []).forEach(c => appendCourse(c));
+        dragAdder['courses-list'] = initDrag('courses-list');
+    }
 
     const mob = cfg.mobile || {};
-    document.getElementById('mobile-enabled').checked = !!mob.enabled;
-    document.getElementById('mobile-pin').value        = mob.pin  || '';
-    document.getElementById('mobile-root').value       = mob.root || '';
+    $c('mobile-enabled', mob.enabled);
+    $v('mobile-pin',     mob.pin);
+    $v('mobile-root',    mob.root);
     const _setSlider = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
     const _setVal    = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
 
@@ -3829,9 +3840,9 @@ function populateForm(cfg) {
     const si = mob.beacon_stat_interval  ?? 120; _setSlider('mobile-stat-interval',  si);  _setVal('mobile-stat-interval-val',  si + 's');
     const sd = mob.beacon_stat_distance  ?? 1.0; _setSlider('mobile-stat-distance',  sd);  _setVal('mobile-stat-distance-val',  parseFloat(sd).toFixed(1) + 'mi');
     const om = cfg.offline_map || {};
-    document.getElementById('offline-radius').value  = om.radius   || '';
-    document.getElementById('offline-maxzoom').value = om.max_zoom || '';
-    document.getElementById('offline-url').value     = om.url      || '';
+    $v('offline-radius',  om.radius);
+    $v('offline-maxzoom', om.max_zoom);
+    $v('offline-url',     om.url);
 }
 
 // ── Use Current Map ───────────────────────────────────────────────────────────
@@ -4156,10 +4167,6 @@ async function doUpdateTrackers() {
         const cs = row.querySelector('.f-cs')?.value.trim() || '';
         trackers.push({ callsign: cs, id: row.querySelector('.f-id')?.value.trim() || '', name: row.querySelector('.f-name')?.value.trim() || '' });
     });
-    const tracker_style = {
-        icon:        document.getElementById('f-tracker-icon').value || 'circle',
-        label_color: document.getElementById('f-tracker-label-color').value
-    };
     const btn = document.getElementById('update-trackers-btn');
     const origText = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
@@ -4167,7 +4174,7 @@ async function doUpdateTrackers() {
         const r = await fetch('?savetrackers', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ trackers, tracker_style })
+            body: JSON.stringify({ trackers })
         });
         const data = await r.json();
         if (r.ok && data.ok) {
@@ -5648,7 +5655,7 @@ async function importGeoSection(type) {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
-attachLatLonPaste(document.getElementById('map-lat'), document.getElementById('map-lon'));
+{ const _ml = document.getElementById('map-lat'), _mn = document.getElementById('map-lon'); if (_ml && _mn) attachLatLonPaste(_ml, _mn); }
 doLoad();
 setInterval(async () => {
     try {

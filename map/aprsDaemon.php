@@ -623,11 +623,12 @@ while (TRUE) {
 				list($lat,$lon) = parseAprsPosition($line);		//extract position if present
 
 				// Extract via path: everything between '>' and ':' minus the destination field
-				$aprsPath = '';
+				$aprsPath = ''; $aprsDevice = '';
 				if (isset($element[1])) {
 					$headerBody = explode(':', $element[1], 2);
 					$headerParts = explode(',', $headerBody[0]);
-					array_shift($headerParts);					//remove destination (e.g. APRS, APX203)
+					$aprsDevice = $headerParts[0] ?? '';		//destination = device-type code (e.g. APK004, APY001)
+					array_shift($headerParts);					//remove destination
 					$aprsPath = implode(',', $headerParts);
 				}
 
@@ -635,6 +636,7 @@ while (TRUE) {
 					if ($tracker["callsign"]==$callsign) {
 						$trackers[$key]["lastUpdate"]=time();	//update time last seen for that callsign
 						$trackers[$key]["path"]=$aprsPath;
+						if ($aprsDevice !== '') $trackers[$key]["radio_type"] = $aprsDevice;
 						if ($lat !== null) {
 							if (!isset($trackerHistory[$callsign])) $trackerHistory[$callsign] = [];
 							$lastCrumb = $trackerHistory[$callsign][0] ?? null;

@@ -32,9 +32,11 @@ mkdir -p "$BACKUP/$HOST"
 
 $SSH "cat /home/pi/direwolf.conf 2>/dev/null || true" \
     > "$BACKUP/$HOST/direwolf.conf"
+sleep 2
 
 $SSH "sudo cat /var/www/html/config.php 2>/dev/null || true" \
     > "$BACKUP/$HOST/config.php"
+sleep 2
 
 if [[ ! -s "$BACKUP/$HOST/direwolf.conf" ]]; then
     echo "WARNING: direwolf.conf is empty or missing — will not restore it."
@@ -53,6 +55,7 @@ $SSH "sudo pkill -f 'SCREEN.*direwolf' 2>/dev/null || true; \
       true"
 
 # ── Step 3: Run install.sh in background (survives SSH timeout/reboot) ───────
+sleep 2
 echo "--- Launching install.sh in background (takes 7–21 min on Pi 4)..."
 $SSH "nohup bash -c 'bash <(curl -fsSL https://marsaprs.org/igate/install.sh) \
     > /home/pi/install-v5.log 2>&1; echo DONE >> /home/pi/install-v5.log' \
@@ -71,21 +74,25 @@ while true; do
 done
 
 # ── Step 4: Restore configs ───────────────────────────────────────────────────
+sleep 2
 echo "--- Restoring configs..."
 
 if [[ -s "$BACKUP/$HOST/direwolf.conf" ]]; then
     $SCP "$BACKUP/$HOST/direwolf.conf" "pi@$HOST:/home/pi/direwolf.conf"
     echo "    direwolf.conf restored."
 fi
+sleep 2
 
 if [[ -s "$BACKUP/$HOST/config.php" ]]; then
     $SCP "$BACKUP/$HOST/config.php" "pi@$HOST:/tmp/config.php.restore"
+    sleep 2
     $SSH "sudo mv /tmp/config.php.restore /var/www/html/config.php && \
           sudo chown www-data:www-data /var/www/html/config.php"
     echo "    config.php restored."
 fi
 
 # ── Step 5: Replace v4 crontab and remove StartAllApps.sh ────────────────────
+sleep 2
 echo "--- Installing v5 crontab..."
 $SSH "crontab - << 'EOF'
 # K6DRK iGate v5.0
@@ -101,11 +108,29 @@ $SSH "crontab - << 'EOF'
 # Enable NetBird after any reboot
 @reboot /home/pi/netbird-up.sh
 EOF
-rm -f /home/pi/StartAllApps.sh"
+rm -f /home/pi/direwolf-start.sh \
+         /home/pi/direwatch-start.sh \
+         /home/pi/CheckNetBird.sh \
+         /home/pi/NetbirdUp.sh \
+         /home/pi/StatsRequestListener.php \
+         /home/pi/StatsRequestListener-start.sh \
+         /home/pi/add_wifi.php \
+         /home/pi/getIgateList.sh \
+         /home/pi/check-swapping.sh \
+         /home/pi/auto-update2.sh \
+         /home/pi/install.sh \
+         /home/pi/StartAllApps.sh"
 
 # ── Step 6: Reboot ────────────────────────────────────────────────────────────
 echo "--- Rebooting $HOST..."
 $SSH "sudo reboot" || true
+
+# ── Step 7: Update known_hosts (fresh OS generates new SSH host keys) ─────────
+echo "--- Waiting 75s for reboot, then updating known_hosts..."
+sleep 75
+ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null && \
+    echo "    known_hosts updated for $HOST." || \
+    echo "    WARNING: ssh-keyscan failed — may need to run manually: ssh-keyscan -H $HOST >> ~/.ssh/known_hosts"
 
 echo ""
 echo "=== Migration complete. $HOST is rebooting. ==="
@@ -113,4 +138,4 @@ echo "    Install log saved to: $BACKUP/$HOST/install.log"
 echo "    Config backups in:    $BACKUP/$HOST/"
 echo ""
 echo "    After reboot (~60s), verify with:"
-echo "    sshpass -p $PASS ssh $SSHOPTS pi@$HOST 'systemctl is-active direwolf direwatch'"
+echo "    sshpass -p $PASS ssh $SSHOPTS pi@$HOST 'systemctl is-active direwolf direwatch stats-listener'"

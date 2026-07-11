@@ -22,7 +22,7 @@ log "=== Display auto-update starting ==="
 log "Downloading files.tar.gz..."
 wget -qO "$TMP/files.tar.gz" \
     --header="Pragma: no-cache" --header="Cache-Control: no-cache" \
-    "$BASE/files.tar.gz" || { log "Download failed"; exit 1; }
+    "$BASE/files.tar.gz?v=$(date +%s)" || { log "Download failed"; exit 1; }
 tar -xzf "$TMP/files.tar.gz" --warning=no-unknown-keyword -C "$TMP"
 
 # Home directory scripts and utilities
@@ -44,6 +44,14 @@ log "Updating systemd services..."
 sudo rsync -a "$TMP/systemd/" /etc/systemd/system/
 sudo systemctl daemon-reload
 
+# Journald volatile storage (reduces SD card writes; /tmp is already tmpfs on Trixie)
+sudo mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nStorage=volatile\n' | sudo tee /etc/systemd/journald.conf.d/volatile.conf > /dev/null
+sudo systemctl restart systemd-journald 2>/dev/null || true
+
+# UFW: ensure DNS response packets (UDP src port 53) are not blocked
+sudo ufw allow in proto udp from any port 53 to any 2>/dev/null || true
+
 # Daemon scripts to /usr/local/bin
 log "Updating daemon scripts..."
 for script in aprs-monitor.sh wifi-watchdog.sh wifi-restored.sh; do
@@ -52,6 +60,7 @@ for script in aprs-monitor.sh wifi-watchdog.sh wifi-restored.sh; do
         sudo chmod +x "/usr/local/bin/$script"
     fi
 done
+sudo systemctl restart aprs-monitor 2>/dev/null || true
 
 # Download latest WiFi list from marsaprs.org
 log "Downloading WiFi list..."

@@ -19,6 +19,7 @@ import json
 import time
 import os
 import re
+import subprocess
 import sys
 
 NETBIRD_DIR = '/var/www/html/netbird'
@@ -46,7 +47,7 @@ def load_yaml():
     for block in re.split(r'(?=^- )', raw, flags=re.MULTILINE):
         if not block.strip():
             continue
-        d = {'name': '', 'host': '', 'ip': '', 'group': '', 'enabled': True}
+        d = {'name': '', 'host': '', 'ip': '', 'group': '', 'enabled': True, 'local': False}
         for line in block.splitlines():
             m = re.match(r'[\s\-]*(\w+):\s*(.*)', line)
             if m:
@@ -54,11 +55,54 @@ def load_yaml():
                 v = m.group(2).strip().strip('"\'')
                 if k == 'enabled':
                     d['enabled'] = v.lower() in ('true', '1')
+                elif k == 'local':
+                    d['local'] = v.lower() in ('true', '1')
                 elif k in d:
                     d[k] = v
         if d['ip']:
             devices.append(d)
     return devices
+
+
+def _run(cmd):
+    try:
+        return subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL, timeout=5).decode().strip()
+    except Exception:
+        return ''
+
+
+def collect_local_stats():
+    """Collect the same stats the PHP StatsRequestListener would return, without UDP."""
+    hostname = _run('hostname').ljust(11)
+
+    # /proc/loadavg is simpler and more reliable than parsing uptime output
+    loadavg = _run('cat /proc/loadavg').split()
+    load = (', '.join(loadavg[:3]) if len(loadavg) >= 3 else '').ljust(14)
+
+    # /sys thermal zone is world-readable; vcgencmd requires the video group
+    try:
+        raw_temp = int(open('/sys/class/thermal/thermal_zone0/temp').read().strip())
+        temp = f"{raw_temp / 1000:.1f}'C"
+    except Exception:
+        temp = _run('vcgencmd measure_temp').split('=')[1] if '=' in _run('vcgencmd measure_temp') else ''
+
+    disk_out = _run("df -h / | awk 'NR==2{print $4}'")
+    disk = disk_out if disk_out else ''
+
+    throttled_out = _run('vcgencmd get_throttled')
+    throttled = throttled_out.split('=')[1] if '=' in throttled_out else '0x0'
+
+    ssid_out = _run("nmcli -t -f active,ssid dev wifi | grep yes")
+    ssid = ssid_out[4:30] if ssid_out else '<Ethernet>'
+
+    ip_out = _run("netbird status | grep 'NetBird IP'")
+    nb_ip = ip_out[12:].rstrip('/16').strip().ljust(15) if ip_out else ''.ljust(15)
+
+    bits = int(throttled, 16) if throttled.startswith('0x') else 0
+    low_v = '  Low Voltage' if bits & 1 else ''
+    hi_t  = '  High Temp'   if bits & 8 else ''
+
+    return f'{hostname}  Load={load}  Temp={temp}  Disk={disk}  Throttled={throttled}  {nb_ip}  SSID={ssid}  {low_v}{hi_t}'
 
 
 def repeat_seconds():
@@ -119,13 +163,28 @@ def broadcast_poll(ips):
     return responses
 
 
+def local_ips():
+    """Return the set of IP addresses assigned to this machine."""
+    try:
+        return set(subprocess.check_output(['hostname', '-I'],
+                   stderr=subprocess.DEVNULL).decode().split())
+    except Exception:
+        return set()
+
+
 def poll_all(devices, stats):
-    now     = int(time.time())
-    enabled = [d for d in devices if d['enabled']]
+    now      = int(time.time())
+    enabled  = [d for d in devices if d['enabled']]
     existing = {sd['ip']: sd for sd in stats.get('devices', [])}
 
-    ips       = [d['ip'] for d in enabled]
-    responses = broadcast_poll(ips)
+    my_ips     = local_ips()
+    remote_ips = [d['ip'] for d in enabled if d['ip'] not in my_ips]
+    responses  = broadcast_poll(remote_ips)
+
+    # Collect stats directly for any device whose IP belongs to this machine
+    for d in enabled:
+        if d['ip'] in my_ips:
+            responses[d['ip']] = collect_local_stats()
 
     out = []
     for d in enabled:
@@ -153,7 +212,7 @@ def poll_all(devices, stats):
 def poll_one(ip, stats):
     now      = int(time.time())
     existing = {sd['ip']: sd for sd in stats.get('devices', [])}
-    responses = broadcast_poll([ip])
+    responses = {ip: collect_local_stats()} if ip in local_ips() else broadcast_poll([ip])
     entry    = existing.get(ip, {'ip': ip})
     entry['ip']           = ip
     entry['last_request'] = now

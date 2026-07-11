@@ -9,8 +9,8 @@
  * ©2025 Doug Kaye, K6DRK <doug@rds.com>
  */
 
-session_start();
-if (empty($_SESSION['stats_auth']) && empty($_SESSION['aprs_admin_authed'])) {
+require_once '/var/www/html/auth/auth.php';
+if (!has_permission('netbird.view') && !has_permission('netbird.admin')) {
     http_response_code(401);
     header('Content-Type: application/json');
     echo json_encode(['error' => 'Authentication required']);

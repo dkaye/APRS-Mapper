@@ -15,7 +15,7 @@
  *   ?config  Map/background/course/tracker config from config.yaml (ETag-cached)
  */
 
-define('WEB_VERSION', '1.18.5+5');
+define('WEB_VERSION', '1.19.0+7');
 
 $trackerStatusFilename = 'trackers.json';
 
@@ -96,13 +96,14 @@ if (isset($_GET['json'])) {
 		if ($am['carrier'] !== null) $t['carrier'] = $am['carrier'];
 		if ($am['ham_callsign'] !== null) {
 			$t['ham_callsign'] = $am['ham_callsign'];
-			// Absorb ham radio position if it is fresher than the injection position
+			// Absorb ham radio position and device type if available
 			$hd = $hamData[$am['ham_callsign']] ?? null;
 			if ($hd && ($hd['lastUpdate'] ?? 0) > ($t['lastUpdate'] ?? 0) && $hd['lat'] !== null) {
 				$t['lat'] = $hd['lat']; $t['lon'] = $hd['lon'];
 				$t['lastUpdate'] = $hd['lastUpdate'];
 				$t['path'] = $hd['path'] ?? $t['path'];
 			}
+			if ($hd && !empty($hd['radio_type'])) $t['radio_type'] = $hd['radio_type'];
 		}
 		if ($am['lat'] !== null && $t['lat'] === null) { $t['lat'] = $am['lat']; $t['lon'] = $am['lon']; }
 		if ($am['lastUpdate'] > ($t['lastUpdate'] ?? 0)) {
@@ -163,6 +164,7 @@ if (isset($_GET['json'])) {
 		'default_event'      => $defaultEvent,
 		'password_required'  => !empty($cfg['event_password'] ?? ''),
 		'blink_duration'     => (int)($cfg['blink_duration'] ?? 5),
+		'breadcrumb_count'   => (int)($cfg['breadcrumb_count'] ?? 100),
 		'mobile_beacons'     => $_bc,
 		'trackers'           => $trackers,
 		'igate_beacons'      => $readBeaconFile($igatesStatusFilename),
@@ -172,12 +174,62 @@ if (isset($_GET['json'])) {
 }
 
 if (isset($_GET['history'])) {
-	$cfgReal      = realpath('config.yaml');
-	$histPath     = $cfgReal ? dirname($cfgReal) . '/tracker_history.yaml' : null;
-	$mobileHist   = __DIR__ . '/mobile_history.yaml';
-	$mtime1       = ($histPath && file_exists($histPath))   ? filemtime($histPath)   : 0;
-	$mtime2       = file_exists($mobileHist)                ? filemtime($mobileHist) : 0;
-	$etag         = '"' . $mtime1 . '-' . $mtime2 . '"';
+	$cfgReal     = realpath('config.yaml');
+	$analyzerDb  = '/home/pi/analyzer/src/aprs.db';
+
+	// Prefer analyzer SQLite DB: it has the full beacon history for all trackers.
+	// Fall back to tracker_history.yaml when the DB is unavailable.
+	if (file_exists($analyzerDb)) {
+		try {
+			require_once 'config_parse.php';
+			$_hcfg     = parseConfigYaml('config.yaml');
+			$_evName   = $_hcfg['event'] ?? '';
+			$_hdb      = null;
+			$_evId     = null;
+			if ($_evName !== '') {
+				$_hdb = new SQLite3($analyzerDb, SQLITE3_OPEN_READONLY);
+				$_hdb->busyTimeout(500);
+				$_evRow = $_hdb->querySingle("SELECT id FROM events WHERE name='" . $_hdb->escapeString($_evName) . "'");
+				$_evId  = ($_evRow !== false && $_evRow !== null) ? (int)$_evRow : null;
+			}
+			if ($_evId !== null) {
+				$_maxTs = (int)$_hdb->querySingle("SELECT CAST(MAX(time) AS INTEGER) FROM beacons WHERE event_id=$_evId");
+				$etag   = '"db-' . $_evId . '-' . $_maxTs . '"';
+				header('ETag: ' . $etag);
+				header('Cache-Control: no-cache');
+				if (isset($_SERVER['HTTP_IF_NONE_MATCH']) && $_SERVER['HTTP_IF_NONE_MATCH'] === $etag) {
+					http_response_code(304);
+					$_hdb->close();
+					exit;
+				}
+				// Fetch beacons newest-first; limit total rows to keep query fast.
+				$_res  = $_hdb->query("SELECT callsign, latitude, longitude, CAST(time AS INTEGER) as ts, path FROM beacons WHERE event_id=$_evId ORDER BY callsign, time DESC LIMIT 20000");
+				$_byCs = []; $_seen = [];
+				while ($_r = $_res->fetchArray(SQLITE3_ASSOC)) {
+					$_cs = $_r['callsign'];
+					if (!isset($_byCs[$_cs])) $_byCs[$_cs] = [];
+					if (count($_byCs[$_cs]) >= 100) continue;
+					// 5-second bucket dedup (APRS-IS and direct injection produce near-duplicate rows)
+					$_bk = $_cs . ':' . (int)($_r['ts'] / 5);
+					if (isset($_seen[$_bk])) continue;
+					$_seen[$_bk] = true;
+					$_byCs[$_cs][] = ['lat' => $_r['latitude'], 'lon' => $_r['longitude'], 'ts' => $_r['ts'], 'path' => $_r['path'] ?? ''];
+				}
+				$_hdb->close();
+				header('Content-Type: application/json');
+				echo json_encode($_byCs);
+				exit;
+			}
+			if ($_hdb) $_hdb->close();
+		} catch (Exception $_he) { /* fall through to YAML */ }
+	}
+
+	// YAML fallback
+	$histPath   = $cfgReal ? dirname($cfgReal) . '/tracker_history.yaml' : null;
+	$mobileHist = __DIR__ . '/mobile_history.yaml';
+	$mtime1     = ($histPath && file_exists($histPath))   ? filemtime($histPath)   : 0;
+	$mtime2     = file_exists($mobileHist)                ? filemtime($mobileHist) : 0;
+	$etag       = '"' . $mtime1 . '-' . $mtime2 . '"';
 	header('ETag: ' . $etag);
 	header('Cache-Control: no-cache');
 	if (isset($_SERVER['HTTP_IF_NONE_MATCH']) && $_SERVER['HTTP_IF_NONE_MATCH'] === $etag) {
@@ -185,8 +237,6 @@ if (isset($_GET['history'])) {
 		exit;
 	}
 	header('Content-Type: application/json');
-
-	// Shared YAML history parser
 	$parseHistYaml = function($path) {
 		$out = [];
 		$fh = fopen($path, 'r');
@@ -216,7 +266,6 @@ if (isset($_GET['history'])) {
 		unset($e);
 		return $out;
 	};
-
 	$result = ($histPath && file_exists($histPath)) ? $parseHistYaml($histPath) : [];
 	if (file_exists($mobileHist)) {
 		foreach ($parseHistYaml($mobileHist) as $cs => $entries) $result[$cs] = $entries;
@@ -513,6 +562,35 @@ function decToAprsLon(float $lon): string {
 	return sprintf('%03d%05.2f%s', $d, $m, $lon >= 0 ? 'E' : 'W');
 }
 
+function injectAnalyzerBeacon(string $callsign, string $name, float $lat, float $lon, int $ts, string $eventName): void {
+	$dbPath = '/home/pi/analyzer/src/aprs.db';
+	if (!file_exists($dbPath) || !is_writable($dbPath)) return;
+	try {
+		$db = new SQLite3($dbPath);
+		$db->busyTimeout(1000);
+		$db->exec("CREATE TABLE IF NOT EXISTS tracker_names (callsign TEXT PRIMARY KEY, name TEXT NOT NULL)");
+		if ($name !== '') {
+			$s = $db->prepare("INSERT INTO tracker_names (callsign,name) VALUES(?,?) ON CONFLICT(callsign) DO UPDATE SET name=excluded.name");
+			$s->bindValue(1, $callsign, SQLITE3_TEXT); $s->bindValue(2, $name, SQLITE3_TEXT); $s->execute();
+		}
+		if ($eventName === '') { $db->close(); return; }
+		$s = $db->prepare("SELECT id FROM events WHERE name=?");
+		$s->bindValue(1, $eventName, SQLITE3_TEXT);
+		$row = $s->execute()->fetchArray(SQLITE3_ASSOC);
+		if (!$row) { $db->close(); return; }
+		$s = $db->prepare("INSERT INTO beacons (callsign,latitude,longitude,time,receiver,event_id,path) VALUES(?,?,?,?,?,?,?)");
+		$s->bindValue(1, $callsign, SQLITE3_TEXT);
+		$s->bindValue(2, $lat,      SQLITE3_FLOAT);
+		$s->bindValue(3, $lon,      SQLITE3_FLOAT);
+		$s->bindValue(4, $ts,       SQLITE3_INTEGER);
+		$s->bindValue(5, 'MARSQ',   SQLITE3_TEXT);
+		$s->bindValue(6, $row['id'],SQLITE3_INTEGER);
+		$s->bindValue(7, '',        SQLITE3_TEXT);
+		$s->execute();
+		$db->close();
+	} catch (Exception $e) { /* don't break beaconing if analyzer DB unavailable */ }
+}
+
 function injectAprsPacket(string $callsign, float $lat, float $lon, string $root): void {
 	$passcode = aprsPasscode($root);
 	$packet   = "{$callsign}>APRS,TCPIP*:!" . decToAprsLat($lat) . '/' . decToAprsLon($lon) . ">Mobile\r\n";
@@ -774,14 +852,14 @@ if (isset($_GET['mobile'])) {
 		$updMode = in_array($rawMode, ['walk_run', 'cycle', 'drive', 'stationary', 'unknown'], true) ? $rawMode : '';
 		if (!$token) { http_response_code(400); echo json_encode(['error' => 'Missing token']); exit; }
 
-		$found = false; $blocked = false; $foundCallsign = null; $foundHamCallsign = null; $pendingMsgs = []; $pendingMode = '';
+		$found = false; $blocked = false; $foundCallsign = null; $foundHamCallsign = null; $foundName = ''; $pendingMsgs = []; $pendingMode = '';
 		$shouldInject = false;
-		modifyMobileTrackers($mobileFile, function($data) use ($token, $lat, $lon, $ackIds, $updMode, &$found, &$blocked, &$foundCallsign, &$foundHamCallsign, &$pendingMsgs, &$pendingMode, &$shouldInject) {
+		modifyMobileTrackers($mobileFile, function($data) use ($token, $lat, $lon, $ackIds, $updMode, &$found, &$blocked, &$foundCallsign, &$foundHamCallsign, &$foundName, &$pendingMsgs, &$pendingMode, &$shouldInject) {
 			$now = time();
 			foreach ($data as &$t) {
 				if (empty($t['token']) || !hash_equals($t['token'], $token)) continue;
 				if (!empty($t['blocked'])) { $blocked = true; break; }
-				$found = true; $foundCallsign = $t['callsign'] ?? null; $foundHamCallsign = $t['ham_callsign'] ?? null;
+				$found = true; $foundCallsign = $t['callsign'] ?? null; $foundHamCallsign = $t['ham_callsign'] ?? null; $foundName = $t['name'] ?? '';
 				$pendingMsgs = $t['pending_msgs'] ?? [];
 				$pendingMode = $t['pending_mode'] ?? '';
 				if ($ackIds) $t['pending_msgs'] = array_values(array_filter($t['pending_msgs'] ?? [], fn($m) => !in_array((int)$m['id'], $ackIds)));
@@ -819,6 +897,8 @@ if (isset($_GET['mobile'])) {
 		if ($shouldInject) {
 			$root = strtoupper(substr(preg_replace('/[^A-Za-z0-9]/', '', $mobileCfg['root'] ?? ''), 0, 5));
 			if ($root !== '' && $foundCallsign) injectAprsPacket($foundCallsign, $lat, $lon, $root);
+			if ($foundCallsign && $lat !== null && $lon !== null)
+				injectAnalyzerBeacon($foundCallsign, $foundName, $lat, $lon, time(), $_mcfg['event'] ?? '');
 		}
 		$resp = ['ok' => true, 'messages' => $pendingMsgs];
 		if ($pendingMode !== '') $resp['set_mode'] = $pendingMode;
@@ -966,7 +1046,11 @@ if ($_eventPw !== '') {
         if (!empty($_GET['operator'])) {
             setcookie($__opCookie, trim($_GET['operator']), $__cookieOpts);
         }
-        header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
+        // Preserve non-autologin params (e.g. ?kiosk=1) in the redirect
+        $params = $_GET;
+        unset($params['autologin'], $params['operator']);
+        $base = strtok($_SERVER['REQUEST_URI'], '?');
+        header('Location: ' . $base . ($params ? '?' . http_build_query($params) : ''));
         exit;
     }
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['map_event_pw'])) {
@@ -999,6 +1083,8 @@ input[type=password]:focus{border-color:#2980b9}
 .err{color:#c0392b;font-size:13px;margin-top:8px;min-height:20px}
 button{width:100%;margin-top:20px;padding:12px;background:#2980b9;color:#fff;border:none;border-radius:6px;font-size:15px;font-weight:700;cursor:pointer;letter-spacing:.02em}
 button:hover{background:#2471a3}
+.cancel{display:block;text-align:center;margin-top:14px;font-size:13px;color:#888;cursor:pointer;text-decoration:none}
+.cancel:hover{color:#555}
 </style>
 </head>
 <body>
@@ -1013,6 +1099,7 @@ button:hover{background:#2471a3}
     <div class="err"><?= $_pwError ? 'Incorrect password — please try again.' : '' ?></div>
     <button type="submit">Enter</button>
   </form>
+  <a class="cancel" onclick="history.back()">Cancel</a>
 </div>
 </body>
 </html><?php
@@ -1862,7 +1949,6 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 			<button id="share-loc-btn" class="sidebar-btn" style="display:none">Share Location</button>
 			<a href="admin/" id="admin-btn" class="sidebar-btn">Admin</a>
 			<button id="msg-messaging-btn" class="sidebar-btn" style="display:none">Messaging</button>
-			<button id="fs-btn" class="sidebar-btn" style="display:none">Full Screen</button>
 		</div>
 	</div>
 </div>
@@ -1950,7 +2036,6 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 			<a href="admin/" class="m-action-btn">Admin</a>
 			<button id="m-help-btn" class="m-action-btn">Help</button>
 			<button id="m-share-loc-btn" class="m-action-btn" style="display:none">Share Location</button>
-			<button id="m-fs-btn" class="m-action-btn" style="display:none">Full Screen</button>
 		</div>
 	</div>
 </div><!-- #mobile-drawer -->
@@ -2304,7 +2389,7 @@ new (L.Control.extend({
 			L.DomEvent.on(exitBtn, 'click', () => { location.href = location.pathname; });
 			L.DomEvent.disableClickPropagation(exitBtn);
 			const txt = L.DomUtil.create('span', '', d);
-			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.18.5+5 &copy; 2026 Doug Kaye (K6DRK)';
+			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.19.0+7 &copy; 2026 Doug Kaye (K6DRK)';
 		} else {
 			if (!isMobile) {
 				const exitBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
@@ -2322,8 +2407,8 @@ new (L.Control.extend({
 			}
 			const ftxt = L.DomUtil.create('span', '', d);
 			ftxt.innerHTML = isMobile
-				? 'MARS APRS v1.18.5+5 &copy; 2026 Doug Kaye (K6DRK)'
-				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.18.5+5 &copy; 2026 Doug Kaye (K6DRK)';
+				? 'MARS APRS v1.19.0+7 &copy; 2026 Doug Kaye (K6DRK)'
+				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.19.0+7 &copy; 2026 Doug Kaye (K6DRK)';
 			if (isMobile) d.style.fontSize = '10px';
 		}
 		return d;
@@ -2395,6 +2480,7 @@ let   courseOrder          = [];
 const lastBeacons          = {};
 const blinkTimers          = {};
 let   _blinkDuration       = 5000; // ms; overridden by blink_duration from ?json
+let   _breadcrumbCount     = 100;  // overridden by breadcrumb_count from ?json
 let   _histBlinkTimer      = null; // setInterval handle for history-dot blinking
 // Beacon settings; overridden from ?config mobile_beacons
 let _beaconIntervalMs = [60000, 30000, 15000, 120000, 60000]; // Walk, Cycle, Drive, Stationary, Unknown
@@ -2404,6 +2490,24 @@ const igateFlashTimers     = {};	// callsign → setTimeout id for green blink
 const lastAidBeacons       = {};	// callsign → lastBeacon timestamp (from aidstations.json)
 const aidFlashTimers       = {};	// callsign → setTimeout id for green blink
 const historyDots          = {};	// callsign → [L.circleMarker, ...]
+// APRS destination-field device-type codes → human-readable radio model names
+const APRS_DEVICES = {
+	APK003:'Kenwood TH-D7A', APK004:'Kenwood TH-D72A/TM-D710', APK005:'Kenwood TH-D74A',
+	APY001:'Yaesu VX-8G',    APY008:'Yaesu FT1D/FT2D',         APY300:'Yaesu FTM-350',
+	APY350:'Yaesu FTM-350R', APY400:'Yaesu FTM-400XDR',        APYS:'Yaesu HT',
+	APDR:'APRSDroid',        APDW:'DireWolf',                   APXG:'Xastir',
+	APAG:'AGWtracker',       APOT:'OpenTracker',                APTT4:'TinyTrak4',
+	APUDR:'Uniden DR',       APTR:'Pocket Tracker',             APW:'WinAPRS',
+};
+function aprsDeviceName(code) {
+	if (!code || code === 'APRS') return null;
+	if (APRS_DEVICES[code]) return APRS_DEVICES[code];
+	// Prefix match (e.g. APDR15 → APRSDroid)
+	for (const [prefix, name] of Object.entries(APRS_DEVICES)) {
+		if (prefix.length >= 3 && code.startsWith(prefix)) return name;
+	}
+	return code; // show raw code if unrecognised
+}
 const DEFAULT_COURSE_COLOR = '#2196f3';
 const LS_COURSE_COLORS     = 'aprs_course_colors';
 let   currentEventName     = '';
@@ -2662,7 +2766,7 @@ function refreshTrackerIcon(callsign) {
 	const m = markers[callsign];
 	if (!m) return;
 	const enlarged = callsign === selectedCallsign && trackerClickCount === 1;
-	m.setIcon(makeTrackerIcon(m._mobile && m._hamCallsign ? 'triangle' : m._mobile ? 'square' : trackerStyle.icon, m._trackerColor, trackerIconSize(callsign)));
+	m.setIcon(makeTrackerIcon(m._mobile && m._hamCallsign ? 'triangle' : m._mobile ? 'square' : 'circle', m._trackerColor, trackerIconSize(callsign)));
 	const tipEl = m.getTooltip()?.getElement();
 	if (tipEl) tipEl.classList.toggle('label-force-show', enlarged);
 }
@@ -2796,86 +2900,101 @@ function showTrackerHistory(callsign, color) {
 		})
 		.then(hist => {
 			if (!hist) return;
-			// For hybrid trackers, merge injection-callsign history with ham-callsign history.
-			// The two sources are separate physical devices so positions will differ slightly;
-			// sort chronologically and only drop exact lat/lon duplicates.
-			const hamCallsign = markers[callsign]?._hamCallsign || null;
-			const raw = [
-				...(hist[callsign]    || []),
-				...(hamCallsign ? (hist[hamCallsign] || []) : [])
-			].sort((a, b) => b.ts - a.ts);
-			// Drop consecutive exact duplicates (same beacon echoed by multiple iGates)
-			const entries = raw.filter((e, i) => i === 0 || e.lat !== raw[i-1].lat || e.lon !== raw[i-1].lon);
-			if (!entries.length) return;
 
-			// Remove stale layers before redrawing
+			const hamCallsign     = markers[callsign]?._hamCallsign || null;
+			const isMobileTracker = markers[callsign]?._mobile || false;
+
+			// Build a deduplicated, capped entry list for one callsign.
+			const buildEntries = (cs, isCell) => {
+				if (!hist[cs] || !hist[cs].length) return [];
+				const raw = [...hist[cs]]
+					.sort((a, b) => b.ts - a.ts)
+					.map(e => ({...e, _isCell: isCell}));
+				const deduped = raw.filter((e, i) => i === 0 || e.lat !== raw[i-1].lat || e.lon !== raw[i-1].lon);
+				if (_breadcrumbCount === 0) return [];
+				return _breadcrumbCount < deduped.length ? deduped.slice(0, _breadcrumbCount) : deduped;
+			};
+
+			// For hybrid trackers, cellular and radio trails are drawn independently —
+			// no cross-type segments. The cellular trail connects to the current marker;
+			// the radio trail ends at its own last known position.
+			const cellEntries  = buildEntries(callsign,   isMobileTracker);
+			const radioEntries = hamCallsign ? buildEntries(hamCallsign, false) : [];
+
+			if (!cellEntries.length && !radioEntries.length) return;
+
 			if (historyDots[callsign]) { historyDots[callsign].forEach(d => d.remove()); }
-
 			const layers = [];
 
-			// Dots — newest first in entries array
-			entries.forEach(e => {
-				const dot = L.circleMarker([e.lat, e.lon], {
-					radius: scaledRadius(r), color: color, fillColor: color,
-					fillOpacity: 0.5, weight: 1.5, pane: 'historyPane'
+			const _carrier    = markers[callsign]?._carrier    || null;
+			const _radioModel = markers[callsign]?._radioModel || null;
+
+			// Draw dots + connecting lines for one trail.
+			// connectToCurrent: true for cellular (extends to live marker), false for radio.
+			const drawTrail = (trailEntries, connectToCurrent) => {
+				const dotColor = trailEntries[0]._isCell ? '#27ae60' : '#e74c3c';
+
+				// Dots — newest first
+				trailEntries.forEach(e => {
+					const dot = L.circleMarker([e.lat, e.lon], {
+						radius: scaledRadius(r), color: dotColor, fillColor: dotColor,
+						fillOpacity: 0.5, weight: 1.5, pane: 'historyPane'
+					});
+					dot._baseRadius = r;
+					const tipHtml = () => {
+						const time = `<div class="aprs-path-time">${esc(relativeTime(e.ts))}</div>`;
+						if (e._isCell) {
+							let th = time;
+							if (_carrier) th += `<div style="color:#888;font-size:11px;margin-top:3px">${esc(_carrier)}</div>`;
+							return th;
+						}
+						const label = `<div style="color:#888;font-size:11px;margin-top:3px">${esc(_radioModel || 'Radio')}</div>`;
+						return `<div style="min-width:260px">${time}${label}${formatAprsPath(e.path)}</div>`;
+					};
+					dot.addTo(map);
+					layers.push(dot);
+					if (isMobile) {
+						const hit = L.circleMarker([e.lat, e.lon], {
+							radius: Math.max(scaledRadius(r) + 12, 18), stroke: false,
+							fillOpacity: 0, fillColor: dotColor, pane: 'historyPane'
+						});
+						hit.on('click', function(ev) {
+							L.DomEvent.stopPropagation(ev);
+							L.popup({ className: 'aprs-path-popup', autoPanPadding: [16, 16], offset: [0, -2] })
+								.setLatLng(dot.getLatLng()).setContent(tipHtml()).openOn(map);
+						});
+						hit.addTo(map);
+						layers.push(hit);
+					} else {
+						dot.bindTooltip(tipHtml(), { sticky: false, direction: 'top', className: 'aprs-path-tip' });
+						dot.on('mouseover', function() { dot.setTooltipContent(tipHtml()); });
+					}
 				});
-				dot._baseRadius = r;
-				const _carrier = markers[callsign]?._carrier || null;
-				const tipHtml = () => {
-					let th = `<div class="aprs-path-time">${esc(relativeTime(e.ts))}</div>`;
-					if (e.path) th += formatAprsPath(e.path);
-					if (_carrier) th += `<div style="color:#888;font-size:11px;margin-top:3px">${esc(_carrier)}</div>`;
-					return th;
-				};
-				dot.addTo(map);
-				layers.push(dot);
-				if (isMobile) {
-					// No hover on touch. A larger, transparent hit circle on top of
-					// the dot widens the tap target; tapping opens a popup (auto-pans
-					// into view, dismissable) instead of an off-screen tooltip.
-					const hit = L.circleMarker([e.lat, e.lon], {
-						radius: Math.max(scaledRadius(r) + 12, 18), stroke: false,
-						fillOpacity: 0, fillColor: color, pane: 'historyPane'
-					});
-					hit.on('click', function(ev) {
-						L.DomEvent.stopPropagation(ev);
-						L.popup({ className: 'aprs-path-popup', autoPanPadding: [16, 16], offset: [0, -2] })
-							.setLatLng(dot.getLatLng()).setContent(tipHtml()).openOn(map);
-					});
-					hit.addTo(map);
-					layers.push(hit);
-				} else {
-					dot.bindTooltip(tipHtml(), { sticky: false, direction: 'top', className: 'aprs-path-tip' });
-					dot.on('mouseover', function() { dot.setTooltipContent(tipHtml()); });
-				}
-			});
 
-			// Build ordered path: oldest history → … → newest history → current position
-			const histPts = [...entries].reverse().map(e => [e.lat, e.lon]);
-			const cur = markers[callsign];
-			const allPts = cur ? [...histPts, [cur.getLatLng().lat, cur.getLatLng().lng]] : histPts;
+				// Connecting lines oldest → newest [→ current marker if cellular]
+				const ordered = [...trailEntries].reverse();
+				const pts = ordered.map(e => [e.lat, e.lon]);
+				const cur = connectToCurrent ? markers[callsign] : null;
+				if (cur) pts.push([cur.getLatLng().lat, cur.getLatLng().lng]);
 
-			if (allPts.length > 1) {
-				// Dotted connecting line
-				const line = L.polyline(allPts, {
-					color, weight: 3, dashArray: '4 7', opacity: 0.80, pane: 'historyPane'
-				}).addTo(map);
-				layers.push(line);
-
-				// One arrowhead per segment, placed at the midpoint and rotated to bearing
-				for (let i = 0; i < allPts.length - 1; i++) {
-					const [lat1, lon1] = allPts[i], [lat2, lon2] = allPts[i + 1];
+				for (let i = 0; i < pts.length - 1; i++) {
+					const [lat1, lon1] = pts[i], [lat2, lon2] = pts[i + 1];
+					layers.push(L.polyline([[lat1, lon1], [lat2, lon2]], {
+						color: dotColor, weight: 3, dashArray: '4 7', opacity: 0.80, pane: 'historyPane'
+					}).addTo(map));
 					const brg = bearingTo(lat1, lon1, lat2, lon2);
-					const arw = L.marker([(lat1 + lat2) / 2, (lon1 + lon2) / 2], {
+					layers.push(L.marker([(lat1 + lat2) / 2, (lon1 + lon2) / 2], {
 						icon: L.divIcon({
-							html: `<svg width="20" height="20" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(${brg}deg);display:block"><polygon points="10,2 18,18 10,12 2,18" fill="${color}" opacity="0.85"/></svg>`,
+							html: `<svg width="20" height="20" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(${brg}deg);display:block"><polygon points="10,2 18,18 10,12 2,18" fill="${dotColor}" opacity="0.85"/></svg>`,
 							className: '', iconSize: [20, 20], iconAnchor: [10, 10]
 						}),
 						pane: 'historyPane', interactive: false
-					}).addTo(map);
-					layers.push(arw);
+					}).addTo(map));
 				}
-			}
+			};
+
+			if (cellEntries.length)  drawTrail(cellEntries,  true);
+			if (radioEntries.length) drawTrail(radioEntries, false);
 
 			historyDots[callsign] = layers;
 			if (blinkTimers[callsign]) blinkHistoryLayers(callsign, true);
@@ -3210,7 +3329,7 @@ function _modeIcon(mode, isMobile) {
 	if (mode === 'drive' || mode === 'drive_cycle') return drive;
 	if (mode === 'cycle')      return cycle;
 	if (mode === 'walk_run')   return walk;
-	if (mode === 'stationary') return `<span style="${s}">📍</span>`;
+	if (mode === 'stationary') return pin;
 	if (mode === 'unknown')    return `<span style="${s}">?</span>`;
 	return isMobile ? '' : radio;
 }
@@ -3283,6 +3402,7 @@ function updateMap() {
 			if (!data) return;
 			const { default_event: defaultEvent, trackers } = data;
 			if (typeof data.blink_duration === 'number') _blinkDuration = data.blink_duration * 1000;
+			if (typeof data.breadcrumb_count === 'number') _breadcrumbCount = data.breadcrumb_count;
 			// Skip tracker update if this client is no longer viewing the default event.
 			// Allow through if currentEventName is not yet set (config still loading).
 			if (currentEventName !== '' && defaultEvent !== currentEventName) return;
@@ -3328,7 +3448,7 @@ function updateMap() {
 				const latlng = [t.lat, t.lon];
 				const color  = t.color || 'red';
 				const sz     = trackerIconSize(t.callsign);
-				const shape  = t.mobile && t.ham_callsign ? 'triangle' : t.mobile ? 'square' : trackerStyle.icon;
+				const shape  = t.mobile && t.ham_callsign ? 'triangle' : t.mobile ? 'square' : 'circle';
 				const icon   = makeTrackerIcon(shape, color, sz);
 				if (markers[t.callsign]) {
 					const oldLL = markers[t.callsign].getLatLng();
@@ -3338,6 +3458,7 @@ function updateMap() {
 					markers[t.callsign]._mobile = t.mobile;
 					markers[t.callsign]._hamCallsign = t.ham_callsign || null;
 					markers[t.callsign]._carrier = t.carrier || null;
+					markers[t.callsign]._radioModel = aprsDeviceName(t.radio_type || '');
 					markers[t.callsign]._trackerId = t.id;
 					markers[t.callsign]._trackerName = t.name;
 					markers[t.callsign].setLatLng(latlng);
@@ -3353,6 +3474,7 @@ function updateMap() {
 					m._mobile = t.mobile;
 					m._hamCallsign = t.ham_callsign || null;
 					m._carrier = t.carrier || null;
+					m._radioModel = aprsDeviceName(t.radio_type || '');
 					m._trackerId = t.id;
 					m._trackerName = t.name;
 					const popup = L.popup({ closeButton: true, autoPan: isMobile, autoPanPadding: [16, 16] })
@@ -3494,7 +3616,7 @@ function refreshMobileAbout() {
 	const rows = [
 		currentEventName ? { label: 'Event',   val: currentEventName } : null,
 		{ label: 'Org',     val: 'Marin Amateur Radio Society' },
-		{ label: 'Version', val: 'APRS Tracker Map · v1.18.5+5' },
+		{ label: 'Version', val: 'APRS Tracker Map · v1.19.0+7' },
 		mobileCallsign ? { label: 'Callsign', val: mobileCallsign } : null,
 		{ label: 'Map',     val: currentBgAttribution || '' },
 		{ label: 'Credit',  val: '&copy; 2026 Doug Kaye (K6DRK)' },
@@ -3951,7 +4073,7 @@ map.on('zoomend', function() {
 	// Rescale tracker markers (selected tracker stays 2x)
 	Object.entries(markers).forEach(([cs, m]) => {
 		if (m._trackerColor !== undefined) {
-			m.setIcon(makeTrackerIcon(m._mobile && m._hamCallsign ? 'triangle' : m._mobile ? 'square' : trackerStyle.icon, m._trackerColor, trackerIconSize(cs)));
+			m.setIcon(makeTrackerIcon(m._mobile && m._hamCallsign ? 'triangle' : m._mobile ? 'square' : 'circle', m._trackerColor, trackerIconSize(cs)));
 		}
 	});
 	// Rescale igate and aid station markers (selected ones stay 2x)
@@ -4080,7 +4202,7 @@ function openAboutModal() {
 	const attrText = currentBgAttribution || '';
 	const rows = [
 		{ label: 'Organization', val: 'Marin Amateur Radio Society' },
-		{ label: 'Application',  val: 'APRS Tracker Map · v1.18.5+5' },
+		{ label: 'Application',  val: 'APRS Tracker Map · v1.19.0+7' },
 		currentEventName ? { label: 'Event', val: currentEventName } : null,
 		mobileCallsign ? { label: 'My Callsign', val: mobileCallsign } : null,
 		mobileCallsign ? { label: 'Activity', val: ['Walk / Run', 'Cycle', 'Drive', 'Stationary', 'Unknown'][_mobileActivityMode] } : null,
@@ -4770,48 +4892,8 @@ if (isNonDefaultEvent) {
 	if (attrEl) attrEl.insertBefore(note, attrEl.firstChild);
 }
 
-// ── Full-screen toggle ────────────────────────────────────────────────────────
-const toggleFullScreen = () => {
-	if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
-	else document.exitFullscreen();
-};
-
-// Full Screen button in the mobile drawer — non-iOS mobile only.
-// iOS doesn't support requestFullscreen() in Safari; standalone PWA is already
-// fullscreen. The Add to Home Screen nudge handles the iOS fullscreen path.
-if (isMobile && !_isIos) {
-	const mFsBtn = document.getElementById('m-fs-btn');
-	mFsBtn.style.display = '';
-	mFsBtn.onclick = toggleFullScreen;
-	document.addEventListener('fullscreenchange', () => {
-		mFsBtn.textContent = document.fullscreenElement ? 'Exit Full Screen' : 'Full Screen';
-	});
-}
-
-// CrOS-only: sidebar fs button, auto-overlay on touch, context menu suppression
+// CrOS: suppress context menu and text selection on touch devices
 if (/CrOS/.test(navigator.userAgent)) {
-	document.getElementById('fs-btn').style.display = '';
-	const fsSidebarBtn = document.getElementById('fs-btn');
-	fsSidebarBtn.onclick = toggleFullScreen;
-	document.addEventListener('fullscreenchange', () => {
-		fsSidebarBtn.textContent = document.fullscreenElement ? 'Exit Full Screen' : 'Full Screen';
-	});
-
-	// Auto full-screen overlay: CrOS touch only (not laptops)
-	if (!document.fullscreenElement && isMobile) {
-		const fsOverlay = document.createElement('div');
-		fsOverlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;cursor:pointer';
-		fsOverlay.innerHTML = '<div style="color:#fff;font-size:22px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;pointer-events:none">Tap to enter full screen</div>';
-		document.body.appendChild(fsOverlay);
-		const enterFs = e => {
-			e.preventDefault();
-			document.documentElement.requestFullscreen().catch(() => {});
-			fsOverlay.remove();
-		};
-		fsOverlay.addEventListener('touchend', enterFs, { once: true, passive: false });
-		fsOverlay.addEventListener('click',    enterFs, { once: true });
-	}
-
 	document.addEventListener('contextmenu', e => e.preventDefault());
 	const crosStyle = document.createElement('style');
 	crosStyle.textContent = '#map, #map * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }';

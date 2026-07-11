@@ -193,7 +193,7 @@
 <div id="content">
 <h1 id="mars-aprs-system">MARS APRS System</h1>
 <p><strong>Author:</strong> Doug Kaye (K6DRK) · <strong>Copyright:</strong> 2026 Doug Kaye. All Rights Reserved.</p>
-<p><strong>Version:</strong> Server &amp; Displays (v1.18.5); Mobile App (v1.18.5); iGates (v5.0)</p>
+<p><strong>Version:</strong> Server &amp; Displays (v1.19.0); Mobile App (v1.18.5); iGates (v5.0)</p>
 <hr />
 <h2 id="table-of-contents">Table of Contents</h2>
 <ol>
@@ -201,12 +201,13 @@
 <li><a href="#system-architecture">System Architecture</a></li>
 <li><a href="#netbird-vpn">NetBird VPN</a></li>
 <li><a href="#igates-v50">iGates (v5.0)</a></li>
-<li><a href="#aprs-server-v1185">APRS Server (v1.18.5)</a></li>
+<li><a href="#aprs-server-v1190">APRS Server (v1.19.0)</a></li>
 <li><a href="#cloudflare-tunnel">Cloudflare Tunnel</a></li>
-<li><a href="#display-pis-v1185">Display Pis (v1.18.5)</a></li>
+<li><a href="#display-pis-v1190">Display Pis (v1.19.0)</a></li>
 <li><a href="#mobile-apps-v1185">Mobile Apps (v1.18.5)</a></li>
 <li><a href="#app-architecture">Architecture</a> · <a href="#location-sharing-flow">Location Sharing Flow</a> · <a href="#smart-track">Smart Track</a> · <a href="#building-distributing">Building &amp; Distributing</a> · <a href="#background-location">Background Location</a></li>
 <li><a href="#user-interfaces">User Interfaces</a></li>
+<li><a href="#authentication">Authentication</a></li>
 <li><a href="#analyzer">Analyzer</a></li>
 <li><a href="#analyzer-architecture">Architecture</a> · <a href="#analyzer-authentication">Authentication</a> · <a href="#beacon-recording">Beacon Recording</a> · <a href="#map--controls">Map &amp; Controls</a> · <a href="#analyzer-key-files">Key Files</a> · <a href="#analyzer-services">Services</a> · <a href="#analyzer-api-endpoints">API Endpoints</a></li>
 <li><a href="#backup-recovery-and-updates">Backup, Recovery and Updates</a></li>
@@ -265,14 +266,14 @@ forwarding or static public IP addresses.</p>
 └────────────────┬─────────────────────┘     │  TCP 14580 (inject position) │
                  │ TCP 14580                 └──────────────┬───────────────┘
 ┌────────────────▼─────────────────────┐                    │ HTTPS (map + config + session)
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.18.5      │
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.19.0      │
 │  aprsDaemon.php → trackers.json      │◀───────────────────┘
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.18.5
+│  Display Pi  (×2)      │  Pi 4 · v1.19.0
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -446,7 +447,7 @@ igate-watchdog.sh  (cron, every minute)
 </table>
 <p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code></p>
 <hr />
-<h2 id="aprs-server-v1185">APRS Server (v1.18.5)</h2>
+<h2 id="aprs-server-v1190">APRS Server (v1.19.0)</h2>
 <p>The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
 APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
 NetBird monitor and WiFi credential manager. It is reachable at <code>marsaprs.org</code> via a
@@ -551,7 +552,7 @@ sudo systemctl start cloudflared
 <p>The tunnel token is obtained from the <strong>Cloudflare Zero Trust dashboard</strong>:
 <em>Networks → Tunnels → \&lt;tunnel&gt; → Configure → Install and run connector</em></p>
 <hr />
-<h2 id="display-pis-v1185">Display Pis (v1.18.5)</h2>
+<h2 id="display-pis-v1190">Display Pis (v1.19.0)</h2>
 <p>A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
 <code>marsaprs.org</code>. It is a read-only display device — no long-term local configuration or data storage.
 Two display Pis are in use: <strong>NetControl</strong> (operator screen) and <strong>BigTV</strong> (large audience
@@ -930,32 +931,38 @@ Pi, accessible at <code>https://marsaprs.org/&lt;path&gt;</code>.</p>
 <tr>
 <td><strong>Map Admin</strong></td>
 <td><code>/admin/</code></td>
-<td>Password</td>
+<td>User account</td>
 <td>Event configuration, tracker list, course and aid station management</td>
 </tr>
 <tr>
 <td><strong>Analyzer</strong></td>
 <td><code>/analyzer/</code></td>
-<td>Event Password</td>
+<td>User account</td>
 <td>Beacon recording, playback, and analysis for the current event</td>
 </tr>
 <tr>
 <td><strong>NetBird Monitor</strong></td>
 <td><code>/netbird/</code></td>
-<td>Password</td>
+<td>User account</td>
 <td>Real-time health status of all Pi devices</td>
 </tr>
 <tr>
 <td><strong>NetBird Admin</strong></td>
 <td><code>/netbird/admin.php</code></td>
-<td>Password</td>
+<td>User account</td>
 <td>Add/remove devices, enable/disable, SSH terminal</td>
 </tr>
 <tr>
 <td><strong>WiFi Manager</strong></td>
 <td><code>/wifi/</code></td>
-<td>Password</td>
+<td>User account</td>
 <td>Edit the shared WiFi credential list distributed to all Pis</td>
+</tr>
+<tr>
+<td><strong>Tickets</strong></td>
+<td><code>/tickets/admin.php</code></td>
+<td>User account</td>
+<td>Bug report and suggestion ticket management</td>
 </tr>
 </tbody>
 </table>
@@ -968,26 +975,163 @@ positions as dots on a dashed line with directional arrows; the trail updates au
 as the selected tracker moves. Aid station and iGate tooltips include an optional callsign.
 A scale bar in the lower-right corner toggles between miles/feet and kilometers/meters when
 clicked. Kiosk mode removes controls for unattended display use.</p>
-<p><strong>Map Admin</strong> — Password-protected. Manages all event configuration: tracker callsigns and
+<p><strong>Map Admin</strong> — Requires <code>admin.view</code> or <code>admin.edit</code>. Manages all event configuration: tracker callsigns and
 IDs, GPX/KML/GeoJSON course overlays, aid station and iGate locations (with optional APRS
 callsign), map default view, and background tile layers. Supports multiple named events;
-switching events is instant.
+switching events is instant. Users with only <code>admin.view</code> see all data read-only.
 See <a href="#admin-interface">Appendix — Server — Admin Interface</a> for full details.</p>
-<p><strong>Analyzer</strong> — Requires the event password to view. A Flask/gunicorn web app served at
+<p><strong>Analyzer</strong> — Requires <code>analyzer.view</code>. A Flask/gunicorn web app served at
 <code>/analyzer/</code> via Apache mod_proxy. Runs <code>analyzer-daemon</code> to record APRS beacons from
 APRS-IS into a local SQLite database for the current event. Displays recorded beacons on
 an interactive Leaflet map with controls for filtering by tracker and iGate, toggling radio
 vs. cellular beacons and course overlays, adjusting the auto-refresh rate (30 s–5 min per
-client), and scrubbing a time-range slider. Daemon start/stop requires the admin password;
-data erasure requires the admin password and two confirmation steps.</p>
-<p><strong>NetBird Monitor</strong> — Password-protected. Page that polls all registered Pi devices every 60 seconds (default; adjustable) over
+client), and scrubbing a time-range slider. Daemon start/stop and data erasure require <code>analyzer.admin</code>.</p>
+<p><strong>NetBird Monitor</strong> — Requires <code>netbird.view</code>. Polls all registered Pi devices every 60 seconds (default; adjustable) over
 the NetBird VPN and shows online/offline/enabling/disabled status. Includes an SSH terminal
-for online devices. See <a href="#netbird-status-monitor">Supporting Systems — NetBird Status Monitor</a>
-for full details.</p>
-<p><strong>NetBird Admin</strong> — Password-protected. Manages the device list in <code>addresses.yaml</code>: add, edit, delete, enable,
+for online devices. Poll/refresh sliders and the Admin button are shown only to users with <code>netbird.admin</code>.
+See <a href="#netbird-status-monitor">Supporting Systems — NetBird Status Monitor</a> for full details.</p>
+<p><strong>NetBird Admin</strong> — Requires <code>netbird.admin</code>. Manages the device list in <code>addresses.yaml</code>: add, edit, delete, enable,
 and disable devices. Access to the SSH terminal for any online device.</p>
-<p><strong>WiFi Manager</strong> — Password-protected. Edits <code>wifi.yaml</code>, the master list of WiFi networks distributed to all
-Pis nightly. Auto-saves on every change; no manual save step.</p>
+<p><strong>WiFi Manager</strong> — Requires <code>wifi.admin</code> to edit; accessible read-only to users with <code>netbird.view</code>.
+Edits <code>wifi.yaml</code>, the master list of WiFi networks distributed to all Pis nightly. Auto-saves on every change; no manual save step.</p>
+<p><strong>Tickets</strong> — Requires <code>tickets.manage</code>. View and manage bug reports and suggestions submitted via the in-app ticket form.</p>
+<hr />
+<h2 id="authentication">Authentication</h2>
+<p>All protected browser interfaces use a shared named-account system. A single sign-in at
+<code>/auth/login.php</code> establishes a session that is recognized by every tool — Admin, Analyzer,
+NetBird, WiFi, and Tickets — without re-entering credentials.</p>
+<h3 id="user-accounts">User Accounts</h3>
+<p>Accounts are stored in an SQLite database at <code>/var/lib/marsaprs/users.db</code> (outside the
+web root, owned by <code>www-data</code>). Each account holds a username, display name, and bcrypt
+password hash, plus an active flag. Inactive accounts cannot log in.</p>
+<h3 id="session-cookie">Session Cookie</h3>
+<p>After a successful login the server inserts a row into the <code>sessions</code> table with a
+64-character hex token and sends it to the browser as the <code>marsaprs_session</code> cookie
+(<code>httponly</code>, <code>secure</code>, <code>SameSite=Lax</code>, 24-hour TTL). Both PHP pages and the Python
+Flask analyzer validate the same cookie against the same database.</p>
+<h3 id="permissions">Permissions</h3>
+<p>Access is controlled by flat permission strings. Each user is granted exactly the
+permissions they need; there are no implicit roles or inheritance.</p>
+<table>
+<thead>
+<tr>
+<th>Permission</th>
+<th>Guards</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>admin.view</code></td>
+<td><code>/admin/</code> — read-only view of all event config, trackers, aid stations, iGates</td>
+</tr>
+<tr>
+<td><code>admin.edit</code></td>
+<td><code>/admin/</code> — full edit and save</td>
+</tr>
+<tr>
+<td><code>admin.set_default</code></td>
+<td><strong>Save as Default Event</strong> action</td>
+</tr>
+<tr>
+<td><code>admin.delete_event</code></td>
+<td><strong>Delete</strong> event action</td>
+</tr>
+<tr>
+<td><code>analyzer.view</code></td>
+<td><code>/analyzer/</code> — event map and beacon data</td>
+</tr>
+<tr>
+<td><code>analyzer.admin</code></td>
+<td>Daemon start/stop; Erase All Data</td>
+</tr>
+<tr>
+<td><code>netbird.view</code></td>
+<td><code>/netbird/</code> — status page; read-only WiFi page</td>
+</tr>
+<tr>
+<td><code>netbird.admin</code></td>
+<td><code>/netbird/admin.php</code>; poll/refresh sliders; full WiFi edit</td>
+</tr>
+<tr>
+<td><code>wifi.admin</code></td>
+<td><code>/wifi/</code> — edit WiFi credentials</td>
+</tr>
+<tr>
+<td><code>tickets.manage</code></td>
+<td><code>/tickets/admin.php</code> — ticket list and management</td>
+</tr>
+<tr>
+<td><code>users.manage</code></td>
+<td><code>/auth/users.php</code> — create/edit/delete accounts and permissions</td>
+</tr>
+</tbody>
+</table>
+<h3 id="login-flow">Login Flow</h3>
+<p>Every protected page passes unauthenticated requests through
+<code>require_permission($perm)</code>, which redirects to <code>/auth/login.php?next=&lt;original-url&gt;</code>.
+After a successful login the browser is sent back to the originally requested page.
+Logging out (<code>/auth/logout.php</code>) deletes the session row and clears the cookie.</p>
+<p>Users with <code>admin.view</code> but not <code>admin.edit</code> see the Admin page in read-only mode:
+all data is displayed but edit controls, save buttons, and import/export actions are
+hidden. The same permission-aware rendering applies to the NetBird status page (sliders
+and Admin button hidden for <code>netbird.view</code>-only users) and the WiFi page (edit controls
+and drag-to-reorder hidden).</p>
+<h3 id="user-management">User Management</h3>
+<p>Users with <code>users.manage</code> access <code>/auth/users.php</code> (linked from the Admin page header
+as <strong>Users</strong>). From there they can create accounts, reset passwords, toggle active status,
+and assign or revoke individual permissions.</p>
+<h3 id="key-files">Key Files</h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Location</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>auth.php</code></td>
+<td><code>/var/www/html/auth/</code></td>
+<td>Shared PHP library: <code>current_user()</code>, <code>has_permission()</code>, <code>require_permission()</code>, <code>create_session()</code>, <code>destroy_session()</code></td>
+</tr>
+<tr>
+<td><code>login.php</code></td>
+<td><code>/var/www/html/auth/</code></td>
+<td>Login form (GET) and credential validator (POST)</td>
+</tr>
+<tr>
+<td><code>logout.php</code></td>
+<td><code>/var/www/html/auth/</code></td>
+<td>Destroys session, redirects to login</td>
+</tr>
+<tr>
+<td><code>users.php</code></td>
+<td><code>/var/www/html/auth/</code></td>
+<td>User management UI (requires <code>users.manage</code>)</td>
+</tr>
+<tr>
+<td><code>init_db.php</code></td>
+<td><code>/var/www/html/auth/</code></td>
+<td>Idempotent DB bootstrap; creates first admin account when no users exist</td>
+</tr>
+<tr>
+<td><code>auth_db.py</code></td>
+<td><code>/home/pi/analyzer/src/</code></td>
+<td>Python mirror of <code>auth.php</code>; validates <code>marsaprs_session</code> cookie in Flask</td>
+</tr>
+<tr>
+<td><code>users.db</code></td>
+<td><code>/var/lib/marsaprs/</code></td>
+<td>SQLite database: <code>users</code>, <code>permissions</code>, <code>sessions</code> tables</td>
+</tr>
+</tbody>
+</table>
+<h3 id="event-lock-password">Event Lock Password</h3>
+<p>The event-level <strong>lock</strong> feature (🔒 in the Admin page) still uses <code>admin/password.txt</code>
+as a separate credential. This is distinct from user-account authentication — it controls
+whether a specific event's YAML can be overwritten, not who can log in. All other
+admin actions are gated by the user-account permission system.</p>
 <hr />
 <h2 id="messaging-system">Messaging System</h2>
 <p>The messaging system allows web operators to exchange text messages with active mobile tracker participants in real time. It is enabled by setting <code>messaging_password</code> in the event's <code>event.yaml</code> (via the Admin page).</p>
@@ -1092,32 +1236,30 @@ aprs_daemon.py  ──writes──▶  aprs.db  (SQLite)
 <p><code>analyzer-daemon</code> is controlled from the Analyzer UI — it does not start automatically at boot. The <code>analyzer</code> (web app) service starts at boot and is always available even when no recording is taking place.</p>
 <p><code>flask_app.py</code> uses <code>ProxyFix(app.wsgi_app, x_prefix=1)</code> so that the <code>/analyzer/</code> path prefix is correctly stripped before routing.</p>
 <h3 id="analyzer-authentication">Analyzer Authentication</h3>
-<p>Two independent HMAC-SHA256 cookie-based auth levels, each valid for 24 hours:</p>
+<p>The Analyzer uses the shared user-account system described in <a href="#authentication">Authentication</a>.
+Access is gated on two permissions:</p>
 <table>
 <thead>
 <tr>
-<th>Level</th>
-<th>Cookie name</th>
-<th>Password source</th>
+<th>Permission</th>
 <th>Required for</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>View</td>
-<td><code>analyzer_view_auth</code></td>
-<td>Event password in <code>event.yaml</code> (<code>mobile.messaging_password</code>)</td>
-<td>All pages and API calls</td>
+<td><code>analyzer.view</code></td>
+<td>All pages and API endpoints</td>
 </tr>
 <tr>
-<td>Admin</td>
-<td><code>analyzer_admin_auth</code></td>
-<td>Admin password in <code>admin/password.txt</code></td>
-<td>Daemon start/stop; Erase All Data</td>
+<td><code>analyzer.admin</code></td>
+<td><code>POST /api/daemon</code> (start/stop); <code>POST /api/flush</code> (erase data)</td>
 </tr>
 </tbody>
 </table>
-<p>On page load, the UI calls <code>GET /api/check_admin</code> to determine whether the admin cookie is already valid. If so, password modals are skipped for daemon and flush operations for the remainder of the 24-hour window — even across daemon restarts and page reloads. Both cookies are <code>httponly</code> and <code>SameSite=Lax</code>.</p>
+<p>The <code>marsaprs_session</code> cookie is validated by <code>auth_db.py</code> against <code>/var/lib/marsaprs/users.db</code>
+on every request. Unauthenticated requests are redirected to <code>/auth/login.php</code>. The
+<strong>Collect Data</strong> checkbox is disabled in the UI for users who lack <code>analyzer.admin</code>;
+no password modal is shown.</p>
 <h3 id="beacon-recording">Beacon Recording</h3>
 <p><code>aprs_daemon.py</code> connects to <code>noam.aprs2.net:14580</code> with an APRS-IS filter string built from all callsigns in the current event's configuration (trackers from <code>config.yaml</code>, mobile participants from <code>mobile_trackers.json</code>). It is managed by <code>analyzer-daemon.service</code> and controlled from the Analyzer UI by users with the admin password.</p>
 <p><strong>What is recorded:</strong> For each received packet that matches a tracked callsign: callsign, latitude, longitude, Unix timestamp, receiving station (iGate), and the full APRS path string. Stored in the <code>beacons</code> table of <code>aprs.db</code> (SQLite), keyed to the current event by <code>event_id</code>.</p>
@@ -1267,8 +1409,8 @@ aprs_daemon.py  ──writes──▶  aprs.db  (SQLite)
 <td>Main map page (Leaflet + controls modal + all JS filtering/drawing logic)</td>
 </tr>
 <tr>
-<td><code>src/templates/login.html</code></td>
-<td>Event-password login form</td>
+<td><code>src/auth_db.py</code></td>
+<td>Python auth library: validates <code>marsaprs_session</code> cookie against <code>users.db</code></td>
 </tr>
 </tbody>
 </table>
@@ -1288,13 +1430,14 @@ sudo journalctl -u analyzer-daemon -f
 <p>Logs: <code>/var/log/analyzer/analyzer.log</code> and <code>/var/log/analyzer/daemon.log</code></p>
 <p>The daemon restarts automatically on failure (30 s delay, 5 retries per 5 minutes). The web app restarts automatically on failure (10 s delay).</p>
 <h3 id="analyzer-api-endpoints">Analyzer API Endpoints</h3>
-<p>All endpoints except <code>/login</code> require a valid view cookie (<code>analyzer_view_auth</code>). Admin endpoints additionally require a valid admin cookie (<code>analyzer_admin_auth</code>) <strong>or</strong> the admin password in the request body.</p>
+<p>All endpoints require a valid <code>marsaprs_session</code> cookie with at least <code>analyzer.view</code>.
+Admin endpoints additionally require <code>analyzer.admin</code>.</p>
 <table>
 <thead>
 <tr>
 <th>Endpoint</th>
 <th>Method</th>
-<th>Auth</th>
+<th>Permission</th>
 <th>Description</th>
 </tr>
 </thead>
@@ -1302,50 +1445,44 @@ sudo journalctl -u analyzer-daemon -f
 <tr>
 <td><code>/</code></td>
 <td>GET</td>
-<td>View</td>
+<td><code>analyzer.view</code></td>
 <td>Redirect to current event URL</td>
 </tr>
 <tr>
 <td><code>/event/&lt;name&gt;</code></td>
 <td>GET</td>
-<td>View</td>
-<td>Main map page for the named event; always redirects to the current yaml event</td>
-</tr>
-<tr>
-<td><code>/login</code></td>
-<td>GET / POST</td>
-<td>None</td>
-<td>Login form; POST with <code>password</code> sets view cookie and redirects to <code>/</code></td>
+<td><code>analyzer.view</code></td>
+<td>Main map page; always redirects to the current yaml event</td>
 </tr>
 <tr>
 <td><code>/api/event_beacons/&lt;name&gt;</code></td>
 <td>GET</td>
-<td>View</td>
+<td><code>analyzer.view</code></td>
 <td>All deduplicated beacons for the named event as JSON</td>
 </tr>
 <tr>
 <td><code>/api/check_admin</code></td>
 <td>GET</td>
-<td>View</td>
-<td>Returns <code>{"ok": true}</code> if the admin cookie is valid</td>
+<td><code>analyzer.view</code></td>
+<td>Returns <code>{"ok": true}</code> if user has <code>analyzer.admin</code></td>
 </tr>
 <tr>
 <td><code>/api/daemon</code></td>
 <td>GET</td>
-<td>View</td>
+<td><code>analyzer.view</code></td>
 <td>Returns <code>{"running": true/false}</code> — current daemon status</td>
 </tr>
 <tr>
 <td><code>/api/daemon</code></td>
 <td>POST</td>
-<td>Admin</td>
-<td><code>{"action": "start"\|"stop"}</code> — starts or stops <code>analyzer-daemon</code>; stamps admin cookie on success</td>
+<td><code>analyzer.admin</code></td>
+<td><code>{"action": "start"\|"stop"}</code> — starts or stops <code>analyzer-daemon</code></td>
 </tr>
 <tr>
 <td><code>/api/flush</code></td>
 <td>POST</td>
-<td>Admin</td>
-<td><code>{"password": "..."}</code> — deletes all beacon rows for the current event; stamps admin cookie on success</td>
+<td><code>analyzer.admin</code></td>
+<td>Deletes all beacon rows for the current event</td>
 </tr>
 </tbody>
 </table>
@@ -2219,8 +2356,8 @@ iGates only. Footer: Sidebar toggle, Reset Map, Exit (navigates to <code>localho
 and when the tracker list has not been locally edited. Only tracker positions and timestamps
 are updated; all other config sections are left unchanged by polls.</p>
 <h4 id="admin-interface">Admin Interface</h4>
-<p>Open <code>https://marsaprs.org/admin/</code>. Password stored in <code>admin/password.txt</code>. Session lasts
-12 hours.</p>
+<p>Open <code>https://marsaprs.org/admin/</code>. Requires a user account with <code>admin.view</code> or
+<code>admin.edit</code> (see <a href="#authentication">Authentication</a>). Session lasts 24 hours.</p>
 <p><strong>Editable sections:</strong> Trackers (callsign, ID, name), Tracker Style (icon, color), Map
 Default View, Default Section Visibility, Backgrounds, Courses, Aid Stations, iGates, Legend, Mobile Tracking (enabled, PIN, root callsign; messaging password; participant list with rename/block/remove), Beacon Settings (upload interval and distance threshold per activity mode).</p>
 <p><strong>Messages modal:</strong> The 💬 Messages button opens a modal showing the full message thread for the current event, with Export (.txt) and <strong>Clear Thread</strong> buttons. Clear Thread deletes <code>messages.json</code> after a two-click confirmation (click once to arm, click again within 4 seconds to confirm).</p>

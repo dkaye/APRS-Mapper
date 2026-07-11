@@ -1,3 +1,4 @@
+# Active direwolf logs in RAM (/var/log is tmpfs; cleared on nightly reboot)
 /var/log/direwolf/*.log {
     daily
     rotate 7
@@ -6,4 +7,14 @@
     notifempty
     copytruncate
     create 0644 pi pi
+}
+
+# Nightly snapshots saved to SD card by auto-update.sh (14-day rolling retention)
+/var/log-saved/*/direwolf/*.log {
+    daily
+    rotate 14
+    compress
+    missingok
+    notifempty
+    nocreate
 }

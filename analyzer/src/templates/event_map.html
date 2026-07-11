@@ -14,6 +14,12 @@
                 padding: 2px 6px !important;
                 border: none; box-shadow: none; color: black; font-weight: bold;
             }
+            .aprs-path-hops { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
+            .aprs-path-hop  { display: flex; align-items: baseline; gap: 8px; font-size: 13px; font-weight: normal; }
+            .aprs-path-hop code { font-size: 12px; }
+            .aprs-path-desc { font-size: 12px; color: #666; }
+            .aprs-path-digi { font-size: 12px; color: #2a7a2a; }
+            .aprs-path-empty { color: #999; font-style: italic; font-size: 13px; font-weight: normal; margin-top: 4px; }
 
             /* ── Map corner buttons ──────────────────────────────── */
             .map-corner-btns { display: flex; flex-direction: column; gap: 6px; }
@@ -85,9 +91,11 @@
             .range-pair input[type=range] { width: 100%; }
             #ctrl-footer {
                 padding: 10px 16px; background: #f5f5f5; border-top: 1px solid #ddd;
-                display: flex; gap: 8px; flex-wrap: wrap;
+                display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
             }
             #ctrl-footer .ctrl-btn { width: auto; flex: 1; }
+            #ctrl-signout { margin-left: auto; font-size: 12px; color: #6b7280; text-decoration: none; white-space: nowrap; }
+            #ctrl-signout:hover { color: #111827; }
 
             /* ── Daemon auth modal (start/stop with password) ────── */
             #daemon-auth-modal {
@@ -137,15 +145,14 @@
                         <div id="rec-stopped" style="display:none">Stopped: <span id="rec-stop-time"></span></div>
                         <div id="rec-no-data" style="color:#aaa">No beacons yet</div>
                     </div>
-                    <label title="Green = actively collecting. Gray = stopped.">
-                        <input type="checkbox" id="daemon-toggle">
+                    <label title="Green = actively collecting. Gray = stopped." style="{% if not analyzer_admin %}cursor:default;opacity:0.7;{% endif %}">
+                        <input type="checkbox" id="daemon-toggle"{% if not analyzer_admin %} disabled{% endif %}>
                         Collect Data
                         <span id="daemon-dot" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#bbb;margin-left:2px;vertical-align:middle" title="Green = actively collecting. Gray = stopped."></span>
                     </label>
                     <hr class="ctrl-divider">
                     <div class="ctrl-section-label">Display</div>
-                    <label><input type="checkbox" id="toggle-beacon-times"> Show All Times</label>
-                    <label><input type="checkbox" id="toggle-full-path"> Show Full Path</label>
+                    <label><input type="checkbox" id="show-tracks" checked> Show Tracks</label>
                     <label><input type="checkbox" id="show-radio" checked> Show Radio Beacons <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#e74c3c;margin-left:3px;vertical-align:middle;flex-shrink:0"></span></label>
                     <label><input type="checkbox" id="show-cellular" checked> Show Cellular Beacons <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#27ae60;margin-left:3px;vertical-align:middle;flex-shrink:0"></span></label>
                     <label><input type="checkbox" id="show-course" checked> Show Courses</label>
@@ -188,7 +195,7 @@
                         <option value="all" selected>All</option>
                         <option value="AT&T">AT&amp;T</option>
                         <option value="Comcast">Comcast</option>
-                        <option value="Space Exploration">Space Exploration</option>
+                        <option value="Space Exploration">Starlink</option>
                         <option value="T-Mobile">T-Mobile</option>
                         <option value="Verizon">Verizon</option>
                         <option value="Other">Other</option>
@@ -199,6 +206,10 @@
             <div id="ctrl-footer">
                 <button id="save-map-btn" class="ctrl-btn" type="button">Save Map Position</button>
                 <button id="flush-btn" class="ctrl-btn" type="button">Erase All Data…</button>
+                <a href="/auth/logout.php" id="ctrl-signout" title="Signed in as {{username}}">Sign out</a>
+            </div>
+            <div id="flush-denied" style="display:none;margin-top:8px;padding:8px 12px;background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;color:#b91c1c;font-size:13px">
+                Your account doesn&rsquo;t have permission to erase data.
             </div>
         </dialog>
 
@@ -239,6 +250,25 @@
         </dialog>
 
         <script>
+            function esc(s) {
+                return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+            }
+            const Q_LABELS = {
+                qAR:'received by iGate', qAC:'bidirectional iGate', qAI:'server generated',
+                qAX:'rejected by iGate', qAZ:'server generated',    qAS:'third-party iGate',
+                qAo:'received without RF', qAO:'received without RF',
+            };
+            function formatAprsPath(path) {
+                if (!path) return '<div class="aprs-path-empty">No path data for this beacon.</div>';
+                return '<div class="aprs-path-hops">' + path.split(',').map(hop => {
+                    const clean = hop.replace('*','');
+                    let desc = '';
+                    if (Q_LABELS[clean])       desc = `<span class="aprs-path-desc">${esc(Q_LABELS[clean])}</span>`;
+                    else if (hop.includes('*')) desc = `<span class="aprs-path-digi">digipeated</span>`;
+                    return `<div class="aprs-path-hop"><code>${esc(hop)}</code>${desc ? ' '+desc : ''}</div>`;
+                }).join('') + '</div>';
+            }
+
             const MAP_LAT  = {{ map_lat }};
             const MAP_LON  = {{ map_lon }};
             const MAP_ZOOM = {{ map_zoom }};
@@ -250,15 +280,18 @@
             const URL_BEACONS     = '{{ url_for("event_beacon_json", event_name=event_name) }}';
             const URL_CHECK_ADMIN = '{{ url_for("check_admin_api") }}';
 
-            // Callsign → display name (from server-rendered tracker list)
-            const trackerNames = {
-                {% for item in trackers %}
-                '{{ item.callsign }}': '{{ item.name | e }}',
-                {% if item.mobile_pair %}
-                '{{ item.mobile_pair }}': '{{ item.name | e }}',
-                {% endif %}
-                {% endfor %}
-            };
+            // Callsign → display name; current config wins, DB fills gaps for removed trackers
+            const trackerNames = Object.assign(
+                {{ historical_names_json | safe }},
+                {
+                    {% for item in trackers %}
+                    '{{ item.callsign }}': '{{ item.name | e }}',
+                    {% if item.mobile_pair %}
+                    '{{ item.mobile_pair }}': '{{ item.name | e }}',
+                    {% endif %}
+                    {% endfor %}
+                }
+            );
             var showNames = true;
 
             let adminAuthenticated = false;
@@ -325,6 +358,14 @@
                         '<div style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#e74c3c;flex-shrink:0"></span><span>Radio</span></div>' +
                         '<div style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#27ae60;flex-shrink:0"></span><span>Cellular</span></div>';
 
+                    const exitBtn = L.DomUtil.create('a', '', wrap);
+                    exitBtn.href = 'https://marsaprs.org/';
+                    exitBtn.textContent = 'Exit';
+                    exitBtn.style.cssText = 'display:block;text-align:center;background:rgba(255,255,255,0.9);border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.3);padding:5px 9px;font-size:12px;color:#333;text-decoration:none;';
+                    exitBtn.onmouseover = () => exitBtn.style.background = '#fff';
+                    exitBtn.onmouseout  = () => exitBtn.style.background = 'rgba(255,255,255,0.9)';
+                    L.DomEvent.on(exitBtn, 'click', L.DomEvent.stopPropagation);
+
                     const copy = L.DomUtil.create('div', '', wrap);
                     copy.style.cssText = 'font-size:10px;color:#555;padding:2px 4px;pointer-events:none;';
                     copy.textContent = '©2026 Alex Peck & Doug Kaye';
@@ -380,7 +421,7 @@
                 const r = raw.toLowerCase();
                 if (r.includes('at&t')) return 'AT&T';
                 if (r.includes('comcast')) return 'Comcast';
-                if (r.includes('space exploration')) return 'Space Exploration';
+                if (r.includes('space exploration')) return 'Starlink';
                 if (r.includes('t-mobile')) return 'T-Mobile';
                 if (r.includes('verizon')) return 'Verizon';
                 return 'Other';
@@ -394,6 +435,7 @@
             var current_beacon_count = 0;
             var active_beacon_list   = [];
             var show_full_path       = false;
+            var showTracks          = true;
             var showRadio            = true;
             var showCellular         = true;
             var selectedCarriers     = new Set(['all']);
@@ -456,7 +498,7 @@
                 const _bel = document.getElementById('beacon-end-label');
                 const _fa  = candidate_list[display_range_start];
                 const _la  = candidate_list[Math.min(display_range_end, candidate_list.length) - 1];
-                const _fd  = ts => new Date(ts * 1000).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+                const _fd  = ts => new Date(ts * 1000).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit', timeZoneName:'short'});
                 if (_bsl) _bsl.textContent = _fa ? _fd(_fa.time) : '—';
                 if (_bel) _bel.textContent = _la ? _fd(_la.time) : '—';
                 draw_tracker();
@@ -472,7 +514,7 @@
                 active_beacon_list.forEach(b => {
                     const mob   = mobileCallsigns.has(b.callsign);
                     const color = mob ? '#27ae60' : '#e74c3c';
-                    const t     = new Date(b.time * 1000).toLocaleTimeString();
+                    const t     = new Date(b.time * 1000).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit', timeZoneName:'short'});
                     const coord = [b.latitude, b.longitude];
 
                     if (!mob) {
@@ -493,16 +535,29 @@
                         }
                     }
 
-                    if (b.callsign === last_cs)
-                        L.polyline([last_coord, coord], {color, weight:2}).addTo(trackerGroup);
+                    if (b.callsign === last_cs && showTracks)
+                        L.polyline([last_coord, coord], {color, weight:2, dashArray:'4 6'}).addTo(trackerGroup);
                     last_cs    = b.callsign;
                     last_coord = coord;
                     lastPosByCallsign[b.callsign] = {coord, color};
 
                     const mk = L.circleMarker(coord, {radius:5, color, weight:2})
                         .addTo(trackerGroup)
-                        .bindPopup(`<b>${b.callsign} ⟶ ${b.receiver}</b><br>${t}<br>${b.path}`);
-                    time_tooltips.push(mk.bindTooltip(t, {direction:'right', offset:[10,0]}));
+                        .bindPopup(`<b>${trackerNames[b.callsign] || b.callsign} ⟶ ${b.receiver}</b><br>${t}<br>${b.path}`);
+                    const _name = esc(trackerNames[b.callsign] || b.callsign);
+                    let _tip;
+                    if (mob) {
+                        const _carrier = trackerCarriers[b.callsign] || '';
+                        _tip = `${_name}<br><span style="color:#888;font-size:11px;font-weight:normal">${t}</span>`
+                             + (_carrier ? `<div style="color:#888;font-size:11px;font-weight:normal;margin-top:2px">${esc(_carrier)}</div>` : '');
+                    } else {
+                        _tip = `<div style="min-width:260px;font-weight:normal">`
+                             + `<b>${_name}</b><br><span style="color:#888;font-size:11px">${t}</span>`
+                             + `<div style="color:#888;font-size:11px;margin-top:3px">Radio</div>`
+                             + formatAprsPath(b.path)
+                             + `</div>`;
+                    }
+                    time_tooltips.push(mk.bindTooltip(_tip, {direction:'right', offset:[10,0]}));
                 });
 
                 if (showNames) {
@@ -562,7 +617,11 @@
                         const sel = document.getElementById('tracker-select');
                         const ex  = new Set(Array.from(sel.options).map(o => o.value));
                         beacons.forEach(b => {
-                            if (!ex.has(b.callsign)) { sel.add(new Option(b.callsign, b.callsign)); ex.add(b.callsign); }
+                            if (!ex.has(b.callsign) && trackerNames[b.callsign]) {
+                                const label = trackerNames[b.callsign];
+                                sel.add(new Option(`${label} (${b.callsign})`, b.callsign));
+                                ex.add(b.callsign);
+                            }
                         });
                         update_filtered_beacon_list(false);
                     });
@@ -595,14 +654,8 @@
                     document.getElementById('controls-modal').close());
 
                 // Show/hide toggles
-                document.getElementById('toggle-beacon-times').addEventListener('change', e => {
-                    time_tooltips.forEach(t => {
-                        if (e.target.checked) { t.openTooltip(); t.permanent = true; }
-                        else                  { t.closeTooltip(); t.permanent = false; }
-                    });
-                });
-                document.getElementById('toggle-full-path').addEventListener('change', e => {
-                    show_full_path = e.target.checked; draw_tracker();
+                document.getElementById('show-tracks').addEventListener('change', e => {
+                    showTracks = e.target.checked; draw_tracker();
                 });
                 document.getElementById('show-radio').addEventListener('change', e => {
                     showRadio = e.target.checked; update_filtered_beacon_list(false);
@@ -652,6 +705,7 @@
                 });
 
                 // ── Daemon checkbox — require password for start and stop ─────
+                {% if analyzer_admin %}
                 let pendingDaemonAction = null;
                 const daemonAuthModal   = document.getElementById('daemon-auth-modal');
                 const daemonToggle      = document.getElementById('daemon-toggle');
@@ -730,6 +784,7 @@
                 document.getElementById('daemon-auth-password').addEventListener('keydown', e => {
                     if (e.key === 'Enter') document.getElementById('daemon-auth-confirm').click();
                 });
+                {% endif %}{# analyzer_admin #}
 
                 // ── Save Map button ────────────────────────────────────────────
                 document.getElementById('save-map-btn').addEventListener('click', function() {
@@ -774,6 +829,14 @@
                 }
 
                 document.getElementById('flush-btn').addEventListener('click', () => {
+                    if (!adminAuthenticated) {
+                        const el = document.getElementById('flush-denied');
+                        el.style.display = 'block';
+                        clearTimeout(el._hideTimer);
+                        el._hideTimer = setTimeout(() => el.style.display = 'none', 5000);
+                        return;
+                    }
+                    document.getElementById('flush-denied').style.display = 'none';
                     document.getElementById('flush-modal1-text').innerHTML =
                         `This will permanently delete all <strong>${beacons.length}</strong> beacons recorded for <strong>{{event_name}}</strong>. Are you sure?`;
                     flushModal1.showModal();

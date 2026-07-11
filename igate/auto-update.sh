@@ -16,7 +16,18 @@ trap 'rm -rf "$TMP"' EXIT
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" | tee -a /var/log/direwolf/watchdog.log; }
 
+# Save today's RAM logs to SD card before the nightly reboot wipes them
+save_logs() {
+    local SAVED="/var/log-saved/$(date +%Y-%m-%d)"
+    sudo mkdir -p "$SAVED"
+    [ -d /var/log/direwolf ] && sudo cp -rp /var/log/direwolf/. "$SAVED/direwolf/" 2>/dev/null || true
+    # Prune saved log directories older than 14 days
+    find /var/log-saved -maxdepth 1 -mindepth 1 -type d -mtime +14 \
+        -exec sudo rm -rf {} \; 2>/dev/null || true
+}
+
 log "=== iGate auto-update starting ==="
+save_logs
 
 # Download the update archive
 log "Downloading files.tar.gz..."
@@ -40,11 +51,35 @@ sudo rsync -a --exclude='config.php' "$TMP/www/" /var/www/html/
 log "Updating systemd services..."
 sudo rsync -a "$TMP/systemd/" /etc/systemd/system/
 sudo systemctl daemon-reload
+sudo systemctl restart stats-listener 2>/dev/null || true
 
 # Log rotation config
 if [ -f "$TMP/etc/logrotate.d/aprs" ]; then
     sudo cp "$TMP/etc/logrotate.d/aprs" /etc/logrotate.d/aprs
 fi
+
+# tmpfiles.d config (recreates /var/log subdirs in tmpfs at each boot)
+if [ -f "$TMP/etc/tmpfiles.d/igate-logs.conf" ]; then
+    sudo mkdir -p /etc/tmpfiles.d
+    sudo cp "$TMP/etc/tmpfiles.d/igate-logs.conf" /etc/tmpfiles.d/igate-logs.conf
+fi
+
+# RAM log setup (idempotent: adds /var/log tmpfs to fstab if not present)
+/home/pi/ramlog-setup.sh
+
+# Remove obsolete v4 scripts superseded by v5 equivalents
+rm -f /home/pi/direwolf-start.sh \
+      /home/pi/direwatch-start.sh \
+      /home/pi/CheckNetBird.sh \
+      /home/pi/NetbirdUp.sh \
+      /home/pi/StatsRequestListener.php \
+      /home/pi/StatsRequestListener-start.sh \
+      /home/pi/add_wifi.php \
+      /home/pi/getIgateList.sh \
+      /home/pi/check-swapping.sh \
+      /home/pi/auto-update2.sh \
+      /home/pi/install.sh \
+      /home/pi/StartAllApps.sh
 
 # Download iGate list from marsaprs.org
 log "Downloading iGate list..."

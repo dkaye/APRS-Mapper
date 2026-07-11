@@ -71,6 +71,8 @@ function buildConfigYaml($cfg, $history = []) {
         if ($msgPw !== '') $L[] = 'messaging_password: ' . ys($msgPw);
         $blinkDur = isset($cfg['blink_duration']) ? (int)$cfg['blink_duration'] : 5;
         if ($blinkDur !== 5) $L[] = 'blink_duration: ' . $blinkDur;
+        $bcCount = isset($cfg['breadcrumb_count']) ? (int)$cfg['breadcrumb_count'] : 100;
+        if ($bcCount !== 100) $L[] = 'breadcrumb_count: ' . $bcCount;
         $L[] = '';
     }
     $legend = trim($cfg['legend'] ?? '');

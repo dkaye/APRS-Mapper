@@ -3,7 +3,7 @@ Version=1.0
 Type=Application
 Name=Start APRS
 Comment=Restart APRS kiosk browser
-Exec=/bin/bash -c 'pkill chromium 2>/dev/null; sleep 1; chromium --password-store=basic --kiosk --noerrdialogs --disable-infobars --disable-dev-shm-usage --incognito https://marsaprs.org/'
+Exec=/bin/bash -c 'pkill chromium 2>/dev/null; sleep 1; /home/pi/start-kiosk.sh'
 Icon=chromium
 Terminal=false
 Categories=Application;

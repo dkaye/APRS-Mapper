@@ -2,7 +2,7 @@
 
 **Author:** Doug Kaye (K6DRK) · **Copyright:** 2026 Doug Kaye. All Rights Reserved.
 
-**Version:** Server & Displays (v1.18.5); Mobile App (v1.18.5); iGates (v5.0)
+**Version:** Server & Displays (v1.19.0); Mobile App (v1.18.5); iGates (v5.0)
 
 ---
 
@@ -12,26 +12,27 @@
 2. [System Architecture](#system-architecture)
 3. [NetBird VPN](#netbird-vpn)
 4. [iGates (v5.0)](#igates-v50)
-5. [APRS Server (v1.18.5)](#aprs-server-v1185)
+5. [APRS Server (v1.19.0)](#aprs-server-v1190)
    - [Cloudflare Tunnel](#cloudflare-tunnel)
-6. [Display Pis (v1.18.5)](#display-pis-v1185)
+6. [Display Pis (v1.19.0)](#display-pis-v1190)
 7. [Mobile Apps (v1.18.5)](#mobile-apps-v1185)
    - [Architecture](#app-architecture) · [Location Sharing Flow](#location-sharing-flow) · [Smart Track](#smart-track) · [Building & Distributing](#building-distributing) · [Background Location](#background-location)
 8. [User Interfaces](#user-interfaces)
-9. [Analyzer](#analyzer)
+9. [Authentication](#authentication)
+10. [Analyzer](#analyzer)
    - [Architecture](#analyzer-architecture) · [Authentication](#analyzer-authentication) · [Beacon Recording](#beacon-recording) · [Map & Controls](#map--controls) · [Key Files](#analyzer-key-files) · [Services](#analyzer-services) · [API Endpoints](#analyzer-api-endpoints)
-10. [Backup, Recovery and Updates](#backup-recovery-and-updates)
+11. [Backup, Recovery and Updates](#backup-recovery-and-updates)
    - [Server Pi](#server-pi) · [Display Pis](#display-pis) · [iGates](#igates)
-11. [Log Rotation](#log-rotation)
-12. [Building & Deploying Devices](#building-deploying-devices)
+12. [Log Rotation](#log-rotation)
+13. [Building & Deploying Devices](#building-deploying-devices)
     - [NetBird Setup Keys](#netbird-setup-keys) · [APRS Server](#aprs-server) · [Display Pis & iGates](#display-pis-igates)
-13. [Creating New Master Images](#creating-new-master-images)
+14. [Creating New Master Images](#creating-new-master-images)
     - [APRS Server](#aprs-server_1) · [Display Pis](#display-pis_1) · [iGates](#igates_1)
-14. [Supporting Systems](#supporting-systems)
+15. [Supporting Systems](#supporting-systems)
     - [NetBird Status Monitor](#netbird-status-monitor) · [WiFi Manager](#wifi-manager)
-15. [Appendix](#appendix)
+16. [Appendix](#appendix)
     - [File Formats](#file-formats) · [Server](#server) · [Display Pi](#display-pi) · [iGate](#igate) · [Pi-Tools](#pi-tools)
-16. [Testing](#testing)
+17. [Testing](#testing)
 
 ---
 
@@ -77,14 +78,14 @@ APRS Radio (144.39 MHz)
 └────────────────┬─────────────────────┘     │  TCP 14580 (inject position) │
                  │ TCP 14580                 └──────────────┬───────────────┘
 ┌────────────────▼─────────────────────┐                    │ HTTPS (map + config + session)
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.18.5      │
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.19.0      │
 │  aprsDaemon.php → trackers.json      │◀───────────────────┘
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.18.5
+│  Display Pi  (×2)      │  Pi 4 · v1.19.0
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -189,7 +190,7 @@ Log: `/var/log/direwolf/watchdog.log`
 
 ---
 
-## APRS Server (v1.18.5)
+## APRS Server (v1.19.0)
 
 The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
 APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
@@ -275,7 +276,7 @@ The tunnel token is obtained from the **Cloudflare Zero Trust dashboard**:
 
 ---
 
-## Display Pis (v1.18.5)
+## Display Pis (v1.19.0)
 
 A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
 `marsaprs.org`. It is a read-only display device — no long-term local configuration or data storage.
@@ -609,11 +610,12 @@ Pi, accessible at `https://marsaprs.org/<path>`.
 | Interface | URL | Access | Purpose |
 |-----------|-----|--------|---------|
 | **Map** | `/` | Public | Live tracker positions on an interactive Leaflet map |
-| **Map Admin** | `/admin/` | Password | Event configuration, tracker list, course and aid station management |
-| **Analyzer** | `/analyzer/` | Event Password | Beacon recording, playback, and analysis for the current event |
-| **NetBird Monitor** | `/netbird/` | Password | Real-time health status of all Pi devices |
-| **NetBird Admin** | `/netbird/admin.php` | Password | Add/remove devices, enable/disable, SSH terminal |
-| **WiFi Manager** | `/wifi/` | Password | Edit the shared WiFi credential list distributed to all Pis |
+| **Map Admin** | `/admin/` | User account | Event configuration, tracker list, course and aid station management |
+| **Analyzer** | `/analyzer/` | User account | Beacon recording, playback, and analysis for the current event |
+| **NetBird Monitor** | `/netbird/` | User account | Real-time health status of all Pi devices |
+| **NetBird Admin** | `/netbird/admin.php` | User account | Add/remove devices, enable/disable, SSH terminal |
+| **WiFi Manager** | `/wifi/` | User account | Edit the shared WiFi credential list distributed to all Pis |
+| **Tickets** | `/tickets/admin.php` | User account | Bug report and suggestion ticket management |
 
 **Map** — Shows tracker positions updated every 5 seconds. Sidebar lists trackers (with
 elapsed time and breadcrumb history), courses, aid stations, iGates, and map backgrounds.
@@ -625,30 +627,109 @@ as the selected tracker moves. Aid station and iGate tooltips include an optiona
 A scale bar in the lower-right corner toggles between miles/feet and kilometers/meters when
 clicked. Kiosk mode removes controls for unattended display use.
 
-**Map Admin** — Password-protected. Manages all event configuration: tracker callsigns and
+**Map Admin** — Requires `admin.view` or `admin.edit`. Manages all event configuration: tracker callsigns and
 IDs, GPX/KML/GeoJSON course overlays, aid station and iGate locations (with optional APRS
 callsign), map default view, and background tile layers. Supports multiple named events;
-switching events is instant.
+switching events is instant. Users with only `admin.view` see all data read-only.
 See [Appendix — Server — Admin Interface](#admin-interface) for full details.
 
-**Analyzer** — Requires the event password to view. A Flask/gunicorn web app served at
+**Analyzer** — Requires `analyzer.view`. A Flask/gunicorn web app served at
 `/analyzer/` via Apache mod_proxy. Runs `analyzer-daemon` to record APRS beacons from
 APRS-IS into a local SQLite database for the current event. Displays recorded beacons on
 an interactive Leaflet map with controls for filtering by tracker and iGate, toggling radio
 vs. cellular beacons and course overlays, adjusting the auto-refresh rate (30 s–5 min per
-client), and scrubbing a time-range slider. Daemon start/stop requires the admin password;
-data erasure requires the admin password and two confirmation steps.
+client), and scrubbing a time-range slider. Daemon start/stop and data erasure require `analyzer.admin`.
 
-**NetBird Monitor** — Password-protected. Page that polls all registered Pi devices every 60 seconds (default; adjustable) over
+**NetBird Monitor** — Requires `netbird.view`. Polls all registered Pi devices every 60 seconds (default; adjustable) over
 the NetBird VPN and shows online/offline/enabling/disabled status. Includes an SSH terminal
-for online devices. See [Supporting Systems — NetBird Status Monitor](#netbird-status-monitor)
-for full details.
+for online devices. Poll/refresh sliders and the Admin button are shown only to users with `netbird.admin`.
+See [Supporting Systems — NetBird Status Monitor](#netbird-status-monitor) for full details.
 
-**NetBird Admin** — Password-protected. Manages the device list in `addresses.yaml`: add, edit, delete, enable,
+**NetBird Admin** — Requires `netbird.admin`. Manages the device list in `addresses.yaml`: add, edit, delete, enable,
 and disable devices. Access to the SSH terminal for any online device.
 
-**WiFi Manager** — Password-protected. Edits `wifi.yaml`, the master list of WiFi networks distributed to all
-Pis nightly. Auto-saves on every change; no manual save step.
+**WiFi Manager** — Requires `wifi.admin` to edit; accessible read-only to users with `netbird.view`.
+Edits `wifi.yaml`, the master list of WiFi networks distributed to all Pis nightly. Auto-saves on every change; no manual save step.
+
+**Tickets** — Requires `tickets.manage`. View and manage bug reports and suggestions submitted via the in-app ticket form.
+
+---
+
+## Authentication
+
+All protected browser interfaces use a shared named-account system. A single sign-in at
+`/auth/login.php` establishes a session that is recognized by every tool — Admin, Analyzer,
+NetBird, WiFi, and Tickets — without re-entering credentials.
+
+### User Accounts
+
+Accounts are stored in an SQLite database at `/var/lib/marsaprs/users.db` (outside the
+web root, owned by `www-data`). Each account holds a username, display name, and bcrypt
+password hash, plus an active flag. Inactive accounts cannot log in.
+
+### Session Cookie
+
+After a successful login the server inserts a row into the `sessions` table with a
+64-character hex token and sends it to the browser as the `marsaprs_session` cookie
+(`httponly`, `secure`, `SameSite=Lax`, 24-hour TTL). Both PHP pages and the Python
+Flask analyzer validate the same cookie against the same database.
+
+### Permissions
+
+Access is controlled by flat permission strings. Each user is granted exactly the
+permissions they need; there are no implicit roles or inheritance.
+
+| Permission | Guards |
+|---|---|
+| `admin.view` | `/admin/` — read-only view of all event config, trackers, aid stations, iGates |
+| `admin.edit` | `/admin/` — full edit and save |
+| `admin.set_default` | **Save as Default Event** action |
+| `admin.delete_event` | **Delete** event action |
+| `analyzer.view` | `/analyzer/` — event map and beacon data |
+| `analyzer.admin` | Daemon start/stop; Erase All Data |
+| `netbird.view` | `/netbird/` — status page; read-only WiFi page |
+| `netbird.admin` | `/netbird/admin.php`; poll/refresh sliders; full WiFi edit |
+| `wifi.admin` | `/wifi/` — edit WiFi credentials |
+| `tickets.manage` | `/tickets/admin.php` — ticket list and management |
+| `users.manage` | `/auth/users.php` — create/edit/delete accounts and permissions |
+
+### Login Flow
+
+Every protected page passes unauthenticated requests through
+`require_permission($perm)`, which redirects to `/auth/login.php?next=<original-url>`.
+After a successful login the browser is sent back to the originally requested page.
+Logging out (`/auth/logout.php`) deletes the session row and clears the cookie.
+
+Users with `admin.view` but not `admin.edit` see the Admin page in read-only mode:
+all data is displayed but edit controls, save buttons, and import/export actions are
+hidden. The same permission-aware rendering applies to the NetBird status page (sliders
+and Admin button hidden for `netbird.view`-only users) and the WiFi page (edit controls
+and drag-to-reorder hidden).
+
+### User Management
+
+Users with `users.manage` access `/auth/users.php` (linked from the Admin page header
+as **Users**). From there they can create accounts, reset passwords, toggle active status,
+and assign or revoke individual permissions.
+
+### Key Files
+
+| File | Location | Purpose |
+|---|---|---|
+| `auth.php` | `/var/www/html/auth/` | Shared PHP library: `current_user()`, `has_permission()`, `require_permission()`, `create_session()`, `destroy_session()` |
+| `login.php` | `/var/www/html/auth/` | Login form (GET) and credential validator (POST) |
+| `logout.php` | `/var/www/html/auth/` | Destroys session, redirects to login |
+| `users.php` | `/var/www/html/auth/` | User management UI (requires `users.manage`) |
+| `init_db.php` | `/var/www/html/auth/` | Idempotent DB bootstrap; creates first admin account when no users exist |
+| `auth_db.py` | `/home/pi/analyzer/src/` | Python mirror of `auth.php`; validates `marsaprs_session` cookie in Flask |
+| `users.db` | `/var/lib/marsaprs/` | SQLite database: `users`, `permissions`, `sessions` tables |
+
+### Event Lock Password
+
+The event-level **lock** feature (🔒 in the Admin page) still uses `admin/password.txt`
+as a separate credential. This is distinct from user-account authentication — it controls
+whether a specific event's YAML can be overwritten, not who can log in. All other
+admin actions are gated by the user-account permission system.
 
 ---
 
@@ -737,14 +818,18 @@ Two systemd services work together:
 
 ### Analyzer Authentication
 
-Two independent HMAC-SHA256 cookie-based auth levels, each valid for 24 hours:
+The Analyzer uses the shared user-account system described in [Authentication](#authentication).
+Access is gated on two permissions:
 
-| Level | Cookie name | Password source | Required for |
-|-------|-------------|-----------------|-------------|
-| View | `analyzer_view_auth` | Event password in `event.yaml` (`mobile.messaging_password`) | All pages and API calls |
-| Admin | `analyzer_admin_auth` | Admin password in `admin/password.txt` | Daemon start/stop; Erase All Data |
+| Permission | Required for |
+|---|---|
+| `analyzer.view` | All pages and API endpoints |
+| `analyzer.admin` | `POST /api/daemon` (start/stop); `POST /api/flush` (erase data) |
 
-On page load, the UI calls `GET /api/check_admin` to determine whether the admin cookie is already valid. If so, password modals are skipped for daemon and flush operations for the remainder of the 24-hour window — even across daemon restarts and page reloads. Both cookies are `httponly` and `SameSite=Lax`.
+The `marsaprs_session` cookie is validated by `auth_db.py` against `/var/lib/marsaprs/users.db`
+on every request. Unauthenticated requests are redirected to `/auth/login.php`. The
+**Collect Data** checkbox is disabled in the UI for users who lack `analyzer.admin`;
+no password modal is shown.
 
 ### Beacon Recording
 
@@ -814,7 +899,7 @@ All files live under `/home/pi/analyzer/` on the server Pi.
 | `src/aprs_db.py` | SQLite wrapper: event management, beacon insert, ordered/deduplicated beacon fetch, recording time range queries |
 | `src/aprs.db` | SQLite database; excluded from deploys |
 | `src/templates/event_map.html` | Main map page (Leaflet + controls modal + all JS filtering/drawing logic) |
-| `src/templates/login.html` | Event-password login form |
+| `src/auth_db.py` | Python auth library: validates `marsaprs_session` cookie against `users.db` |
 
 Configuration is read live from `/var/www/html/admin/config.yaml` (the active event symlink) and `/var/www/html/mobile_trackers.json` on every page load — no restart needed when the event or tracker list changes.
 
@@ -839,18 +924,18 @@ The daemon restarts automatically on failure (30 s delay, 5 retries per 5 minute
 
 ### Analyzer API Endpoints
 
-All endpoints except `/login` require a valid view cookie (`analyzer_view_auth`). Admin endpoints additionally require a valid admin cookie (`analyzer_admin_auth`) **or** the admin password in the request body.
+All endpoints require a valid `marsaprs_session` cookie with at least `analyzer.view`.
+Admin endpoints additionally require `analyzer.admin`.
 
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/` | GET | View | Redirect to current event URL |
-| `/event/<name>` | GET | View | Main map page for the named event; always redirects to the current yaml event |
-| `/login` | GET / POST | None | Login form; POST with `password` sets view cookie and redirects to `/` |
-| `/api/event_beacons/<name>` | GET | View | All deduplicated beacons for the named event as JSON |
-| `/api/check_admin` | GET | View | Returns `{"ok": true}` if the admin cookie is valid |
-| `/api/daemon` | GET | View | Returns `{"running": true/false}` — current daemon status |
-| `/api/daemon` | POST | Admin | `{"action": "start"\|"stop"}` — starts or stops `analyzer-daemon`; stamps admin cookie on success |
-| `/api/flush` | POST | Admin | `{"password": "..."}` — deletes all beacon rows for the current event; stamps admin cookie on success |
+| Endpoint | Method | Permission | Description |
+|----------|--------|------------|-------------|
+| `/` | GET | `analyzer.view` | Redirect to current event URL |
+| `/event/<name>` | GET | `analyzer.view` | Main map page; always redirects to the current yaml event |
+| `/api/event_beacons/<name>` | GET | `analyzer.view` | All deduplicated beacons for the named event as JSON |
+| `/api/check_admin` | GET | `analyzer.view` | Returns `{"ok": true}` if user has `analyzer.admin` |
+| `/api/daemon` | GET | `analyzer.view` | Returns `{"running": true/false}` — current daemon status |
+| `/api/daemon` | POST | `analyzer.admin` | `{"action": "start"\|"stop"}` — starts or stops `analyzer-daemon` |
+| `/api/flush` | POST | `analyzer.admin` | Deletes all beacon rows for the current event |
 
 ---
 
@@ -1577,8 +1662,8 @@ are updated; all other config sections are left unchanged by polls.
 
 #### Admin Interface
 
-Open `https://marsaprs.org/admin/`. Password stored in `admin/password.txt`. Session lasts
-12 hours.
+Open `https://marsaprs.org/admin/`. Requires a user account with `admin.view` or
+`admin.edit` (see [Authentication](#authentication)). Session lasts 24 hours.
 
 **Editable sections:** Trackers (callsign, ID, name), Tracker Style (icon, color), Map
 Default View, Default Section Visibility, Backgrounds, Courses, Aid Stations, iGates, Legend, Mobile Tracking (enabled, PIN, root callsign; messaging password; participant list with rename/block/remove), Beacon Settings (upload interval and distance threshold per activity mode).

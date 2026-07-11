@@ -25,7 +25,9 @@ echo ""
 # ── System update ─────────────────────────────────────────────────────────────
 msg "Updating system packages"
 sudo apt-get update -y
-sudo apt-get upgrade -y
+sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+    -o Dpkg::Options::="--force-confdef" \
+    -o Dpkg::Options::="--force-confold" || true
 ok "System up to date"
 
 # ── Install packages ──────────────────────────────────────────────────────────
@@ -57,9 +59,9 @@ rsync -a "$TMP/home/"     /home/pi/
 sudo rsync -a "$TMP/systemd/" /etc/systemd/system/
 ok "Display files applied"
 
-# ── Journald volatile storage (reduces SD card writes) ────────────────────────
+# ── Journald volatile storage (reduces SD card writes; /tmp is tmpfs on Trixie) ─
 sudo mkdir -p /etc/systemd/journald.conf.d
-sudo cp "$TMP/etc/systemd/journald.conf.d/volatile.conf" /etc/systemd/journald.conf.d/volatile.conf
+printf '[Journal]\nStorage=volatile\n' | sudo tee /etc/systemd/journald.conf.d/volatile.conf > /dev/null
 sudo systemctl restart systemd-journald
 ok "Journald configured for volatile (RAM) storage"
 
@@ -182,6 +184,7 @@ sudo ufw allow ssh
 sudo ufw allow http
 sudo ufw allow 1235/udp   # StatsRequestListener
 sudo ufw allow 5900/tcp   # x11vnc VNC
+sudo ufw allow in proto udp from any port 53 to any   # DNS responses
 sudo ufw default deny incoming
 sudo ufw --force enable
 ok "UFW firewall enabled"

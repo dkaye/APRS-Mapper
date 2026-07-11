@@ -1,0 +1,13 @@
+[Unit]
+Description=APRS Server Stats Request Listener
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+ExecStart=/usr/bin/php /home/pi/StatsRequestListener.php
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

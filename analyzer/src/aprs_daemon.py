@@ -93,6 +93,10 @@ def read_event_data():
             event_id    = event["id"]
             print(f"Found event {event_id}: {event_name}.")
             watch_list = database.get_trackers_for_event(event_name)
+            for cs, name in watch_list.items():
+                display_name = name.split('/')[1] if '/' in name else name
+                if display_name:
+                    database.save_tracker_name(cs, display_name)
             return
     event_name = None
     print("No matching event found.  Will only print beacons")
@@ -121,6 +125,10 @@ def main_loop():
             if added:
                 print(f"New trackers: {', '.join(added)}")
             watch_list = new_watch
+        for cs, name in watch_list.items():
+            display_name = name.split('/')[1] if '/' in name else name
+            if display_name:
+                database.save_tracker_name(cs, display_name)
         calls = "/".join(watch_list.keys())
         print(f"Connecting to APRS-IS... filter: p/{calls} t/p")
         ais = aprslib.IS("KN6RST", passwd="-1", host="noam.aprs2.net", port=14580)

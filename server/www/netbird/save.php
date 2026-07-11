@@ -8,8 +8,8 @@
  * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
  * ©2025 Doug Kaye, K6DRK <doug@rds.com>
  */
-session_start();
-$authed = !empty($_SESSION['stats_auth']) || !empty($_SESSION['aprs_admin_authed']);
+require_once '/var/www/html/auth/auth.php';
+require_permission('netbird.admin');
 
 header('Content-Type: application/json');
 header('Cache-Control: no-store');
@@ -22,9 +22,8 @@ function aprs_admin_log(string $action, array $ctx = []): void {
        ?? $_SERVER['REMOTE_ADDR']
        ?? '-';
     $ts  = (new DateTime('now', new DateTimeZone('America/Los_Angeles')))->format('Y-m-d H:i:s T');
-    $who = isset($_SESSION['aprs_log_name']) && $_SESSION['aprs_log_name'] !== ''
-         ? preg_replace('/[^A-Za-z0-9 _\-\.]/', '', $_SESSION['aprs_log_name'])
-         : '';
+    $u   = current_user();
+    $who = $u ? $u['username'] : '';
     $extra = $who !== '' ? " user=$who" : '';
     foreach ($ctx as $k => $v) $extra .= " $k=$v";
     @file_put_contents('/var/log/aprs-admin/aprs-admin.log',
@@ -49,13 +48,6 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 $action = $_POST['action'] ?? '';
-
-// save_config (poll interval) is allowed without auth — not security-sensitive
-if (!$authed && $action !== 'save_config') {
-    http_response_code(401);
-    echo json_encode(['error' => 'Unauthorized']);
-    exit;
-}
 
 if ($action === 'save_addresses') {
     $content = $_POST['content'] ?? '';

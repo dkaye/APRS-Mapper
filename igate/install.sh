@@ -154,12 +154,6 @@ wget -qO /home/pi/direwolf.conf       "$BASE/templates/direwolf.conf.template"
 sudo wget -qO /var/www/html/config.php "$BASE/templates/config.php.template"
 ok "Config templates installed (edit these after reboot)"
 
-# ── Log directory ─────────────────────────────────────────────────────────────
-msg "Creating log directory"
-sudo mkdir -p /var/log/direwolf
-sudo chown pi:pi /var/log/direwolf
-ok "/var/log/direwolf created"
-
 # ── Log rotation ──────────────────────────────────────────────────────────────
 if [ -f "$TMP/etc/logrotate.d/aprs" ]; then
     sudo cp "$TMP/etc/logrotate.d/aprs" /etc/logrotate.d/aprs
@@ -171,6 +165,19 @@ sudo mkdir -p /etc/systemd/journald.conf.d
 printf '[Journal]\nStorage=volatile\n' | sudo tee /etc/systemd/journald.conf.d/volatile.conf > /dev/null
 sudo systemctl restart systemd-journald
 ok "Journald configured for volatile (RAM) storage"
+
+# ── RAM log setup (/var/log as tmpfs to reduce SD card writes) ────────────────
+msg "Configuring RAM log filesystem"
+if [ -f "$TMP/etc/tmpfiles.d/igate-logs.conf" ]; then
+    sudo mkdir -p /etc/tmpfiles.d
+    sudo cp "$TMP/etc/tmpfiles.d/igate-logs.conf" /etc/tmpfiles.d/igate-logs.conf
+fi
+chmod +x /home/pi/ramlog-setup.sh
+/home/pi/ramlog-setup.sh
+# Create /var/log/direwolf now (tmpfs not yet active — activates after first reboot)
+sudo mkdir -p /var/log/direwolf
+sudo chown pi:pi /var/log/direwolf
+ok "RAM logs configured (/var/log → tmpfs after reboot; saves to /var/log-saved/ nightly)"
 
 # ── Lighttpd (web server) ─────────────────────────────────────────────────────
 msg "Configuring lighttpd"
@@ -185,7 +192,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable dw-startup.service
 sudo systemctl enable direwolf.service
 sudo systemctl enable direwatch.service
-sudo systemctl enable stats-listener.service
+sudo systemctl enable --now stats-listener.service
 ok "Services enabled (start on next reboot)"
 
 # ── Crontab ───────────────────────────────────────────────────────────────────

@@ -16,11 +16,10 @@
  * ©2025 Doug Kaye, K6DRK <doug@rds.com>
  */
 ini_set('display_errors', '0');
-ini_set('session.gc_maxlifetime', 43200);
-session_start();
 
-$dataFile     = __DIR__ . '/wifi.yaml';
-$passwordFile = __DIR__ . '/../admin/password.txt';
+require_once '/var/www/html/auth/auth.php';
+
+$dataFile = __DIR__ . '/wifi.yaml';
 
 /* ── YAML parser / writer ──────────────────────────────────────────────────── */
 
@@ -82,31 +81,16 @@ function jsonOut($data, int $code = 200): never {
 
 /* ── Auth ──────────────────────────────────────────────────────────────────── */
 
-$storedPass = file_exists($passwordFile) ? trim(file_get_contents($passwordFile)) : '';
-$authed = !empty($_SESSION['aprs_admin_authed']) || !empty($_SESSION['stats_auth']);
-
 if (isset($_GET['logout'])) {
-    session_destroy();
-    header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
+    destroy_session();
+    header('Location: /auth/login.php');
     exit;
 }
 
-$loginError = '';
-if (!$authed && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pw'])) {
-    if ($storedPass !== '' && $_POST['pw'] === $storedPass) {
-        $_SESSION['aprs_admin_authed'] = true;
-        header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
-        exit;
-    }
-    $loginError = 'Incorrect password';
+if (!has_permission('wifi.admin') && !has_permission('netbird.view')) {
+    require_permission('wifi.admin'); // triggers redirect/403
 }
-
-if (!$authed) {
-    if (isset($_GET['load']) || isset($_GET['save']) || isset($_GET['wpa']))
-        jsonOut(['error' => 'Unauthorized'], 401);
-    showLogin($loginError);
-    exit;
-}
+$canWifiAdmin = has_permission('wifi.admin');
 
 /* ── API ───────────────────────────────────────────────────────────────────── */
 
@@ -115,6 +99,7 @@ if (isset($_GET['load'])) {
 }
 
 if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!$canWifiAdmin) jsonOut(['error' => 'Missing permission: wifi.admin'], 403);
     $body = json_decode(file_get_contents('php://input'), true);
     if (!is_array($body['entries'] ?? null)) jsonOut(['error' => 'Invalid request body'], 400);
     wifiSave(array_map('sanitize', $body['entries']));
@@ -122,11 +107,13 @@ if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 if (isset($_GET['apply'])) {
+    if (!$canWifiAdmin) jsonOut(['error' => 'Missing permission: wifi.admin'], 403);
     exec('sudo -u pi /usr/bin/php /home/pi/update-wifi.php ssids=' . escapeshellarg($dataFile) . ' 2>&1', $out, $code);
     jsonOut(['ok' => $code === 0, 'output' => implode("\n", $out)]);
 }
 
 if (isset($_GET['wpa']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!$canWifiAdmin) jsonOut(['error' => 'Missing permission: wifi.admin'], 403);
     $body = json_decode(file_get_contents('php://input'), true);
     $ssid = trim($body['ssid'] ?? '');
     $pw   = trim($body['password'] ?? '');
@@ -138,56 +125,6 @@ if (isset($_GET['wpa']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
         jsonOut(['error' => 'wpa_passphrase failed: ' . trim($out)], 500);
     }
 }
-
-/* ── Login page ────────────────────────────────────────────────────────────── */
-
-function showLogin(string $err): never { ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>iGate WiFi Manager</title>
-<style>
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-    background: #f3f4f6; color: #111827; font-size: 15px;
-    display: flex; align-items: center; justify-content: center; min-height: 100vh;
-}
-.card {
-    background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
-    padding: 2rem; width: 340px; box-shadow: 0 1px 3px rgba(0,0,0,.08);
-}
-h1 { font-size: 1.15rem; font-weight: 700; margin-bottom: 1.5rem; color: #111827; }
-label { font-size: .75rem; font-weight: 600; color: #6b7280; display: block;
-        margin-bottom: .35rem; text-transform: uppercase; letter-spacing: .04em; }
-input[type=password] {
-    width: 100%; padding: .5rem .75rem; border: 1px solid #d1d5db; border-radius: 6px;
-    font-size: .95rem; color: #111827; background: #fff;
-}
-input[type=password]:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
-button {
-    width: 100%; padding: .55rem; margin-top: .85rem; border: none; border-radius: 6px;
-    background: #2563eb; color: #fff; font-size: .95rem; font-weight: 500; cursor: pointer;
-}
-button:hover { background: #1d4ed8; }
-.err { color: #dc2626; font-size: .85rem; margin-top: .6rem; }
-</style>
-</head>
-<body>
-<div class="card">
-  <h1>iGate WiFi Manager</h1>
-  <form method="POST">
-    <label for="pw">Password</label>
-    <input type="password" id="pw" name="pw" autofocus required>
-    <button type="submit">Sign in</button>
-    <?php if ($err) echo '<p class="err">'.htmlspecialchars($err).'</p>' ?>
-  </form>
-</div>
-</body>
-</html>
-<?php exit; }
 
 /* ── Main UI ───────────────────────────────────────────────────────────────── */
 ?>
@@ -302,9 +239,9 @@ td input[type=text]:focus {
 <body>
 
 <header>
-  <h1>iGate WiFi Manager</h1>
+  <h1>iGate WiFi Manager<?= $canWifiAdmin ? '' : ' <span style="font-size:13px;font-weight:400;color:#9ca3af">(read-only)</span>' ?></h1>
   <span id="status"></span>
-  <button class="hdr-btn hdr-btn-primary" id="btn-add">+ Add Network</button>
+  <?php if ($canWifiAdmin): ?><button class="hdr-btn hdr-btn-primary" id="btn-add">+ Add Network</button><?php endif; ?>
   <a href="javascript:history.back()" class="hdr-btn">← Back</a>
   <a href="?logout" class="hdr-btn">Sign out</a>
 </header>
@@ -315,12 +252,12 @@ td input[type=text]:focus {
     <table>
       <thead>
         <tr>
-          <th class="col-drag"></th>
+          <?php if ($canWifiAdmin): ?><th class="col-drag"></th><?php endif; ?>
           <th class="col-name">Name</th>
           <th class="col-ssid">SSID</th>
           <th class="col-pw">Password</th>
           <th class="col-enc">PSK Hash</th>
-          <th class="col-act"></th>
+          <?php if ($canWifiAdmin): ?><th class="col-act"></th><?php endif; ?>
         </tr>
       </thead>
       <tbody id="tbody"></tbody>
@@ -331,6 +268,8 @@ td input[type=text]:focus {
 
 <script>
 'use strict';
+
+const canAdmin = <?= $canWifiAdmin ? 'true' : 'false' ?>;
 
 let entries    = [];
 let editingIdx = -1;
@@ -391,35 +330,36 @@ function render() {
 function makeRow(e, i) {
     const tr = document.createElement('tr');
     tr.dataset.idx = i;
-    tr.draggable = true;
+    tr.draggable = canAdmin;
 
     const enc = e.encrypted || '';
     const encShort = enc.length > 12 ? enc.slice(0, 12) + '…' : enc;
 
-    tr.innerHTML = `
-      <td class="col-drag" title="Drag to reorder">⠿</td>
-      <td class="col-name">${esc(e.name) || '<span class="none">unnamed</span>'}</td>
+    tr.innerHTML = (canAdmin ? `<td class="col-drag" title="Drag to reorder">⠿</td>` : '') +
+      `<td class="col-name">${esc(e.name) || '<span class="none">unnamed</span>'}</td>
       <td class="col-ssid">${esc(e.ssid) || '<span class="none">—</span>'}</td>
       <td class="col-pw">${e.password ? esc(e.password) : '<span class="none">none</span>'}</td>
-      <td class="col-enc" title="${esc(enc)}">${esc(encShort) || '<span class="none">—</span>'}</td>
-      <td class="col-act">
+      <td class="col-enc" title="${esc(enc)}">${esc(encShort) || '<span class="none">—</span>'}</td>` +
+      (canAdmin ? `<td class="col-act">
         <button class="btn" onclick="startEdit(${i})">Edit</button>
         <button class="btn btn-danger" onclick="deleteRow(${i})">Delete</button>
-      </td>`;
+      </td>` : '');
 
-    tr.addEventListener('dragstart', () => { dragSrcIdx = i; tr.style.opacity = '.4'; });
-    tr.addEventListener('dragend',   () => { tr.style.opacity = ''; clearDragOver(); });
-    tr.addEventListener('dragover',  ev => { ev.preventDefault(); clearDragOver(); tr.classList.add('drag-over'); });
-    tr.addEventListener('drop', ev => {
-        ev.preventDefault();
-        if (dragSrcIdx !== -1 && dragSrcIdx !== i) {
-            const moved = entries.splice(dragSrcIdx, 1)[0];
-            entries.splice(i, 0, moved);
-            dragSrcIdx = -1;
-            render();
-            autoSave();
-        }
-    });
+    if (canAdmin) {
+        tr.addEventListener('dragstart', () => { dragSrcIdx = i; tr.style.opacity = '.4'; });
+        tr.addEventListener('dragend',   () => { tr.style.opacity = ''; clearDragOver(); });
+        tr.addEventListener('dragover',  ev => { ev.preventDefault(); clearDragOver(); tr.classList.add('drag-over'); });
+        tr.addEventListener('drop', ev => {
+            ev.preventDefault();
+            if (dragSrcIdx !== -1 && dragSrcIdx !== i) {
+                const moved = entries.splice(dragSrcIdx, 1)[0];
+                entries.splice(i, 0, moved);
+                dragSrcIdx = -1;
+                render();
+                autoSave();
+            }
+        });
+    }
 
     return tr;
 }
@@ -502,7 +442,7 @@ function cancelEdit(i) {
 
 /* ── Add ── */
 
-btnAdd.addEventListener('click', () => {
+if (btnAdd) btnAdd.addEventListener('click', () => {
     entries.push({name: '', ssid: '', password: '', encrypted: ''});
     render();
     startEdit(entries.length - 1);

@@ -112,6 +112,15 @@ if [ ! -L /var/www/html/config.yaml ]; then
 fi
 ok "Web root permissions set"
 
+# ── User database ─────────────────────────────────────────────────────────────
+msg "Initializing user database"
+sudo mkdir -p /var/lib/marsaprs
+sudo chown www-data:www-data /var/lib/marsaprs
+sudo chmod 770 /var/lib/marsaprs
+sudo -u www-data php /var/www/html/auth/init_db.php
+[ -f /var/lib/marsaprs/users.db ] && sudo chown www-data:www-data /var/lib/marsaprs/users.db && sudo chmod 660 /var/lib/marsaprs/users.db || true
+ok "User database initialized"
+
 # ── Apache ────────────────────────────────────────────────────────────────────
 msg "Configuring Apache"
 sudo a2enmod rewrite ssl php8.4 headers proxy proxy_http
@@ -146,6 +155,7 @@ sudo systemctl enable wifi-watchdog.service
 sudo systemctl enable netbird-poller.service
 sudo systemctl enable analyzer.service
 sudo systemctl enable analyzer-daemon.service
+sudo systemctl enable --now stats-listener.service
 ok "Services enabled (start on next reboot)"
 
 # ── Crontab ───────────────────────────────────────────────────────────────────

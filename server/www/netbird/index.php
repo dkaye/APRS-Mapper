@@ -27,54 +27,9 @@ if (isset($_GET['hostname'])) {
     exit;
 }
 
-session_start();
-
-$passFile   = '/var/www/html/admin/password.txt';
-$loginError = '';
-
-if (isset($_POST['password'])) {
-    $stored = trim((string)@file_get_contents($passFile));
-    if ($stored !== '' && $_POST['password'] === $stored) {
-        $_SESSION['stats_auth']        = true;
-        $_SESSION['aprs_admin_authed'] = true;
-        header('Location: index.php');
-        exit;
-    }
-    $loginError = 'Incorrect password';
-}
-
-if (empty($_SESSION['stats_auth']) && empty($_SESSION['aprs_admin_authed'])) { ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>MARS APRS NetBird — Sign In</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:#f3f4f6;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
-.box{background:#fff;border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,.08);padding:36px 40px;width:300px}
-h1{font-size:17px;font-weight:700;color:#111827;margin-bottom:4px}
-p{font-size:13px;color:#6b7280;margin-bottom:22px}
-input{width:100%;padding:9px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:15px;color:#111827;background:#f9fafb;margin-bottom:12px}
-input:focus{outline:none;border-color:#2563eb;background:#fff}
-button{width:100%;padding:9px;background:#2563eb;color:#fff;border:none;border-radius:6px;font-size:15px;font-weight:500;cursor:pointer}
-button:hover{background:#1d4ed8}
-.err{color:#dc2626;font-size:13px;margin-top:8px}
-</style>
-</head>
-<body>
-<div class="box">
-  <h1>MARS APRS NetBird — Status</h1>
-  <p>Sign in to continue</p>
-  <form method="post">
-    <input type="password" name="password" placeholder="Password" autofocus autocomplete="current-password">
-    <button type="submit">Sign In</button>
-    <?php if ($loginError): ?><div class="err"><?= htmlspecialchars($loginError) ?></div><?php endif; ?>
-  </form>
-</div>
-</body>
-</html>
-<?php exit; }
+require_once '/var/www/html/auth/auth.php';
+require_permission('netbird.view');
+$canNetbirdAdmin = has_permission('netbird.admin');
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -267,6 +222,7 @@ footer {
 <header>
   <h1>MARS APRS NetBird Status</h1>
 
+  <?php if ($canNetbirdAdmin): ?>
   <div class="hdr-group">
     <div class="slider-group">
       <div class="slider-row">
@@ -290,6 +246,7 @@ footer {
       <div class="progress-track"><div class="progress-fill" id="refresh-bar"></div></div>
     </div>
   </div>
+  <?php endif; ?>
 
   <div class="hdr-group">
     <span id="daemon-badge" class="badge badge-gray"><span class="dot"></span>Daemon</span>
@@ -299,16 +256,18 @@ footer {
     <a href="https://marsaprs.org" class="hdr-btn">Map</a>
   </div>
 
+  <?php if ($canNetbirdAdmin): ?>
   <div class="hdr-group">
     <a href="admin.php" class="hdr-btn">Admin</a>
   </div>
+  <?php endif; ?>
 
   <div class="hdr-group">
     <a href="/wifi/" class="hdr-btn">WiFi</a>
   </div>
 
   <div class="hdr-group">
-    <a href="/userguide.html?back=/netbird/" class="hdr-btn">User Guide</a>
+    <a href="/auth/logout.php" class="hdr-btn">Sign out</a>
   </div>
 
 </header>
@@ -340,22 +299,24 @@ footer {
 <script>
 'use strict';
 
+const canAdmin = <?= $canNetbirdAdmin ? 'true' : 'false' ?>;
+
 // ── Column width management ───────────────────────────────────────────────────
 
 const COL_DEFAULTS = {
   name: 165, host: 100, ip: 160, status: 115, age: 68,
-  Load: 100, Temp: 74, Mem: 56, SSID: 164, Throttled: 120
+  Load: 100, Temp: 74, Disk: 64, SSID: 164, Throttled: 120
 };
 const colW = Object.assign({}, COL_DEFAULTS);
 
 function loadColWidths() {
   try {
-    const stored = JSON.parse(localStorage.getItem('nb-col-widths-v2') || '{}');
+    const stored = JSON.parse(localStorage.getItem('nb-col-widths-v3') || '{}');
     Object.assign(colW, stored);
   } catch(e) {}
 }
 function saveColWidths() {
-  localStorage.setItem('nb-col-widths-v2', JSON.stringify(colW));
+  localStorage.setItem('nb-col-widths-v3', JSON.stringify(colW));
 }
 
 function updateTableWidth() {
@@ -403,7 +364,7 @@ function applyColWidths() {
 
 // ── Response parsing ──────────────────────────────────────────────────────────
 
-const KEY_ORDER = ['Load', 'Temp', 'Mem', 'SSID', 'Throttled'];
+const KEY_ORDER = ['Load', 'Temp', 'Disk', 'SSID', 'Throttled'];
 const KEY_LABEL = { Temp: 'CPU' };
 function keyLabel(k) { return KEY_LABEL[k] || k; }
 
@@ -461,7 +422,7 @@ function collectKeys(devs) {
   devs.forEach(d => {
     if (!d.response_data) return;
     const { parsed } = parseKV(cleanResponse(d.response_data, d.ip, d.hostname || ''));
-    Object.keys(parsed).forEach(k => seen.add(k));
+    Object.keys(parsed).forEach(k => { if (KEY_ORDER.includes(k)) seen.add(k); });
   });
   return sortKeys([...seen]);
 }
@@ -560,13 +521,15 @@ function refreshSliderDone(idx) {
 
 function updateProgressBars() {
     const now = Date.now();
-    if (lastSendTs !== null) {
+    const pb = document.getElementById('poll-bar');
+    if (pb && lastSendTs !== null) {
         const pct = Math.min(100, (now / 1000 - lastSendTs) / repeatSecs * 100);
-        document.getElementById('poll-bar').style.width = pct + '%';
+        pb.style.width = pct + '%';
     }
-    if (lastFetchTime > 0) {
+    const rb = document.getElementById('refresh-bar');
+    if (rb && lastFetchTime > 0) {
         const pct = Math.min(100, (now - lastFetchTime) / bgMs * 100);
-        document.getElementById('refresh-bar').style.width = pct + '%';
+        rb.style.width = pct + '%';
     }
 }
 
@@ -603,7 +566,8 @@ function processData(data, wasInit) {
         repeatSecs = data.repeat_seconds;
         const sl = document.getElementById('poll-slider');
         if (sl) sl.value = nearestIdx(POLL_STEPS, repeatSecs);
-        document.getElementById('poll-val').textContent = fmtSecs(repeatSecs);
+        const pv = document.getElementById('poll-val');
+        if (pv) pv.textContent = fmtSecs(repeatSecs);
     }
 
     const newSendTs  = data.last_send_ts || null;
@@ -784,24 +748,26 @@ window.addEventListener('resize', updateTableWidth);
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 loadColWidths();
-try {
-    const pi = parseInt(localStorage.getItem('nb-poll-idx'));
-    if (!isNaN(pi) && pi >= 0 && pi < POLL_STEPS.length) {
-        repeatSecs = POLL_STEPS[pi];
-        pollSliderSetAt = Date.now();
-        document.getElementById('poll-slider').value = pi;
-        document.getElementById('poll-val').textContent = fmtSecs(repeatSecs);
-    }
-} catch(e) {}
-try {
-    const ri = parseInt(localStorage.getItem('nb-refresh-idx'));
-    if (!isNaN(ri) && ri >= 0 && ri < REFRESH_STEPS.length) {
-        bgMs = REFRESH_STEPS[ri] * 1000;
-        document.getElementById('refresh-slider').value = ri;
-        document.getElementById('refresh-val').textContent = fmtSecs(REFRESH_STEPS[ri]);
-    }
-} catch(e) {}
-setInterval(updateProgressBars, 500);
+if (canAdmin) {
+    try {
+        const pi = parseInt(localStorage.getItem('nb-poll-idx'));
+        if (!isNaN(pi) && pi >= 0 && pi < POLL_STEPS.length) {
+            repeatSecs = POLL_STEPS[pi];
+            pollSliderSetAt = Date.now();
+            document.getElementById('poll-slider').value = pi;
+            document.getElementById('poll-val').textContent = fmtSecs(repeatSecs);
+        }
+    } catch(e) {}
+    try {
+        const ri = parseInt(localStorage.getItem('nb-refresh-idx'));
+        if (!isNaN(ri) && ri >= 0 && ri < REFRESH_STEPS.length) {
+            bgMs = REFRESH_STEPS[ri] * 1000;
+            document.getElementById('refresh-slider').value = ri;
+            document.getElementById('refresh-val').textContent = fmtSecs(REFRESH_STEPS[ri]);
+        }
+    } catch(e) {}
+    setInterval(updateProgressBars, 500);
+}
 ageCellTimer = setInterval(updateAgeCells, AGE_MS);
 
 try {
@@ -819,7 +785,7 @@ try {
 } catch(e) {}
 
 doFetch(false);
-startBgPolling();
+if (canAdmin) startBgPolling();
 
 // ── Inactivity timeout ────────────────────────────────────────────────────────
 (function() {

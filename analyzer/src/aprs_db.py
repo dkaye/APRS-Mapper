@@ -57,7 +57,44 @@ class aprs_db_connection:
             );
             """
             cursor.execute(table_query)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS tracker_names (
+                    callsign TEXT PRIMARY KEY,
+                    name     TEXT NOT NULL
+                );
+            """)
+            try:
+                cursor.execute("ALTER TABLE tracker_names ADD COLUMN carrier TEXT")
+            except sqlite3.OperationalError:
+                pass  # column already exists
             cursor.close()
+
+    def save_tracker_name(self, callsign, name):
+        with self.connection:
+            self.connection.execute(
+                "INSERT INTO tracker_names (callsign, name) VALUES (?, ?)"
+                " ON CONFLICT(callsign) DO UPDATE SET name=excluded.name",
+                (callsign, name)
+            )
+
+    def save_tracker_carrier(self, callsign, carrier):
+        with self.connection:
+            self.connection.execute(
+                "INSERT INTO tracker_names (callsign, name, carrier) VALUES (?, '', ?)"
+                " ON CONFLICT(callsign) DO UPDATE SET carrier=excluded.carrier",
+                (callsign, carrier)
+            )
+
+    def get_all_tracker_names(self):
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT callsign, name FROM tracker_names")
+        return {row[0]: row[1] for row in cursor.fetchall()}
+
+    def get_all_tracker_carriers(self):
+        cursor = self.connection.cursor()
+        cursor.execute("SELECT callsign, carrier FROM tracker_names WHERE carrier IS NOT NULL AND carrier != ''")
+        return {row[0]: row[1] for row in cursor.fetchall()}
 
     def get_event(self,event_name):
         with self.connection:

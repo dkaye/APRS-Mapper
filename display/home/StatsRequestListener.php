@@ -100,8 +100,8 @@ while (true) {
 		$temp=$token[1];
 
 		$result=array();
-		$result_code=exec("du -sh ~",$result);
-		$disk=substr($result[0],0,4);
+		$result_code=exec("df -h / | awk 'NR==2{print \$4}'",$result);
+		$disk=$result[0];
 
 		$result=array();
 		$result_code=exec("vcgencmd get_throttled",$result);
@@ -132,7 +132,7 @@ while (true) {
 			$line="$hostname Load=$load $temp Throttled=$throttled SSID=$ssid $lowVoltage$highTemp";
 		}
 		else {
-			$line="$hostname  Load=$load  Temp=$temp  Mem=$disk  Throttled=$throttled  $ip  SSID=$ssid  $lowVoltage$highTemp";				
+			$line="$hostname  Load=$load  Temp=$temp  Disk=$disk  Throttled=$throttled  $ip  SSID=$ssid  $lowVoltage$highTemp";
 		}
 		if ( ! socket_sendto($responderSocket, $line , strlen($line) , 0 , $remote_ip, $destinationPort)) {
 			$errorcode = socket_last_error();

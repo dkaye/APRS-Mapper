@@ -10,8 +10,24 @@ Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
 """
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import subprocess
+import os
+import urllib.parse
 
-CONNECTING_HTML = b"""<!DOCTYPE html>
+def _build_target_url():
+    autologin_path = os.path.expanduser('~/autologin.txt')
+    if not os.path.exists(autologin_path):
+        return 'https://marsaprs.org/'
+    with open(autologin_path) as f:
+        lines = f.read().splitlines()
+    operator = lines[0].strip() if lines else ''
+    url = 'https://marsaprs.org/?autologin'
+    if operator:
+        url += '&operator=' + urllib.parse.quote(operator)
+    return url
+
+TARGET_URL = _build_target_url()
+
+CONNECTING_HTML = ("""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
@@ -33,7 +49,7 @@ CONNECTING_HTML = b"""<!DOCTYPE html>
   <h1>MARS APRS</h1>
   <p>Connecting<span class="dots"><span>.</span><span>.</span><span>.</span></span></p>
   <script>
-    const TARGET = 'https://marsaprs.org/';
+    const TARGET = """ + repr(TARGET_URL) + """;
     function tryConnect() {
       fetch('https://marsaprs.org/', { method: 'GET', mode: 'no-cors', cache: 'no-store' })
         .then(() => { window.location.href = TARGET; })
@@ -42,7 +58,7 @@ CONNECTING_HTML = b"""<!DOCTYPE html>
     setTimeout(tryConnect, 1000);
   </script>
 </body>
-</html>"""
+</html>""").encode()
 
 class Handler(BaseHTTPRequestHandler):
     def _pna_headers(self):

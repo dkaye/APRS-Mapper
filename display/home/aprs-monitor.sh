@@ -15,18 +15,15 @@ check_aprs() {
 
 start_connecting() {
     sudo -u pi DISPLAY=:0 XAUTHORITY=/home/pi/.Xauthority nohup chromium \
-        --password-store=basic --noerrdialogs --disable-infobars \
+        --password-store=basic --kiosk --noerrdialogs --disable-infobars \
         --disable-dev-shm-usage --incognito \
         --disable-features=BlockInsecurePrivateNetworkRequests \
         'http://localhost:8080/' >/tmp/chromium.log 2>&1 &
 }
 
 start_kiosk() {
-    sudo -u pi DISPLAY=:0 XAUTHORITY=/home/pi/.Xauthority nohup chromium \
-        --password-store=basic --kiosk --noerrdialogs --disable-infobars \
-        --disable-dev-shm-usage --incognito \
-        --disable-features=BlockInsecurePrivateNetworkRequests \
-        'https://marsaprs.org/' >/tmp/chromium.log 2>&1 &
+    sudo -u pi DISPLAY=:0 XAUTHORITY=/home/pi/.Xauthority \
+        XCURSOR_SIZE=48 /home/pi/start-kiosk.sh >/tmp/chromium.log 2>&1 &
 }
 
 while true; do

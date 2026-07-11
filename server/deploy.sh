@@ -109,10 +109,24 @@ ssh "$REMOTE" "rsync -a \
     sudo chmod 664 /var/www/html/netbird/addresses.yaml 2>/dev/null || true && \
     sudo systemctl start aprs-daemon"
 
+echo "Ensuring user database..."
+ssh "$REMOTE" "sudo mkdir -p /var/lib/marsaprs && \
+    sudo chown www-data:www-data /var/lib/marsaprs && \
+    sudo chmod 770 /var/lib/marsaprs && \
+    sudo -u www-data php /var/www/html/auth/init_db.php && \
+    sudo chown www-data:www-data /var/lib/marsaprs/users.db 2>/dev/null || true && \
+    sudo chmod 660 /var/lib/marsaprs/users.db 2>/dev/null || true"
+
 echo "Updating Apache config..."
 ssh "$REMOTE" "sudo rsync -a $STAGING/apache/ /etc/apache2/sites-available/ && \
     sudo a2enmod proxy proxy_http 2>/dev/null || true && \
     sudo systemctl reload apache2"
+
+echo "Deploying netbird poller..."
+ssh "$REMOTE" "sudo cp $STAGING/bin/netbird-poller.py /usr/local/bin/netbird-poller.py && \
+    sudo chmod +x /usr/local/bin/netbird-poller.py && \
+    sudo systemctl disable --now stats-listener 2>/dev/null || true && \
+    sudo systemctl restart netbird-poller"
 
 echo "Deploying analyzer..."
 ssh "$REMOTE" "rsync -a \

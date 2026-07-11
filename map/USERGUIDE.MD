@@ -1,6 +1,6 @@
 # APRS Tracker Map — User Guide
 
-**Version 1.18.5 · July 9, 2026**
+**Version 1.19.0 · July 10, 2026**
 
 ---
 
@@ -35,6 +35,7 @@ This document is a guide for users of the MARS APRS system. For technical detail
   - [Save Map](#save-map)
   - [Kiosk Mode](#kiosk-mode)
   - [Clients](#clients)
+- [Signing In](#signing-in)
 - [Admin Page](#admin-page)
   - [Editing the Configuration](#editing-the-configuration)
     - [Trackers](#trackers)
@@ -81,7 +82,7 @@ This document is a guide for users of the MARS APRS system. For technical detail
 When you first come to the website, you will see a map configured for the current **default event**. 
 A user with admin privileges can switch to a different default event, which all new visitors will then see, using an administrative page described later.
 
-You are free to make a variety of changes to how the map and various objects appear and are treated. So long as you don't Save your view (which requires that administration privilege and password) the changes you make are strictly local and won't affect what other users see.
+You are free to make a variety of changes to how the map and various objects appear and are treated. So long as you don't Save your view (which requires an admin account) the changes you make are strictly local and won't affect what other users see.
 
 ## Large vs. Small Screens
 
@@ -543,9 +544,23 @@ Click **Clients** in the page footer to open a panel showing:
 
 ---
 
+## Signing In
+
+The administrative tools — Admin page, Analyzer, NetBird Monitor, WiFi Manager, and Tickets — are accessible only to users with a personal account. Each account has a username, a password, and a set of permissions that determine which tools and actions are available.
+
+To sign in, click **Admin** (or navigate directly to any protected page). You will be taken to the login page at `marsaprs.org/auth/login.php`. Enter your username and password and click **Sign In**. Your session lasts 24 hours; you will not be asked to sign in again unless you sign out or the session expires.
+
+To sign out, click **Sign out** in the header of any admin page. Your session is immediately ended.
+
+If you need an account or your password has been forgotten, contact the system administrator.
+
+---
+
 ## Admin Page (L,S)
 
-Click on the Admin button and enter the password when prompted. The login form also has a **Your name for logging** field — enter your name so that admin actions (saving events, NetBird changes, etc.) are attributed to you in the server logs. Your name is saved in your browser and pre-filled on future visits. After logging in, you can edit the configuration for the currently default event. Your session remains active for 12 hours; you will not be asked for the password again if you return to the admin page within that timeframe. As mentioned earlier, all changes will be strictly local unless and until you use Save as Default Event... to publish them for others to see.
+Click the **Admin** button to go to the admin page. If you are not already signed in, you will be taken to the login page first and returned to the Admin page after signing in. Once signed in, you can edit the configuration for the currently default event. As mentioned earlier, all changes will be strictly local unless and until you use Save as Default Event... to publish them for others to see.
+
+What you see on the Admin page depends on your account permissions. Users with full edit access (**admin.edit**) can modify and save all sections. Users with view-only access (**admin.view**) can see all event configuration, tracker information, aid stations, and iGates, but editing controls are hidden.
 
 The header and footer each contain action buttons:
 
@@ -779,7 +794,7 @@ event immediately. A dialog prompts for the event name (or to overwrite an exist
 After saving, the new configuration is live within about 5 seconds for all users who subsequently load the website.
 
 If the name already exists, a warning is shown before the overwrite is confirmed. If the
-event is locked (🔒), the admin password is required before the save proceeds.
+event is locked (🔒), the event password is required before the save proceeds.
 
 #### Load
 
@@ -793,8 +808,8 @@ Opens a list of all saved events, sorted newest-first. From this dialog:
 #### Locking an Event
 
 Each event in the Save and Load dialogs has a lock icon (🔒). Clicking it prompts for
-the admin password and toggles the lock state. A locked event (🔒, shown in red) cannot
-be overwritten by Save or Save as Default Event without entering the admin password first.
+the event password and toggles the lock state. A locked event (🔒, shown in red) cannot
+be overwritten by Save or Save as Default Event without entering the event password first.
 Use this to protect a production event from accidental edits while still allowing it to be
 loaded and previewed.
 
@@ -820,7 +835,7 @@ Click **Controls** in the lower-left corner of the map to open the controls moda
 
 | Field | Description |
 |-------|-------------|
-| **Collect Data** | Check to start recording APRS beacons into the analyzer database; uncheck to stop. Starting and stopping requires the admin password. |
+| **Collect Data** | Check to start recording APRS beacons into the analyzer database; uncheck to stop. This control is only active for users with analyzer admin privileges; others see it as a read-only indicator. |
 | **Started** | The date and time data collection began for the current event. |
 | **Stopped** | The date and time data collection was most recently stopped (shown only when the daemon is not running). |
 
@@ -848,7 +863,7 @@ Click **Save Map Position** to save the current map center and zoom as your pers
 
 #### Erase All Data
 
-Click **Erase All Data…** to permanently delete all recorded beacons for the current event. This requires the admin password and two confirmation steps. **This cannot be undone.**
+Click **Erase All Data…** to permanently delete all recorded beacons for the current event. This requires analyzer admin privileges and two confirmation steps. **This cannot be undone.**
 
 ---
 
@@ -863,18 +878,18 @@ equipment. It is independent of the tracker map.
 **The Problem with NetBird:*
 In order for NetBird to keep track of devices, those devices must frequently announce themselves to the NetBird servers. Unfortunately, this generates a great deal of internet traffic -- more than the traffic generated by our devices themselves. In some permanent iGate locations we use cellular hotspots to connect to the internet. Our hotspot provider gives us 1GB/month free of charge. The problem is that the NetBird traffic can easily surpass that limit.
 
-We have therefore implemented a system that allows us to turn NetBird on and off remotely. Each device contacts the marsaprs.org server every five minutes to see if should turn its NetBird service on or off. This is controlled by the WiFi admin page on our server. A user with the admin password can use this admin page to enable or disable NetBird on any remote device. The device will act on any changes at its next five-minute interval. Note that we generally keep NetBird off for any permanently located iGate that uses a cellular hotspot. This isn't necessary for temporary or "guerrilla" iGates since they're usually on for less than 24 hours per event.
+We have therefore implemented a system that allows us to turn NetBird on and off remotely. Each device contacts the marsaprs.org server every five minutes to see if should turn its NetBird service on or off. A user with NetBird admin privileges can use the NetBird Admin page to enable or disable any remote device. The device will act on any changes at its next five-minute interval. Note that we generally keep NetBird off for any permanently located iGate that uses a cellular hotspot. This isn't necessary for temporary or "guerrilla" iGates since they're usually on for less than 24 hours per event.
 
 ### Accessing the Monitor
 
-There are two password-protected pages:
+There are two pages, both requiring a user account:
 
-| Page | URL |
-|------|-----|
-| Status | `/netbird/` |
-| Admin | `/netbird/admin.php` |
+| Page | URL | Required permission |
+|------|-----|---------------------|
+| Status | `/netbird/` | NetBird view |
+| Admin | `/netbird/admin.php` | NetBird admin |
 
-Both pages share the same login as the map Admin page. Visiting `/netbird/admin.php` will redirect to the Admin login if you are not already signed in, then return you to the NetBird admin automatically.
+All pages share the same sign-in. If you are not already signed in, you will be taken to the login page and returned automatically after signing in. Users with only NetBird view access see the status page in read-only mode — poll/refresh sliders and the Admin button are not shown.
 
 ---
 
@@ -882,12 +897,14 @@ Both pages share the same login as the map Admin page. Visiting `/netbird/admin.
 
 The status page polls the server automatically and updates in real time. Two sliders in the header control timing:
 
+Users with NetBird admin privileges see two sliders in the header:
+
 - **Poll** — how often the daemon queries each device (15 s – 5 min). Your setting is remembered across sessions.
 - **Refresh** — how often the browser fetches the latest results (2 – 30 s). Your setting is remembered across sessions.
 
 Progress bars next to each slider show how far through the current interval you are.
 
-The page stops polling after 20 minutes of inactivity and shows a **Polling Paused** overlay. Click **Resume** to restart.
+The page stops polling after 20 minutes of inactivity and shows a **Polling Paused** overlay. Click **Resume** to restart. (View-only users see the current state at page load only; no live updates.)
 
 #### Summary Bar
 
@@ -992,8 +1009,9 @@ We try to keep track of all the SSIDs and passwords for all the WiFi access poin
 It's important to keep at least one device such as a mobile phone's hotspot at the top of the list. These are "recovery hotspots". The idea is that we can always get a device to connect to a recovery hotspot in case we need to perform some manual maintenance.
 
 The WiFi Manager at `marsaprs.org/wifi/` manages the shared list of WiFi credentials used
-by all MARS Pi devices — iGates, display Pis, and the server. It requires admin login (same
-session as the map admin page).
+by all MARS Pi devices — iGates, display Pis, and the server. Full editing requires a user
+account with WiFi admin privileges. Users with NetBird view privileges can open the page in
+read-only mode (no add, edit, delete, or reorder).
 
 ### Managing Credentials
 
@@ -1131,7 +1149,7 @@ night at 4:00 AM. There are two ways to add a new hotspot:
 #### Permanent — via the web admin (preferred)
 
 1. Log in to the **WiFi Manager** at [marsaprs.org/wifi/](https://marsaprs.org/wifi/)
-   (requires the admin password).
+   (requires a user account with WiFi admin privileges).
 2. Enter the network **Name** (a label for your records), **SSID**, and **password**.
 3. Click **Add**. The new network is saved immediately and will be distributed to all
    field devices at the next nightly update (4:00 AM).

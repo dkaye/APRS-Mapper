@@ -7,14 +7,13 @@
  * tickets stored in tickets.json on the server.
  */
 ini_set('display_errors', '0');
-ini_set('session.gc_maxlifetime', 43200);
-session_start();
+
+require_once '/var/www/html/auth/auth.php';
+require_permission('tickets.manage');
 
 $ticketsFile  = __DIR__ . '/tickets.json';
 $versionsFile = __DIR__ . '/versions.json';
 $configFile   = __DIR__ . '/config.json';
-$passwordFile = __DIR__ . '/../admin/password.txt';
-$storedPass   = file_exists($passwordFile) ? trim(file_get_contents($passwordFile)) : '';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -166,30 +165,6 @@ function formatSize(int $bytes): string {
     return round($bytes / (1024 * 1024), 1) . ' MB';
 }
 
-// ── Auth ──────────────────────────────────────────────────────────────────────
-
-if (isset($_GET['logout'])) {
-    session_destroy();
-    header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
-    exit;
-}
-
-$loginError = '';
-if (!isset($_SESSION['aprs_admin_authed']) && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['pw'])) {
-    if ($storedPass !== '' && $_POST['pw'] === $storedPass) {
-        $_SESSION['aprs_admin_authed'] = true;
-        header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
-        exit;
-    }
-    $loginError = 'Incorrect password';
-}
-
-$authed = !empty($_SESSION['aprs_admin_authed']) || !empty($_SESSION['stats_auth']);
-
-if (!$authed) {
-    renderLogin($loginError);
-    exit;
-}
 
 // ── POST: update ticket ───────────────────────────────────────────────────────
 
@@ -321,54 +296,6 @@ if (isset($_GET['id'])) {
 
 // ── List view ─────────────────────────────────────────────────────────────────
 
-function renderLogin(string $error): void { ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Tickets Admin — MARS APRS</title>
-<style>
-* { margin:0;padding:0;box-sizing:border-box; }
-body { font-family:arial,helvetica,sans-serif;font-size:14px;background:#eef0f3;min-height:100vh;display:flex;flex-direction:column; }
-#hdr { background:#2c3e50;color:#fff;padding:10px 20px; }
-#hdr h1 { font-size:16px;font-weight:bold; }
-#content { flex:1;display:flex;align-items:center;justify-content:center;padding:40px 20px; }
-.card { background:#fff;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.12);padding:32px 36px;width:100%;max-width:300px; }
-.card h2 { font-size:15px;color:#333;margin-bottom:20px; }
-.field { display:flex;flex-direction:column;gap:4px;margin-bottom:16px; }
-.field label { font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.04em; }
-.field input { padding:8px 10px;border:1px solid #ccc;border-radius:4px;font-size:14px;font-family:inherit; }
-.field input:focus { outline:none;border-color:#2980b9; }
-.btn-row { display:flex;gap:10px;margin-top:4px; }
-.submit-btn { flex:1;padding:9px;background:#2980b9;color:#fff;border:none;border-radius:4px;font-size:14px;font-weight:bold;cursor:pointer; }
-.submit-btn:hover { background:#1f6da0; }
-.cancel-btn { flex:1;padding:9px;background:#f0f0f0;color:#555;border:1px solid #ccc;border-radius:4px;font-size:14px;font-weight:bold;cursor:pointer;text-decoration:none;text-align:center; }
-.cancel-btn:hover { background:#e0e0e0; }
-.error { background:#fff0f0;border:1px solid #f5c6c6;border-radius:4px;padding:8px 12px;color:#c0392b;font-size:13px;margin-bottom:14px; }
-</style>
-</head>
-<body>
-<div id="hdr"><h1>MARS APRS — Ticket Admin</h1></div>
-<div id="content">
-    <div class="card">
-        <h2>Sign in</h2>
-        <?php if ($error): ?><div class="error"><?= esc($error) ?></div><?php endif; ?>
-        <form method="POST">
-            <div class="field">
-                <label for="pw">Password</label>
-                <input type="password" id="pw" name="pw" autocomplete="current-password" autofocus>
-            </div>
-            <div class="btn-row">
-                <button type="submit" class="submit-btn">Sign In</button>
-                <a href="../" class="cancel-btn">Cancel</a>
-            </div>
-        </form>
-    </div>
-</div>
-</body>
-</html>
-<?php }
-
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -479,7 +406,7 @@ th.sort-desc::after { content:' ▼';font-size:10px;opacity:.7; }
     <h1>MARS APRS — Ticket Admin</h1>
     <div id="hdr-right">
         <a href="." class="hdr-btn">New Ticket</a>
-        <a href="?logout" class="hdr-btn">Sign Out</a>
+        <a href="/auth/logout.php" class="hdr-btn">Sign Out</a>
         <a href="../admin/" class="hdr-btn">Map Admin</a>
     </div>
 </div>

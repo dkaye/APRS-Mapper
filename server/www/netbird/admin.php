@@ -8,18 +8,15 @@
  * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
  * ©2025 Doug Kaye, K6DRK <doug@rds.com>
  */
-session_start();
+require_once '/var/www/html/auth/auth.php';
 
 if (isset($_GET['logout'])) {
-    session_destroy();
-    header('Location: /admin/');
+    destroy_session();
+    header('Location: /auth/login.php');
     exit;
 }
 
-if (empty($_SESSION['stats_auth']) && empty($_SESSION['aprs_admin_authed'])) {
-    header('Location: /admin/?next=' . urlencode('/netbird/admin.php'));
-    exit;
-}
+require_permission('netbird.admin');
 
 require_once __DIR__ . '/yaml_lib.php';
 $devices   = loadDevices(__DIR__ . '/addresses.yaml');
