@@ -49,13 +49,15 @@ class TrackerData {
 
 class APRSData {
   final List<TrackerData> trackers;
-  final int blinkDuration; // seconds
+  final int blinkDuration;   // seconds
+  final int breadcrumbCount; // 0 = off, 1–100
   final List<int>?    beaconIntervalsSec; // [walk, drive, stat]; null = unchanged
   final List<double>? beaconDistancesMi;
 
   const APRSData({
     required this.trackers,
     this.blinkDuration = 5,
+    this.breadcrumbCount = 100,
     this.beaconIntervalsSec,
     this.beaconDistancesMi,
   });
@@ -66,7 +68,8 @@ class APRSData {
       trackers: (j['trackers'] as List? ?? [])
           .map((t) => TrackerData.fromJson(t as Map<String, dynamic>))
           .toList(),
-      blinkDuration: (j['blink_duration'] as num?)?.toInt() ?? 5,
+      blinkDuration:   (j['blink_duration']   as num?)?.toInt() ?? 5,
+      breadcrumbCount: (j['breadcrumb_count'] as num?)?.toInt() ?? 100,
       beaconIntervalsSec: bc is Map ? [
         (bc['walk_interval']  as num?)?.toInt() ?? 60,
         (bc['cycle_interval'] as num?)?.toInt() ?? 30,

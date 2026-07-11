@@ -108,7 +108,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   Set<String> _blinkingIds = {};
   bool _blinkOn = true;
   Timer? _blinkTimer;
-  int _blinkDurationSec = 5;
+  int _blinkDurationSec  = 5;
+  int _breadcrumbCount   = 100;
 
   // Saved map position (restored when reset button tapped)
   LatLng? _savedCenter;
@@ -121,7 +122,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
   // Breadcrumb trail for selected tracker
   List<Map<String, dynamic>> _trailEntries = [];
-  Color _trailColor = Colors.grey;
+  List<LatLng> _cellTrailPts  = [];
+  List<LatLng> _radioTrailPts = [];
 
   // Background location / sharing
   final _bgLocation = BackgroundLocationService();
@@ -230,23 +232,17 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             })
             .map((t) => t.id)
             .toSet();
-        // Compute updated trail color before setState so it lands in one frame.
-        Color? newTrailColor;
-        String? refetchCallsign;
+        TrackerData? refetchTracker;
         if (_selectedId != null) {
           final sel = data.trackers.where((t) => t.id == _selectedId).firstOrNull;
-          if (sel != null) {
-            final c = _trackerColor(sel.color);
-            if (c != _trailColor) newTrailColor = c;
-            if (updated.contains(_selectedId)) refetchCallsign = sel.callsign;
-          }
+          if (sel != null && updated.contains(_selectedId)) refetchTracker = sel;
         }
         final newIntervals  = data.beaconIntervalsSec;
         final newDistances  = data.beaconDistancesMi;
         setState(() {
           _trackers = data.trackers;
-          if (newTrailColor != null) _trailColor = newTrailColor;
           _blinkDurationSec = data.blinkDuration;
+          _breadcrumbCount  = data.breadcrumbCount;
           if (newIntervals != null) _beaconIntervalsSec = newIntervals;
           if (newDistances != null) _beaconDistancesMi  = newDistances;
         });
@@ -276,7 +272,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             _bgLocation.updateDistanceThreshold(newDistances[_sharingActivityMode]);
         }
         if (updated.isNotEmpty) _triggerBlink({..._blinkingIds, ...updated});
-        if (refetchCallsign != null) _fetchTrail(refetchCallsign);
+        if (refetchTracker != null) _fetchTrail(refetchTracker);
       },
       onStateChange: (state) {
         if (!mounted) return;
@@ -1547,7 +1543,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     setState(() {
       _selectedId = t.id;
       _trailEntries = [];
-      _trailColor = _trackerColor(t.color);
+      _cellTrailPts  = [];
+      _radioTrailPts = [];
     });
     _selectionClickCount = 1;
     final newZoom = zoom
@@ -1555,13 +1552,15 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         : _mapController.camera.zoom;
     _mapController.move(t.latLng, newZoom);
     _triggerBlink({t.id});
-    _fetchTrail(t.callsign);
+    _fetchTrail(t);
   }
 
   void _selectFixed(FixedMarker m, {bool zoom = false}) {
     setState(() {
       _selectedId = m.name;
-      _trailEntries = [];
+      _trailEntries  = [];
+      _cellTrailPts  = [];
+      _radioTrailPts = [];
     });
     _selectionClickCount = 1;
     final newZoom = zoom
@@ -1579,7 +1578,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       _mapController.move(LatLng(m.lat, m.lon), 15.0);
     } else if (_selectedId == m.name && _selectionClickCount >= 2) {
       _selectionClickCount = 0;
-      setState(() { _selectedId = null; _trailEntries = []; });
+      setState(() { _selectedId = null; _trailEntries = []; _cellTrailPts = []; _radioTrailPts = []; });
       _handleReset();
     } else {
       _selectFixed(m);
@@ -1617,28 +1616,81 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     return math.atan2(y, x);
   }
 
-  Future<void> _fetchTrail(String callsign) async {
-    if (!_isOnline || callsign.isEmpty) return;
+  Future<void> _fetchTrail(TrackerData tracker) async {
+    if (!_isOnline) return;
     try {
       final resp = await http.get(Uri.parse('${MapConfig.serverBaseUrl}/index.php?history'));
       if (resp.statusCode != 200) return;
       final data = jsonDecode(resp.body) as Map<String, dynamic>;
-      final raw = (data[callsign] as List? ?? []).cast<Map<String, dynamic>>();
-      // Drop consecutive duplicate positions
-      final deduped = <Map<String, dynamic>>[];
-      for (var i = 0; i < raw.length; i++) {
-        if (i == 0 || raw[i]['lat'] != raw[i - 1]['lat'] || raw[i]['lon'] != raw[i - 1]['lon']) {
-          deduped.add(raw[i]);
+      // Cellular entries from the tracker's own callsign; radio entries from the ham callsign
+      final cellEntries = (data[tracker.callsign] as List? ?? [])
+          .cast<Map<String, dynamic>>()
+          .map((e) => {...e, 'isCell': tracker.mobile})
+          .toList();
+      final radioEntries = tracker.hamCallsign != null
+          ? (data[tracker.hamCallsign!] as List? ?? [])
+              .cast<Map<String, dynamic>>()
+              .map((e) => {...e, 'isCell': false})
+              .toList()
+          : <Map<String, dynamic>>[];
+      // Helper: sort newest-first, deduplicate, apply breadcrumb limit, reverse to oldest-first
+      final limit = _breadcrumbCount;
+      List<Map<String, dynamic>> dedupe(List<Map<String, dynamic>> src) {
+        src.sort((a, b) => (b['ts'] as int? ?? 0).compareTo(a['ts'] as int? ?? 0));
+        final d = <Map<String, dynamic>>[];
+        for (var i = 0; i < src.length; i++) {
+          if (i == 0 || src[i]['lat'] != src[i - 1]['lat'] || src[i]['lon'] != src[i - 1]['lon']) d.add(src[i]);
         }
+        final trimmed = (limit > 0 && d.length > limit) ? d.sublist(0, limit) : d;
+        return trimmed.reversed.toList();
       }
-      // Reverse from newest-first to oldest-first
-      final entries = deduped.reversed.toList();
-      if (mounted) setState(() => _trailEntries = entries);
+      final cell  = dedupe(cellEntries);
+      final radio = dedupe(radioEntries);
+      toLatLng(List<Map<String, dynamic>> es) =>
+          es.map((e) => LatLng((e['lat'] as num).toDouble(), (e['lon'] as num).toDouble())).toList();
+      // Merged entries (for dot markers); separate pts lists (for typed polylines/arrows)
+      final all = [...cell, ...radio]
+        ..sort((a, b) => (a['ts'] as int? ?? 0).compareTo(b['ts'] as int? ?? 0));
+      if (mounted) setState(() {
+        _trailEntries  = all;
+        _cellTrailPts  = toLatLng(cell);
+        _radioTrailPts = toLatLng(radio);
+      });
     } catch (_) {}
   }
 
-  List<LatLng> get _trailPoints =>
-      _trailEntries.map((e) => LatLng((e['lat'] as num).toDouble(), (e['lon'] as num).toDouble())).toList();
+  List<Widget> _buildTrailLayers(List<LatLng> pts, Color color) {
+    if (pts.length < 2) return [];
+    return [
+      PolylineLayer(polylines: [
+        Polyline(
+          points: pts,
+          color: color.withOpacity(0.80),
+          strokeWidth: 3.0,
+          pattern: StrokePattern.dashed(segments: [4, 7]),
+        ),
+      ]),
+      MarkerLayer(markers: [
+        for (var i = 0; i < pts.length - 1; i++)
+          Marker(
+            point: LatLng(
+              (pts[i].latitude  + pts[i + 1].latitude)  / 2,
+              (pts[i].longitude + pts[i + 1].longitude) / 2,
+            ),
+            width: 20,
+            height: 20,
+            alignment: Alignment.center,
+            child: Transform.rotate(
+              angle: _bearingRad(pts[i], pts[i + 1]),
+              child: CustomPaint(
+                size: const Size(20, 20),
+                painter: ArrowPainter(color: color),
+              ),
+            ),
+          ),
+      ]),
+    ];
+  }
 
   String _relativeTime(int ts) {
     final s = (DateTime.now().millisecondsSinceEpoch ~/ 1000) - ts;
@@ -1883,18 +1935,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                   tileProvider: _tileProvider,
                 ),
                 CourseLayer(courses: _visibleCourses),
-                if (_trailPoints.length > 1)
-                  PolylineLayer(polylines: [
-                    Polyline(
-                      points: _trailPoints,
-                      color: _trailColor.withOpacity(0.80),
-                      strokeWidth: 3.0,
-                      pattern: StrokePattern.dashed(segments: [4, 7]),
-                    ),
-                  ]),
+                ..._buildTrailLayers(_cellTrailPts,  const Color(0xFF27AE60)),
+                ..._buildTrailLayers(_radioTrailPts, const Color(0xFFE74C3C)),
                 if (_trailEntries.isNotEmpty)
                   MarkerLayer(markers: _trailEntries.map((e) {
                     final pt = LatLng((e['lat'] as num).toDouble(), (e['lon'] as num).toDouble());
+                    final isCell = e['isCell'] as bool? ?? true;
+                    final dotColor = isCell ? const Color(0xFF27AE60) : const Color(0xFFE74C3C);
                     return Marker(
                       point: pt,
                       width: 30,
@@ -1910,8 +1957,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                             child: Container(
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
-                                color: _trailColor.withOpacity(0.5),
-                                border: Border.all(color: _trailColor, width: 1.5),
+                                color: dotColor.withOpacity(0.5),
+                                border: Border.all(color: dotColor, width: 1.5),
                               ),
                             ),
                           ),
@@ -1919,26 +1966,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                       ),
                     );
                   }).toList()),
-                if (_trailPoints.length > 1)
-                  MarkerLayer(markers: [
-                    for (var i = 0; i < _trailPoints.length - 1; i++)
-                      Marker(
-                        point: LatLng(
-                          (_trailPoints[i].latitude + _trailPoints[i + 1].latitude) / 2,
-                          (_trailPoints[i].longitude + _trailPoints[i + 1].longitude) / 2,
-                        ),
-                        width: 20,
-                        height: 20,
-                        alignment: Alignment.center,
-                        child: Transform.rotate(
-                          angle: _bearingRad(_trailPoints[i], _trailPoints[i + 1]),
-                          child: CustomPaint(
-                            size: const Size(20, 20),
-                            painter: ArrowPainter(color: _trailColor),
-                          ),
-                        ),
-                      ),
-                  ]),
                 if (showIgates && _config.igates.isNotEmpty)
                   FixedMarkerLayer(
                     markers: _config.igates,
