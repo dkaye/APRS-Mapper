@@ -43,6 +43,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $s->execute();
             $db->close();
             $done = true;
+            $ticketsCfg = @json_decode(@file_get_contents('/var/www/html/tickets/config.json'), true) ?: [];
+            $managerEmail = $ticketsCfg['manager_email'] ?? '';
+            if ($managerEmail !== '' && filter_var($managerEmail, FILTER_VALIDATE_EMAIL)) {
+                $subj = 'MARS APRS: New account request — ' . $username;
+                $body = "A new account has been created and is awaiting permissions.\n\n"
+                      . "Username: $username\n"
+                      . ($name  !== '' ? "Name:     $name\n"  : '')
+                      . ($email !== '' ? "Email:    $email\n" : '')
+                      . "\nGrant access at: https://marsaprs.org/auth/users.php";
+                @mail($managerEmail, $subj, $body, "From: noreply@marsaprs.org\r\nContent-Type: text/plain; charset=utf-8");
+            }
         } catch (Exception $e) {
             $error = str_contains($e->getMessage(), 'UNIQUE')
                 ? "Username &ldquo;$username&rdquo; is already taken."
@@ -87,7 +98,7 @@ button:hover{background:#1d4ed8}
     <div class="ok">
       Account created. An administrator will grant you access — you'll be able to sign in once permissions are assigned.
     </div>
-    <a class="back" href="/auth/login.php">Back to Sign In</a>
+    <a class="back" href="/">Back to Map</a>
   <?php else: ?>
     <p class="sub">New accounts have no permissions until an administrator grants access.</p>
     <?php if ($error): ?><div class="err"><?= $error ?></div><?php endif; ?>
@@ -121,6 +132,7 @@ button:hover{background:#1d4ed8}
       <button type="submit">Create Account</button>
     </form>
     <a class="back" href="/auth/login.php">Already have an account? Sign in</a>
+    <a class="back" href="/" style="color:#6b7280;margin-top:6px">Cancel</a>
   <?php endif; ?>
 </div>
 <script>

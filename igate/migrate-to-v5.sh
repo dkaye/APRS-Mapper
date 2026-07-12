@@ -57,9 +57,8 @@ $SSH "sudo pkill -f 'SCREEN.*direwolf' 2>/dev/null || true; \
 # ── Step 3: Run install.sh in background (survives SSH timeout/reboot) ───────
 sleep 2
 echo "--- Launching install.sh in background (takes 7–21 min on Pi 4)..."
-$SSH "nohup bash -c 'bash <(curl -fsSL https://marsaprs.org/igate/install.sh) \
-    > /home/pi/install-v5.log 2>&1; echo DONE >> /home/pi/install-v5.log' \
-    &>/dev/null &"
+$SSH "screen -dmS install bash -c 'curl -fsSL https://marsaprs.org/igate/install.sh | bash \
+    > /home/pi/install-v5.log 2>&1; echo DONE >> /home/pi/install-v5.log'"
 
 echo "--- Polling for completion (checking every 30s)..."
 while true; do

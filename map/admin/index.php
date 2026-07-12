@@ -1,5 +1,6 @@
 <?php
 ini_set('display_errors', '0');
+require_once '/var/www/html/track_ip.php'; track_client_ip('admin');
 /**
  * MARS APRS Map Admin
  *

@@ -1,4 +1,5 @@
 <?php
+require_once '/var/www/html/track_ip.php'; track_client_ip('wifi');
 /**
  * iGate WiFi Manager — marsaprs.org/igate/wifi/
  *

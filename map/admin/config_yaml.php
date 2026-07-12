@@ -188,7 +188,8 @@ function buildConfigYaml($cfg, $history = []) {
     $mobEnabled = !empty($mob['enabled']) && $mob['enabled'] !== false;
     $mobPin     = trim((string)($mob['pin'] ?? ''));
     $mobRoot    = strtoupper(trim((string)($mob['root'] ?? '')));
-    $beaconDefs = ['beacon_walk_interval' => 60, 'beacon_walk_distance' => 0.2,
+    $beaconDefs = ['beacon_walk_interval' => 60,  'beacon_walk_distance' => 0.2,
+                   'beacon_cycle_interval' => 30, 'beacon_cycle_distance' => 0.2,
                    'beacon_drive_interval' => 15, 'beacon_drive_distance' => 0.2,
                    'beacon_stat_interval' => 120, 'beacon_stat_distance' => 1.0];
     $hasBeacon = false;

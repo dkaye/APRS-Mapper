@@ -62,6 +62,7 @@ fi
 if [ -f "$TMP/etc/tmpfiles.d/igate-logs.conf" ]; then
     sudo mkdir -p /etc/tmpfiles.d
     sudo cp "$TMP/etc/tmpfiles.d/igate-logs.conf" /etc/tmpfiles.d/igate-logs.conf
+    sudo systemd-tmpfiles --create /etc/tmpfiles.d/igate-logs.conf 2>/dev/null || true
 fi
 
 # RAM log setup (idempotent: adds /var/log tmpfs to fstab if not present)

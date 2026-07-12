@@ -27,6 +27,7 @@ if (isset($_GET['hostname'])) {
     exit;
 }
 
+require_once '/var/www/html/track_ip.php'; track_client_ip('netbird');
 require_once '/var/www/html/auth/auth.php';
 require_permission('netbird.view');
 $canNetbirdAdmin = has_permission('netbird.admin');

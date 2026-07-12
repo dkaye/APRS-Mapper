@@ -246,8 +246,35 @@ app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.wsgi_app = ProxyFix(app.wsgi_app, x_prefix=1)
 
 
+def _track_client_ip(page: str) -> None:
+    ip = (request.headers.get('CF-Connecting-IP')
+          or request.headers.get('X-Forwarded-For', '').split(',')[0].strip()
+          or request.remote_addr or '')
+    if not ip:
+        return
+    ip_file = '/run/aprs/recent_ips.json'
+    try:
+        import fcntl
+        fh = open(ip_file, 'a+')
+        fh.seek(0)
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            data = json.loads(fh.read() or '{}')
+            data[ip] = {'ts': int(time.time()), 'page': page, 'cs': data.get(ip, {}).get('cs')}
+            if len(data) > 200:
+                data = dict(sorted(data.items(), key=lambda x: x[1]['ts'], reverse=True)[:200])
+            fh.seek(0); fh.truncate(); fh.write(json.dumps(data))
+            fcntl.flock(fh, fcntl.LOCK_UN)
+        except BlockingIOError:
+            pass
+        fh.close()
+    except Exception:
+        pass
+
+
 @app.before_request
 def require_auth():
+    _track_client_ip('analyzer')
     resp = require_permission('analyzer.view')
     if resp is not None:
         return resp

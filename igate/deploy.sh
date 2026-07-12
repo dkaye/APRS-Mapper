@@ -41,8 +41,9 @@ ssh "$REMOTE" "tar -czf $REMOTE_DIR/files.tar.gz -C $STAGING ."
 
 # Upload the scripts that are served directly
 echo "Uploading scripts..."
-scp "$IGATE_DIR/install.sh"     "$REMOTE:$REMOTE_DIR/install.sh"
-scp "$IGATE_DIR/auto-update.sh" "$REMOTE:$REMOTE_DIR/auto-update.sh"
+scp "$IGATE_DIR/install.sh"        "$REMOTE:$REMOTE_DIR/install.sh"
+scp "$IGATE_DIR/auto-update.sh"    "$REMOTE:$REMOTE_DIR/auto-update.sh"
+scp "$IGATE_DIR/migrate-to-v5.sh"  "$REMOTE:$REMOTE_DIR/migrate-to-v5.sh"
 
 # Sync server-side web content (wifi token endpoint served by aprs-pi)
 echo "Syncing www/ to aprs-pi..."
@@ -55,4 +56,5 @@ ssh "$REMOTE" "sudo chown -R pi:www-data $REMOTE_DIR && sudo find $REMOTE_DIR -t
 echo ""
 echo "Done. Files live at:"
 echo "  https://marsaprs.org/igate/install.sh      (bootstrap for new iGates)"
+echo "  https://marsaprs.org/igate/migrate-to-v5.sh (v4→v5 migration)"
 echo "  https://marsaprs.org/igate/files.tar.gz    (nightly update archive)"

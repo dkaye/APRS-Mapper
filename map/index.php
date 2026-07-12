@@ -15,9 +15,36 @@
  *   ?config  Map/background/course/tracker config from config.yaml (ETag-cached)
  */
 
-define('WEB_VERSION', '1.19.0+7');
+define('WEB_VERSION', '1.19.1+8');
 
 $trackerStatusFilename = 'trackers.json';
+
+// Track real client IP + timestamp + page type for the Clients modal (non-blocking)
+{
+    $_rip = trim($_SERVER['HTTP_CF_CONNECTING_IP']
+        ?? (isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? explode(',', $_SERVER['HTTP_X_FORWARDED_FOR'])[0] : null)
+        ?? $_SERVER['REMOTE_ADDR']);
+    $_page = 'map';
+    if     (isset($_GET['mobile']))         $_page = 'tracker';
+    elseif (isset($_GET['messaging']))      $_page = 'msg';
+    elseif (isset($_GET['clientstatus']))   $_page = 'status';
+    elseif (isset($_GET['history']))        $_page = 'hist';
+    $_ipFile = '/run/aprs/recent_ips.json';
+    $_fh = @fopen($_ipFile, 'c+');
+    if ($_fh && flock($_fh, LOCK_EX | LOCK_NB)) {
+        $ips = json_decode(stream_get_contents($_fh), true) ?: [];
+        $ips[$_rip] = ['ts' => time(), 'page' => $_page, 'cs' => $ips[$_rip]['cs'] ?? null];
+        if (count($ips) > 200) {
+            uasort($ips, fn($a, $b) => $b['ts'] - $a['ts']);
+            $ips = array_slice($ips, 0, 200, true);
+        }
+        rewind($_fh); ftruncate($_fh, 0); fwrite($_fh, json_encode($ips));
+        flock($_fh, LOCK_UN);
+    }
+    if ($_fh) fclose($_fh);
+    unset($_page, $_ipFile, $_fh, $ips);
+}
+define('_CLIENT_IP', $_rip); unset($_rip);
 
 if (isset($_GET['json'])) {
 	$igatesStatusFilename     = 'igates.json';
@@ -346,13 +373,29 @@ if (isset($_GET['clientstatus'])) {
 	}
 	$counts = array_count_values($clients);
 	arsort($counts);
+	$recentIps = [];
+	$_ipFile = '/run/aprs/recent_ips.json';
+	if (is_readable($_ipFile)) {
+		$_ipData = json_decode(file_get_contents($_ipFile), true) ?: [];
+		uasort($_ipData, fn($a, $b) => $b['ts'] - $a['ts']);
+		$recentIps = array_slice($_ipData, 0, 50, true);
+	}
+	$csNames = [];
+	$_mf = __DIR__ . '/mobile_trackers.json';
+	if (is_readable($_mf)) {
+		foreach ((json_decode(file_get_contents($_mf), true)['trackers'] ?? []) as $_t) {
+			if (!empty($_t['callsign']) && !empty($_t['name'])) $csNames[$_t['callsign']] = $_t['name'];
+		}
+	}
 	echo json_encode([
-		'busy'    => isset($stats['BusyWorkers']) ? (int)$stats['BusyWorkers']  : null,
-		'idle'    => isset($stats['IdleWorkers'])  ? (int)$stats['IdleWorkers']  : null,
-		'rps'     => isset($stats['ReqPerSec'])    ? (float)$stats['ReqPerSec'] : null,
-		'uptime'  => $stats['ServerUptime'] ?? null,
-		'clients' => $counts,
-		'total'   => count($clients),
+		'busy'      => isset($stats['BusyWorkers']) ? (int)$stats['BusyWorkers']  : null,
+		'idle'      => isset($stats['IdleWorkers'])  ? (int)$stats['IdleWorkers']  : null,
+		'rps'       => isset($stats['ReqPerSec'])    ? (float)$stats['ReqPerSec'] : null,
+		'uptime'    => $stats['ServerUptime'] ?? null,
+		'clients'   => $counts,
+		'total'     => count($clients),
+		'recentIps' => $recentIps,
+		'csNames'   => $csNames,
 	]);
 	exit;
 }
@@ -899,6 +942,17 @@ if (isset($_GET['mobile'])) {
 			if ($root !== '' && $foundCallsign) injectAprsPacket($foundCallsign, $lat, $lon, $root);
 			if ($foundCallsign && $lat !== null && $lon !== null)
 				injectAnalyzerBeacon($foundCallsign, $foundName, $lat, $lon, time(), $_mcfg['event'] ?? '');
+		}
+		// Update IP record with callsign so the Clients modal can label this tracker
+		if ($foundCallsign) {
+			$_fh2 = @fopen('/run/aprs/recent_ips.json', 'c+');
+			if ($_fh2 && flock($_fh2, LOCK_EX | LOCK_NB)) {
+				$_ips2 = json_decode(stream_get_contents($_fh2), true) ?: [];
+				if (isset($_ips2[_CLIENT_IP])) $_ips2[_CLIENT_IP]['cs'] = $foundCallsign;
+				rewind($_fh2); ftruncate($_fh2, 0); fwrite($_fh2, json_encode($_ips2));
+				flock($_fh2, LOCK_UN);
+			}
+			if ($_fh2) fclose($_fh2);
 		}
 		$resp = ['ok' => true, 'messages' => $pendingMsgs];
 		if ($pendingMode !== '') $resp['set_mode'] = $pendingMode;
@@ -1630,13 +1684,18 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 #clients-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
 #clients-box {
     position: relative; background: #fff; border-radius: 8px;
-    padding: 18px 22px; min-width: 280px; max-width: 420px; width: 90%;
+    padding: 0; min-width: 280px; max-width: 420px; width: 90%;
+    max-height: 90vh; display: flex; flex-direction: column;
     box-shadow: 0 4px 24px rgba(0,0,0,.35); z-index: 1;
     font-family: arial, helvetica, sans-serif; font-size: 13px;
 }
 #clients-header {
     display: flex; justify-content: space-between; align-items: center;
-    margin-bottom: 14px; font-size: 14px; font-weight: bold;
+    padding: 14px 18px 12px; font-size: 14px; font-weight: bold;
+    border-bottom: 1px solid #eee; flex-shrink: 0;
+}
+#clients-body {
+    overflow-y: auto; padding: 14px 18px 18px; flex: 1;
 }
 #clients-close {
     background: none; border: none; font-size: 20px; line-height: 1;
@@ -2389,7 +2448,7 @@ new (L.Control.extend({
 			L.DomEvent.on(exitBtn, 'click', () => { location.href = location.pathname; });
 			L.DomEvent.disableClickPropagation(exitBtn);
 			const txt = L.DomUtil.create('span', '', d);
-			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.19.0+7 &copy; 2026 Doug Kaye (K6DRK)';
+			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.19.1+8 &copy; 2026 Doug Kaye (K6DRK)';
 		} else {
 			if (!isMobile) {
 				const exitBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
@@ -2407,8 +2466,8 @@ new (L.Control.extend({
 			}
 			const ftxt = L.DomUtil.create('span', '', d);
 			ftxt.innerHTML = isMobile
-				? 'MARS APRS v1.19.0+7 &copy; 2026 Doug Kaye (K6DRK)'
-				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.19.0+7 &copy; 2026 Doug Kaye (K6DRK)';
+				? 'MARS APRS v1.19.1+8 &copy; 2026 Doug Kaye (K6DRK)'
+				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.19.1+8 &copy; 2026 Doug Kaye (K6DRK)';
 			if (isMobile) d.style.fontSize = '10px';
 		}
 		return d;
@@ -3616,7 +3675,7 @@ function refreshMobileAbout() {
 	const rows = [
 		currentEventName ? { label: 'Event',   val: currentEventName } : null,
 		{ label: 'Org',     val: 'Marin Amateur Radio Society' },
-		{ label: 'Version', val: 'APRS Tracker Map · v1.19.0+7' },
+		{ label: 'Version', val: 'APRS Tracker Map · v1.19.1+8' },
 		mobileCallsign ? { label: 'Callsign', val: mobileCallsign } : null,
 		{ label: 'Map',     val: currentBgAttribution || '' },
 		{ label: 'Credit',  val: '&copy; 2026 Doug Kaye (K6DRK)' },
@@ -4202,7 +4261,7 @@ function openAboutModal() {
 	const attrText = currentBgAttribution || '';
 	const rows = [
 		{ label: 'Organization', val: 'Marin Amateur Radio Society' },
-		{ label: 'Application',  val: 'APRS Tracker Map · v1.19.0+7' },
+		{ label: 'Application',  val: 'APRS Tracker Map · v1.19.1+8' },
 		currentEventName ? { label: 'Event', val: currentEventName } : null,
 		mobileCallsign ? { label: 'My Callsign', val: mobileCallsign } : null,
 		mobileCallsign ? { label: 'Activity', val: ['Walk / Run', 'Cycle', 'Drive', 'Stationary', 'Unknown'][_mobileActivityMode] } : null,
@@ -4270,6 +4329,27 @@ async function fetchClients() {
 			html += `<div class="clients-none">None</div>`;
 		}
 		html += `</div>`;
+		const now = Math.floor(Date.now() / 1000);
+		const recentEntries = Object.entries(d.recentIps || {})
+			.filter(([, rec]) => (now - (rec.ts ?? rec)) < 3600);
+		if (recentEntries.length) {
+			const pageLabel = { map:'Map', tracker:'Tracker', msg:'Msg', hist:'History', status:'Status', admin:'Admin', analyzer:'Analyzer', netbird:'NetBird', wifi:'WiFi' };
+			const pageColor = { map:'#2e7d32', tracker:'#1565c0', msg:'#6a1b9a', hist:'#888', status:'#888', admin:'#b71c1c', analyzer:'#e65100', netbird:'#00695c', wifi:'#4527a0' };
+			html += `<div class="clients-ip-list" style="margin-top:12px">`;
+			html += `<div class="clients-ip-title">Recent requests (past hour) &mdash; ${recentEntries.length} IPs</div>`;
+			recentEntries.forEach(([ip, rec]) => {
+				const ts   = rec.ts ?? rec;
+				const page = rec.page ?? 'map';
+				const cs   = rec.cs ?? null;
+				const sec  = now - ts;
+				const ago  = sec < 60 ? `${sec}s ago` : sec < 3600 ? `${Math.floor(sec/60)}m ago` : `${Math.floor(sec/3600)}h ago`;
+				const label = cs ? ((d.csNames || {})[cs] ?? cs) : (pageLabel[page] ?? page);
+				const color = cs ? '#1565c0' : (pageColor[page] ?? '#555');
+				const badge = `<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:${color};color:#fff;margin-left:5px">${label}</span>`;
+				html += `<div class="clients-ip-row"><span>${ip}${badge}</span><span style="color:#888">${ago}</span></div>`;
+			});
+			html += `</div>`;
+		}
 		body.innerHTML = html;
 	} catch(e) {
 		body.innerHTML = '<span style="color:#c00">Failed to fetch status.</span>';
