@@ -125,6 +125,37 @@
             .modal-btns button { padding: 8px 18px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
             #flush-cancel  { background: #eee; }
             #flush-confirm, #flush1-continue { background: #e74c3c; color: white; }
+
+            /* ── Export progress overlay ─────────────────────────── */
+            #export-overlay {
+                position: fixed; inset: 0; z-index: 3000;
+                display: none; align-items: center; justify-content: center;
+                background: rgba(0,0,0,.45);
+            }
+            #export-overlay.show { display: flex; }
+            #export-card {
+                background: #fff; border-radius: 14px; padding: 30px 40px;
+                box-shadow: 0 8px 40px rgba(0,0,0,.3);
+                display: flex; flex-direction: column; align-items: center; gap: 16px;
+                min-width: 240px; text-align: center;
+            }
+            #export-spinner {
+                width: 52px; height: 52px; border-radius: 50%;
+                border: 5px solid #e6e6e6; border-top-color: #2196f3;
+                animation: export-spin .8s linear infinite;
+            }
+            @keyframes export-spin { to { transform: rotate(360deg); } }
+            #export-check, #export-x { width: 52px; height: 52px; display: none; }
+            #export-overlay.done  #export-spinner { display: none; }
+            #export-overlay.done  #export-check   { display: block; }
+            #export-overlay.error #export-spinner { display: none; }
+            #export-overlay.error #export-x       { display: block; }
+            #export-check circle, #export-check path { stroke-dasharray: 200; stroke-dashoffset: 200; }
+            #export-overlay.done #export-check circle { animation: export-draw .5s ease forwards; }
+            #export-overlay.done #export-check path   { animation: export-draw .35s .35s ease forwards; }
+            @keyframes export-draw { to { stroke-dashoffset: 0; } }
+            #export-msg { font-size: 16px; color: #222; font-weight: 600; }
+            #export-sub { font-size: 12px; color: #888; margin-top: -8px; word-break: break-all; }
         </style>
     </head>
     <body>
@@ -205,6 +236,7 @@
             </div>
             <div id="ctrl-footer">
                 <button id="save-map-btn" class="ctrl-btn" type="button">Save Map Position</button>
+                <button id="download-btn" class="ctrl-btn" type="button">Export Session…</button>
                 <button id="flush-btn" class="ctrl-btn" type="button">Erase All Data…</button>
                 <a href="/auth/logout.php" id="ctrl-signout" title="Signed in as {{username}}">Sign out</a>
             </div>
@@ -249,6 +281,23 @@
             </div>
         </dialog>
 
+        <!-- Export progress / acknowledgement overlay -->
+        <div id="export-overlay">
+            <div id="export-card">
+                <div id="export-spinner"></div>
+                <svg id="export-check" viewBox="0 0 52 52" fill="none" stroke="#27ae60" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="26" cy="26" r="23"/>
+                    <path d="M15 27 l7 7 l15 -16"/>
+                </svg>
+                <svg id="export-x" viewBox="0 0 52 52" fill="none" stroke="#e74c3c" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="26" cy="26" r="23"/>
+                    <path d="M18 18 l16 16 M34 18 l-16 16"/>
+                </svg>
+                <div id="export-msg">Exporting session…</div>
+                <div id="export-sub"></div>
+            </div>
+        </div>
+
         <script>
             function esc(s) {
                 return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -279,6 +328,7 @@
             const URL_FLUSH       = '{{ url_for("flush_api") }}';
             const URL_BEACONS     = '{{ url_for("event_beacon_json", event_name=event_name) }}';
             const URL_CHECK_ADMIN = '{{ url_for("check_admin_api") }}';
+            const URL_EXPORT      = '{{ url_for("export_session_api", event_name=event_name) }}';
 
             // Callsign → display name; current config wins, DB fills gaps for removed trackers
             const trackerNames = Object.assign(
@@ -794,6 +844,55 @@
                     this.textContent = 'Map Saved ✓';
                     this.classList.add('saved');
                     setTimeout(() => { this.textContent = 'Save Map Position'; this.classList.remove('saved'); }, 2000);
+                });
+
+                // ── Export Session (self-contained playback bundle) ───────────
+                const exportOverlay = document.getElementById('export-overlay');
+                const exportMsg     = document.getElementById('export-msg');
+                const exportSub     = document.getElementById('export-sub');
+                let   exportDismiss = null;
+
+                function showExportOverlay(state, msg, sub) {
+                    clearTimeout(exportDismiss);
+                    exportOverlay.classList.remove('done', 'error');
+                    if (state) exportOverlay.classList.add(state);
+                    exportMsg.textContent = msg;
+                    exportSub.textContent = sub || '';
+                    exportOverlay.classList.add('show');
+                }
+                function hideExportOverlay(delay) {
+                    exportDismiss = setTimeout(() => exportOverlay.classList.remove('show'), delay);
+                }
+                // Click backdrop to dismiss once finished
+                exportOverlay.addEventListener('click', e => {
+                    if (e.target === exportOverlay && exportOverlay.matches('.done, .error'))
+                        exportOverlay.classList.remove('show');
+                });
+
+                document.getElementById('download-btn').addEventListener('click', async () => {
+                    showExportOverlay(null, 'Exporting session…', '');
+                    try {
+                        const resp = await fetch(URL_EXPORT);
+                        if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+                        let fname = 'session.marsplay.json.gz';
+                        const cd = resp.headers.get('Content-Disposition') || '';
+                        const m  = cd.match(/filename="?([^"]+)"?/);
+                        if (m) fname = m[1];
+                        const blob = await resp.blob();
+                        // Trigger the file download client-side
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url; a.download = fname;
+                        document.body.appendChild(a); a.click(); a.remove();
+                        setTimeout(() => URL.revokeObjectURL(url), 10000);
+                        const kb = blob.size / 1024;
+                        const size = kb >= 1024 ? (kb / 1024).toFixed(1) + ' MB' : Math.round(kb) + ' KB';
+                        showExportOverlay('done', 'Session exported', `${fname} · ${size}`);
+                        hideExportOverlay(2600);
+                    } catch (e) {
+                        showExportOverlay('error', 'Export failed', e.message || String(e));
+                        hideExportOverlay(4000);
+                    }
                 });
 
                 // ── Flush modals (step 1: confirm; step 2: password) ──────────

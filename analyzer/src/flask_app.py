@@ -7,6 +7,8 @@ daemon start/stop API, data flush API, and live beacon JSON endpoint.
 """
 import time
 import os
+import gzip
+import re
 import json
 import yaml
 import subprocess
@@ -245,6 +247,70 @@ app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.wsgi_app = ProxyFix(app.wsgi_app, x_prefix=1)
 
+BUNDLE_FORMAT  = 'marsaprs-analyzer-session'
+BUNDLE_VERSION = 1
+
+
+def build_session_bundle(event_name, exported_by=''):
+    """Assemble a self-contained playback bundle for one event.
+
+    Captures the exact inputs show_event_map() feeds the template — beacons plus
+    their full rendering context (trackers, igates, courses, map config, names,
+    carriers, recording times) — so the session can be replayed later by the
+    standalone player without any live config, DB, or APRS-IS access.
+
+    Beacons are the ordered/deduplicated set as displayed, with rx_lat/rx_lng
+    resolved from igate positions, matching show_event_map() exactly.
+    """
+    (yaml_event, yaml_trackers, event_igates, event_digipeaters,
+     mobile_callsigns, tracker_options, carriers_map) = load_config()
+    map_cfg = load_map_config()
+    courses = load_courses()
+
+    beacon_list = db.get_ordered_deduplicated_beacons(event_name) or []
+    for beacon in beacon_list:
+        cs = beacon['callsign']
+        if cs not in yaml_trackers:
+            yaml_trackers[cs] = cs
+        if cs.startswith('MARSQ-'):
+            mobile_callsigns.add(cs)
+        if beacon['receiver'] in event_igates:
+            igate = event_igates[beacon['receiver']]
+            beacon['rx_lat'] = igate['lat']
+            beacon['rx_lng'] = igate['lng']
+        if not beacon.get('path'):
+            beacon['path'] = ''
+        beacon.pop('id', None)
+        beacon.pop('event_id', None)
+
+    event_data = db.get_event(event_name)
+    rec        = db.get_event_recording_times(event_name)
+    tracker_options.sort(key=lambda t: t['label'].lower())
+
+    return {
+        'format':      BUNDLE_FORMAT,
+        'version':     BUNDLE_VERSION,
+        'exported_at': int(time.time()),
+        'exported_by': exported_by or '',
+        'event': {
+            'name':            event_name,
+            'start_time':      event_data['start_time'] if event_data else None,
+            'end_time':        event_data['end_time']   if event_data else None,
+            'recording_first': rec['first'] if rec else None,
+            'recording_last':  rec['last']  if rec else None,
+            'beacon_count':    len(beacon_list),
+        },
+        'map':              map_cfg,
+        'courses':          courses,
+        'igates':           event_igates,
+        'digipeaters':      event_digipeaters,
+        'trackers':         tracker_options,
+        'mobile_callsigns': sorted(mobile_callsigns),
+        'tracker_names':    db.get_all_tracker_names(),
+        'carriers':         carriers_map,
+        'beacons':          beacon_list,
+    }
+
 
 def _track_client_ip(page: str) -> None:
     ip = (request.headers.get('CF-Connecting-IP')
@@ -289,6 +355,25 @@ def event_beacon_json(event_name):
 @app.route('/api/check_admin')
 def check_admin_api():
     return jsonify({'ok': has_permission('analyzer.admin')})
+
+
+@app.route('/api/export/<event_name>')
+def export_session_api(event_name):
+    """Download a gzipped, self-contained playback bundle for the event.
+
+    Read-only export of data the viewer can already see; the global
+    analyzer.view gate on before_request is sufficient (no admin required).
+    """
+    user   = current_user()
+    bundle = build_session_bundle(event_name, exported_by=user['username'] if user else '')
+    payload = gzip.compress(json.dumps(bundle, separators=(',', ':')).encode('utf-8'), 9)
+    safe    = re.sub(r'[^A-Za-z0-9._-]+', '_', event_name).strip('_') or 'session'
+    fname   = f"{safe}_{time.strftime('%Y%m%d')}.marsplay.json.gz"
+    resp = make_response(payload)
+    resp.headers['Content-Type']        = 'application/gzip'
+    resp.headers['Content-Disposition'] = f'attachment; filename="{fname}"'
+    resp.headers['Content-Length']      = str(len(payload))
+    return resp
 
 
 @app.route('/api/daemon', methods=['GET', 'POST'])

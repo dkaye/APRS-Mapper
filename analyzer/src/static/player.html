@@ -1,0 +1,261 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <title>MARS APRS Session Player</title>
+    <style>
+        * { box-sizing: border-box; }
+        html, body { margin: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        #map { width: 100%; height: 100vh; background: #e8e8e8; }
+        .leaflet-tooltip {
+            background-color: rgba(255,255,255,0.85) !important;
+            padding: 2px 6px !important;
+            border: none; box-shadow: none; color: black; font-weight: bold;
+        }
+        .aprs-path-hops { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
+        .aprs-path-hop  { display: flex; align-items: baseline; gap: 8px; font-size: 13px; font-weight: normal; }
+        .aprs-path-hop code { font-size: 12px; }
+        .aprs-path-desc { font-size: 12px; color: #666; }
+        .aprs-path-digi { font-size: 12px; color: #2a7a2a; }
+        .aprs-path-empty { color: #999; font-style: italic; font-size: 13px; font-weight: normal; margin-top: 4px; }
+
+        .map-corner-btns { display: flex; flex-direction: column; gap: 6px; }
+        .map-corner-btn {
+            display: flex; align-items: center; justify-content: center;
+            width: 34px; height: 34px;
+            background: rgba(255,255,255,0.9); border: none;
+            border-radius: 6px; box-shadow: 0 1px 5px rgba(0,0,0,.3);
+            cursor: pointer; color: #333;
+        }
+        .map-corner-btn:hover { background: #fff; }
+        .map-corner-btn.saved { background: #d4edda; }
+        .map-float-btn {
+            display: flex; align-items: center; gap: 7px;
+            padding: 8px 14px; font-size: 13px; font-weight: 600;
+            background: rgba(255,255,255,0.95);
+            border: none; border-radius: 6px;
+            box-shadow: 0 2px 8px rgba(0,0,0,.3);
+            cursor: pointer; color: #333; white-space: nowrap;
+        }
+        .map-float-btn:hover { background: #fff; }
+
+        #controls-modal {
+            border: none; border-radius: 10px; padding: 0;
+            box-shadow: 0 6px 32px rgba(0,0,0,.25);
+            max-width: 540px; width: calc(100vw - 32px); overflow: hidden;
+        }
+        #controls-modal::backdrop { background: rgba(0,0,0,.35); }
+        #ctrl-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 12px 16px; background: #f5f5f5; border-bottom: 1px solid #ddd;
+        }
+        #ctrl-header h3 { margin: 0; font-size: 15px; }
+        #ctrl-close { background: none; border: none; font-size: 20px; cursor: pointer; color: #666; line-height: 1; padding: 0 4px; }
+        #ctrl-close:hover { color: #222; }
+        #ctrl-body { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+        .ctrl-col { padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+        .ctrl-col + .ctrl-col { border-left: 1px solid #eee; }
+        .ctrl-col label { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+        .ctrl-section-label { font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 2px; }
+        .ctrl-divider { border: none; border-top: 1px solid #eee; margin: 6px 0; }
+        #rec-info { font-size: 12px; color: #555; line-height: 1.8; }
+        select { font-size: 13px; padding: 4px 6px; border: 1px solid #ccc; border-radius: 4px; width: 100%; }
+        .ctrl-btn {
+            padding: 6px 10px; font-size: 13px; background: #f0f0f0; border: 1px solid #bbb;
+            border-radius: 4px; cursor: pointer; white-space: nowrap;
+            display: inline-flex; align-items: center; gap: 5px; width: 100%; justify-content: center;
+        }
+        .ctrl-btn:hover { background: #e4e4e4; }
+        #ctrl-footer { padding: 10px 16px; background: #f5f5f5; border-top: 1px solid #ddd; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+        #ctrl-footer .ctrl-btn { width: auto; flex: 1; }
+
+        /* ── File loader overlay ─────────────────────────────────────────── */
+        #loader {
+            position: fixed; inset: 0; z-index: 2000;
+            display: flex; align-items: center; justify-content: center;
+            background: linear-gradient(135deg, #1f2933, #323f4b); color: #e4e7eb;
+        }
+        #loader.hidden { display: none; }
+        #drop {
+            width: min(520px, calc(100vw - 40px)); padding: 40px 32px; text-align: center;
+            border: 2px dashed #7b8794; border-radius: 14px; background: rgba(255,255,255,0.04);
+            transition: border-color .15s, background .15s;
+        }
+        #drop.hot { border-color: #38bec9; background: rgba(56,190,201,0.10); }
+        #drop h1 { font-size: 20px; margin: 0 0 6px; }
+        #drop p  { font-size: 14px; color: #9aa5b1; margin: 6px 0 18px; }
+        #pick-btn {
+            display: inline-block; padding: 10px 20px; font-size: 14px; font-weight: 600;
+            background: #38bec9; color: #12303a; border: none; border-radius: 8px; cursor: pointer;
+        }
+        #pick-btn:hover { background: #54d1db; }
+        #load-err { color: #ff9b9b; font-size: 13px; min-height: 18px; margin-top: 14px; }
+        #session-badge {
+            position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+            z-index: 900; background: rgba(255,255,255,0.92); border-radius: 6px;
+            box-shadow: 0 2px 8px rgba(0,0,0,.25); padding: 5px 12px; font-size: 12px; color: #333;
+            display: none; max-width: 90vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="session-badge"></div>
+
+    <!-- Controls modal (playback subset — no live data-collection controls) -->
+    <dialog id="controls-modal">
+        <div id="ctrl-header">
+            <h3 id="ctrl-title">Session Player</h3>
+            <button id="ctrl-close" type="button" title="Close">×</button>
+        </div>
+        <div id="ctrl-body">
+            <div class="ctrl-col">
+                <div class="ctrl-section-label">Recording</div>
+                <div id="rec-info"><div id="rec-span" style="color:#aaa">No session loaded</div></div>
+                <hr class="ctrl-divider">
+                <div class="ctrl-section-label">Display</div>
+                <label><input type="checkbox" id="show-tracks" checked> Show Tracks</label>
+                <label><input type="checkbox" id="show-radio" checked> Show Radio Beacons <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#e74c3c;margin-left:3px;vertical-align:middle;flex-shrink:0"></span></label>
+                <label><input type="checkbox" id="show-cellular" checked> Show Cellular Beacons <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#27ae60;margin-left:3px;vertical-align:middle;flex-shrink:0"></span></label>
+                <label><input type="checkbox" id="show-course" checked> Show Courses</label>
+                <label><input type="checkbox" id="show-names" checked> Show Names</label>
+                <div style="margin-top:6px">
+                    <div class="ctrl-section-label" style="margin-bottom:4px">Beacon Time Range</div>
+                    <div style="font-size:11px;margin-bottom:2px"><span style="color:#666">Start: </span><span id="beacon-start-label" style="color:#888">—</span></div>
+                    <input type="range" id="set-first-beacon" min="0" max="10" step="1" value="0" style="width:100%;margin-bottom:6px">
+                    <div style="font-size:11px;margin-bottom:2px"><span style="color:#666">End: </span><span id="beacon-end-label" style="color:#888">—</span></div>
+                    <input type="range" id="set-last-beacon" min="2" max="10" step="1" value="0" style="width:100%">
+                </div>
+            </div>
+            <div class="ctrl-col">
+                <div class="ctrl-section-label">Trackers</div>
+                <select id="tracker-select" multiple size="5"><option value="all" selected>All</option></select>
+                <div class="ctrl-section-label" style="margin-top:4px">IGates</div>
+                <select id="igate-select" multiple size="4"><option value="all" selected>All</option></select>
+                <div class="ctrl-section-label" style="margin-top:4px">Cellular Carrier</div>
+                <select id="carrier-select" multiple size="7">
+                    <option value="all" selected>All</option>
+                    <option value="AT&T">AT&amp;T</option>
+                    <option value="Comcast">Comcast</option>
+                    <option value="Space Exploration">Starlink</option>
+                    <option value="T-Mobile">T-Mobile</option>
+                    <option value="Verizon">Verizon</option>
+                    <option value="Other">Other</option>
+                </select>
+                <div style="font-size:11px;color:#aaa;margin-top:2px">⌘/Ctrl+click to select multiple</div>
+            </div>
+        </div>
+        <div id="ctrl-footer">
+            <button id="save-map-btn" class="ctrl-btn" type="button">Save Map Position</button>
+            <button id="open-btn" class="ctrl-btn" type="button">Open Session…</button>
+        </div>
+    </dialog>
+
+    <!-- Load overlay -->
+    <div id="loader">
+        <div id="drop">
+            <h1>MARS APRS Session Player</h1>
+            <p>Drop a saved <code>.marsplay.json.gz</code> session here, or choose a file.</p>
+            <button id="pick-btn" type="button">Choose Session File</button>
+            <div id="load-err"></div>
+        </div>
+    </div>
+
+    <input type="file" id="file-input" accept=".gz,.json,application/gzip,application/json" style="display:none">
+
+    <script src="session_player.js"></script>
+    <script>
+        let player = null;
+
+        async function readBundleFile(file) {
+            const buf = await file.arrayBuffer();
+            const isGz = file.name.endsWith('.gz')
+                || (new Uint8Array(buf, 0, 2)[0] === 0x1f && new Uint8Array(buf, 0, 2)[1] === 0x8b);
+            let text;
+            if (isGz) {
+                if (typeof DecompressionStream === 'undefined')
+                    throw new Error('This browser cannot decompress .gz files. Use a recent Chrome, Safari, Edge, or Firefox.');
+                const ds = new DecompressionStream('gzip');
+                const stream = new Response(buf).body.pipeThrough(ds);
+                text = await new Response(stream).text();
+            } else {
+                text = new TextDecoder().decode(buf);
+            }
+            return JSON.parse(text);
+        }
+
+        function boot(data, sourceName) {
+            if (data.format !== 'marsaprs-analyzer-session')
+                throw new Error('Not a MARS APRS analyzer session file.');
+
+            // Reset for a possible re-load
+            if (player) { player.map.remove(); }
+            ['tracker-select', 'igate-select'].forEach(id => {
+                const sel = document.getElementById(id);
+                Array.from(sel.options).forEach(o => { if (o.value !== 'all') o.remove(); });
+                sel.querySelector('option[value="all"]').selected = true;
+            });
+
+            const ev = data.event || {};
+            document.getElementById('ctrl-title').textContent = ev.name || 'Session Player';
+            document.title = `MARS APRS — ${ev.name || 'Session'}`;
+            const span = (ev.recording_first && ev.recording_last)
+                ? `${new Date(ev.recording_first*1000).toLocaleString()} → ${new Date(ev.recording_last*1000).toLocaleString()}`
+                : 'No beacons in this session';
+            document.getElementById('rec-span').textContent = span;
+            document.getElementById('rec-span').style.color = '#555';
+
+            const badge = document.getElementById('session-badge');
+            badge.textContent = `${ev.name || 'Session'} · ${ev.beacon_count ?? 0} beacons`;
+            badge.title = sourceName || '';
+            badge.style.display = 'block';
+
+            player = initSessionPlayer(data, { storagePrefix: 'aprs_player' });
+            document.getElementById('loader').classList.add('hidden');
+        }
+
+        async function loadFile(file) {
+            const errEl = document.getElementById('load-err');
+            errEl.textContent = '';
+            try {
+                const data = await readBundleFile(file);
+                boot(data, file.name);
+            } catch (e) {
+                errEl.textContent = e.message || String(e);
+                document.getElementById('loader').classList.remove('hidden');
+            }
+        }
+
+        // ── File picker + drag/drop ────────────────────────────────────────
+        const fileInput = document.getElementById('file-input');
+        document.getElementById('pick-btn').addEventListener('click', () => fileInput.click());
+        document.getElementById('open-btn').addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', e => { if (e.target.files[0]) loadFile(e.target.files[0]); });
+
+        const drop = document.getElementById('drop');
+        ['dragenter', 'dragover'].forEach(ev => document.addEventListener(ev, e => {
+            e.preventDefault(); drop.classList.add('hot');
+        }));
+        ['dragleave', 'drop'].forEach(ev => document.addEventListener(ev, e => {
+            e.preventDefault(); if (ev === 'drop' || e.target === document.documentElement) drop.classList.remove('hot');
+        }));
+        document.addEventListener('drop', e => {
+            e.preventDefault();
+            const f = e.dataTransfer.files[0];
+            if (f) loadFile(f);
+        });
+
+        // ── Optional ?bundle=<url> auto-load ───────────────────────────────
+        const bundleUrl = new URLSearchParams(location.search).get('bundle');
+        if (bundleUrl) {
+            fetch(bundleUrl)
+                .then(r => { if (!r.ok) throw new Error(`Fetch failed: ${r.status}`); return r.blob(); })
+                .then(b => loadFile(new File([b], bundleUrl.split('/').pop() || 'session.gz')))
+                .catch(e => { document.getElementById('load-err').textContent = e.message; });
+        }
+    </script>
+</body>
+</html>
