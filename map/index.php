@@ -231,7 +231,7 @@ if (isset($_GET['history'])) {
 				}
 				// Fetch beacons newest-first; limit total rows to keep query fast.
 				$_res  = $_hdb->query("SELECT callsign, latitude, longitude, CAST(time AS INTEGER) as ts, path FROM beacons WHERE event_id=$_evId ORDER BY callsign, time DESC LIMIT 20000");
-				$_byCs = []; $_seen = [];
+				$_byCs = []; $_seen = []; $_lastKept = [];
 				while ($_r = $_res->fetchArray(SQLITE3_ASSOC)) {
 					$_cs = $_r['callsign'];
 					if (!isset($_byCs[$_cs])) $_byCs[$_cs] = [];
@@ -240,6 +240,18 @@ if (isset($_GET['history'])) {
 					$_bk = $_cs . ':' . (int)($_r['ts'] / 5);
 					if (isset($_seen[$_bk])) continue;
 					$_seen[$_bk] = true;
+					// Anti-shuffle: drop breadcrumbs within 30.48 m (100 ft) of the last *kept*
+					// point for this callsign so a stationary tracker's ~20 m GPS drift (heartbeat
+					// beacons re-inject the raw fix every 5 min) doesn't render as a cluster.
+					// Mirrors aprsDaemon.php's tracker_history.yaml dedup (MIN_MOVE_METRES), but
+					// compares against the last kept point rather than just the previous row, so a
+					// genuine ping-pong between two spots >30 m apart still collapses. Rows arrive
+					// newest-first per callsign, so the current position is always the first crumb.
+					if (isset($_lastKept[$_cs])
+						&& haversineMeters($_lastKept[$_cs][0], $_lastKept[$_cs][1], (float)$_r['latitude'], (float)$_r['longitude']) < 30.48) {
+						continue;
+					}
+					$_lastKept[$_cs] = [(float)$_r['latitude'], (float)$_r['longitude']];
 					$_byCs[$_cs][] = ['lat' => $_r['latitude'], 'lon' => $_r['longitude'], 'ts' => $_r['ts'], 'path' => $_r['path'] ?? ''];
 				}
 				$_hdb->close();
