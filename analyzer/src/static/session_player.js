@@ -83,6 +83,19 @@ function initSessionPlayer(data, opts) {
     } catch(e) {}
     map.setView([defaultView.lat, defaultView.lon], defaultView.zoom);
 
+    // ── Beacon time-range readout (bottom-center map overlay) ──────────────
+    // Surfaces the start→end of the currently displayed beacon window right on
+    // the map, updated live as the time-range sliders move. Self-contained
+    // (inline-styled, appended to the page) so both host pages get it for free.
+    const rangeReadout = document.createElement('div');
+    rangeReadout.id = 'beacon-range-readout';
+    rangeReadout.style.cssText =
+        'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:900;' +
+        'background:rgba(255,255,255,0.92);border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.25);' +
+        'padding:5px 14px;font-size:12px;color:#333;font-weight:600;white-space:nowrap;' +
+        'max-width:94vw;overflow:hidden;text-overflow:ellipsis;pointer-events:none;display:none;';
+    document.body.appendChild(rangeReadout);
+
     // ── Top-right: Reset Map ───────────────────────────────────────────────
     const ResetControl = L.Control.extend({
         options: { position: 'topright' },
@@ -253,6 +266,14 @@ function initSessionPlayer(data, opts) {
         const _la  = candidate_list[Math.min(display_range_end, candidate_list.length) - 1];
         if (_bsl) _bsl.textContent = _fa ? fmtTime(_fa.time) : '—';
         if (_bel) _bel.textContent = _la ? fmtTime(_la.time) : '—';
+        if (_fa && _la) {
+            rangeReadout.innerHTML =
+                '<span style="color:#888;font-weight:normal;margin-right:7px">Beacon range</span>'
+                + esc(fmtTime(_fa.time)) + ' <span style="color:#aaa">→</span> ' + esc(fmtTime(_la.time));
+            rangeReadout.style.display = 'block';
+        } else {
+            rangeReadout.style.display = 'none';
+        }
         draw_tracker();
     }
 
