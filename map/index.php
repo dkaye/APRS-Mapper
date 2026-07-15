@@ -2982,22 +2982,33 @@ function showTrackerHistory(callsign, color) {
 			const hamCallsign     = markers[callsign]?._hamCallsign || null;
 			const isMobileTracker = markers[callsign]?._mobile || false;
 
-			// Build a deduplicated, capped entry list for one callsign.
+			// Build a deduplicated (newest-first) entry list for one callsign — NOT yet
+			// capped; the breadcrumb-count cap is applied to the merged set below.
 			const buildEntries = (cs, isCell) => {
 				if (!hist[cs] || !hist[cs].length) return [];
 				const raw = [...hist[cs]]
 					.sort((a, b) => b.ts - a.ts)
 					.map(e => ({...e, _isCell: isCell, _cs: cs}));
-				const deduped = raw.filter((e, i) => i === 0 || e.lat !== raw[i-1].lat || e.lon !== raw[i-1].lon);
-				if (_breadcrumbCount === 0) return [];
-				return _breadcrumbCount < deduped.length ? deduped.slice(0, _breadcrumbCount) : deduped;
+				return raw.filter((e, i) => i === 0 || e.lat !== raw[i-1].lat || e.lon !== raw[i-1].lon);
 			};
 
 			// For hybrid trackers, cellular and radio trails are drawn independently —
 			// no cross-type segments. The cellular trail connects to the current marker;
 			// the radio trail ends at its own last known position.
-			const cellEntries  = buildEntries(callsign,   isMobileTracker);
-			const radioEntries = hamCallsign ? buildEntries(hamCallsign, false) : [];
+			const cellAll  = buildEntries(callsign,   isMobileTracker);
+			const radioAll = hamCallsign ? buildEntries(hamCallsign, false) : [];
+
+			// Apply the Breadcrumb Count cap across BOTH sources combined: keep only the
+			// N most-recent crumbs overall, regardless of whether each came from the radio
+			// or the mobile tracker, then split back by source for drawing.
+			let selected = [...cellAll, ...radioAll].sort((a, b) => b.ts - a.ts);
+			if (_breadcrumbCount === 0) selected = [];
+			else if (_breadcrumbCount < selected.length) selected = selected.slice(0, _breadcrumbCount);
+			// Split by source callsign, not by _isCell: the primary trail (the marker's own
+			// callsign) is the one that connects to the live marker — true for a hybrid's
+			// cellular trail AND for a pure-radio tracker's own trail.
+			const cellEntries  = selected.filter(e => e._cs === callsign);
+			const radioEntries = hamCallsign ? selected.filter(e => e._cs === hamCallsign) : [];
 
 			if (!cellEntries.length && !radioEntries.length) return;
 
