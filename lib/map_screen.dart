@@ -1633,24 +1633,34 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
               .map((e) => {...e, 'isCell': false})
               .toList()
           : <Map<String, dynamic>>[];
-      // Helper: sort newest-first, deduplicate, apply breadcrumb limit, reverse to oldest-first
-      final limit = _breadcrumbCount;
-      List<Map<String, dynamic>> dedupe(List<Map<String, dynamic>> src) {
+      // Helper: sort newest-first and drop consecutive duplicate positions, tagging
+      // each crumb with its source trail so the combined set can be split back apart.
+      List<Map<String, dynamic>> dedupe(List<Map<String, dynamic>> src, String trail) {
         src.sort((a, b) => (b['ts'] as int? ?? 0).compareTo(a['ts'] as int? ?? 0));
         final d = <Map<String, dynamic>>[];
         for (var i = 0; i < src.length; i++) {
-          if (i == 0 || src[i]['lat'] != src[i - 1]['lat'] || src[i]['lon'] != src[i - 1]['lon']) d.add(src[i]);
+          if (i == 0 || src[i]['lat'] != src[i - 1]['lat'] || src[i]['lon'] != src[i - 1]['lon']) {
+            d.add({...src[i], '_trail': trail});
+          }
         }
-        final trimmed = (limit > 0 && d.length > limit) ? d.sublist(0, limit) : d;
-        return trimmed.reversed.toList();
+        return d;
       }
-      final cell  = dedupe(cellEntries);
-      final radio = dedupe(radioEntries);
+      // Apply the Breadcrumb Count cap across BOTH sources combined: keep only the N
+      // most-recent crumbs overall, regardless of whether each came from the mobile or
+      // the radio tracker, then split back by source for drawing.
+      final limit = _breadcrumbCount;
+      var merged = [...dedupe(cellEntries, 'cell'), ...dedupe(radioEntries, 'radio')]
+        ..sort((a, b) => (b['ts'] as int? ?? 0).compareTo(a['ts'] as int? ?? 0));
+      if (limit <= 0) {
+        merged = [];
+      } else if (merged.length > limit) {
+        merged = merged.sublist(0, limit);
+      }
+      final all   = merged.reversed.toList(); // oldest-first for drawing
+      final cell  = all.where((e) => e['_trail'] == 'cell').toList();
+      final radio = all.where((e) => e['_trail'] == 'radio').toList();
       toLatLng(List<Map<String, dynamic>> es) =>
           es.map((e) => LatLng((e['lat'] as num).toDouble(), (e['lon'] as num).toDouble())).toList();
-      // Merged entries (for dot markers); separate pts lists (for typed polylines/arrows)
-      final all = [...cell, ...radio]
-        ..sort((a, b) => (a['ts'] as int? ?? 0).compareTo(b['ts'] as int? ?? 0));
       if (mounted) setState(() {
         _trailEntries  = all;
         _cellTrailPts  = toLatLng(cell);
