@@ -229,8 +229,15 @@ if (isset($_GET['history'])) {
 					$_hdb->close();
 					exit;
 				}
-				// Fetch beacons newest-first; limit total rows to keep query fast.
-				$_res  = $_hdb->query("SELECT callsign, latitude, longitude, CAST(time AS INTEGER) as ts, path FROM beacons WHERE event_id=$_evId ORDER BY callsign, time DESC LIMIT 20000");
+				// Fetch beacons newest-first, capped PER CALLSIGN (not globally). A flat
+				// "ORDER BY callsign, time DESC LIMIT 20000" let a few busy trackers exhaust
+				// the budget, so every callsign sorting after the cutoff (e.g. late MARSQ-###
+				// mobiles) returned zero crumbs and its trail vanished. ROW_NUMBER() keeps the
+				// newest 500 raw rows for each callsign, guaranteeing every tracker is present
+				// while the PHP loop below still trims to 100 kept crumbs after dedup. rn=1 is
+				// the newest row, so "ORDER BY callsign, rn" preserves the newest-first order
+				// the anti-shuffle filter relies on.
+				$_res  = $_hdb->query("SELECT callsign, latitude, longitude, ts, path FROM (SELECT callsign, latitude, longitude, CAST(time AS INTEGER) as ts, path, ROW_NUMBER() OVER (PARTITION BY callsign ORDER BY time DESC) rn FROM beacons WHERE event_id=$_evId) WHERE rn <= 500 ORDER BY callsign, rn");
 				$_byCs = []; $_seen = []; $_lastKept = [];
 				while ($_r = $_res->fetchArray(SQLITE3_ASSOC)) {
 					$_cs = $_r['callsign'];
