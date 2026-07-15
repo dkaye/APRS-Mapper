@@ -2987,7 +2987,7 @@ function showTrackerHistory(callsign, color) {
 				if (!hist[cs] || !hist[cs].length) return [];
 				const raw = [...hist[cs]]
 					.sort((a, b) => b.ts - a.ts)
-					.map(e => ({...e, _isCell: isCell}));
+					.map(e => ({...e, _isCell: isCell, _cs: cs}));
 				const deduped = raw.filter((e, i) => i === 0 || e.lat !== raw[i-1].lat || e.lon !== raw[i-1].lon);
 				if (_breadcrumbCount === 0) return [];
 				return _breadcrumbCount < deduped.length ? deduped.slice(0, _breadcrumbCount) : deduped;
@@ -3006,6 +3006,8 @@ function showTrackerHistory(callsign, color) {
 
 			const _carrier    = markers[callsign]?._carrier    || null;
 			const _radioModel = markers[callsign]?._radioModel || null;
+			const _name       = markers[callsign]?._trackerName || null;
+			const _id         = markers[callsign]?._trackerId   || null;
 
 			// Draw dots + connecting lines for one trail.
 			// connectToCurrent: true for cellular (extends to live marker), false for radio.
@@ -3022,12 +3024,14 @@ function showTrackerHistory(callsign, color) {
 					const tipHtml = () => {
 						const time = `<div class="aprs-path-time">${esc(relativeTime(e.ts))}</div>`;
 						if (e._isCell) {
-							let th = time;
+							const head = `<div style="font-weight:600;margin-bottom:2px">${_name ? esc(_name) + ' ' : ''}(${esc(_id || e._cs)})</div>`;
+							let th = head + time;
 							if (_carrier) th += `<div style="color:#888;font-size:11px;margin-top:3px">${esc(_carrier)}</div>`;
 							return th;
 						}
 						const label = `<div style="color:#888;font-size:11px;margin-top:3px">${esc(_radioModel || 'Radio')}</div>`;
-						return `<div style="min-width:260px">${time}${label}${formatAprsPath(e.path)}</div>`;
+						const head  = `<div style="font-weight:600;margin-bottom:2px">${_name ? esc(_name) + ' ' : ''}(${esc(e._cs)})</div>`;
+						return `<div style="min-width:260px">${head}${time}${label}${formatAprsPath(e.path)}</div>`;
 					};
 					dot.addTo(map);
 					layers.push(dot);
