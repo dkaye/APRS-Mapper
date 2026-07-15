@@ -1812,6 +1812,38 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 }
 .help-modal-btn:hover { background: #e0e8f0; }
 
+/* ── Quick Start modal ─────────────────────────────────────────────────── */
+#quickstart-modal {
+    position: fixed; inset: 0; z-index: 10001;
+    display: flex; align-items: center; justify-content: center;
+}
+#qs-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+#qs-box {
+    position: relative; background: #fff; border-radius: 8px;
+    width: 92%; max-width: 460px; max-height: 88vh;
+    display: flex; flex-direction: column;
+    box-shadow: 0 4px 24px rgba(0,0,0,.35); z-index: 1; overflow: hidden;
+    font-family: arial, helvetica, sans-serif;
+}
+#qs-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 16px; background: rgba(28,40,51,0.95); color: #fff;
+    font-size: 14px; font-weight: bold; flex: 0 0 auto;
+}
+#qs-close { background: none; border: none; font-size: 20px; line-height: 1; cursor: pointer; color: #aaa; padding: 0 2px; }
+#qs-close:hover { color: #fff; }
+#qs-body { padding: 16px 18px; overflow-y: auto; }
+.qs-note { background: #e8f4fd; border: 1px solid #90caf9; border-radius: 8px; padding: 10px 12px; font-size: 12.5px; color: #1565c0; line-height: 1.45; margin-bottom: 18px; }
+.qs-sec { margin-bottom: 20px; }
+.qs-sec-title { font-size: 13px; font-weight: 700; color: #2c3e50; letter-spacing: .3px; margin-bottom: 8px; }
+.qs-tip { position: relative; padding-left: 16px; font-size: 13px; color: #333; line-height: 1.45; margin-bottom: 6px; }
+.qs-tip::before { content: '•'; position: absolute; left: 3px; color: #888; }
+.qs-color { display: flex; align-items: center; gap: 8px; padding-left: 24px; margin-bottom: 5px; font-size: 13px; color: #333; }
+.qs-swatch { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto; }
+.qs-color b { font-weight: 600; }
+.qs-shape { display: flex; align-items: flex-start; gap: 9px; padding-left: 24px; margin-bottom: 5px; font-size: 12.5px; color: #555; line-height: 1.4; }
+.qs-shape svg { flex: 0 0 auto; margin-top: 2px; }
+
 /* ── Mobile join modal ─────────────────────────────────────────────────── */
 #mobile-join-modal {
     position: fixed; inset: 0; z-index: 10000;
@@ -2126,6 +2158,59 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 			<button id="about-close">&times;</button>
 		</div>
 		<div id="about-body"></div>
+	</div>
+</div>
+
+<div id="quickstart-modal" style="display:none">
+	<div id="qs-backdrop"></div>
+	<div id="qs-box">
+		<div id="qs-header">
+			<span>Quick Start</span>
+			<button id="qs-close">&times;</button>
+		</div>
+		<div id="qs-body">
+			<div class="qs-note">You can reopen this guide anytime from <strong>Help &rarr; Quick Start</strong>.</div>
+
+			<div class="qs-sec">
+				<div class="qs-sec-title">The Map</div>
+				<div class="qs-tip">Drag to pan. Zoom with the scroll wheel, the +/&minus; keys, or pinch on a touchscreen.</div>
+				<div class="qs-tip">On a computer, use the buttons at the lower-right: the crosshair centers on your current location, and the circular arrow resets the map to its default view.</div>
+				<div class="qs-tip">Click <strong>Save Map</strong> to record the map's current position and zoom, which is then restored whenever you reset.</div>
+			</div>
+
+			<div class="qs-sec">
+				<div class="qs-sec-title">The Sidebar</div>
+				<div class="qs-tip">On a computer the sidebar is docked on the left. On a phone or tablet, tap the &#9881; gear button to open it.</div>
+				<div class="qs-tip">Colored dots show the current location of each tracker:</div>
+				<div class="qs-color"><span class="qs-swatch" style="background:#43A047"></span><span><b style="color:#43A047">Green</b> &mdash; reported within the last 2 minutes.</span></div>
+				<div class="qs-color"><span class="qs-swatch" style="background:#1E88E5"></span><span><b style="color:#1E88E5">Blue</b> &mdash; reported 2&ndash;5 minutes ago.</span></div>
+				<div class="qs-color"><span class="qs-swatch" style="background:#E53935"></span><span><b style="color:#E53935">Red</b> &mdash; no report for more than 5 minutes.</span></div>
+				<div class="qs-tip">Marker shapes show how a tracker's position is reported:</div>
+				<div class="qs-shape"><svg width="12" height="12"><circle cx="6" cy="6" r="5" fill="#888" stroke="#fff" stroke-width="1.5"/></svg><span>Circle (or other configured shape) &mdash; radio tracker via APRS radio and iGates.</span></div>
+				<div class="qs-shape"><svg width="12" height="12"><rect x="1" y="1" width="10" height="10" rx="2" fill="#888" stroke="#fff" stroke-width="1.5"/></svg><span>Rounded square &mdash; mobile-only, sharing via the app with no ham radio.</span></div>
+				<div class="qs-shape"><svg width="12" height="12"><polygon points="6,1 11,11 1,11" fill="#888" stroke="#fff" stroke-width="1.5"/></svg><span>Triangle &mdash; hybrid: both the app and a licensed ham radio at once.</span></div>
+				<div class="qs-tip">Click (or tap) any Tracker, Aid/Rest Stop, or iGate in the sidebar to center the map on it, blink its marker, and show its breadcrumb trail. Click it again to zoom in.</div>
+				<div class="qs-tip">On the map, hover a marker (or tap it) to see its details. Hover a breadcrumb dot to see the time, name, and callsign for that point.</div>
+				<div class="qs-tip">Show or hide whole sections &mdash; or individual Courses &mdash; with the checkbox, and toggle map labels with the label button.</div>
+			</div>
+
+			<div class="qs-sec">
+				<div class="qs-sec-title">Share Location</div>
+				<div class="qs-tip">So others can see you on the map, click <strong>Share Location</strong> and enter your first name and the event PIN.</div>
+				<div class="qs-tip">Optional: add your licensed ham callsign and SSID to become a hybrid tracker &mdash; your marker appears as a triangle and your position comes from both the app and your radio.</div>
+				<div class="qs-tip">Sharing begins in unknown (?) mode while Smart Track takes its first GPS readings &mdash; within about 90 seconds it sets the beacon interval automatically: walk/run (60&nbsp;s), cycle (30&nbsp;s), drive (15&nbsp;s), or stationary (2&nbsp;min).</div>
+				<div class="qs-tip">For reliable background sharing from a phone, install the MARS APRS Tracker app &mdash; this web page only shares while it stays open.</div>
+			</div>
+
+			<div class="qs-sec">
+				<div class="qs-sec-title">Messaging</div>
+				<div class="qs-tip">While you are sharing your location, net control can send you text messages. An incoming message plays a tone and shows a pop-up with the sender's name and text.</div>
+				<div class="qs-tip">Click <strong>Reply</strong> to respond, or use the <strong>Messaging</strong> button to start a new message.</div>
+			</div>
+
+			<a href="https://marsaprs.org/userguide.html" target="_blank" class="help-modal-btn">Open Full User Guide</a>
+			<button type="button" class="help-modal-btn" id="qs-continue-btn">Continue</button>
+		</div>
 	</div>
 </div>
 
@@ -3716,7 +3801,7 @@ function refreshMobileAbout() {
 	].filter(Boolean);
 	el.innerHTML = `<div id="m-about-body-inner">${rows.map(r =>
 		`<div class="m-about-row"><span class="m-about-label">${r.label}</span><span class="m-about-val">${r.val}</span></div>`
-	).join('')}<a href="https://marsaprs.org/userguide.html" target="_blank" class="help-modal-btn" style="margin-top:8px;font-size:12px">User Guide</a><a href="https://marsaprs.org/tickets/" target="_blank" class="help-modal-btn" style="font-size:12px">Submit a Bug or Suggestion</a></div>`;
+	).join('')}<button type="button" class="help-modal-btn" style="margin-top:8px;font-size:12px" onclick="openQuickStart()">Quick Start</button><a href="https://marsaprs.org/userguide.html" target="_blank" class="help-modal-btn" style="font-size:12px">User Guide</a><a href="https://marsaprs.org/tickets/" target="_blank" class="help-modal-btn" style="font-size:12px">Submit a Bug or Suggestion</a></div>`;
 }
 
 function applyEvent(name) {
@@ -4303,6 +4388,7 @@ function openAboutModal() {
 		{ label: 'Copyright',    val: '&copy; 2026 Doug Kaye (K6DRK). All Rights Reserved.' },
 	].filter(Boolean);
 	body.innerHTML = rows.map(r => `<div class="about-row"><div class="about-label">${r.label}</div><div class="about-val">${r.val}</div></div>`).join('')
+		+ '<button type="button" class="help-modal-btn" onclick="openQuickStart()">Quick Start</button>'
 		+ '<a href="https://marsaprs.org/userguide.html" target="_blank" class="help-modal-btn">User Guide</a>'
 		+ '<a href="https://marsaprs.org/tickets/" target="_blank" class="help-modal-btn">Submit a Bug or Suggestion</a>';
 	document.getElementById('about-modal').style.display = 'flex';
@@ -4310,6 +4396,19 @@ function openAboutModal() {
 function closeAboutModal() { document.getElementById('about-modal').style.display = 'none'; }
 document.getElementById('about-close').addEventListener('click', closeAboutModal);
 document.getElementById('about-backdrop').addEventListener('click', closeAboutModal);
+
+// ── Quick Start guide ────────────────────────────────────────────────────────
+function openQuickStart() {
+	closeAboutModal();
+	if (typeof closeMobileDrawer === 'function') closeMobileDrawer();
+	const m = document.getElementById('quickstart-modal');
+	m.style.display = 'flex';
+	document.getElementById('qs-body').scrollTop = 0;
+}
+function closeQuickStart() { document.getElementById('quickstart-modal').style.display = 'none'; }
+document.getElementById('qs-close').addEventListener('click', closeQuickStart);
+document.getElementById('qs-backdrop').addEventListener('click', closeQuickStart);
+document.getElementById('qs-continue-btn').addEventListener('click', closeQuickStart);
 
 // Q_LABELS, formatAprsPath: loaded from utils.js
 if (document.getElementById('about-btn'))  document.getElementById('about-btn').addEventListener('click', openAboutModal);
