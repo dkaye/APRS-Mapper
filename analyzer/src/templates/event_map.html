@@ -86,6 +86,7 @@
                 justify-content: center;
             }
             .ctrl-btn:hover { background: #e4e4e4; }
+            a.ctrl-btn { text-decoration: none; color: #222; }
             #flush-btn:hover { background: #f8d7da; border-color: #e74c3c; }
             .range-pair { display: flex; flex-direction: column; gap: 6px; }
             .range-pair input[type=range] { width: 100%; }
@@ -127,12 +128,14 @@
             #flush-confirm, #flush1-continue { background: #e74c3c; color: white; }
 
             /* ── Export progress overlay ─────────────────────────── */
+            /* A <dialog> opened with showModal() so it enters the browser's
+               top layer and paints above the Controls modal (top-layer
+               stacking ignores z-index). */
             #export-overlay {
-                position: fixed; inset: 0; z-index: 3000;
-                display: none; align-items: center; justify-content: center;
-                background: rgba(0,0,0,.45);
+                border: none; padding: 0; background: transparent;
+                max-width: none; max-height: none;
             }
-            #export-overlay.show { display: flex; }
+            #export-overlay::backdrop { background: rgba(0,0,0,.45); }
             #export-card {
                 background: #fff; border-radius: 14px; padding: 30px 40px;
                 box-shadow: 0 8px 40px rgba(0,0,0,.3);
@@ -224,9 +227,12 @@
                 </div>
             </div>
             <div id="ctrl-footer">
-                <button id="save-map-btn" class="ctrl-btn" type="button">Save Map Position</button>
-                <button id="download-btn" class="ctrl-btn" type="button">Export Session…</button>
-                <button id="flush-btn" class="ctrl-btn" type="button">Erase All Data…</button>
+                <button id="save-map-btn" class="ctrl-btn" type="button">Save Map</button>
+                <button id="download-btn" class="ctrl-btn" type="button">Export…</button>
+                <a id="playback-btn" class="ctrl-btn" target="_blank" rel="noopener"
+                   href="{{ url_for('static', filename='player.html') }}?bundle={{ url_for('export_session_api', event_name=event_name) | urlencode }}"
+                   title="Open this session in the standalone player">Playback…</a>
+                <button id="flush-btn" class="ctrl-btn" type="button">Erase All…</button>
                 <a href="/auth/logout.php" id="ctrl-signout" title="Signed in as {{username}}">Sign out</a>
             </div>
             <div id="flush-denied" style="display:none;margin-top:8px;padding:8px 12px;background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;color:#b91c1c;font-size:13px">
@@ -271,7 +277,7 @@
         </dialog>
 
         <!-- Export progress / acknowledgement overlay -->
-        <div id="export-overlay">
+        <dialog id="export-overlay">
             <div id="export-card">
                 <div id="export-spinner"></div>
                 <svg id="export-check" viewBox="0 0 52 52" fill="none" stroke="#27ae60" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
@@ -285,7 +291,7 @@
                 <div id="export-msg">Exporting session…</div>
                 <div id="export-sub"></div>
             </div>
-        </div>
+        </dialog>
 
         <script src="{{ url_for('static', filename='session_player.js') }}"></script>
         <script>
@@ -479,15 +485,22 @@
                     if (state) exportOverlay.classList.add(state);
                     exportMsg.textContent = msg;
                     exportSub.textContent = sub || '';
-                    exportOverlay.classList.add('show');
+                    // showModal() puts the dialog in the top layer, above the
+                    // Controls modal that launched the export.
+                    if (!exportOverlay.open) exportOverlay.showModal();
                 }
                 function hideExportOverlay(delay) {
-                    exportDismiss = setTimeout(() => exportOverlay.classList.remove('show'), delay);
+                    exportDismiss = setTimeout(() => exportOverlay.close(), delay);
                 }
+                // Block Esc from closing the overlay while the export is still
+                // in progress (only dismissable once done/error).
+                exportOverlay.addEventListener('cancel', e => {
+                    if (!exportOverlay.matches('.done, .error')) e.preventDefault();
+                });
                 // Click backdrop to dismiss once finished
                 exportOverlay.addEventListener('click', e => {
                     if (e.target === exportOverlay && exportOverlay.matches('.done, .error'))
-                        exportOverlay.classList.remove('show');
+                        exportOverlay.close();
                 });
 
                 document.getElementById('download-btn').addEventListener('click', async () => {
