@@ -3,7 +3,7 @@
 #
 # Restarts the APRS background daemon. Run manually or called from the web UI.
 #
-# Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
+# Docs: https://github.com/dkaye/APRS-Mapper/blob/main/README.md
 # ©2025 Doug Kaye, K6DRK <doug@rds.com>
 
 sudo systemctl restart aprs-daemon

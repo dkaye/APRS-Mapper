@@ -7,6 +7,10 @@ vendor/
 # Node.js
 map/tests/js/node_modules/
 
+# Python bytecode caches
+**/__pycache__/
+*.pyc
+
 # Claude Code workspace settings
 .claude/
 

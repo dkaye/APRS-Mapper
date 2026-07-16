@@ -4,7 +4,7 @@ require_once '/var/www/html/track_ip.php'; track_client_ip('admin');
 /**
  * MARS APRS Map Admin
  *
- * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
+ * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/README.md
  * @author    Doug Kaye
  * @copyright 2026 Doug Kaye. All Rights Reserved.
  *
@@ -3747,6 +3747,19 @@ function collectConfig() {
         igates:      document.getElementById('sv-igates').checked,
         backgrounds: document.getElementById('sv-backgrounds').checked,
     };
+    // Label "eyeball" defaults — captured from this browser's shared (same-origin)
+    // eyeball state so "Save as Default Event" persists the current toggle layout.
+    // Absent key ⇒ default on (true). Applies to both normal and kiosk modes.
+    const _tlv = (() => { try { return JSON.parse(localStorage.getItem('aprs_tracker_label_vis') || '{}'); } catch (e) { return {}; } })();
+    const _plv = (() => { try { return JSON.parse(localStorage.getItem('aprs_place_label_vis')   || '{}'); } catch (e) { return {}; } })();
+    const label_defaults = {
+        tracker_id:     _tlv.id   !== false,
+        tracker_name:   _tlv.name !== false,
+        aid_name:       (_plv.aidstations || {}).name !== false,
+        aid_callsign:   (_plv.aidstations || {}).cs   !== false,
+        igate_name:     (_plv.igates || {}).name !== false,
+        igate_callsign: (_plv.igates || {}).cs   !== false,
+    };
     const mobile = {
         enabled: document.getElementById('mobile-enabled').checked,
         pin:     document.getElementById('mobile-pin').value.trim(),
@@ -3769,7 +3782,7 @@ function collectConfig() {
     const messaging_password   = document.getElementById('f-messaging-password').value.trim();
     const blink_duration    = parseInt(document.getElementById('f-blink-duration').value, 10);
     const breadcrumb_count  = bcSliderToCount(parseInt(document.getElementById('f-breadcrumb-count').value, 10));
-    return { event: document.getElementById('f-event').value.trim(), event_password, messaging_password, blink_duration, breadcrumb_count, legend: document.getElementById('f-legend').value, trackers, map, backgrounds, background_url, courses, aidstations, igates, section_visibility, mobile, offline_map };
+    return { event: document.getElementById('f-event').value.trim(), event_password, messaging_password, blink_duration, breadcrumb_count, legend: document.getElementById('f-legend').value, trackers, map, backgrounds, background_url, courses, aidstations, igates, section_visibility, label_defaults, mobile, offline_map };
 }
 
 // ── Populate form from a config object ───────────────────────────────────────
@@ -5027,6 +5040,15 @@ function buildSectionYaml(type, cfg) {
         L.push('  aidstations: ' + (sv.aidstations !== false ? 'true' : 'false'));
         L.push('  igates: '      + (sv.igates      !== false ? 'true' : 'false'));
         L.push('  backgrounds: ' + (sv.backgrounds !== false ? 'true' : 'false'));
+        L.push('');
+        const ld = cfg.label_defaults || {};
+        L.push('label_defaults:');
+        L.push('  tracker_id: '     + (ld.tracker_id     !== false ? 'true' : 'false'));
+        L.push('  tracker_name: '   + (ld.tracker_name   !== false ? 'true' : 'false'));
+        L.push('  aid_name: '       + (ld.aid_name       !== false ? 'true' : 'false'));
+        L.push('  aid_callsign: '   + (ld.aid_callsign   !== false ? 'true' : 'false'));
+        L.push('  igate_name: '     + (ld.igate_name     !== false ? 'true' : 'false'));
+        L.push('  igate_callsign: ' + (ld.igate_callsign !== false ? 'true' : 'false'));
         L.push('');
         const map = cfg.map || {};
         L.push('map:');

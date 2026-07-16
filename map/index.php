@@ -2,7 +2,7 @@
 /**
  * APRS Tracker Map
  *
- * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
+ * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/README.md
  * @author    Doug Kaye
  * @copyright 2026 Doug Kaye. All Rights Reserved.
  *
@@ -16,6 +16,20 @@
  */
 
 define('WEB_VERSION', '1.19.1+8');
+
+// ── Client/server API contract version ────────────────────────────────────────
+// Advertised in the ?json and ?config responses so mobile apps can detect an
+// incompatible server. This is the WIRE-FORMAT contract version, NOT WEB_VERSION —
+// it is deliberately decoupled from the release version.
+//   API_VERSION    — the current contract version. Bump ONLY on a breaking change
+//                    to the response shape (removing/renaming a field clients read,
+//                    or changing its meaning). Additive changes do NOT bump it.
+//   API_MIN_CLIENT — the oldest client contract this server still supports. Raise
+//                    ONLY when dropping backward compatibility. A client whose
+//                    built-in version is >= API_MIN_CLIENT is fully supported, so a
+//                    newer server serving older clients stays silent (the normal case).
+define('API_VERSION', 1);
+define('API_MIN_CLIENT', 1);
 
 $trackerStatusFilename = 'trackers.json';
 
@@ -188,6 +202,7 @@ if (isset($_GET['json'])) {
 	];
 	header('Content-Type: application/json');
 	echo json_encode([
+		'api'                => ['version' => API_VERSION, 'min_client' => API_MIN_CLIENT],
 		'default_event'      => $defaultEvent,
 		'password_required'  => !empty($cfg['event_password'] ?? ''),
 		'blink_duration'     => (int)($cfg['blink_duration'] ?? 5),
@@ -352,6 +367,7 @@ if (isset($_GET['config'])) {
 		'stat_distance'  => (float)($mobileCfgTmp['beacon_stat_distance']  ?? 1.0),
 	];
 	echo json_encode([
+		'api'                => ['version' => API_VERSION, 'min_client' => API_MIN_CLIENT],
 		'event'              => $cfg['event'] ?? '',
 		'legend'             => $cfg['legend'] ?? '',
 		'tracker_style'      => $cfg['tracker_style'] ?? [],
@@ -1362,12 +1378,12 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 .aprs-hide-tracker-labels .tracker-label.label-force-show  { display: block !important; }
 .aprs-hide-aid-labels .aid-station-label.label-force-show  { display: block !important; }
 .aprs-hide-igate-labels .igate-label.label-force-show      { display: block !important; }
-.sec-label-btn {
+.sec-label-btn, .tk-lbl-btn {
     background: none; border: none; padding: 0 3px 0 0; margin: 0; cursor: pointer;
     color: #888; display: flex; align-items: center; line-height: 1;
 }
-.sec-label-btn:hover { color: #333; }
-.sec-label-btn.labels-off { color: #bbb; }
+.sec-label-btn:hover, .tk-lbl-btn:hover { color: #333; }
+.sec-label-btn.labels-off, .tk-lbl-btn.labels-off { color: #bbb; }
 .section-dimmed { opacity: 0.35; }
 .section-divider { border: none; border-top: 1px solid #ccc; margin: 6px 0 4px; }
 
@@ -1983,6 +1999,13 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
     border: none; border-radius: 5px; font-size: 14px; cursor: pointer; font-family: inherit;
 }
 #msg-sub-submit:hover, #msg-compose-send:hover { background: #2471a3; }
+#msg-sub-submit:disabled, #msg-compose-send:disabled { cursor: default; background: #5b93b9; }
+.btn-spinner {
+    display: inline-block; width: 13px; height: 13px; margin-right: 7px; vertical-align: -2px;
+    border: 2px solid rgba(255,255,255,0.45); border-top-color: #fff; border-radius: 50%;
+    animation: btn-spin 0.6s linear infinite;
+}
+@keyframes btn-spin { to { transform: rotate(360deg); } }
 
 #msg-incoming-modal {
     position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 9500;
@@ -2026,7 +2049,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 <!-- ── Desktop sidebar ─────────────────────────────────────────────────── -->
 <div id="sidebar">
 	<div id="sidebar-scroll">
-		<div class="sec-hdr open" data-body="legend"><span>Trackers</span><span class="sec-hdr-right"><button class="sec-label-btn" data-section="trackers" title="Toggle labels"></button><input type="checkbox" class="sec-vis-cb" checked data-section="trackers"></span></div>
+		<div class="sec-hdr open" data-body="legend"><span>Trackers</span><span class="sec-hdr-right"><button class="tk-lbl-btn tk-idlbl-btn" title="Show/hide tracker IDs"></button><button class="tk-lbl-btn tk-namelbl-btn" title="Show/hide tracker names"></button><input type="checkbox" class="sec-vis-cb" checked data-section="trackers"></span></div>
 		<div id="legend"></div>
 
 		<div id="courses-section" style="display:none">
@@ -2035,12 +2058,12 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 		</div>
 
 		<div id="aidstations-section" style="display:none">
-			<div class="sec-hdr open" data-body="aidstations"><span>Aid/Rest Stops</span><span class="sec-hdr-right"><button class="sec-label-btn" data-section="aidstations" title="Toggle labels"></button><input type="checkbox" class="sec-vis-cb" checked data-section="aidstations"></span></div>
+			<div class="sec-hdr open" data-body="aidstations"><span>Aid/Rest Stops</span><span class="sec-hdr-right"><button class="tk-lbl-btn pl-name-btn" data-section="aidstations" title="Show/hide names"></button><button class="tk-lbl-btn pl-cs-btn" data-section="aidstations" title="Show/hide callsigns"></button><input type="checkbox" class="sec-vis-cb" checked data-section="aidstations"></span></div>
 			<div id="aidstations"></div>
 		</div>
 
 		<div id="igates-section" style="display:none">
-			<div class="sec-hdr open" data-body="igates"><span>iGates</span><span class="sec-hdr-right"><button class="sec-label-btn" data-section="igates" title="Toggle labels"></button><input type="checkbox" class="sec-vis-cb" checked data-section="igates"></span></div>
+			<div class="sec-hdr open" data-body="igates"><span>iGates</span><span class="sec-hdr-right"><button class="tk-lbl-btn pl-name-btn" data-section="igates" title="Show/hide names"></button><button class="tk-lbl-btn pl-cs-btn" data-section="igates" title="Show/hide callsigns"></button><input type="checkbox" class="sec-vis-cb" checked data-section="igates"></span></div>
 			<div id="igates"></div>
 		</div>
 
@@ -2093,7 +2116,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 	<div id="drawer-body">
 		<div class="drawer-sec">
 			<div class="drawer-sec-hdr open" data-body="m-trackers-body">
-				<span>Trackers</span><span class="sec-hdr-right"><input type="checkbox" class="sec-vis-cb" checked data-section="trackers"></span>
+				<span>Trackers</span><span class="sec-hdr-right"><button class="tk-lbl-btn tk-idlbl-btn" title="Show/hide tracker IDs"></button><button class="tk-lbl-btn tk-namelbl-btn" title="Show/hide tracker names"></button><input type="checkbox" class="sec-vis-cb" checked data-section="trackers"></span>
 			</div>
 			<div id="m-trackers-body">
 				<div id="m-legend"></div>
@@ -2119,7 +2142,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 		</div>
 		<div class="drawer-sec" id="m-aidstations-section" style="display:none">
 			<div class="drawer-sec-hdr" data-body="m-aidstations-body">
-				<span>Aid/Rest Stops</span><span class="sec-hdr-right"><input type="checkbox" class="sec-vis-cb" checked data-section="aidstations"></span>
+				<span>Aid/Rest Stops</span><span class="sec-hdr-right"><button class="tk-lbl-btn pl-name-btn" data-section="aidstations" title="Show/hide names"></button><button class="tk-lbl-btn pl-cs-btn" data-section="aidstations" title="Show/hide callsigns"></button><input type="checkbox" class="sec-vis-cb" checked data-section="aidstations"></span>
 			</div>
 			<div id="m-aidstations-body" style="display:none">
 				<div id="m-aidstations-list"></div>
@@ -2127,7 +2150,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 		</div>
 		<div class="drawer-sec" id="m-igates-section" style="display:none">
 			<div class="drawer-sec-hdr" data-body="m-igates-body">
-				<span>iGates</span><span class="sec-hdr-right"><input type="checkbox" class="sec-vis-cb" checked data-section="igates"></span>
+				<span>iGates</span><span class="sec-hdr-right"><button class="tk-lbl-btn pl-name-btn" data-section="igates" title="Show/hide names"></button><button class="tk-lbl-btn pl-cs-btn" data-section="igates" title="Show/hide callsigns"></button><input type="checkbox" class="sec-vis-cb" checked data-section="igates"></span>
 			</div>
 			<div id="m-igates-body" style="display:none">
 				<div id="m-igates-list"></div>
@@ -2552,7 +2575,7 @@ new (L.Control.extend({
 			L.DomEvent.on(exitBtn, 'click', () => { location.href = location.pathname; });
 			L.DomEvent.disableClickPropagation(exitBtn);
 			const txt = L.DomUtil.create('span', '', d);
-			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v1.19.1+8 &copy; 2026 Doug Kaye (K6DRK)';
+			txt.innerHTML = '&ensp;Marin Amateur Radio Society APRS Tracking v<?= WEB_VERSION ?> &copy; 2026 Doug Kaye (K6DRK)';
 		} else {
 			if (!isMobile) {
 				const exitBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
@@ -2570,8 +2593,8 @@ new (L.Control.extend({
 			}
 			const ftxt = L.DomUtil.create('span', '', d);
 			ftxt.innerHTML = isMobile
-				? 'MARS APRS v1.19.1+8 &copy; 2026 Doug Kaye (K6DRK)'
-				: '&ensp;Marin Amateur Radio Society APRS Tracking v1.19.1+8 &copy; 2026 Doug Kaye (K6DRK)';
+				? 'MARS APRS v<?= WEB_VERSION ?> &copy; 2026 Doug Kaye (K6DRK)'
+				: '&ensp;Marin Amateur Radio Society APRS Tracking v<?= WEB_VERSION ?> &copy; 2026 Doug Kaye (K6DRK)';
 			if (isMobile) d.style.fontSize = '10px';
 		}
 		return d;
@@ -2627,6 +2650,9 @@ if (kiosk) {
 	document.getElementById('backgrounds-section').style.display = 'none';
 	document.getElementById('sidebar-footer').style.display = 'none';
 	document.querySelectorAll('#sidebar .sec-hdr').forEach(el => { el.style.pointerEvents = 'none'; el.style.cursor = 'default'; });
+	// …but keep the ID/Name label eyes operational in kiosk (the rest of the header
+	// stays inert — section collapse and the visibility checkbox remain locked).
+	document.querySelectorAll('#sidebar .tk-lbl-btn').forEach(b => { b.style.pointerEvents = 'auto'; b.style.cursor = 'pointer'; });
 	if (localStorage.getItem('aprs_kiosk_sidebar') === '0')
 		document.getElementById('sidebar').style.display = 'none';
 	document.documentElement.requestFullscreen().catch(() => {});
@@ -3200,10 +3226,10 @@ function triggerBlink(callsign) {
 	if (el) el.style.animation = 'blink-anim 0.4s steps(2,end) infinite';
 	const tipEl = markers[callsign]?.getTooltip()?.getElement();
 	if (tipEl) tipEl.style.animation = 'blink-anim 0.4s steps(2,end) infinite';
-	// Expand tooltip to show name while blinking
+	// Keep the resting label content (ID/Name toggles) while blinking
 	const m = markers[callsign];
 	if (m && !kiosk) {
-		m.setTooltipContent(m._trackerName || m._trackerId || callsign);
+		m.setTooltipContent(trackerLabelText(m._trackerId, m._trackerName));
 	}
 	blinkTimers[callsign] = setTimeout(() => {
 		if (item) item.classList.remove('blinking');
@@ -3214,7 +3240,7 @@ function triggerBlink(callsign) {
 		// Collapse tooltip back to resting label
 		if (markers[callsign] && !kiosk) {
 			const _m = markers[callsign];
-			_m.setTooltipContent(_m._trackerName || _m._trackerId || callsign);
+			_m.setTooltipContent(trackerLabelText(_m._trackerId, _m._trackerName));
 		}
 		blinkHistoryLayers(callsign, false);
 		delete blinkTimers[callsign];
@@ -3643,7 +3669,7 @@ function updateMap() {
 					markers[t.callsign].setIcon(icon);
 					if (trackerPopups[t.callsign]) trackerPopups[t.callsign].setContent(popupHtml(t));
 					if (!blinkTimers[t.callsign])
-						markers[t.callsign].setTooltipContent(t.name || t.id);
+						markers[t.callsign].setTooltipContent(trackerLabelText(t.id, t.name));
 					// Redraw breadcrumb trail whenever the selected tracker moves or changes staleness color.
 					if ((moved || color !== prevColor) && t.callsign === selectedCallsign) showTrackerHistory(t.callsign, color);
 				} else {
@@ -3682,7 +3708,7 @@ function updateMap() {
 						});
 						m.on('mouseout', scheduleClose);
 					}
-					m.bindTooltip(t.name || t.id, {
+					m.bindTooltip(trackerLabelText(t.id, t.name), {
 						permanent: true, direction: 'right',
 						className: 'tracker-label', offset: [sz + 2, 0]
 					});
@@ -3794,7 +3820,7 @@ function refreshMobileAbout() {
 	const rows = [
 		currentEventName ? { label: 'Event',   val: currentEventName } : null,
 		{ label: 'Org',     val: 'Marin Amateur Radio Society' },
-		{ label: 'Version', val: 'APRS Tracker Map · v1.19.1+8' },
+		{ label: 'Version', val: 'APRS Tracker Map · v<?= WEB_VERSION ?>' },
 		mobileCallsign ? { label: 'Callsign', val: mobileCallsign } : null,
 		{ label: 'Map',     val: currentBgAttribution || '' },
 		{ label: 'Credit',  val: '&copy; 2026 Doug Kaye (K6DRK)' },
@@ -4076,7 +4102,7 @@ function applyIgates(igates) {
 	igateMarkers.forEach(d => d.m.remove());
 	igateMarkers = []; selectedIgateIdx = -1; igateClickCount = 0;
 
-	if (kiosk || !igates || !igates.length) { section.style.display = 'none'; return; }
+	if (!igates || !igates.length) { section.style.display = 'none'; return; }
 	section.style.display = '';
 	container.innerHTML = '';
 
@@ -4089,8 +4115,10 @@ function applyIgates(igates) {
 			pane: 'igatePane', radius: scaledRadius(igateBase), color: '#222', weight: 1.5, fillColor: '#111', fillOpacity: 0.9
 		}).addTo(map);
 		m._baseRadius = igateBase;
-		const tipLabel = g.callsign ? `${g.name} (${g.callsign})` : g.name;
-		m.bindTooltip(tipLabel, { permanent: true, direction: 'right', className: 'place-label igate-label', offset: [8, 0] });
+		const tipLabel = placeLabelText(g.name, g.callsign || '', 'igates');
+		m.bindTooltip(tipLabel, kiosk
+			? { permanent: true, direction: 'right', className: 'place-label-kiosk igate-label' }
+			: { permanent: true, direction: 'right', className: 'place-label igate-label', offset: [8, 0] });
 		if (isMobile) m.on('click', function(e) { L.DomEvent.stopPropagation(e); onIgateClick(igateMarkers.length); });
 
 		let item;
@@ -4125,6 +4153,7 @@ function applyIgates(igates) {
 	});
 
 	section.style.display = igateMarkers.length ? '' : 'none';
+	updatePlaceLabels('igates');
 }
 
 function applyAidStations(stations) {
@@ -4149,7 +4178,7 @@ function applyAidStations(stations) {
 			pane: 'aidPane', radius: scaledRadius(aidBase), color: '#222', weight: 1.5, fillColor: '#111', fillOpacity: 0.9
 		}).addTo(map);
 		m._baseRadius = aidBase;
-		const aidTipLabel = g.callsign ? `${g.name} (${g.callsign})` : g.name;
+		const aidTipLabel = placeLabelText(g.name, g.callsign || '', 'aidstations');
 		m.bindTooltip(aidTipLabel, kiosk
 			? { permanent: true, direction: 'right', className: 'place-label-kiosk' }
 			: { permanent: true, direction: 'right', className: 'place-label aid-station-label', offset: [8, 0] });
@@ -4187,6 +4216,7 @@ function applyAidStations(stations) {
 	});
 
 	section.style.display = aidMarkers.length ? '' : 'none';
+	updatePlaceLabels('aidstations');
 	if (kiosk) resolveAidTooltipOverlaps();
 }
 
@@ -4380,7 +4410,7 @@ function openAboutModal() {
 	const attrText = currentBgAttribution || '';
 	const rows = [
 		{ label: 'Organization', val: 'Marin Amateur Radio Society' },
-		{ label: 'Application',  val: 'APRS Tracker Map · v1.19.1+8' },
+		{ label: 'Application',  val: 'APRS Tracker Map · v<?= WEB_VERSION ?>' },
 		currentEventName ? { label: 'Event', val: currentEventName } : null,
 		mobileCallsign ? { label: 'My Callsign', val: mobileCallsign } : null,
 		mobileCallsign ? { label: 'Activity', val: ['Walk / Run', 'Cycle', 'Drive', 'Stationary', 'Unknown'][_mobileActivityMode] } : null,
@@ -4580,8 +4610,109 @@ document.querySelectorAll('.sec-label-btn').forEach(btn => {
 	});
 });
 
-// Apply initial state (on by default; localStorage may override)
-Object.keys(labelVisible).forEach(k => setLabelVisible(k, labelVisible[k]));
+// Trackers, aid stations and iGates are all managed by their own two-eye toggles
+// below (updateTrackerLabels / updatePlaceLabels), not the generic setLabelVisible.
+
+// ── Label eyeball defaults (admin "Save as Default Event") ────────────────────
+// Server-rendered from the event config. These seed a FIRST-TIME visitor's eyes;
+// once a visitor has toggled anything their own choice lives in localStorage and
+// wins below. Applies to both normal and kiosk modes.
+<?php
+$_ld   = is_array($_cfg['label_defaults'] ?? null) ? $_cfg['label_defaults'] : [];
+$_ldJs = [];
+foreach (['tracker_id','tracker_name','aid_name','aid_callsign','igate_name','igate_callsign'] as $_lk) {
+	$_ldJs[$_lk] = array_key_exists($_lk, $_ld) ? ($_ld[$_lk] === true || $_ld[$_lk] === 'true' || $_ld[$_lk] === 1) : true;
+}
+?>
+const LABEL_DEFAULTS = <?= json_encode($_ldJs) ?>;
+
+// ── Tracker label content: separate ID and Name eyes (default both on) ────────
+const LS_TRACKER_LABELS = 'aprs_tracker_label_vis';
+let trackerIdVisible = LABEL_DEFAULTS.tracker_id, trackerNameVisible = LABEL_DEFAULTS.tracker_name;
+try { const s = JSON.parse(localStorage.getItem(LS_TRACKER_LABELS) || '{}');
+	if (s.id   !== undefined) trackerIdVisible   = !!s.id;
+	if (s.name !== undefined) trackerNameVisible = !!s.name;
+} catch {}
+
+// Compose a resting tracker label from the current ID/Name toggle state.
+function trackerLabelText(id, name) {
+	const parts = [];
+	if (trackerIdVisible   && id)   parts.push(id);
+	if (trackerNameVisible && name) parts.push(name);
+	return parts.join(' ');
+}
+
+function updateTrackerLabels() {
+	// When both eyes are off there is nothing to show — hide all tracker labels.
+	labelVisible.trackers = trackerIdVisible || trackerNameVisible;
+	map._container.classList.toggle('aprs-hide-tracker-labels', !labelVisible.trackers || !sectionVisible.trackers);
+	Object.values(markers).forEach(m => {
+		if (m && m.getTooltip && m.getTooltip()) m.setTooltipContent(trackerLabelText(m._trackerId, m._trackerName));
+	});
+	document.querySelectorAll('.tk-idlbl-btn').forEach(b => {
+		b.innerHTML = trackerIdVisible ? EYE_ON : EYE_OFF; b.classList.toggle('labels-off', !trackerIdVisible);
+	});
+	document.querySelectorAll('.tk-namelbl-btn').forEach(b => {
+		b.innerHTML = trackerNameVisible ? EYE_ON : EYE_OFF; b.classList.toggle('labels-off', !trackerNameVisible);
+	});
+	try { localStorage.setItem(LS_TRACKER_LABELS, JSON.stringify({id: trackerIdVisible, name: trackerNameVisible})); } catch {}
+}
+
+document.querySelectorAll('.tk-idlbl-btn').forEach(b => b.addEventListener('click', e => {
+	e.stopPropagation(); trackerIdVisible = !trackerIdVisible; updateTrackerLabels();
+}));
+document.querySelectorAll('.tk-namelbl-btn').forEach(b => b.addEventListener('click', e => {
+	e.stopPropagation(); trackerNameVisible = !trackerNameVisible; updateTrackerLabels();
+}));
+updateTrackerLabels();
+
+// ── Aid/iGate label content: separate Name and Callsign eyes (default both on) ─
+// Same two-eye pattern as trackers; for a place the label form is "Name (CALLSIGN)",
+// so the two components are the name and the callsign. Shared for both sections.
+const LS_PLACE_LABELS = 'aprs_place_label_vis';
+const placeLabelState = {
+	aidstations: { name: LABEL_DEFAULTS.aid_name,   cs: LABEL_DEFAULTS.aid_callsign },
+	igates:      { name: LABEL_DEFAULTS.igate_name, cs: LABEL_DEFAULTS.igate_callsign },
+};
+try { const s = JSON.parse(localStorage.getItem(LS_PLACE_LABELS) || '{}');
+	['aidstations','igates'].forEach(sec => { if (s[sec]) {
+		if (s[sec].name !== undefined) placeLabelState[sec].name = !!s[sec].name;
+		if (s[sec].cs   !== undefined) placeLabelState[sec].cs   = !!s[sec].cs;
+	}});
+} catch {}
+
+// Compose a place label ("Name (CALLSIGN)") from the section's Name/Callsign eyes.
+function placeLabelText(name, callsign, sec) {
+	const st = placeLabelState[sec];
+	const parts = [];
+	if (st.name && name)     parts.push(name);
+	if (st.cs   && callsign) parts.push(`(${callsign})`);
+	return parts.join(' ');
+}
+
+function updatePlaceLabels(sec) {
+	const st   = placeLabelState[sec];
+	const list = sec === 'aidstations' ? aidMarkers : igateMarkers;
+	// When both eyes are off there is nothing to show — hide all labels for the section.
+	labelVisible[sec] = st.name || st.cs;
+	map._container.classList.toggle(LABEL_HIDE_CLASS[sec], !labelVisible[sec] || !sectionVisible[sec]);
+	list.forEach(d => { if (d.m.getTooltip()) d.m.setTooltipContent(placeLabelText(d.name, d.callsign, sec)); });
+	document.querySelectorAll(`.pl-name-btn[data-section="${sec}"]`).forEach(b => {
+		b.innerHTML = st.name ? EYE_ON : EYE_OFF; b.classList.toggle('labels-off', !st.name);
+	});
+	document.querySelectorAll(`.pl-cs-btn[data-section="${sec}"]`).forEach(b => {
+		b.innerHTML = st.cs ? EYE_ON : EYE_OFF; b.classList.toggle('labels-off', !st.cs);
+	});
+	try { localStorage.setItem(LS_PLACE_LABELS, JSON.stringify(placeLabelState)); } catch {}
+}
+
+document.querySelectorAll('.pl-name-btn').forEach(b => b.addEventListener('click', e => {
+	e.stopPropagation(); const sec = b.dataset.section; placeLabelState[sec].name = !placeLabelState[sec].name; updatePlaceLabels(sec);
+}));
+document.querySelectorAll('.pl-cs-btn').forEach(b => b.addEventListener('click', e => {
+	e.stopPropagation(); const sec = b.dataset.section; placeLabelState[sec].cs = !placeLabelState[sec].cs; updatePlaceLabels(sec);
+}));
+['aidstations','igates'].forEach(updatePlaceLabels);
 
 // ── Mobile location sharing ────────────────────────────────────────────────
 
@@ -5336,6 +5467,8 @@ document.getElementById('msg-compose-broadcast').addEventListener('change', func
 	else { modal.dataset.to = modal.dataset.toLabel; document.getElementById('msg-compose-to').textContent = 'To: ' + modal.dataset.toLabel; }
 });
 document.getElementById('msg-compose-send').addEventListener('click', async () => {
+	const btn    = document.getElementById('msg-compose-send');
+	if (btn.disabled) return; // in-flight — ignore duplicate clicks
 	const modal  = document.getElementById('msg-compose-modal');
 	const to     = modal.dataset.to;
 	const toLabel = modal.dataset.toLabel;
@@ -5343,6 +5476,10 @@ document.getElementById('msg-compose-send').addEventListener('click', async () =
 	const errEl  = document.getElementById('msg-compose-error');
 	if (!text) { errEl.textContent = 'Please enter a message.'; return; }
 	errEl.textContent = '';
+	// Disable + spinner while the send is in flight so the button can't be double-clicked.
+	const btnHtml = btn.innerHTML;
+	btn.disabled = true;
+	btn.innerHTML = '<span class="btn-spinner"></span>Sending…';
 	try {
 		const r = await fetch('index.php?messaging=send', { method: 'POST', headers: {'Content-Type':'application/json'},
 			body: JSON.stringify({web_token: _msgToken, to, text}) });
@@ -5353,6 +5490,7 @@ document.getElementById('msg-compose-send').addEventListener('click', async () =
 		if (_msgLog.length > 50) _msgLog.shift();
 		modal.style.display = 'none';
 	} catch { errEl.textContent = 'Send failed. Please try again.'; }
+	finally { btn.disabled = false; btn.innerHTML = btnHtml; }
 });
 
 // Rename link

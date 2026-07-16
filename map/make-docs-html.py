@@ -222,8 +222,10 @@ def build(src_name, dst_name, title):
 
     print(f"Written: {dst}")
 
+# README.md is the system doc at the repo root; USERGUIDE.MD is the web-served
+# user guide, which stays in map/. Both render into map/ for serving.
 DOCS = [
-    ("README.MD",    "readme.html",    "MARS APRS — README"),
+    ("../README.md", "readme.html",    "MARS APRS — README"),
     ("USERGUIDE.MD", "userguide.html", "MARS APRS — User Guide"),
 ]
 

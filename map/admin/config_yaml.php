@@ -112,6 +112,17 @@ function buildConfigYaml($cfg, $history = []) {
         $L[] = '  ' . $k . ': ' . (($v && $v !== 'false') ? 'true' : 'false');
     }
     $L[] = '';
+    $L[] = '# ── Label defaults ────────────────────────────────────────────────────────────';
+    $L[] = '# Default on/off state of the sidebar label "eyeball" toggles for first-time';
+    $L[] = '# visitors (true/false). Applies to both normal and kiosk modes. Once a visitor';
+    $L[] = '# changes a toggle, their own choice is remembered and these defaults no longer apply.';
+    $L[] = 'label_defaults:';
+    $ld  = $cfg['label_defaults'] ?? [];
+    foreach (['tracker_id','tracker_name','aid_name','aid_callsign','igate_name','igate_callsign'] as $k) {
+        $v = $ld[$k] ?? true;
+        $L[] = '  ' . $k . ': ' . (($v && $v !== 'false') ? 'true' : 'false');
+    }
+    $L[] = '';
     $L[] = '# ── Map default view ──────────────────────────────────────────────────────────';
     $L[] = '# Sets the map center and zoom at page load and after second-clicking a tracker.';
     $L[] = '#   lat  : latitude of map center  (decimal degrees; positive = North, negative = South)';
