@@ -51,6 +51,9 @@ class APRSData {
   final List<TrackerData> trackers;
   final int blinkDuration;   // seconds
   final int breadcrumbCount; // 0 = off, 1–100
+  // Oldest client contract the server still supports (from the `api` object).
+  // 0 when absent (old server) → treated as compatible. See MapConfig.clientApiVersion.
+  final int apiMinClient;
   final List<int>?    beaconIntervalsSec; // [walk, drive, stat]; null = unchanged
   final List<double>? beaconDistancesMi;
 
@@ -58,6 +61,7 @@ class APRSData {
     required this.trackers,
     this.blinkDuration = 5,
     this.breadcrumbCount = 100,
+    this.apiMinClient = 0,
     this.beaconIntervalsSec,
     this.beaconDistancesMi,
   });
@@ -70,6 +74,7 @@ class APRSData {
           .toList(),
       blinkDuration:   (j['blink_duration']   as num?)?.toInt() ?? 5,
       breadcrumbCount: (j['breadcrumb_count'] as num?)?.toInt() ?? 100,
+      apiMinClient:    ((j['api'] as Map?)?['min_client'] as num?)?.toInt() ?? 0,
       beaconIntervalsSec: bc is Map ? [
         (bc['walk_interval']  as num?)?.toInt() ?? 60,
         (bc['cycle_interval'] as num?)?.toInt() ?? 30,

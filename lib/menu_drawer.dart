@@ -20,6 +20,10 @@ class MenuDrawer extends StatefulWidget {
   final Map<String, bool> courseVisible;
   final Set<String> blinkingIds;
   final bool blinkOn;
+  final bool showTrackerIds;
+  final bool showTrackerNames;
+  final VoidCallback? onToggleTrackerIds;
+  final VoidCallback? onToggleTrackerNames;
   final void Function(TrackerData)? onTrackerTap;
   final void Function(TrackerData)? onTrackerLongPress;
   final void Function(FixedMarker)? onFixedTap;
@@ -50,6 +54,10 @@ class MenuDrawer extends StatefulWidget {
     this.selectedId,
     this.blinkingIds = const {},
     this.blinkOn = true,
+    this.showTrackerIds = true,
+    this.showTrackerNames = true,
+    this.onToggleTrackerIds,
+    this.onToggleTrackerNames,
     this.onTrackerTap,
     this.onTrackerLongPress,
     this.onFixedTap,
@@ -177,6 +185,10 @@ class _MenuDrawerState extends State<MenuDrawer> {
                       key: 'trackers',
                       title: 'Trackers',
                       hasVisToggle: true,
+                      extraToggles: [
+                        _labelEye(on: widget.showTrackerIds,   tip: 'Show/hide tracker IDs',   onTap: widget.onToggleTrackerIds),
+                        _labelEye(on: widget.showTrackerNames, tip: 'Show/hide tracker names', onTap: widget.onToggleTrackerNames),
+                      ],
                       children: widget.trackers.isEmpty
                           ? [_empty('Waiting for tracker data…')]
                           : ([...widget.trackers]..sort((a, b) => _naturalCompare(a.id, b.id)))
@@ -352,11 +364,26 @@ class _MenuDrawerState extends State<MenuDrawer> {
 
   // ── Accordion section ──────────────────────────────────────────────────────
 
+  // Small eyeball toggle used in section headers (e.g. tracker ID / Name labels).
+  Widget _labelEye({required bool on, required String tip, required VoidCallback? onTap}) => Tooltip(
+        message: tip,
+        child: GestureDetector(
+          onTap: onTap,
+          behavior: HitTestBehavior.opaque,
+          child: Padding(
+            padding: const EdgeInsets.only(right: 10),
+            child: Icon(on ? Icons.visibility : Icons.visibility_off,
+                size: 18, color: on ? Colors.grey[600] : Colors.grey[400]),
+          ),
+        ),
+      );
+
   Widget _section({
     required String key,
     required String title,
     required bool hasVisToggle,
     required List<Widget> children,
+    List<Widget> extraToggles = const [],
   }) {
     final open = _expanded.contains(key);
     final visible = widget.sectionVisible[key] ?? true;
@@ -372,6 +399,7 @@ class _MenuDrawerState extends State<MenuDrawer> {
                 child: Text(title,
                     style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF444444))),
               ),
+              ...extraToggles,
               if (hasVisToggle)
                 GestureDetector(
                   onTap: () => widget.onSectionVisibility?.call(key, !visible),

@@ -19,6 +19,8 @@ class TrackerLayer extends StatelessWidget {
   final String? selectedId;
   final Set<String> blinkingIds;
   final bool blinkOn;
+  final bool showIds;
+  final bool showNames;
   final void Function(TrackerData)? onLongPress;
 
   const TrackerLayer({
@@ -27,6 +29,8 @@ class TrackerLayer extends StatelessWidget {
     this.selectedId,
     this.blinkingIds = const {},
     this.blinkOn = true,
+    this.showIds = true,
+    this.showNames = true,
     this.onLongPress,
   });
 
@@ -40,24 +44,26 @@ class TrackerLayer extends StatelessWidget {
         final opacity = blinking ? (blinkOn ? 1.0 : 0.15) : 1.0;
 
         final dot = _TrackerMarker(color: color, mobile: t.mobile);
-        final labelText = (blinkingIds.contains(t.id) && t.name.isNotEmpty)
-            ? '${t.id} ${t.name}'
-            : t.id;
+        // A selected (short- or long-tapped) tracker always shows "id name". A resting
+        // tracker shows whatever the sidebar ID / Name eyes enable (both on by default).
+        final restingParts = <String>[
+          if (showIds) t.id,
+          if (showNames && t.name.isNotEmpty) t.name,
+        ];
+        final labelText = selected
+            ? (t.name.isNotEmpty ? '${t.id} ${t.name}' : t.id)
+            : restingParts.join(' ');
 
         final labelWidget = selected
-            ? Container(
-                padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-                decoration: BoxDecoration(
-                  color: const Color(0xEBFFFFFF),
-                  borderRadius: BorderRadius.circular(3),
+            ? Text(
+                labelText,
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black,
                 ),
-                child: Text(
-                  labelText,
-                  style: TextStyle(
-                      fontSize: 10, fontWeight: FontWeight.w600, color: color),
-                  overflow: TextOverflow.fade,
-                  softWrap: false,
-                ),
+                overflow: TextOverflow.fade,
+                softWrap: false,
               )
             : Text(
                 labelText,

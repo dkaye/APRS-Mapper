@@ -36,6 +36,7 @@ import 'tracker_data.dart';
 import 'tracker_layer.dart';
 import 'widgets/mode_indicator.dart';
 import 'widgets/offline_banner.dart';
+import 'widgets/update_banner.dart';
 
 enum _LocationState { notRequested, whileInUse, always, denied, permanentlyDenied }
 
@@ -110,6 +111,14 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   Timer? _blinkTimer;
   int _blinkDurationSec  = 5;
   int _breadcrumbCount   = 100;
+
+  // Resting tracker label content — toggled by the ID / Name eyes in the sidebar.
+  bool _showTrackerIds   = true;
+  bool _showTrackerNames = true;
+
+  // Set when the server reports it no longer supports this app's API contract.
+  bool _updateRequired      = false;
+  bool _updateBannerDismissed = false;
 
   // Saved map position (restored when reset button tapped)
   LatLng? _savedCenter;
@@ -220,6 +229,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _beaconIntervalsSec = List.of(_config.beaconIntervalsSec);
     _beaconDistancesMi  = List.of(_config.beaconDistancesMi);
     _initCourseVisibility();
+    _loadLabelPrefs();
     _checkExistingPermission();
     _poller = OnlinePoller(
       onData: (data) {
@@ -245,6 +255,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           _breadcrumbCount  = data.breadcrumbCount;
           if (newIntervals != null) _beaconIntervalsSec = newIntervals;
           if (newDistances != null) _beaconDistancesMi  = newDistances;
+          // Server no longer supports this app's contract → prompt an update.
+          // Silent in the normal case (server newer but still supports this client).
+          _updateRequired = data.apiMinClient > MapConfig.clientApiVersion;
         });
         // If a resumed session doesn't know its mode yet, infer it from the
         // server tracker's sharing_mode field (e.g. 'stationary').
@@ -1480,6 +1493,27 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _loadLabelPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _showTrackerIds   = prefs.getBool('show_tracker_ids')   ?? true;
+      _showTrackerNames = prefs.getBool('show_tracker_names') ?? true;
+    });
+  }
+
+  Future<void> _toggleTrackerIds() async {
+    setState(() => _showTrackerIds = !_showTrackerIds);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('show_tracker_ids', _showTrackerIds);
+  }
+
+  Future<void> _toggleTrackerNames() async {
+    setState(() => _showTrackerNames = !_showTrackerNames);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('show_tracker_names', _showTrackerNames);
+  }
+
   Future<void> _loadSavedMap() async {
     final prefs = await SharedPreferences.getInstance();
     final lat = prefs.getDouble('map_saved_lat');
@@ -1887,6 +1921,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         selectedId: _selectedId,
         blinkingIds: _blinkingIds,
         blinkOn: _blinkOn,
+        showTrackerIds: _showTrackerIds,
+        showTrackerNames: _showTrackerNames,
+        onToggleTrackerIds: _toggleTrackerIds,
+        onToggleTrackerNames: _toggleTrackerNames,
         selectedBgUrl: _tileUrl,
         sectionVisible: _sectionVisible,
         courseVisible: _courseVisible,
@@ -2001,6 +2039,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                     selectedId: _selectedId,
                     blinkingIds: _blinkingIds,
                     blinkOn: _blinkOn,
+                    showIds: _showTrackerIds,
+                    showNames: _showTrackerNames,
                     onLongPress: (t) { if (t.lat != null && t.lon != null) _openGoogleMaps(t.lat!, t.lon!); },
                   ),
                 if (_locationState == _LocationState.whileInUse ||
@@ -2023,6 +2063,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           ),
 
           if (!_isOnline) const OfflineBanner(),
+          if (_updateRequired && !_updateBannerDismissed)
+            UpdateBanner(onDismiss: () => setState(() => _updateBannerDismissed = true)),
 
           // Scale bar — bottom left
           Positioned(
