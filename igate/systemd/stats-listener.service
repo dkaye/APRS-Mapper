@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 User=pi
 ExecStart=/usr/bin/php /home/pi/stats-listener.php
-Restart=on-failure
+Restart=always
 RestartSec=10
 
 [Install]

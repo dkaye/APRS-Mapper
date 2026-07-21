@@ -74,7 +74,12 @@ debug("Responder socket created");
 while (true) {
         //Receive some data
         $r = socket_recvfrom($listenerSocket, $buf, 100, 0, $remote_ip, $remote_port);
-        if ($r===FALSE) fatal("Error receiving from socket");
+        if ($r===FALSE) { debug("recvfrom error: ".socket_strerror(socket_last_error($listenerSocket))); continue; }
+		// A packet with no usable source address can't be answered. Skip it —
+		// otherwise socket_sendto() below fails with EDESTADDRREQ [89] and the
+		// old fatal()/exit() took the whole listener down (a clean exit, so
+		// systemd's Restart=on-failure never brought it back).
+		if ($remote_ip === '' || $remote_ip === null) { debug("Ignoring packet with empty source address"); continue; }
         debug("Received: $buf");
 		$result=array();
 		$result_code=exec("hostname",$result);
@@ -137,7 +142,7 @@ while (true) {
 		if ( ! socket_sendto($responderSocket, $line , strlen($line) , 0 , $remote_ip, $destinationPort)) {
 			$errorcode = socket_last_error();
 			$errormsg = socket_strerror($errorcode);
-			fatal("Could not send data: [$errorcode] $errormsg");
+			debug("Could not send data to $remote_ip: [$errorcode] $errormsg"); continue; // skip this reply, keep listening
 		}
 		else {
 			debug("Sent $line to $remote_ip:$destinationPort");
