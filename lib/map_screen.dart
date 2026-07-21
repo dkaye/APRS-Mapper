@@ -115,6 +115,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   // Resting tracker label content — toggled by the ID / Name eyes in the sidebar.
   bool _showTrackerIds   = true;
   bool _showTrackerNames = true;
+  String? _lastRecipient; // sticky default for Send Message
 
   // Set when the server reports it no longer supports this app's API contract.
   bool _updateRequired      = false;
@@ -237,6 +238,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _initCourseVisibility();
     _initSectionVisibility();
     _loadLabelPrefs();
+    _loadLastRecipient();
     _checkExistingPermission();
     _poller = OnlinePoller(
       onData: (data) {
@@ -388,9 +390,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             if (!ctx.mounted) return;
             setDlgState(() {
               recipients = list;
-              // Auto-select only when there's exactly one operator; with several,
-              // leave it unselected so the user must consciously pick a recipient.
-              selectedRecipient = list.length == 1 ? list.first : null;
+              // One operator → pick it. Otherwise fall back to whoever was chosen
+              // last time, provided they're still monitoring, so repeat messages
+              // don't need a trip through the dropdown. Only when there's no usable
+              // previous choice is the user made to pick one.
+              selectedRecipient = list.length == 1
+                  ? list.first
+                  : (list.contains(_lastRecipient) ? _lastRecipient : null);
             });
           });
         }
@@ -462,10 +468,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                         items: recipients
                             .map((r) => DropdownMenuItem(value: r, child: Text(r)))
                             .toList(),
-                        onChanged: (v) => setDlgState(() {
-                          selectedRecipient = v;
-                          recipientError = false;
-                        }),
+                        onChanged: (v) {
+                          _rememberRecipient(v);
+                          setDlgState(() {
+                            selectedRecipient = v;
+                            recipientError = false;
+                          });
+                        },
                       ),
                     ),
                   ]),
@@ -501,6 +510,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                       return;
                     }
                     Navigator.pop(ctx);
+                    _rememberRecipient(selectedRecipient);
                     final error = await _bgLocation.session.sendMessage(text, to: selectedRecipient);
                     if (error == null) {
                       setState(() {
@@ -640,15 +650,31 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
               }
             });
           }
+          // In landscape (esp. iPad) the on-screen keyboard eats ~half the
+          // screen, so go wide-and-short: a wider dialog with a shorter
+          // history pane and a shorter reply field.
+          final mq = MediaQuery.of(ctx);
+          final landscape = mq.size.width > mq.size.height;
+          final historyMax = landscape ? 200.0 : 300.0;
+          final contentWidth = landscape
+              ? math.min(mq.size.width * 0.8, 720.0)
+              : math.min(mq.size.width * 0.9, 400.0);
           return AlertDialog(
+            insetPadding: EdgeInsets.symmetric(horizontal: 24, vertical: landscape ? 12 : 24),
+            titlePadding: EdgeInsets.fromLTRB(24, landscape ? 12 : 24, 24, 0),
+            contentPadding: EdgeInsets.fromLTRB(24, landscape ? 12 : 20, 24, landscape ? 8 : 24),
             title: Row(children: [
               const Icon(Icons.message, size: 20),
               const SizedBox(width: 8),
               Text(msg.fromLabel),
             ]),
-            content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Container(
-                constraints: const BoxConstraints(maxHeight: 300),
+            content: SizedBox(
+              width: contentWidth,
+              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              // Flexible so the history pane gives up height to the on-screen
+              // keyboard instead of overflowing the dialog.
+              Flexible(child: Container(
+                constraints: BoxConstraints(maxHeight: historyMax),
                 decoration: BoxDecoration(
                   color: const Color(0xFFF5F5F5),
                   borderRadius: BorderRadius.circular(6),
@@ -679,18 +705,27 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                     ])),
                   ],
                 ),
-              ),
+              )),
               if (showReply) ...[
-                const SizedBox(height: 12),
+                SizedBox(height: landscape ? 8 : 12),
                 TextField(
                   controller: replyController,
                   maxLength: 280,
-                  maxLines: 4,
-                  decoration: const InputDecoration(hintText: 'Type your reply…', border: OutlineInputBorder()),
+                  maxLines: landscape ? 2 : 4,
+                  // Hide the 0/280 counter in landscape — every pixel counts.
+                  buildCounter: landscape
+                      ? (_, {required currentLength, required isFocused, maxLength}) => null
+                      : null,
+                  decoration: InputDecoration(
+                    hintText: 'Type your reply…',
+                    border: const OutlineInputBorder(),
+                    isDense: landscape,
+                    contentPadding: landscape ? const EdgeInsets.symmetric(horizontal: 12, vertical: 10) : null,
+                  ),
                   autofocus: true,
                 ),
               ],
-            ]),
+            ])),
             actions: [
               if (!showReply) TextButton(
                 onPressed: () => setDlgState(() => showReply = true),
@@ -1564,6 +1599,22 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Map position saved'), duration: Duration(seconds: 2)),
     );
+  }
+
+  // Last operator the user picked in Send Message. Reused as the default so a
+  // repeat message doesn't need a trip through the dropdown; only honoured when
+  // that operator is still monitoring (i.e. still in the fetched recipient list).
+  Future<void> _loadLastRecipient() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() => _lastRecipient = prefs.getString('last_msg_recipient'));
+  }
+
+  Future<void> _rememberRecipient(String? name) async {
+    if (name == null || name == _lastRecipient) return;
+    _lastRecipient = name;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('last_msg_recipient', name);
   }
 
   Future<void> _loadLabelPrefs() async {

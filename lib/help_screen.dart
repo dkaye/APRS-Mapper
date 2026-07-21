@@ -2,9 +2,19 @@
 /// from the Help button in the drawer footer.
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'map_config.dart';
+
+/// Release date shown under the Quick Start title. The version number itself
+/// comes from PackageInfo (i.e. pubspec.yaml), but the date has no such source —
+/// bump it by hand alongside the version.
+const kGuideDate = 'July 21, 2026';
+
+const _tipStyle = TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4);
+const _tipStyleBold = TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4, fontWeight: FontWeight.w600);
+const _tipStyleItalic = TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4, fontStyle: FontStyle.italic);
 
 class HelpScreen extends StatelessWidget {
   final bool isOnline;
@@ -36,6 +46,19 @@ class HelpScreen extends StatelessWidget {
       body: ListView(
         padding: EdgeInsets.fromLTRB(16, 20, 16, 32 + MediaQuery.of(context).padding.bottom),
         children: [
+
+          FutureBuilder<PackageInfo>(
+            future: PackageInfo.fromPlatform(),
+            builder: (_, snap) => Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: Text(
+                snap.hasData
+                    ? 'Version ${snap.data!.version}+${snap.data!.buildNumber} · $kGuideDate'
+                    : '',
+                style: const TextStyle(fontSize: 12, color: Color(0xFF888888)),
+              ),
+            ),
+          ),
 
           if (isFirstLaunch)
             Container(
@@ -82,11 +105,29 @@ class HelpScreen extends StatelessWidget {
             _tip('In the sidebar: long-press any Tracker, Aid/Rest Stop, or iGate to do the same and also zoom in.'),
             _tip('On the map: tap a marker to see its details. Long-press any marker to open Google Maps centered on that location.'),
             _tipWidget(Text.rich(TextSpan(children: [
-              const TextSpan(text: 'Hide/show sections of the sidebar or individual Courses by tapping the ', 
-			  style: TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4)),
-              WidgetSpan(child: Icon(Icons.visibility, size: 16, color: Colors.grey), alignment: PlaceholderAlignment.middle),
-              const TextSpan(text: '.', style: TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4)),
+              const TextSpan(text: 'The ', style: _tipStyle),
+              WidgetSpan(child: Icon(Icons.visibility, size: 16, color: Colors.grey[600]), alignment: PlaceholderAlignment.middle),
+              const TextSpan(text: ' eye at the right of each section header (Trackers, Courses, Aid/Rest Stops, iGates) shows or hides everything in that section on the map. Each Course also has its own eye.', style: _tipStyle),
             ]))),
+            _tipWidget(Text.rich(TextSpan(children: [
+              const TextSpan(text: 'The Trackers header has ', style: _tipStyle),
+              const TextSpan(text: 'two more eyes', style: _tipStyleBold),
+              const TextSpan(text: ' to the left of that one. These don\'t hide the markers — they choose what the map labels say. The first eye controls the tracker ', style: _tipStyle),
+              const TextSpan(text: 'ID', style: _tipStyleBold),
+              const TextSpan(text: ', the second controls the tracker ', style: _tipStyle),
+              const TextSpan(text: 'Name', style: _tipStyleBold),
+              const TextSpan(text: '.', style: _tipStyle),
+            ]))),
+            _tipWidget(Text.rich(TextSpan(children: [
+              const TextSpan(text: 'A dimmed, slashed ', style: _tipStyle),
+              WidgetSpan(child: Icon(Icons.visibility_off, size: 16, color: Colors.grey[400]), alignment: PlaceholderAlignment.middle),
+              const TextSpan(text: ' means that part is switched off. With both tracker eyes on a label reads ', style: _tipStyle),
+              const TextSpan(text: 'M083 James', style: _tipStyleItalic),
+              const TextSpan(text: '; with only the ID eye on it reads ', style: _tipStyle),
+              const TextSpan(text: 'M083', style: _tipStyleItalic),
+              const TextSpan(text: '. Turn both off and the tracker labels disappear while the markers stay on the map — useful when a crowded course turns into a wall of text.', style: _tipStyle),
+            ]))),
+            _tip('All of these choices are remembered the next time you open the app.'),
 		    _tipWidget(Text.rich(TextSpan(children: [
 		      const TextSpan(text: 'Tap ', style: TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4)),
 		      WidgetSpan(child: Icon(Icons.push_pin, size: 16, color: Color(0xFF333333)), alignment: PlaceholderAlignment.middle),
@@ -126,6 +167,9 @@ class HelpScreen extends StatelessWidget {
               WidgetSpan(child: Icon(Icons.chat_bubble_outline, size: 16, color: Color(0xFF333333)), alignment: PlaceholderAlignment.middle),
               const TextSpan(text: ' Message in the drawer footer to send a new message.', style: TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4)),
             ]))),
+            _tip('If more than one operator is monitoring messages, pick one from the To: dropdown. '
+                 'Whoever you choose becomes the default for your next message, so you don\'t have to '
+                 'choose again each time. If that operator stops monitoring, you\'ll be asked to pick again.'),
           ]),
 
           _section('Offline Use', Icons.download_for_offline_outlined, [
