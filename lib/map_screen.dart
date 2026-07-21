@@ -367,6 +367,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     List<String> recipients = [];
     String? selectedRecipient;
     bool recipientsRequested = false;
+    bool recipientError = false; // true after a send attempt with no recipient chosen
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -381,7 +382,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             if (!ctx.mounted) return;
             setDlgState(() {
               recipients = list;
-              selectedRecipient ??= list.isNotEmpty ? list.first : null;
+              // Auto-select only when there's exactly one operator; with several,
+              // leave it unselected so the user must consciously pick a recipient.
+              selectedRecipient = list.length == 1 ? list.first : null;
             });
           });
         }
@@ -441,18 +444,31 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             if (recipients.length > 1)
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                child: Row(children: [
-                  const Text('To: ', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-                  Expanded(
-                    child: DropdownButton<String>(
-                      isExpanded: true,
-                      value: selectedRecipient,
-                      items: recipients
-                          .map((r) => DropdownMenuItem(value: r, child: Text(r)))
-                          .toList(),
-                      onChanged: (v) => setDlgState(() => selectedRecipient = v),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    const Text('To: ', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                    Expanded(
+                      child: DropdownButton<String>(
+                        isExpanded: true,
+                        value: selectedRecipient,
+                        hint: const Text('Select recipient…',
+                            style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                        items: recipients
+                            .map((r) => DropdownMenuItem(value: r, child: Text(r)))
+                            .toList(),
+                        onChanged: (v) => setDlgState(() {
+                          selectedRecipient = v;
+                          recipientError = false;
+                        }),
+                      ),
                     ),
-                  ),
+                  ]),
+                  if (recipientError)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 2),
+                      child: Text('Choose who will receive this message',
+                          style: TextStyle(color: Colors.red, fontSize: 12)),
+                    ),
                 ]),
               ),
             Padding(
@@ -474,6 +490,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                   onPressed: () async {
                     final text = controller.text.trim();
                     if (text.isEmpty) return;
+                    if (recipients.length > 1 && selectedRecipient == null) {
+                      setDlgState(() => recipientError = true);
+                      return;
+                    }
                     Navigator.pop(ctx);
                     final error = await _bgLocation.session.sendMessage(text, to: selectedRecipient);
                     if (error == null) {
