@@ -71,6 +71,9 @@ class RemoteConfig {
   final List<BackgroundLayer> backgrounds;
   final List<FixedMarker> aidStations;
   final List<FixedMarker> igates;
+  // Default on/off state per sidebar section (from the admin "Default Section
+  // Visibility" settings). Absent keys fall back to visible.
+  final Map<String, bool> sectionVisibility;
   final double mapLat;
   final double mapLon;
   final double mapZoom;
@@ -92,6 +95,7 @@ class RemoteConfig {
     required this.backgrounds,
     required this.aidStations,
     required this.igates,
+    this.sectionVisibility = const {},
     required this.mapLat,
     required this.mapLon,
     required this.mapZoom,
@@ -130,6 +134,7 @@ class RemoteConfig {
           .map((g) => FixedMarker.fromJson(g as Map<String, dynamic>))
           .where((g) => g.lat != 0.0 || g.lon != 0.0)
           .toList(),
+      sectionVisibility: _parseSectionVisibility(j['section_visibility']),
       mapLat: (map['lat'] as num?)?.toDouble() ?? 37.970,
       mapLon: (map['lon'] as num?)?.toDouble() ?? -122.620,
       mapZoom: (map['zoom'] as num?)?.toDouble() ?? MapConfig.initialZoom,
@@ -163,6 +168,23 @@ class RemoteConfig {
         offlineMaxZoom: MapConfig.downloadMaxZoom,
         offlineTileUrl: MapConfig.tileUrl,
       );
+}
+
+// Parse the admin "Default Section Visibility" map. Accepts bool, or the
+// string/number forms YAML→JSON can yield. Unknown/absent → empty map (visible).
+Map<String, bool> _parseSectionVisibility(dynamic sv) {
+  if (sv is! Map) return const {};
+  final out = <String, bool>{};
+  sv.forEach((k, v) {
+    if (v is bool) {
+      out[k.toString()] = v;
+    } else if (v is num) {
+      out[k.toString()] = v != 0;
+    } else if (v is String) {
+      out[k.toString()] = v.toLowerCase() == 'true' || v == '1';
+    }
+  });
+  return out;
 }
 
 List<int> _parseBeaconIntervals(dynamic bc) {

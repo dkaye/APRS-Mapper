@@ -192,14 +192,18 @@ class MobileSession {
     return [];
   }
 
-  Future<String?> sendMessage(String text) async {
+  /// Sends a message to web operators. [to] names a specific operator; when
+  /// null/empty the server delivers to all operators (legacy behavior).
+  Future<String?> sendMessage(String text, {String? to}) async {
     final t = token;
     if (t == null) return 'Not connected';
     try {
+      final body = <String, dynamic>{'token': t, 'text': text};
+      if (to != null && to.isNotEmpty) body['to'] = to;
       final response = await http.post(
         Uri.parse('${MapConfig.serverBaseUrl}/index.php?mobile=message'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'token': t, 'text': text}),
+        body: jsonEncode(body),
       ).timeout(const Duration(seconds: 8));
       if (response.statusCode == 200) return null;
       try {
@@ -209,6 +213,29 @@ class MobileSession {
       return 'Failed to send message';
     } catch (_) {}
     return 'Failed to send message';
+  }
+
+  /// Names of web operators currently monitoring messages (active in the last
+  /// ~60 s). Used to offer a destination picker. Returns an empty list on error
+  /// or when the server predates this endpoint (older server → no picker).
+  Future<List<String>> fetchWebRecipients() async {
+    final t = token;
+    if (t == null) return const [];
+    try {
+      final response = await http.post(
+        Uri.parse('${MapConfig.serverBaseUrl}/index.php?mobile=web_recipients'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'token': t}),
+      ).timeout(const Duration(seconds: 6));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        return (data['recipients'] as List<dynamic>? ?? [])
+            .map((e) => e.toString())
+            .where((s) => s.isNotEmpty)
+            .toList();
+      }
+    } catch (_) {}
+    return const [];
   }
 
   /// Validates the event password with the server.

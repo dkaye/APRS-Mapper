@@ -229,6 +229,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _beaconIntervalsSec = List.of(_config.beaconIntervalsSec);
     _beaconDistancesMi  = List.of(_config.beaconDistancesMi);
     _initCourseVisibility();
+    _initSectionVisibility();
     _loadLabelPrefs();
     _checkExistingPermission();
     _poller = OnlinePoller(
@@ -361,6 +362,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     final controller = TextEditingController(text: prefill ?? '');
     final scrollController = ScrollController();
     bool didScroll = false;
+    // Destination picker: web operators currently monitoring. Fetched once when
+    // the sheet opens. 0/1 → no picker; >1 → dropdown to choose the recipient.
+    List<String> recipients = [];
+    String? selectedRecipient;
+    bool recipientsRequested = false;
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -369,6 +375,16 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
       ),
       builder: (ctx) => StatefulBuilder(builder: (ctx, setDlgState) {
+        if (!recipientsRequested) {
+          recipientsRequested = true;
+          _bgLocation.session.fetchWebRecipients().then((list) {
+            if (!ctx.mounted) return;
+            setDlgState(() {
+              recipients = list;
+              selectedRecipient ??= list.isNotEmpty ? list.first : null;
+            });
+          });
+        }
         final recent = _msgLog.length > 10 ? _msgLog.sublist(_msgLog.length - 10) : List.of(_msgLog);
         if (!didScroll && recent.isNotEmpty) {
           didScroll = true;
@@ -422,6 +438,23 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
               ),
               const Divider(height: 1, thickness: 1, color: Color(0xFFBDBDBD), indent: 16, endIndent: 16),
             ],
+            if (recipients.length > 1)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: Row(children: [
+                  const Text('To: ', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                  Expanded(
+                    child: DropdownButton<String>(
+                      isExpanded: true,
+                      value: selectedRecipient,
+                      items: recipients
+                          .map((r) => DropdownMenuItem(value: r, child: Text(r)))
+                          .toList(),
+                      onChanged: (v) => setDlgState(() => selectedRecipient = v),
+                    ),
+                  ),
+                ]),
+              ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 8, 12),
               child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
@@ -442,7 +475,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                     final text = controller.text.trim();
                     if (text.isEmpty) return;
                     Navigator.pop(ctx);
-                    final error = await _bgLocation.session.sendMessage(text);
+                    final error = await _bgLocation.session.sendMessage(text, to: selectedRecipient);
                     if (error == null) {
                       setState(() {
                         _msgLog.add((label: 'Me', text: text, isMe: true, time: DateTime.now()));
@@ -638,7 +671,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                   final text = replyController.text.trim();
                   if (text.isEmpty) return;
                   Navigator.pop(ctx);
-                  final error = await _bgLocation.session.sendMessage(text);
+                  // Reply goes back to the operator who sent the incoming message.
+                  final error = await _bgLocation.session.sendMessage(text, to: msg.fromLabel);
                   if (error == null) {
                     setState(() {
                       _msgLog.add((label: 'Me', text: text, isMe: true, time: DateTime.now()));
@@ -670,6 +704,15 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _courseVisible = {
       for (final c in _config.courses) c.file: c.visible,
     };
+  }
+
+  // Seed section on/off state from the server's "Default Section Visibility"
+  // config (admin page). Only overrides known sections that the config
+  // specifies; absent keys keep their default (visible).
+  void _initSectionVisibility() {
+    _config.sectionVisibility.forEach((key, visible) {
+      if (_sectionVisible.containsKey(key)) _sectionVisible[key] = visible;
+    });
   }
 
   @override
@@ -1782,6 +1825,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     setState(() {
       _config = fresh;
       _initCourseVisibility();
+      _initSectionVisibility();
     });
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Config reloaded'), duration: Duration(seconds: 2)),
