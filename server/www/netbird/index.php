@@ -16,7 +16,10 @@ if (isset($_GET['hostname'])) {
     $needle  = trim($_GET['hostname']);
     $result  = -1;
     foreach (loadDevices(__DIR__ . '/addresses.yaml') as $d) {
-        if ($d['host'] === $needle) {
+        // Host match is case-insensitive so a device reporting e.g. "mars-3"
+        // resolves to an "MARS-3" entry (and vice versa) — see save.php's
+        // add_device dedupe guard, which prevents same-host duplicates.
+        if (strcasecmp($d['host'], $needle) === 0) {
             $result = $d['enabled'] ? 1 : 0;
             break;
         }

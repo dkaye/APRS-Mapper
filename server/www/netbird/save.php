@@ -41,6 +41,22 @@ function nb_device_name(string $ip): string {
     return $map[$ip] ?? $ip;
 }
 
+/**
+ * Return the name of an existing device that collides with $host (case-
+ * insensitive) or $ip, or null if none. Rows whose ip === $excludeIp are
+ * skipped so a device can keep its own host/ip on update. Prevents the
+ * duplicate-entry class of bug where two rows share a host/IP and IP-keyed
+ * operations (toggle/update/delete) silently act on the wrong one.
+ */
+function nb_find_conflict(array $devices, string $host, string $ip, string $excludeIp = ''): ?string {
+    foreach ($devices as $d) {
+        if ($excludeIp !== '' && ($d['ip'] ?? '') === $excludeIp) continue;
+        if ($host !== '' && strcasecmp((string)($d['host'] ?? ''), $host) === 0) return $d['name'] ?? $host;
+        if ($ip   !== '' && ($d['ip'] ?? '') === $ip)                            return $d['name'] ?? $ip;
+    }
+    return null;
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     echo json_encode(['error' => 'POST required']);
@@ -89,6 +105,12 @@ if ($action === 'save_addresses') {
     require_once __DIR__ . '/yaml_lib.php';
     $file    = __DIR__ . '/addresses.yaml';
     $devices = loadDevices($file);
+    $conflict = nb_find_conflict($devices, trim($_POST['host'] ?? ''), trim($_POST['ip'] ?? ''));
+    if ($conflict !== null) {
+        http_response_code(409);
+        echo json_encode(['error' => "A device with that host or IP already exists: $conflict"]);
+        exit;
+    }
     $devices[] = [
         'name'    => trim($_POST['name']    ?? ''),
         'host'    => trim($_POST['host']    ?? ''),
@@ -121,6 +143,12 @@ if ($action === 'save_addresses') {
     $file    = __DIR__ . '/addresses.yaml';
     $devices = loadDevices($file);
     $origIp  = $_POST['orig_ip'] ?? '';
+    $conflict = nb_find_conflict($devices, trim($_POST['host'] ?? ''), trim($_POST['ip'] ?? ''), $origIp);
+    if ($conflict !== null) {
+        http_response_code(409);
+        echo json_encode(['error' => "Another device already uses that host or IP: $conflict"]);
+        exit;
+    }
     foreach ($devices as &$d) {
         if ($d['ip'] === $origIp) {
             $d['name']    = trim($_POST['name']    ?? '');
