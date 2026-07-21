@@ -193,7 +193,7 @@
 <div id="content">
 <h1 id="mars-aprs-system">MARS APRS System</h1>
 <p><strong>Author:</strong> Doug Kaye (K6DRK) · <strong>Copyright:</strong> 2026 Doug Kaye. All Rights Reserved.</p>
-<p><strong>Version:</strong> Server &amp; Displays (v1.19.1); Mobile App (v1.19.1); iGates (v5.0)</p>
+<p><strong>Version:</strong> Server &amp; Displays (v1.20.0); Mobile App (v1.20.0); iGates (v5.0)</p>
 <hr />
 <h2 id="table-of-contents">Table of Contents</h2>
 <ol>
@@ -201,10 +201,10 @@
 <li><a href="#system-architecture">System Architecture</a></li>
 <li><a href="#netbird-vpn">NetBird VPN</a></li>
 <li><a href="#igates-v50">iGates (v5.0)</a></li>
-<li><a href="#aprs-server-v1191">APRS Server (v1.19.1)</a></li>
+<li><a href="#aprs-server-v1201">APRS Server (v1.20.0)</a></li>
 <li><a href="#cloudflare-tunnel">Cloudflare Tunnel</a></li>
-<li><a href="#display-pis-v1191">Display Pis (v1.19.1)</a></li>
-<li><a href="#mobile-apps-v1191">Mobile Apps (v1.19.1)</a></li>
+<li><a href="#display-pis-v1201">Display Pis (v1.20.0)</a></li>
+<li><a href="#mobile-apps-v1201">Mobile Apps (v1.20.0)</a></li>
 <li><a href="#app-architecture">Architecture</a> · <a href="#location-sharing-flow">Location Sharing Flow</a> · <a href="#smart-track">Smart Track</a> · <a href="#building-distributing">Building &amp; Distributing</a> · <a href="#background-location">Background Location</a></li>
 <li><a href="#user-interfaces">User Interfaces</a></li>
 <li><a href="#authentication">Authentication</a></li>
@@ -262,18 +262,18 @@ forwarding or static public IP addresses.</p>
            ▼
 ┌──────────────────────────────────────┐     ┌──────────────────────────────┐
 │           APRS-IS Network            │◀────│  Mobile App  (iOS/Android)   │
-│         noam.aprs2.net:14580         │     │  Flutter v1.19.1               │
+│         noam.aprs2.net:14580         │     │  Flutter v1.20.0               │
 └────────────────┬─────────────────────┘     │  TCP 14580 (inject position) │
                  │ TCP 14580                 └──────────────┬───────────────┘
 ┌────────────────▼─────────────────────┐                    │ HTTPS (map + config + session)
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.19.1      │
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.20.0      │
 │  aprsDaemon.php → trackers.json      │◀───────────────────┘
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.19.1
+│  Display Pi  (×2)      │  Pi 4 · v1.20.0
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -447,7 +447,7 @@ igate-watchdog.sh  (cron, every minute)
 </table>
 <p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code></p>
 <hr />
-<h2 id="aprs-server-v1191">APRS Server (v1.19.1)</h2>
+<h2 id="aprs-server-v1201">APRS Server (v1.20.0)</h2>
 <p>The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
 APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
 NetBird monitor and WiFi credential manager. It is reachable at <code>marsaprs.org</code> via a
@@ -552,7 +552,7 @@ sudo systemctl start cloudflared
 <p>The tunnel token is obtained from the <strong>Cloudflare Zero Trust dashboard</strong>:
 <em>Networks → Tunnels → \&lt;tunnel&gt; → Configure → Install and run connector</em></p>
 <hr />
-<h2 id="display-pis-v1191">Display Pis (v1.19.1)</h2>
+<h2 id="display-pis-v1201">Display Pis (v1.20.0)</h2>
 <p>A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
 <code>marsaprs.org</code>. It is a read-only display device — no long-term local configuration or data storage.
 Two display Pis are in use: <strong>NetControl</strong> (operator screen) and <strong>BigTV</strong> (large audience
@@ -587,7 +587,7 @@ keeps journal entries in RAM. Both configured via <code>files.tar.gz</code> and 
 <p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code> · VNC: <code>vnc://&lt;ip&gt;:5901</code></p>
 <p>For details on using the map, see <a href="https://marsaprs.org/userguide.html?back=/readme.html">USERGUIDE.MD</a>.</p>
 <hr />
-<h2 id="mobile-apps-v1191">Mobile Apps (v1.19.1)</h2>
+<h2 id="mobile-apps-v1201">Mobile Apps (v1.20.0)</h2>
 <p>Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.</p>
 <p><strong>Repository:</strong> <code>/Users/doug/aprs-map</code> (separate from this marsaprs repo)</p>
 <h3 id="app-architecture">App Architecture</h3>
@@ -809,7 +809,7 @@ storeFile=&lt;absolute path to .jks or .p12&gt;
 </ol>
 <p><strong>Each release:</strong></p>
 <ol>
-<li>Bump <code>version</code> in <code>pubspec.yaml</code> (e.g. <code>1.19.0+7</code> → <code>1.19.1+8</code> — the build number after <code>+</code> must increase with each upload).</li>
+<li>Bump <code>version</code> in <code>pubspec.yaml</code> (e.g. <code>1.19.1+8</code> → <code>1.20.0+9</code> — the build number after <code>+</code> must increase with each upload).</li>
 <li>Build a signed App Bundle (AAB):
    <code>bash
    flutter build appbundle --release</code>
@@ -1061,11 +1061,16 @@ permissions they need; there are no implicit roles or inheritance.</p>
 <td><code>/tickets/admin.php</code> — ticket list and management</td>
 </tr>
 <tr>
+<td><code>messages.delete_all</code></td>
+<td><strong>Delete All Messages</strong> button in the map's All Messages window</td>
+</tr>
+<tr>
 <td><code>users.manage</code></td>
 <td><code>/auth/users.php</code> — create/edit/delete accounts and permissions</td>
 </tr>
 </tbody>
 </table>
+<p>The authoritative list is <code>KNOWN_PERMISSIONS</code> in <code>server/www/auth/users.php</code>; a permission missing from it cannot be granted in the UI. Pages outside the auth tree guard themselves with <code>require_once __DIR__.'/auth/auth.php'</code> then <code>has_permission(...)</code> — <code>map/index.php</code> does this lazily (<code>msgHasAuthPermission()</code>) so the public map never opens <code>users.db</code> for anonymous visitors.</p>
 <h3 id="login-flow">Login Flow</h3>
 <p>Every protected page passes unauthenticated requests through
 <code>require_permission($perm)</code>, which redirects to <code>/auth/login.php?next=&lt;original-url&gt;</code>.
@@ -1151,6 +1156,11 @@ admin actions are gated by the user-account permission system.</p>
 <td>Persistent log of all messages (both directions)</td>
 </tr>
 <tr>
+<td><code>messages.json.counter</code></td>
+<td><code>events/&lt;EventName&gt;/</code></td>
+<td>Message-ID high-water mark; survives <strong>Delete All Messages</strong></td>
+</tr>
+<tr>
 <td><code>web_sessions.json</code></td>
 <td><code>/run/aprs/</code> (RAM disk)</td>
 <td>Active web operator sessions; cleared on server reboot</td>
@@ -1166,28 +1176,46 @@ admin actions are gated by the user-account permission system.</p>
 <pre><code class="language-json">{
   &quot;id&quot;: 5,
   &quot;ts&quot;: 1750000000,
-  &quot;from&quot;: &quot;web&quot;,
-  &quot;from_label&quot;: &quot;Net Control&quot;,
-  &quot;to&quot;: &quot;K6DRK-03&quot;,
-  &quot;to_label&quot;: &quot;Alice&quot;,
-  &quot;text&quot;: &quot;Check in at Aid 3&quot;,
-  &quot;broadcast&quot;: false
+  &quot;from&quot;: &quot;MARSQ-83&quot;,
+  &quot;from_label&quot;: &quot;James&quot;,
+  &quot;to&quot;: &quot;web&quot;,
+  &quot;to_label&quot;: &quot;web&quot;,
+  &quot;text&quot;: &quot;Arrived at Aid 3&quot;,
+  &quot;broadcast&quot;: false,
+  &quot;lat&quot;: 37.9012,
+  &quot;lon&quot;: -122.5487,
+  &quot;pos_ts&quot;: 1749999940
 }
 </code></pre>
-<p>Direction: <code>from: "web"</code> = operator → tracker; <code>from: &lt;callsign&gt;</code> = tracker → web (with <code>to: "web"</code>).</p>
+<p>Direction: <code>from: "web"</code> = operator → tracker; <code>from: &lt;callsign&gt;</code> = tracker → web. <code>to</code> is <code>web</code> (any operator), an operator's name (per-operator addressing), a tracker callsign, or <code>*</code> with <code>broadcast: true</code>.</p>
+<p><code>lat</code>/<code>lon</code>/<code>pos_ts</code> appear only on messages <strong>from</strong> a mobile tracker: the sender's most recent beacon (<code>aprs_lat</code>/<code>aprs_lon</code>/<code>aprs_ts</code> from <code>mobile_trackers.json</code>), stamped on at send time so operators can see where someone was. <code>pos_ts</code> dates the fix separately from the message, because a tracker briefly out of coverage may send a message whose position is minutes old — the UI flags that rather than presenting a stale pin as fact.</p>
+<p><strong>Message IDs must never go backwards.</strong> Every operator browser polls with a <code>since_id</code> watermark, so if IDs restarted at 1 after a wipe, all existing watermarks would exceed any new message and clients would go permanently deaf. <code>msgNextId()</code> therefore takes <code>max(highest id in file, counter file) + 1</code> and rewrites the sidecar counter, so <strong>Delete All Messages</strong> keeps the sequence intact. (IDs are per-event, so switching events still resets them — a latent instance of the same hazard.)</p>
+<p>The log is <strong>not size-capped</strong>: it grows for the life of an event, and every append rewrites the whole array under an exclusive lock.</p>
 <h3 id="web-operator-flow">Web Operator Flow</h3>
 <ol>
-<li>Operator clicks the <strong>Messaging</strong> button (shown when not yet subscribed) → subscribe modal → POST <code>?messaging=subscribe {name, password}</code> → receives token; button changes to <strong>Broadcast</strong></li>
-<li>Operator right-clicks a tracker in the sidebar → compose modal (pre-addressed to that tracker) → POST <code>?messaging=send</code></li>
+<li>Operator clicks the <strong>Messaging</strong> button → subscribe modal → POST <code>?messaging=subscribe {name, password}</code> → receives token</li>
+<li>Operator opens the compose modal and picks a recipient from the <strong>To:</strong> dropdown — <code>All Trackers</code> (default) plus every mobile tracker in the live feed (<code>t.mobile</code>, i.e. mobile-only and hybrid; radio-only trackers cannot receive). Right-clicking a tracker in the sidebar opens the modal pre-addressed to it. → POST <code>?messaging=send</code></li>
 <li>Server appends to <code>messages.json</code> and queues the message in the tracker's <code>pending_msgs</code></li>
 <li>Operator polls <code>?messaging=poll?web_token=...&amp;since_id=N</code> every 5 seconds</li>
 <li>When a mobile tracker sends a reply, it appears in the poll response → notification modal</li>
 </ol>
 <p>The incoming notification modal shows the full conversation thread (12 px) above the new message (15 px, slightly larger) in a 480 px-wide window. History load fires at most one modal per page load (the most recent unnotified message).</p>
-<p>The compose modal footer has two links:
-- <strong>Change my name</strong> — inline panel; POSTs to <code>?messaging=rename</code>; updates display name for future messages.
-- <strong>Disable messaging</strong> — clears the token and localStorage entry, stops the poll timer, resets the UI to the Messaging button (unsubscribed state).</p>
+<p><strong>Conversation scoping.</strong> <code>?messaging=history</code> returns the <em>entire</em> log, including other operators' traffic, so both thread views filter through <code>_msgInvolvesMe()</code> — a message counts as yours if it is addressed to <code>web</code>, addressed to you by name, or was sent by you. Because every operator's messages carry <code>from: "web"</code>, "sent by me" is decided by comparing <code>from_label</code> against your subscribed name; two operators sharing a name are indistinguishable. The same filter gates the replay-on-return, which would otherwise pop up modals for messages trackers sent to <em>other</em> operators.</p>
+<p><strong>Live refresh.</strong> The 5-second poll re-renders the compose thread in place when the modal is open (<code>_renderComposeThread()</code>), preserving scroll position unless already at the bottom. An arrival that continues the conversation on screen re-renders the notification modal immediately; one from a different sender stays queued so the message being read is not yanked away.</p>
+<p>The compose modal footer has three links:</p>
+<ul>
+<li><strong>View all messages</strong> — opens the full-log window (below).</li>
+<li><strong>Change my name</strong> — inline panel; POSTs to <code>?messaging=rename</code>; updates display name for future messages.</li>
+<li><strong>Disable messaging</strong> — clears the token and localStorage entry, stops the poll timer, resets the UI to the Messaging button (unsubscribed state).</li>
+</ul>
 <p><strong>Auto-subscribe for Display Pi operators:</strong> When <code>window._aprsAutoMsgPw</code> is embedded in the page (via <code>?autologin&amp;operator=&lt;name&gt;</code> → PHP session → HTML <code>&lt;script&gt;</code> tag), <code>_autoSubscribe()</code> runs silently on page load. The token is stored only in memory (not localStorage), so removing line 1 from <code>~/autologin.txt</code> and rebooting the Pi cleanly unsubscribes.</p>
+<h3 id="all-messages-window">All Messages Window</h3>
+<p>Opened from the compose footer; fetches <code>?messaging=history</code> (the whole log, unfiltered) into a scrollable table of Time / location pin / From / To / Message. Trackers render as <code>ID Name</code> via a <code>callsign → id</code> map built as the legend updates; <code>web</code> renders as <code>Operator</code>, <code>*</code> as <code>All Trackers</code>. Broadcasts are row-tinted.</p>
+<ul>
+<li><strong>Location pin</strong> — shown when the row has <code>lat</code>/<code>lon</code>. Closes the log and the compose modal, drops a marker on the main Leaflet map with a popup (sender, time, text), and pans there at zoom ≥ 15. The marker self-removes on <code>popupclose</code>. Handing off to the real map rather than embedding a mini-map keeps course, aid stations and live trackers as context at no extra tile cost.</li>
+<li><strong>Export CSV</strong> — <code>ID, Time, UTC, From, From Callsign, To, To Callsign, Broadcast, Latitude, Longitude, Message</code>, UTF-8 with BOM for Excel.</li>
+<li><strong>Delete All Messages</strong> — POST <code>?messaging=delete_all</code>. Requires <strong>both</strong> an active messaging subscription <strong>and</strong> a signed-in account holding <code>messages.delete_all</code>; the button is hidden otherwise (<code>can_delete_all</code> in the history response) and the endpoint re-checks. Truncates <code>messages.json</code> to <code>[]</code>, preserves the ID counter, and clears every tracker's <code>pending_msgs</code> so queued messages don't surface on phones afterwards.</li>
+</ul>
 <h3 id="mobile-participant-flow">Mobile Participant Flow</h3>
 <ol>
 <li>Messages queued in <code>pending_msgs</code> are delivered in the <code>?mobile=update</code> response body</li>
@@ -1196,6 +1224,8 @@ admin actions are gated by the user-account permission system.</p>
 <li>Flutter shows a sound + dialog; tap <strong>Reply</strong> to POST <code>?mobile=message {token, text}</code></li>
 <li>On the next update or poll, <code>ack_ids</code> are sent to remove delivered messages from <code>pending_msgs</code></li>
 </ol>
+<p><strong>Recipient selection (Send Message sheet).</strong> <code>?mobile=web_recipients</code> lists the operators monitoring messages. One operator → auto-selected. Several → the last operator this user chose is pre-selected (persisted in <code>SharedPreferences</code> as <code>last_msg_recipient</code>), so a repeat message needs no dropdown interaction. The sticky default is only honoured while that operator is still in the live list; if they have gone off-watch the field clears and the user must pick again, rather than addressing someone who is no longer listening. Replies stay addressed to the sender of the message being replied to and do not change the default.</p>
+<p><strong>Landscape layout.</strong> On iPad the on-screen keyboard takes roughly half the screen, so the inbound-message dialog goes wide-and-short in landscape: a wider box, trimmed padding, a 2-line reply field with the character counter hidden, and — critically — a <code>Flexible</code> history pane, so it surrenders height to the keyboard instead of overflowing the dialog.</p>
 <hr />
 <h2 id="analyzer">Analyzer</h2>
 <p>The Analyzer is a separate Flask web application served at <code>/analyzer/</code> that records APRS beacons into a local SQLite database during an event and provides an interactive playback and analysis map. It is the only interface that preserves a historical record of all positions received — the main map only retains the 10 most recent breadcrumbs per tracker. The Analyzer is intended for post-event analysis, coverage review, and real-time monitoring of beacon reception quality.</p>
@@ -2514,7 +2544,7 @@ for <code>?json</code>, <code>?config</code>, and <code>?history</code>.</p>
 <tr>
 <td><code>?mobile=message</code></td>
 <td>POST</td>
-<td>Send a text message from a mobile participant to web operators. Body: <code>{token, text}</code>. Returns <code>{ok, id}</code>.</td>
+<td>Send a text message from a mobile participant to web operators. Body: <code>{token, text, to?}</code> — <code>to</code> is an operator name for per-operator addressing, omitted (legacy) → <code>web</code> (all operators). Stamps the sender's latest beacon onto the log entry as <code>lat</code>/<code>lon</code>/<code>pos_ts</code>. Returns <code>{ok, id}</code>.</td>
 </tr>
 <tr>
 <td><code>?mobile=poll</code></td>
@@ -2539,12 +2569,22 @@ for <code>?json</code>, <code>?config</code>, and <code>?history</code>.</p>
 <tr>
 <td><code>?messaging=send</code></td>
 <td>POST</td>
-<td>Send a message from a web operator to a mobile tracker. Body: <code>{web_token, to, text}</code>. <code>to</code> is a callsign or <code>"*"</code> for broadcast.</td>
+<td>Send a message from a web operator to a mobile tracker. Body: <code>{web_token, to, text}</code>. <code>to</code> is a callsign or <code>"*"</code> for broadcast, taken from the compose <strong>To:</strong> dropdown.</td>
 </tr>
 <tr>
 <td><code>?messaging=poll</code></td>
 <td>GET</td>
 <td>Poll for new messages directed to web operators. Params: <code>web_token</code>, <code>since_id</code>. Returns <code>{messages, last_id}</code>.</td>
+</tr>
+<tr>
+<td><code>?messaging=history</code></td>
+<td>GET/POST</td>
+<td>Full <code>messages.json</code> for the current event (unfiltered — includes other operators' traffic). Param/body: <code>web_token</code>. Returns <code>{messages, last_id, can_delete_all}</code>.</td>
+</tr>
+<tr>
+<td><code>?messaging=delete_all</code></td>
+<td>POST</td>
+<td>Erase the message log. Body: <code>{web_token}</code>. Requires a valid subscription <strong>and</strong> a signed-in account with <code>messages.delete_all</code>; otherwise 403. Preserves the ID counter and clears all <code>pending_msgs</code>. Returns <code>{ok, deleted}</code>.</td>
 </tr>
 <tr>
 <td><code>?messaging=rename</code></td>

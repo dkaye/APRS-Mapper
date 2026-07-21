@@ -1,6 +1,6 @@
 # APRS Tracker Map — User Guide
 
-**Version 1.19.1 · July 16, 2026**
+**Version 1.20.0 · July 21, 2026**
 
 ---
 
@@ -160,6 +160,14 @@ The drawer header shows the app name and the current event. The body has collaps
 | **Aid Stations** | **Tap** to close the drawer, center the map, and blink the marker. **Long-press** to do the same and also zoom in. |
 | **iGates** | **Tap** to close the drawer, center the map, and blink the marker. **Long-press** to do the same and also zoom in. |
 
+Each section header carries an eye icon (👁) on the right that shows or hides everything in
+that section on the map. The **Trackers** header has two extra eyes to the left of it that
+control what the map labels say rather than hiding markers: the first for the tracker **ID**,
+the second for the **Name**. A dimmed, slashed eye means that part is off — with both on a
+label reads `M083 James`, with only the ID eye on it reads `M083`, and with both off the
+tracker labels disappear while the markers remain. All of these are remembered between
+launches.
+
 The drawer footer has buttons:
 
 | Button | Action |
@@ -241,10 +249,20 @@ Open the map at [marsaprs.org](https://marsaprs.org).
 
 ### Sidebar (L) 
 
-The sidebar on the left lists all sections. Each section header has two controls:
+The sidebar on the left lists all sections. Each section header has these controls:
 
+- **Label eyes** (to the left of the checkbox) — these choose what the *labels on the map*
+  say for that section. They never hide the markers themselves. **Trackers** has one eye for
+  the tracker **ID** and one for the **Name**; **Aid/Rest Stops** and **iGates** each have one
+  for the **Name** and one for the **Callsign**. A dimmed, slashed eye means that part is
+  switched off. With both tracker eyes on a label reads `M083 James`; with only the ID eye on
+  it reads `M083`. Turn both off and that section's labels disappear while the markers stay
+  put — useful when a crowded course turns into a wall of text. Your choices are remembered in
+  your browser; an administrator can set the starting state for first-time visitors with
+  **Save as Default Event**.
 - **Visibility checkbox** (right side) — when checked, that section's objects are shown on
   the map; when unchecked, they are hidden and the section's rows dim to indicate this.
+  Individual Courses have their own checkbox.
 - **Click the header text** — collapses or expands the section's list to save vertical
   space. Collapse state is remembered across page reloads.
 
@@ -433,21 +451,49 @@ An **Operator** is any web user who has subscribed to the messaging channel for 
 
 1. Click the **Messaging** button in the sidebar (it appears when messaging is enabled for the current event and you are not yet subscribed).
 2. Enter your **name** (shown to mobile participants when you send a message) and the **messaging password** (provided by the event administrator).
-3. Click **Subscribe**. The Messaging button is replaced by a **Broadcast** button, and you will start receiving messages.
+3. Click **Subscribe**. You will start receiving messages immediately.
 
 Your subscription is remembered in the browser. On future visits you will be re-subscribed automatically without re-entering the password.
 
-**Sending a message to a mobile tracker:**
+**Sending a message:**
 
-Right-click (or Ctrl+click) a tracker entry in the sidebar. A compose window opens pre-addressed to that participant, showing the recent conversation thread above the text field. Type up to 280 characters and click **Send**.
+Click the **Messaging** button to open the compose window. At the top is a **To:** dropdown listing **All Trackers** (the default) followed by every mobile tracker currently on the map, shown as ID and name — for example `M083 James`. Choose a recipient, type up to 280 characters and click **Send**.
 
-The compose window footer also has two options:
+Only mobile trackers appear in the list — they are the participants running the app, and radio-only trackers cannot receive messages. If you had selected a tracker that has since stopped reporting, it stays in the list marked *(offline)* rather than silently switching your message to someone else.
+
+You can also right-click (or Ctrl+click) a tracker entry in the sidebar to open the compose window already addressed to that participant.
+
+Your conversation with the selected recipient appears above the text field, and changing the recipient switches the thread. Messages that arrive while the window is open are added to the thread as they come in — you do not need to close and reopen it. Only your own conversations are shown; traffic between other operators and trackers is not.
+
+A slider in the compose window sets the volume of the alert tone played when a message arrives; set it to 0 to mute.
+
+The compose window footer has three options:
+
+- **View all messages** — open the full message log (see below).
 - **Change my name** — update the name shown to mobile participants for future messages.
 - **Disable messaging** — unsubscribe and clear your session. The Messaging button reappears so you can re-subscribe later.
 
 **Receiving messages:**
 
-When a mobile tracker sends a message, a notification window appears showing the sender's name and message text. The recent conversation thread is shown in smaller text above the new message (which appears slightly larger for easy spotting). Click **Reply** to compose a response, or **Close** to dismiss.
+When a mobile tracker sends a message, a notification window appears showing the sender's name and message text. The recent conversation thread is shown in smaller text above the new message (which appears slightly larger for easy spotting). Click **Reply** to compose a response, or **Close** to dismiss. If another message arrives from the same person while the window is open, it appears straight away.
+
+**All Messages:**
+
+Click **View all messages** in the compose window footer to open the complete message log for the event — every message, in both directions, including other operators' conversations — in a scrollable table:
+
+| Column | Contents |
+|---|---|
+| Time | Month-day and time, e.g. `07-21 13:22:05` |
+| (pin) | Appears on messages sent from a mobile tracker — click to see where the sender was |
+| From | Tracker ID and name, or the operator's name |
+| To | Tracker ID and name, `All Trackers` for a broadcast, or `Operator` |
+| Message | The message text |
+
+Broadcasts are tinted so they stand out. Three actions are available:
+
+- **Location pin** — clicking a pin closes the log, centres the map on the position the sender last reported and drops a marker there, with a popup showing the sender, the time and the message. Dismissing the popup removes the marker. If the sender's position was recorded noticeably earlier than the message — for example if they were briefly out of coverage — the popup says so. The pin marks where they last reported, which is not necessarily where they were standing when they typed.
+- **Export CSV** — download the whole log as a spreadsheet file, with full timestamps (local and UTC), callsigns, and the sender's latitude and longitude where recorded.
+- **Delete All Messages** — permanently erase the message log for everyone. This button is only visible to users signed in with the **Delete All Messages** permission (see [Signing In](#signing-in)). It asks for confirmation first and cannot be undone, so export the log if you need a record.
 
 **Operator auto-login (Display Pis without keyboards):**
 
@@ -472,6 +518,8 @@ In both cases, if multiple messages arrived while backgrounded, the dialogs open
 **Sending messages:**
 
 Tap the **Message** (💬) button in the drawer footer (visible while sharing). A compose window opens showing the recent conversation thread, scrolled to the most recent message. Type up to 280 characters and tap **Send**.
+
+If more than one operator is monitoring messages, a **To:** dropdown lets you choose who receives it. Once you pick someone, they become the default for your future messages, so you do not have to choose again each time. If that operator later stops monitoring, the field is cleared and you are asked to pick again rather than sending to someone who is no longer listening. When only one operator is monitoring, they are selected automatically and no dropdown appears.
 
 ---
 

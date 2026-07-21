@@ -15,7 +15,7 @@
  *   ?config  Map/background/course/tracker config from config.yaml (ETag-cached)
  */
 
-define('WEB_VERSION', '1.19.1+8');
+define('WEB_VERSION', '1.20.0+9');
 
 // ── Client/server API contract version ────────────────────────────────────────
 // Advertised in the ?json and ?config responses so mobile apps can detect an
@@ -521,8 +521,8 @@ if (isset($_GET['messaging'])) {
 		if (!$broadcast) { foreach ($mobileData as $t) { if (($t['callsign'] ?? '') === $to) { $toLabel = $t['name'] ?? $to; break; } } }
 		$msgId = null;
 		if ($messagesFile) {
-			$modifyJsonFile($messagesFile, function($msgs) use ($session, $to, $toLabel, $text, $broadcast, &$msgId) {
-				$msgId = (int)(end($msgs)['id'] ?? 0) + 1;
+			$modifyJsonFile($messagesFile, function($msgs) use ($session, $to, $toLabel, $text, $broadcast, $messagesFile, &$msgId) {
+				$msgId = msgNextId($msgs, $messagesFile);
 				$msgs[] = ['id' => $msgId, 'ts' => time(), 'from' => 'web', 'from_label' => $session['name'],
 				           'to' => $to, 'to_label' => $toLabel, 'text' => $text, 'broadcast' => $broadcast];
 				return $msgs;
@@ -589,11 +589,95 @@ if (isset($_GET['messaging'])) {
 			if ($fh) { flock($fh, LOCK_SH); $all = json_decode(stream_get_contents($fh), true) ?: []; flock($fh, LOCK_UN); fclose($fh); }
 		}
 		$lastId = $all ? max(array_column($all, 'id')) : 0;
-		echo json_encode(['messages' => $all, 'last_id' => $lastId]);
+		echo json_encode([
+			'messages'       => $all,
+			'last_id'        => $lastId,
+			'can_delete_all' => msgHasAuthPermission('messages.delete_all'),
+		]);
+		exit;
+	}
+
+	// Wipes the entire message log. Requires BOTH an active messaging
+	// subscription and a signed-in account holding messages.delete_all.
+	if ($action === 'delete_all') {
+		$input    = json_decode(file_get_contents('php://input'), true) ?: [];
+		$webToken = trim($input['web_token'] ?? '');
+		if (!$validateWebToken($webToken)) { http_response_code(403); echo json_encode(['error' => 'Not subscribed']); exit; }
+		if (!msgHasAuthPermission('messages.delete_all')) {
+			http_response_code(403);
+			echo json_encode(['error' => 'You do not have permission to delete messages.']);
+			exit;
+		}
+		$deleted = 0;
+		if ($messagesFile) {
+			$fh = fopen($messagesFile, 'c+');
+			if ($fh) {
+				flock($fh, LOCK_EX);
+				$all = json_decode(stream_get_contents($fh), true) ?: [];
+				$deleted = count($all);
+				// Preserve the ID high-water mark so client watermarks stay valid.
+				$max = msgReadCounter($messagesFile);
+				foreach ($all as $m) $max = max($max, (int)($m['id'] ?? 0));
+				msgWriteCounter($messagesFile, $max);
+				ftruncate($fh, 0); rewind($fh);
+				fwrite($fh, "[]\n");
+				flock($fh, LOCK_UN); fclose($fh);
+			}
+		}
+		// Drop undelivered messages still queued for mobile trackers, otherwise
+		// they would pop up on phones after the log was supposedly cleared.
+		$mobileFile = __DIR__ . '/mobile_trackers.json';
+		$fh = fopen($mobileFile, 'c+');
+		if ($fh) {
+			flock($fh, LOCK_EX);
+			$raw     = json_decode(stream_get_contents($fh), true) ?: [];
+			$counter = $raw['counter'] ?? 0;
+			$data    = isset($raw['trackers']) ? $raw['trackers'] : $raw;
+			foreach ($data as &$t) { if (isset($t['pending_msgs'])) $t['pending_msgs'] = []; }
+			unset($t);
+			ftruncate($fh, 0); rewind($fh);
+			fwrite($fh, json_encode(['counter' => $counter, 'trackers' => $data], JSON_PRETTY_PRINT) . "\n");
+			flock($fh, LOCK_UN); fclose($fh);
+		}
+		echo json_encode(['ok' => true, 'deleted' => $deleted]);
 		exit;
 	}
 
 	http_response_code(400); echo json_encode(['error' => 'Unknown action']); exit;
+}
+
+// ── Messaging helpers ─────────────────────────────────────────────────────────
+
+// Next message ID. IDs must be strictly monotonic for the life of the install:
+// every operator browser polls with a since_id watermark, and the mobile app
+// tracks the highest ID it has seen. If "Delete All Messages" emptied the log
+// and IDs restarted at 1, every existing watermark would be higher than any new
+// message and clients would go permanently deaf. So the high-water mark is
+// mirrored in a sidecar counter file that survives a wipe.
+function msgNextId(array $msgs, string $messagesFile): int {
+	$max = 0;
+	foreach ($msgs as $m) $max = max($max, (int)($m['id'] ?? 0));
+	$next = max($max, msgReadCounter($messagesFile)) + 1;
+	msgWriteCounter($messagesFile, $next);
+	return $next;
+}
+function msgCounterFile(string $messagesFile): string { return $messagesFile . '.counter'; }
+function msgReadCounter(string $messagesFile): int {
+	$f = msgCounterFile($messagesFile);
+	return is_readable($f) ? (int)trim((string)@file_get_contents($f)) : 0;
+}
+function msgWriteCounter(string $messagesFile, int $v): void {
+	@file_put_contents(msgCounterFile($messagesFile), $v . "\n", LOCK_EX);
+}
+
+// True when the caller holds a signed-in marsaprs session carrying $perm.
+// Separate from the messaging password: subscribing to messages does not imply
+// any administrative rights.
+function msgHasAuthPermission(string $perm): bool {
+	$authFile = __DIR__ . '/auth/auth.php';
+	if (!is_readable($authFile)) return false;
+	require_once $authFile;
+	return function_exists('has_permission') && has_permission($perm);
 }
 
 // ── APRS-IS helpers (used by mobile update) ───────────────────────────────────
@@ -1081,11 +1165,22 @@ if (isset($_GET['mobile'])) {
 			if ($fh) {
 				flock($fh, LOCK_EX);
 				$msgs = json_decode(stream_get_contents($fh), true) ?: [];
-				$msgId = (int)(end($msgs)['id'] ?? 0) + 1;
-				$msgs[] = ['id' => $msgId, 'ts' => time(), 'from' => $found['callsign'],
+				$msgId = msgNextId($msgs, $messagesFile);
+				$_entry = ['id' => $msgId, 'ts' => time(), 'from' => $found['callsign'],
 				           'from_label' => $found['name'] ?? $found['callsign'],
 				           'to' => $toWeb !== '' ? $toWeb : 'web',
 				           'to_label' => $toWeb !== '' ? $toWeb : 'web', 'text' => $text, 'broadcast' => false];
+				// Stamp the sender's most recent known position onto the message, so
+				// operators can see where someone was when they sent it. aprs_lat/lon
+				// is the tracker's latest beacon; aprs_ts dates it, since a stale fix
+				// (poor GPS, no data) can be much older than the message itself.
+				if (isset($found['aprs_lat'], $found['aprs_lon'])
+					&& is_numeric($found['aprs_lat']) && is_numeric($found['aprs_lon'])) {
+					$_entry['lat'] = (float)$found['aprs_lat'];
+					$_entry['lon'] = (float)$found['aprs_lon'];
+					if (!empty($found['aprs_ts'])) $_entry['pos_ts'] = (int)$found['aprs_ts'];
+				}
+				$msgs[] = $_entry;
 				ftruncate($fh, 0); rewind($fh);
 				fwrite($fh, json_encode($msgs, JSON_PRETTY_PRINT) . "\n");
 				flock($fh, LOCK_UN); fclose($fh);
@@ -1883,6 +1978,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 #qs-close { background: none; border: none; font-size: 20px; line-height: 1; cursor: pointer; color: #aaa; padding: 0 2px; }
 #qs-close:hover { color: #fff; }
 #qs-body { padding: 16px 18px; overflow-y: auto; }
+.qs-ver { font-size: 12px; color: #888; margin-bottom: 10px; }
 .qs-note { background: #e8f4fd; border: 1px solid #90caf9; border-radius: 8px; padding: 10px 12px; font-size: 12.5px; color: #1565c0; line-height: 1.45; margin-bottom: 18px; }
 .qs-sec { margin-bottom: 20px; }
 .qs-sec-title { font-size: 13px; font-weight: 700; color: #2c3e50; letter-spacing: .3px; margin-bottom: 8px; }
@@ -2028,6 +2124,10 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 #msg-sub-header button, #msg-compose-header button {
     background: none; border: none; font-size: 20px; cursor: pointer; color: #888; padding: 0 2px; line-height: 1;
 }
+#msg-compose-to-sel {
+    flex: 1; min-width: 0; padding: 6px 8px; font-family: inherit; font-size: 13px;
+    border: 1px solid #ccc; border-radius: 4px; background: #fff; color: #333;
+}
 #msg-sub-submit, #msg-compose-send {
     width: 100%; padding: 9px; background: #2980b9; color: #fff;
     border: none; border-radius: 5px; font-size: 14px; cursor: pointer; font-family: inherit;
@@ -2076,6 +2176,64 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 .msg-thread-from { font-weight: 600; color: #333; }
 .msg-thread-web { color: #1a5276; }
 .msg-thread-time { color: #aaa; font-size: 10px; margin-left: 6px; }
+
+/* ── Messaging: full message log ─────────────────────────────────────────── */
+#msg-all-modal {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 9200;
+}
+#msg-all-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.5); }
+#msg-all-box {
+    position: relative; background: #fff; border-radius: 8px; padding: 18px 20px 16px;
+    width: 1100px; max-width: calc(100vw - 32px); max-height: calc(100vh - 64px);
+    z-index: 1; box-shadow: 0 4px 24px rgba(0,0,0,0.25);
+    display: flex; flex-direction: column;
+}
+#msg-all-header {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 15px; font-weight: 600; margin-bottom: 12px;
+}
+#msg-all-header button {
+    background: none; border: none; font-size: 20px; cursor: pointer; color: #888; padding: 0 2px; line-height: 1;
+}
+#msg-all-scroll {
+    flex: 1; min-height: 120px; overflow: auto;
+    border: 1px solid #e0e0e0; border-radius: 4px;
+}
+#msg-all-status { padding: 20px; text-align: center; color: #888; font-size: 13px; }
+#msg-all-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+#msg-all-table th {
+    position: sticky; top: 0; z-index: 1; background: #f2f2f2; text-align: left;
+    padding: 6px 8px; border-bottom: 1px solid #ddd; font-weight: 600; white-space: nowrap;
+}
+#msg-all-table td { padding: 5px 8px; border-bottom: 1px solid #f0f0f0; vertical-align: top; line-height: 1.4; }
+#msg-all-table tr:last-child td { border-bottom: none; }
+/* width:1% + nowrap shrink-wraps the metadata columns so Message takes the rest. */
+#msg-all-table td.msg-all-time, #msg-all-table th.msg-all-time { width: 1%; white-space: nowrap; color: #777; font-variant-numeric: tabular-nums; }
+#msg-all-table td.msg-all-who,  #msg-all-table th.msg-all-who  { width: 1%; white-space: nowrap; color: #333; font-weight: 600; }
+#msg-all-table td.msg-all-loc, #msg-all-table th.msg-all-loc { width: 1%; white-space: nowrap; padding: 2px 4px; text-align: center; }
+#msg-all-table td.msg-all-text { width: 100%; word-break: break-word; }
+.msg-all-locbtn {
+    background: none; border: none; padding: 2px 3px; cursor: pointer;
+    color: #b0b6bb; line-height: 0; border-radius: 3px;
+}
+.msg-all-locbtn:hover { color: #c0392b; background: #f2f2f2; }
+.msg-loc-pin { background: none; border: none; filter: drop-shadow(0 1px 2px rgba(0,0,0,.4)); }
+#msg-all-table tr.msg-all-bcast td { background: #fffbe8; }
+#msg-all-table .msg-all-web { color: #1a5276; }
+#msg-all-footer { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 12px; }
+#msg-all-count { font-size: 12px; color: #777; }
+#msg-all-export {
+    padding: 8px 14px; background: #2980b9; color: #fff; border: none;
+    border-radius: 5px; font-size: 13px; cursor: pointer; font-family: inherit;
+}
+#msg-all-export:hover { background: #2471a3; }
+#msg-all-export:disabled { background: #b0c4d4; cursor: default; }
+#msg-all-delete {
+    padding: 8px 14px; background: #fff; color: #c0392b; border: 1px solid #e0b4ae;
+    border-radius: 5px; font-size: 13px; cursor: pointer; font-family: inherit;
+}
+#msg-all-delete:hover { background: #c0392b; color: #fff; border-color: #c0392b; }
+#msg-all-delete:disabled { opacity: 0.5; cursor: default; }
 </style>
 </head>
 <body>
@@ -2226,6 +2384,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 			<button id="qs-close">&times;</button>
 		</div>
 		<div id="qs-body">
+			<div class="qs-ver">Version <?= WEB_VERSION ?> &middot; July 21, 2026</div>
 			<div class="qs-note">You can reopen this guide anytime from <strong>Help &rarr; Quick Start</strong>.</div>
 
 			<div class="qs-sec">
@@ -2248,7 +2407,16 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 				<div class="qs-shape"><svg width="12" height="12"><polygon points="6,1 11,11 1,11" fill="#888" stroke="#fff" stroke-width="1.5"/></svg><span>Triangle &mdash; hybrid: both the app and a licensed ham radio at once.</span></div>
 				<div class="qs-tip">Click (or tap) any Tracker, Aid/Rest Stop, or iGate in the sidebar to center the map on it, blink its marker, and show its breadcrumb trail. Click it again to zoom in.</div>
 				<div class="qs-tip">On the map, hover a marker (or tap it) to see its details. Hover a breadcrumb dot to see the time, name, and callsign for that point.</div>
-				<div class="qs-tip">Show or hide whole sections &mdash; or individual Courses &mdash; with the checkbox, and toggle map labels with the label button.</div>
+			</div>
+
+			<div class="qs-sec">
+				<div class="qs-sec-title">Showing &amp; Hiding Things</div>
+				<div class="qs-tip">The <strong>checkbox</strong> at the right of each section header shows or hides everything in that section &mdash; Trackers, Courses, Aid/Rest Stops, iGates and Backgrounds. Each Course also has its own checkbox.</div>
+				<div class="qs-tip">The <strong>eyes</strong> next to the checkbox do something different: they choose what the <em>labels on the map</em> say. They never hide the markers themselves. A dimmed, slashed eye means that part is switched off.</div>
+				<div class="qs-shape"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="#666" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 8s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2.5" fill="#666" stroke="none"/></svg><span><strong>Trackers</strong> &mdash; the first eye controls the tracker <strong>ID</strong>, the second controls the tracker <strong>Name</strong>.</span></div>
+				<div class="qs-shape"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="#666" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 8s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2.5" fill="#666" stroke="none"/></svg><span><strong>Aid/Rest Stops</strong> and <strong>iGates</strong> &mdash; the first eye controls the <strong>Name</strong>, the second controls the <strong>Callsign</strong>.</span></div>
+				<div class="qs-tip">Mix them to suit the map. With both tracker eyes on a label reads <em>M083 James</em>; with only the ID eye on it reads <em>M083</em>. Turn both eyes off and that section's labels disappear while the markers stay put &mdash; handy when a crowded course turns into a wall of text.</div>
+				<div class="qs-tip">Your choices are remembered in this browser for next time.</div>
 			</div>
 
 			<div class="qs-sec">
@@ -2263,6 +2431,8 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 				<div class="qs-sec-title">Messaging</div>
 				<div class="qs-tip">While you are sharing your location, net control can send you text messages. An incoming message plays a tone and shows a pop-up with the sender's name and text.</div>
 				<div class="qs-tip">Click <strong>Reply</strong> to respond, or use the <strong>Messaging</strong> button to start a new message.</div>
+				<div class="qs-tip">Operators: the <strong>To:</strong> dropdown at the top of the message window lists <strong>All Trackers</strong> (the default) and every mobile tracker on the map. Switching recipients switches the conversation shown above the text box, and new messages appear there as they arrive.</div>
+				<div class="qs-tip"><strong>View all messages</strong> at the bottom of that window opens the complete log for the event, with the time, who sent it and who it went to. Messages sent from a phone carry a location pin &mdash; click it to see on the map where the sender was. You can also export the whole log to a spreadsheet.</div>
 			</div>
 
 			<a href="https://marsaprs.org/userguide.html" target="_blank" class="help-modal-btn">Open Full User Guide</a>
@@ -2383,14 +2553,12 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 	<div id="msg-compose-backdrop"></div>
 	<div id="msg-compose-box">
 		<div id="msg-compose-header"><span id="msg-compose-title">Send Message</span><button id="msg-compose-close">&times;</button></div>
-		<div id="msg-compose-to" style="font-size:13px;color:#555;margin-bottom:8px"></div>
+		<div id="msg-compose-to" style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+			<label for="msg-compose-to-sel" style="font-size:13px;color:#555;font-weight:600">To:</label>
+			<select id="msg-compose-to-sel"></select>
+		</div>
 		<div id="msg-compose-thread" style="display:none;max-height:280px;overflow-y:auto;border:1px solid #e0e0e0;border-radius:4px;padding:6px 8px;margin-bottom:10px;background:#f9f9f9;font-size:12px"></div>
 		<textarea id="msg-compose-text" maxlength="280" rows="3" placeholder="Type your message…" style="width:100%;box-sizing:border-box;font-size:14px;font-family:inherit;border:1px solid #ccc;border-radius:4px;padding:8px;resize:vertical"></textarea>
-		<div style="display:flex;align-items:center;gap:8px;margin-top:8px">
-			<label style="font-size:13px;display:flex;align-items:center;gap:5px;cursor:pointer">
-				<input type="checkbox" id="msg-compose-broadcast"> Send to all trackers
-			</label>
-		</div>
 		<div id="msg-compose-error" style="color:#c0392b;font-size:13px;min-height:18px;margin-top:6px"></div>
 		<button id="msg-compose-send" style="margin-top:8px">Send</button>
 			<div id="msg-sound-ctl" style="margin-top:12px;padding-top:10px;border-top:1px solid #eee">
@@ -2400,7 +2568,8 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 					<span id="msg-sound-vol-val" style="font-size:12px;color:#555;width:34px;text-align:right">70%</span>
 				</div>
 			</div>
-		<div style="margin-top:12px;padding-top:10px;border-top:1px solid #eee;display:flex;justify-content:space-between">
+		<div style="margin-top:12px;padding-top:10px;border-top:1px solid #eee;display:flex;justify-content:space-between;gap:10px">
+			<a href="#" id="msg-compose-all-link" style="font-size:12px;color:#2980b9;text-decoration:none">View all messages</a>
 			<a href="#" id="msg-compose-rename-link" style="font-size:12px;color:#555;text-decoration:none">Change my name</a>
 			<a href="#" id="msg-compose-disable-link" style="font-size:12px;color:#c0392b;text-decoration:none">Disable messaging</a>
 		</div>
@@ -2411,6 +2580,22 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 			<div style="display:flex;gap:8px;margin-top:8px">
 				<button id="msg-rename-save">Save Name</button>
 				<button id="msg-rename-cancel" style="background:#eee;color:#444;border-color:#ccc">Cancel</button>
+			</div>
+		</div>
+	</div>
+</div>
+
+<!-- ── Messaging: full message log ────────────────────────────────────────── -->
+<div id="msg-all-modal" style="display:none">
+	<div id="msg-all-backdrop"></div>
+	<div id="msg-all-box">
+		<div id="msg-all-header"><span>All Messages</span><button id="msg-all-close">&times;</button></div>
+		<div id="msg-all-scroll"><div id="msg-all-status">Loading…</div></div>
+		<div id="msg-all-footer">
+			<span id="msg-all-count"></span>
+			<div style="display:flex;gap:8px;align-items:center">
+				<button id="msg-all-delete" style="display:none">Delete All Messages</button>
+				<button id="msg-all-export" disabled>Export CSV</button>
 			</div>
 		</div>
 	</div>
@@ -3495,7 +3680,27 @@ function onMobileTrackerLongPress(callsign) {
 }
 
 // ── Update legend ──────────────────────────────────────────────────────────
+// callsign → tracker ID (e.g. "MARSQ-83" → "M083"). Messages store callsigns,
+// but operators think in IDs, so the message log renders "M083 James".
+const _trackerIdByCs = {};
+// Mobile/hybrid trackers only — they're the ones running the app, so they're the
+// only trackers that can receive a message. Feeds the Send Message recipient list.
+let _mobileTrackers = [];
+function _noteTrackerIds(trackers) {
+	(trackers || []).forEach(t => { if (t && t.callsign && t.id) _trackerIdByCs[t.callsign] = t.id; });
+}
+// Only ever called with the LIVE tracker feed — applyTrackerConfig passes config
+// entries that carry no `mobile` flag, and would wrongly empty this list.
+function _noteMobileTrackers(trackers) {
+	const mob = (trackers || []).filter(t => t && t.mobile && t.callsign)
+		.map(t => ({callsign: t.callsign, id: t.id || '', name: t.name || ''}));
+	mob.sort((a, b) => naturalCompare(a.id, b.id));
+	_mobileTrackers = mob;
+	if (_composeModalOpen()) _populateComposeRecipients();
+}
 function updateLegend(trackers) {
+	_noteTrackerIds(trackers);
+	_noteMobileTrackers(trackers);
 	if (isMobile) updateMobileLegend(trackers);
 	else          updateDesktopLegend(trackers);
 }
@@ -3892,6 +4097,7 @@ function applyMapConfig(m) {
 }
 
 function applyTrackerConfig(trackers) {
+	_noteTrackerIds(trackers);
 	const pfx     = isMobile ? 'm-legend-' : 'legend-';
 	const idSel   = isMobile ? '.m-id'     : '.legend-id';
 	const nameSel = isMobile ? '.m-name'   : '.legend-name';
@@ -5335,6 +5541,16 @@ try {
 
 function _msgIsSubscribed() { return !!_msgToken; }
 
+// The history endpoint returns the WHOLE log — including traffic between other
+// operators and other trackers. These decide what belongs to *this* operator so
+// conversation views don't show someone else's messages.
+// Operator-sent messages all carry from:'web', so the sender's name is the only
+// thing distinguishing mine from another operator's.
+function _msgSentByMe(m) { return m.from === 'web' && (m.from_label || '') === _msgName; }
+// 'web' = addressed to every operator; _msgName = addressed to me by name.
+function _msgSentToMe(m) { return m.to === 'web' || (!!_msgName && m.to === _msgName); }
+function _msgInvolvesMe(m) { return !!m && (_msgSentByMe(m) || _msgSentToMe(m)); }
+
 async function _loadMsgHistory(markAllSeen = false) {
 	if (!_msgToken) return false;
 	try {
@@ -5365,7 +5581,8 @@ async function _loadMsgHistory(markAllSeen = false) {
 			const _pending = [];
 			for (const m of _msgLog) {
 				if (m.id <= _msgSeenId) { _msgNotifiedIds.add(m.id); }
-				else if (m.from !== "web") { _pending.push(m); }
+				else if (m.from !== "web" && _msgInvolvesMe(m)) { _pending.push(m); }
+				else { _msgNotifiedIds.add(m.id); }
 			}
 			_pending.sort((a, b) => a.id - b.id);
 			for (const m of _pending) { _msgNotifiedIds.add(m.id); _enqueueMsgModal(m); }
@@ -5490,31 +5707,74 @@ document.getElementById('legend').addEventListener('click', e => {
 }, true);
 
 // Compose modal
+// Callsign ('*' for all trackers) whose conversation the compose thread is
+// showing. Tracks the recipient dropdown.
+let _composeThreadTo = null;
+
+// Renders the conversation between this operator and _composeThreadTo. Split out
+// of _showComposeModal so the poll can refresh it in place when a message lands
+// while the modal is open.
+function _renderComposeThread() {
+	const threadEl = document.getElementById('msg-compose-thread');
+	if (!threadEl || _composeThreadTo === null) return;
+	const to = _composeThreadTo;
+	// Only messages involving this operator — the history feed also carries other
+	// operators' conversations.
+	const relevant = _msgLog.filter(m => _msgInvolvesMe(m) && (
+		to === '*' ? (m.broadcast || m.to === '*') : (m.from === to || m.to === to)
+	));
+	if (!relevant.length) { threadEl.style.display = 'none'; threadEl.innerHTML = ''; return; }
+	// Stay pinned to the newest message only if the user hadn't scrolled up.
+	const atBottom = threadEl.scrollHeight - threadEl.scrollTop - threadEl.clientHeight < 24;
+	threadEl.innerHTML = relevant.map(m => {
+		const isMe = m.from === 'web';
+		const who  = isMe ? `<span class="msg-thread-from msg-thread-web">${_esc(m.from_label)}</span>` : `<span class="msg-thread-from">${_esc(m.from_label)}</span>`;
+		const d    = new Date(m.ts * 1000);
+		const t    = d.toLocaleDateString([], {month:'2-digit',day:'2-digit'}) + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+		return `<div class="msg-thread-entry">${who}<span class="msg-thread-time">${t}</span><br>${_esc(m.text)}</div>`;
+	}).join('');
+	threadEl.style.display = '';
+	if (atBottom) setTimeout(() => { threadEl.scrollTop = threadEl.scrollHeight; }, 0);
+}
+
+function _composeModalOpen() {
+	const m = document.getElementById('msg-compose-modal');
+	return !!m && m.style.display !== 'none' && m.style.display !== '';
+}
+
+function _escAttr(s) { return _esc(s).replace(/"/g, '&quot;'); }
+
+// Recipient dropdown: "All Trackers" plus every mobile tracker currently on the
+// map. Repopulated as trackers come and go, preserving the current selection.
+function _populateComposeRecipients(want) {
+	const sel = document.getElementById('msg-compose-to-sel');
+	if (!sel) return;
+	const target = want !== undefined ? want : (sel.value || '*');
+	const opts = ['<option value="*">All Trackers</option>'];
+	let found = target === '*';
+	for (const t of _mobileTrackers) {
+		if (t.callsign === target) found = true;
+		const label = [t.id, t.name].filter(Boolean).join(' ') || t.callsign;
+		opts.push(`<option value="${_escAttr(t.callsign)}">${_esc(label)}</option>`);
+	}
+	// A tracker chosen from the sidebar may have since dropped off the live feed;
+	// keep it selectable rather than silently switching the recipient.
+	if (!found) {
+		const label = [_trackerIdByCs[target], target].filter(Boolean).join(' ');
+		opts.push(`<option value="${_escAttr(target)}">${_esc(label)} (offline)</option>`);
+	}
+	sel.innerHTML = opts.join('');
+	sel.value = target;
+	if (!sel.value) sel.value = '*';
+}
+
 function _showComposeModal(toCallsign, toLabel, prefill) {
-	document.getElementById('msg-compose-to').textContent    = 'To: ' + toLabel;
-	document.getElementById('msg-compose-broadcast').checked = (toCallsign === '*');
+	_populateComposeRecipients(toCallsign || '*');
 	document.getElementById('msg-compose-text').value        = prefill || '';
 	document.getElementById('msg-compose-error').textContent = '';
-	document.getElementById('msg-compose-modal').dataset.to      = toCallsign;
-	document.getElementById('msg-compose-modal').dataset.toLabel = toLabel;
-	// Show thread — full history for this callsign, oldest first, scroll to bottom
-	const threadEl = document.getElementById('msg-compose-thread');
-	const relevant = toCallsign === '*'
-		? _msgLog.filter(m => m.broadcast || m.to === '*')
-		: _msgLog.filter(m => m.from === toCallsign || m.to === toCallsign || m.broadcast);
-	if (relevant.length) {
-		threadEl.innerHTML = relevant.map(m => {
-			const isMe = m.from === 'web';
-			const who  = isMe ? `<span class="msg-thread-from msg-thread-web">${_esc(m.from_label)}</span>` : `<span class="msg-thread-from">${_esc(m.from_label)}</span>`;
-			const d    = new Date(m.ts * 1000);
-			const t    = d.toLocaleDateString([], {month:'2-digit',day:'2-digit'}) + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-			return `<div class="msg-thread-entry">${who}<span class="msg-thread-time">${t}</span><br>${_esc(m.text)}</div>`;
-		}).join('');
-		threadEl.style.display = '';
-		setTimeout(() => { threadEl.scrollTop = threadEl.scrollHeight; }, 0);
-	} else {
-		threadEl.style.display = 'none';
-	}
+	_composeThreadTo = document.getElementById('msg-compose-to-sel').value;
+	document.getElementById('msg-compose-thread').scrollTop = 0;
+	_renderComposeThread();
 	document.getElementById('msg-rename-panel').style.display = 'none';
 	document.getElementById('msg-compose-modal').style.display = 'flex';
 	setTimeout(() => document.getElementById('msg-compose-text').focus(), 50);
@@ -5539,17 +5799,23 @@ document.getElementById('msg-compose-backdrop').addEventListener('click', () => 
 	});
 })();
 document.getElementById('msg-compose-close').addEventListener('click',    () => document.getElementById('msg-compose-modal').style.display = 'none');
-document.getElementById('msg-compose-broadcast').addEventListener('change', function() {
-	const modal = document.getElementById('msg-compose-modal');
-	if (this.checked) { modal.dataset.to = '*'; document.getElementById('msg-compose-to').textContent = 'To: All Trackers'; }
-	else { modal.dataset.to = modal.dataset.toLabel; document.getElementById('msg-compose-to').textContent = 'To: ' + modal.dataset.toLabel; }
+// Switching recipient swaps the thread to that conversation.
+document.getElementById('msg-compose-to-sel').addEventListener('change', function() {
+	_composeThreadTo = this.value;
+	document.getElementById('msg-compose-thread').scrollTop = 0;
+	_renderComposeThread();
 });
 document.getElementById('msg-compose-send').addEventListener('click', async () => {
 	const btn    = document.getElementById('msg-compose-send');
 	if (btn.disabled) return; // in-flight — ignore duplicate clicks
 	const modal  = document.getElementById('msg-compose-modal');
-	const to     = modal.dataset.to;
-	const toLabel = modal.dataset.toLabel;
+	const sel     = document.getElementById('msg-compose-to-sel');
+	const to      = sel.value;
+	// Match what the server stores: the tracker's plain name (or '*' for a
+	// broadcast) — NOT the dropdown's "ID Name" text, which would render as
+	// "M083 M083 James" once _msgWho prefixes the ID again.
+	const _trk    = _mobileTrackers.find(t => t.callsign === to);
+	const toLabel = to === '*' ? '*' : ((_trk && _trk.name) || to);
 	const text   = document.getElementById('msg-compose-text').value.trim();
 	const errEl  = document.getElementById('msg-compose-error');
 	if (!text) { errEl.textContent = 'Please enter a message.'; return; }
@@ -5569,6 +5835,213 @@ document.getElementById('msg-compose-send').addEventListener('click', async () =
 		modal.style.display = 'none';
 	} catch { errEl.textContent = 'Send failed. Please try again.'; }
 	finally { btn.disabled = false; btn.innerHTML = btnHtml; }
+});
+
+// ── All-messages log ──────────────────────────────────────────────────────
+// Pulls the complete server-side log (every message, both directions, all
+// trackers) rather than the 50-entry client cache in _msgLog.
+let _msgAllRows = [];
+
+// Display stamp: "07-21 13:22:05" — no year, the log is always current-event.
+function _msgFmtStamp(ts) {
+	const d = new Date(ts * 1000), p = n => String(n).padStart(2, '0');
+	return p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+	       ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+// Full stamp with year — CSV export only, where the file outlives the event.
+function _msgFmtStampFull(ts) {
+	return new Date(ts * 1000).getFullYear() + '-' + _msgFmtStamp(ts);
+}
+// Trackers render as "M083 James" (ID + name, never the callsign). Operators
+// render as their subscribed name.
+function _msgWho(label, cs) {
+	if (cs === 'web')  return (label && label !== 'web') ? label : 'Operator';
+	if (cs === '*')    return 'All Trackers';
+	if (!cs)           return label || '—';
+	const id = _trackerIdByCs[cs];
+	if (id) return (label && label !== cs && label !== id) ? id + ' ' + label : id;
+	// Unknown to the legend (tracker dropped, or an operator addressed by name).
+	return (label && label !== cs) ? label : cs;
+}
+
+async function _showAllMessages() {
+	const modal  = document.getElementById('msg-all-modal');
+	const scroll = document.getElementById('msg-all-scroll');
+	const count  = document.getElementById('msg-all-count');
+	const expBtn = document.getElementById('msg-all-export');
+	const delBtn = document.getElementById('msg-all-delete');
+	_msgAllRows = [];
+	expBtn.disabled = true;
+	delBtn.style.display = 'none';
+	count.textContent = '';
+	scroll.innerHTML = '<div id="msg-all-status">Loading…</div>';
+	modal.style.display = 'flex';
+	let msgs;
+	try {
+		const r = await fetch('index.php?messaging=history&web_token=' + encodeURIComponent(_msgToken || ''));
+		const d = await r.json();
+		if (d.error) throw new Error(d.error);
+		msgs = d.messages || [];
+		// Server-side check against the signed-in account's permissions; hiding
+		// the button is cosmetic, the delete_all endpoint re-checks.
+		if (d.can_delete_all) delBtn.style.display = '';
+	} catch {
+		scroll.innerHTML = '<div id="msg-all-status">Could not load the message log.</div>';
+		return;
+	}
+	msgs.sort((a, b) => (a.ts - b.ts) || ((a.id || 0) - (b.id || 0)));
+	_msgAllRows = msgs;
+	if (!msgs.length) {
+		scroll.innerHTML = '<div id="msg-all-status">No messages yet.</div>';
+		return;
+	}
+	const rows = msgs.map((m, i) => {
+		const bcast = !!m.broadcast;
+		const from  = _msgWho(m.from_label, m.from);
+		const to    = bcast ? 'All Trackers' : _msgWho(m.to_label, m.to);
+		const fCls  = m.from === 'web' ? ' class="msg-all-web"' : '';
+		// Position is only recorded for messages sent from a mobile tracker.
+		const loc = (typeof m.lat === 'number' && typeof m.lon === 'number')
+			? `<button class="msg-all-locbtn" data-idx="${i}" title="Show where this message was sent from">${MSG_PIN_SVG}</button>`
+			: '';
+		return '<tr' + (bcast ? ' class="msg-all-bcast"' : '') + '>' +
+			'<td class="msg-all-time">' + _esc(_msgFmtStamp(m.ts)) + '</td>' +
+			'<td class="msg-all-loc">' + loc + '</td>' +
+			'<td class="msg-all-who"><span' + fCls + '>' + _esc(from) + '</span></td>' +
+			'<td class="msg-all-who">' + _esc(to) + '</td>' +
+			'<td class="msg-all-text">' + _esc(m.text || '') + '</td></tr>';
+	}).join('');
+	scroll.innerHTML = '<table id="msg-all-table"><thead><tr>' +
+		'<th class="msg-all-time">Time</th><th class="msg-all-loc"></th><th class="msg-all-who">From</th>' +
+		'<th class="msg-all-who">To</th><th>Message</th></tr></thead><tbody>' + rows + '</tbody></table>';
+	scroll.querySelectorAll('.msg-all-locbtn').forEach(b =>
+		b.addEventListener('click', () => _showMsgLocation(_msgAllRows[+b.dataset.idx])));
+	count.textContent = msgs.length + (msgs.length === 1 ? ' message' : ' messages');
+	expBtn.disabled = false;
+	scroll.scrollTop = scroll.scrollHeight;
+}
+
+// Map-pin glyph, used both for the table button and the marker dropped on the map.
+const MSG_PIN_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">' +
+	'<path fill="currentColor" d="M12 2c-3.87 0-7 3.13-7 7 0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"/></svg>';
+
+// Clicking the pin hands off to the main map: the message's location gets a
+// marker with a popup, and the log closes so the map is actually visible. Using
+// the real map (rather than a mini-map in the modal) keeps the course, aid
+// stations and every other tracker as context, and costs no extra tile loads.
+let _msgLocMarker = null;
+function _showMsgLocation(m) {
+	if (!m || typeof m.lat !== 'number' || typeof m.lon !== 'number') return;
+	// Close the log AND the compose modal beneath it, or the map stays hidden.
+	document.getElementById('msg-all-modal').style.display = 'none';
+	document.getElementById('msg-compose-modal').style.display = 'none';
+	if (_msgLocMarker) { map.removeLayer(_msgLocMarker); _msgLocMarker = null; }
+	const who  = _esc(_msgWho(m.from_label, m.from));
+	const sent = _esc(_msgFmtStamp(m.ts));
+	// Flag a position noticeably older than the message — the tracker may have
+	// been out of coverage, so this is where they last reported, not necessarily
+	// where they were standing when they typed.
+	const age  = m.pos_ts ? m.ts - m.pos_ts : 0;
+	const fix  = age > 120
+		? `<div style="color:#c0392b;font-size:11px;margin-top:3px">Position last reported ${_esc(_msgFmtAge(age))} before the message</div>`
+		: '';
+	_msgLocMarker = L.marker([m.lat, m.lon], {
+		icon: L.divIcon({
+			className: 'msg-loc-pin',
+			html: '<svg viewBox="0 0 24 24" width="30" height="30"><path fill="#c0392b" stroke="#fff" stroke-width="1.2" d="M12 2c-3.87 0-7 3.13-7 7 0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"/></svg>',
+			iconSize: [30, 30], iconAnchor: [15, 29], popupAnchor: [0, -27],
+		}),
+		zIndexOffset: 2000,
+	}).addTo(map);
+	_msgLocMarker.bindPopup(
+		`<div style="font-size:12px;line-height:1.45;max-width:230px">` +
+		`<div style="font-weight:700">${who}</div>` +
+		`<div style="color:#777;font-size:11px">${sent}</div>` +
+		`<div style="margin-top:5px">${_esc(m.text || '')}</div>${fix}</div>`
+	);
+	// Self-cleaning: dismissing the popup takes the marker with it.
+	_msgLocMarker.on('popupclose', () => {
+		if (_msgLocMarker) { map.removeLayer(_msgLocMarker); _msgLocMarker = null; }
+	});
+	map.setView([m.lat, m.lon], Math.max(map.getZoom(), 15));
+	_msgLocMarker.openPopup();
+}
+function _msgFmtAge(secs) {
+	if (secs < 90) return secs + ' sec';
+	const mins = Math.round(secs / 60);
+	if (mins < 90) return mins + ' min';
+	return Math.round(mins / 60) + ' hr';
+}
+
+function _msgCsvCell(v) {
+	const s = String(v == null ? '' : v);
+	return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function _exportAllMessages() {
+	if (!_msgAllRows.length) return;
+	const lines = [['ID', 'Time', 'UTC', 'From', 'From Callsign', 'To', 'To Callsign', 'Broadcast', 'Latitude', 'Longitude', 'Message']];
+	for (const m of _msgAllRows) {
+		lines.push([
+			m.id || '',
+			_msgFmtStampFull(m.ts),
+			new Date(m.ts * 1000).toISOString(),
+			_msgWho(m.from_label, m.from),
+			m.from === 'web' ? '' : (m.from || ''),
+			m.broadcast ? 'All Trackers' : _msgWho(m.to_label, m.to),
+			(m.to === 'web' || m.to === '*') ? '' : (m.to || ''),
+			m.broadcast ? 'yes' : 'no',
+			typeof m.lat === 'number' ? m.lat.toFixed(6) : '',
+			typeof m.lon === 'number' ? m.lon.toFixed(6) : '',
+			m.text || '',
+		]);
+	}
+	// BOM so Excel reads UTF-8 correctly.
+	const csv  = '﻿' + lines.map(r => r.map(_msgCsvCell).join(',')).join('\r\n') + '\r\n';
+	const d    = new Date(), p = n => String(n).padStart(2, '0');
+	const name = 'aprs-messages-' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) +
+	             '-' + p(d.getHours()) + p(d.getMinutes()) + '.csv';
+	const url  = URL.createObjectURL(new Blob([csv], {type: 'text/csv;charset=utf-8'}));
+	const a    = document.createElement('a');
+	a.href = url; a.download = name;
+	document.body.appendChild(a); a.click(); a.remove();
+	setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+document.getElementById('msg-compose-all-link').addEventListener('click', e => { e.preventDefault(); _showAllMessages(); });
+document.getElementById('msg-all-close').addEventListener('click',    () => document.getElementById('msg-all-modal').style.display = 'none');
+document.getElementById('msg-all-backdrop').addEventListener('click', () => document.getElementById('msg-all-modal').style.display = 'none');
+document.getElementById('msg-all-export').addEventListener('click', _exportAllMessages);
+
+// Delete All — irreversible, so it takes an explicit confirmation naming the count.
+document.getElementById('msg-all-delete').addEventListener('click', async () => {
+	const delBtn = document.getElementById('msg-all-delete');
+	const n = _msgAllRows.length;
+	if (!confirm('Permanently delete all ' + n + (n === 1 ? ' message' : ' messages') +
+	             ' for everyone?\n\nThis cannot be undone. Export first if you need a record.')) return;
+	const label = delBtn.textContent;
+	delBtn.disabled = true;
+	delBtn.textContent = 'Deleting…';
+	try {
+		const r = await fetch('index.php?messaging=delete_all', { method: 'POST', headers: {'Content-Type':'application/json'},
+			body: JSON.stringify({web_token: _msgToken}) });
+		const d = await r.json();
+		if (d.error) { alert(d.error); return; }
+		// Clear this browser's caches too; the compose-modal thread reads _msgLog.
+		_msgLog = [];
+		_msgAllRows = [];
+		_msgNotifiedIds.clear();
+		document.getElementById('msg-all-scroll').innerHTML = '<div id="msg-all-status">No messages yet.</div>';
+		document.getElementById('msg-all-count').textContent = '';
+		document.getElementById('msg-all-export').disabled = true;
+		const thread = document.getElementById('msg-compose-thread');
+		if (thread) { thread.innerHTML = ''; thread.style.display = 'none'; }
+	} catch { alert('Delete failed. Please try again.'); }
+	finally { delBtn.disabled = false; delBtn.textContent = label; }
+});
+document.addEventListener('keydown', e => {
+	if (e.key === 'Escape' && document.getElementById('msg-all-modal').style.display !== 'none') {
+		document.getElementById('msg-all-modal').style.display = 'none';
+	}
 });
 
 // Rename link
@@ -5632,6 +6105,9 @@ async function _pollMessages() {
 				_msgNotifiedIds.add(m.id);
 			});
 			_msgLastId = d.last_id;
+			// A message that lands while the Send Message window is open must show
+			// up there without the operator having to reopen it.
+			if (_composeModalOpen()) _renderComposeThread();
 			try { const _s = JSON.parse(localStorage.getItem('aprs_msg_session') || 'null'); if (_s) { _s.last_id = _msgLastId; localStorage.setItem('aprs_msg_session', JSON.stringify(_s)); } } catch {}
 		}
 	} catch {}
@@ -5700,6 +6176,7 @@ function _playMsgTone() {
 
 let _msgQueue = [];   // queued incoming messages waiting to display
 let _msgModalOpen = false;
+let _msgCurrent = null; // message currently shown in the Message window
 // Suppress incoming modals briefly on autologin startup to avoid showing
 // messages that arrived while the Pi was offline (history-fail race condition).
 const _msgStartupTs = Date.now();
@@ -5714,27 +6191,36 @@ function _markMsgSeen(id) {
 // window (avoids replaying stale messages during a history-fail race).
 function _showMsgModal(msg) {
 	if (window._aprsAutoMsgPw && Date.now() - _msgStartupTs < 8000) return;
-	_enqueueMsgModal(msg);
+	_enqueueMsgModal(msg, true);
 }
 // Actually display a message: mark it seen, play the tone, queue the modal.
 // Called directly (no autologin guard) for messages replayed from a confirmed
 // history fetch when returning to the page.
-function _enqueueMsgModal(msg) {
+function _enqueueMsgModal(msg, live = false) {
 	_markMsgSeen(msg.id);
 	_playMsgTone();
 	_msgQueue.push(msg);
-	if (!_msgModalOpen) _showNextMsgModal();
+	// Closed → show it. Already open and the arrival continues the conversation
+	// on screen → advance immediately so it appears without a dismiss; the message
+	// it replaces drops into the thread above, so nothing disappears. Open but
+	// from someone else → stay queued, so what's being read isn't yanked away.
+	const continuesCurrent = live && _msgCurrent && msg.from === _msgCurrent.from;
+	if (!_msgModalOpen || continuesCurrent) _showNextMsgModal();
 }
 
 function _showNextMsgModal() {
-	if (!_msgQueue.length) { _msgModalOpen = false; return; }
+	if (!_msgQueue.length) { _msgModalOpen = false; _msgCurrent = null; return; }
 	_msgModalOpen = true;
 	const msg = _msgQueue.shift();
+	_msgCurrent = msg;
 	const canReply = msg.from !== 'web';
 	document.getElementById('msg-incoming-from').style.display = 'none';
 	// Show thread (prior messages with this sender)
 	const threadEl = document.getElementById('msg-incoming-thread');
-	const prior = _msgLog.filter(m => m.id !== msg.id && (m.from === msg.from || m.to === msg.from)).slice(-8);
+	// Only this operator's conversation with the sender: the history feed also
+	// carries other operators' traffic, which has no business in this window.
+	const prior = _msgLog.filter(m => m.id !== msg.id && _msgInvolvesMe(m)
+		&& (m.from === msg.from || m.to === msg.from)).slice(-8);
 	if (prior.length) {
 		threadEl.innerHTML = prior.map(m => {
 				const isMe = m.from === 'web';
@@ -5771,6 +6257,7 @@ function _showNextMsgModal() {
 		document.getElementById('msg-incoming-modal').style.display = 'none';
 		_msgQueue = [];
 		_msgModalOpen = false;
+		_msgCurrent = null;
 	};
 	document.getElementById('msg-incoming-backdrop').onclick = null; // don't close on backdrop click
 	document.getElementById('msg-incoming-modal').style.display = 'flex';
