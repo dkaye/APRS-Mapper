@@ -1,0 +1,45 @@
+**/dgph
+*.mode1v3
+*.mode2v3
+*.moved-aside
+*.pbxuser
+*.perspectivev3
+**/*sync/
+.sconsign.dblite
+.tags*
+**/.vagrant/
+**/DerivedData/
+Icon?
+**/Pods/
+**/.symlinks/
+profile
+xcuserdata
+**/.generated/
+Flutter/App.framework
+Flutter/Flutter.framework
+Flutter/Flutter.podspec
+Flutter/Generated.xcconfig
+Flutter/ephemeral/
+Flutter/app.flx
+Flutter/app.zip
+Flutter/flutter_assets/
+Flutter/flutter_export_environment.sh
+ServiceDefinitions.json
+Runner/GeneratedPluginRegistrant.*
+
+# Xcode-generated SwiftPM state (this project uses CocoaPods) + Finder cruft
+**/xcshareddata/swiftpm/
+.DS_Store
+
+# iOS build/export artifacts (Xcode archive exports, IPAs)
+*.ipa
+/aprs_map.ipa/
+/Runner 20*/
+/ExportOptions.plist
+/appstore-export.plist
+
+# Exceptions to above rules.
+!default.mode1v3
+!default.mode2v3
+!default.pbxuser
+!default.perspectivev3
