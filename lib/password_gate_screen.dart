@@ -1,7 +1,9 @@
 /// Full-screen password entry form shown when the event requires authentication
 /// before the map is accessible.
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'map_config.dart';
@@ -195,6 +197,19 @@ class _PasswordGateScreenState extends State<PasswordGateScreen> {
                                   child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                               : const Text('Enter', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
                         ),
+                        // Android only: iOS ignores SystemNavigator.pop() (Apple
+                        // disallows programmatic exit), so a Cancel link there would
+                        // be a no-op.
+                        if (Platform.isAndroid) ...[
+                          const SizedBox(height: 4),
+                          Center(
+                            child: TextButton(
+                              onPressed: _submitting ? null : () => SystemNavigator.pop(),
+                              child: const Text('Cancel',
+                                  style: TextStyle(fontSize: 14, color: Color(0xFF888888))),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
