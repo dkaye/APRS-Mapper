@@ -551,7 +551,9 @@ if (isset($_GET['messaging'])) {
 	if ($action === 'poll') {
 		$webToken = trim($_GET['web_token'] ?? '');
 		$sinceId  = (int)($_GET['since_id'] ?? 0);
-		if (!$validateWebToken($webToken)) { http_response_code(403); echo json_encode(['error' => 'Not subscribed']); exit; }
+		$session  = $validateWebToken($webToken);
+		if (!$session) { http_response_code(403); echo json_encode(['error' => 'Not subscribed']); exit; }
+		$myName = $session['name'] ?? '';
 		$modifyJsonFile($webSessionsFile, function($data) use ($webToken) {
 			foreach ($data as &$s) {
 				if (!empty($s['token']) && hash_equals($s['token'], $webToken)) { $s['ts'] = time(); break; }
@@ -564,7 +566,9 @@ if (isset($_GET['messaging'])) {
 			if ($fh) {
 				flock($fh, LOCK_SH); $all = json_decode(stream_get_contents($fh), true) ?: []; flock($fh, LOCK_UN); fclose($fh);
 				foreach ($all as $m) {
-					if ((int)$m['id'] > $sinceId && ($m['to'] === 'web' || !empty($m['broadcast']))) {
+					// 'web' = addressed to all web operators (legacy / broadcast);
+					// $myName = addressed to this specific operator by name.
+					if ((int)$m['id'] > $sinceId && ($m['to'] === 'web' || $m['to'] === $myName || !empty($m['broadcast']))) {
 						$msgs[] = $m;
 						if ((int)$m['id'] > $lastId) $lastId = (int)$m['id'];
 					}
@@ -1042,6 +1046,9 @@ if (isset($_GET['mobile'])) {
 	if ($action === 'message') {
 		$token = $input['token'] ?? '';
 		$text  = substr(trim($input['text'] ?? ''), 0, 280);
+		// Optional destination web operator (by name). Absent (older apps) →
+		// 'web', which every subscribed operator receives (legacy behavior).
+		$toWeb = substr(trim($input['to'] ?? ''), 0, 30);
 		if (!$token) { http_response_code(400); echo json_encode(['error' => 'Missing token']); exit; }
 		if (!$text)  { http_response_code(400); echo json_encode(['error' => 'Message required']); exit; }
 		$found = null;
@@ -1077,13 +1084,40 @@ if (isset($_GET['mobile'])) {
 				$msgId = (int)(end($msgs)['id'] ?? 0) + 1;
 				$msgs[] = ['id' => $msgId, 'ts' => time(), 'from' => $found['callsign'],
 				           'from_label' => $found['name'] ?? $found['callsign'],
-				           'to' => 'web', 'to_label' => 'web', 'text' => $text, 'broadcast' => false];
+				           'to' => $toWeb !== '' ? $toWeb : 'web',
+				           'to_label' => $toWeb !== '' ? $toWeb : 'web', 'text' => $text, 'broadcast' => false];
 				ftruncate($fh, 0); rewind($fh);
 				fwrite($fh, json_encode($msgs, JSON_PRETTY_PRINT) . "\n");
 				flock($fh, LOCK_UN); fclose($fh);
 			}
 		}
 		echo json_encode(['ok' => true, 'id' => $msgId]);
+		exit;
+	}
+
+	if ($action === 'web_recipients') {
+		// List web operators currently monitoring messages (active in last 60 s),
+		// so the app can offer a destination picker. Requires a valid tracker
+		// token before revealing operator names.
+		$token = $input['token'] ?? '';
+		if (!$token) { http_response_code(400); echo json_encode(['error' => 'Missing token']); exit; }
+		$isTracker = false;
+		$fh = fopen($mobileFile, 'r');
+		if ($fh) { flock($fh, LOCK_SH); $d = json_decode(stream_get_contents($fh), true) ?: []; flock($fh, LOCK_UN); fclose($fh);
+			$trackers = isset($d['trackers']) ? $d['trackers'] : $d;
+			foreach ($trackers as $t) { if (!empty($t['token']) && hash_equals($t['token'], $token)) { $isTracker = true; break; } } }
+		if (!$isTracker) { http_response_code(404); echo json_encode(['error' => 'Token not found']); exit; }
+		$webSessionsFile = '/run/aprs/web_sessions.json';
+		$names = [];
+		if (file_exists($webSessionsFile)) {
+			$fh = fopen($webSessionsFile, 'r');
+			if ($fh) { flock($fh, LOCK_SH); $sessions = json_decode(stream_get_contents($fh), true) ?: []; flock($fh, LOCK_UN); fclose($fh);
+				foreach ($sessions as $s) {
+					if (!empty($s['name']) && !empty($s['ts']) && (time() - (int)$s['ts']) < 60) $names[$s['name']] = true;
+				}
+			}
+		}
+		echo json_encode(['recipients' => array_keys($names)]);
 		exit;
 	}
 
@@ -2359,6 +2393,13 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 		</div>
 		<div id="msg-compose-error" style="color:#c0392b;font-size:13px;min-height:18px;margin-top:6px"></div>
 		<button id="msg-compose-send" style="margin-top:8px">Send</button>
+			<div id="msg-sound-ctl" style="margin-top:12px;padding-top:10px;border-top:1px solid #eee">
+				<label for="msg-sound-vol" style="font-size:12px;color:#555;display:block;margin-bottom:4px">🔔 Incoming message sound</label>
+				<div style="display:flex;align-items:center;gap:8px">
+					<input type="range" id="msg-sound-vol" min="0" max="100" step="5" value="70" style="flex:1" title="Volume for the tone played when a message arrives (0 = off)">
+					<span id="msg-sound-vol-val" style="font-size:12px;color:#555;width:34px;text-align:right">70%</span>
+				</div>
+			</div>
 		<div style="margin-top:12px;padding-top:10px;border-top:1px solid #eee;display:flex;justify-content:space-between">
 			<a href="#" id="msg-compose-rename-link" style="font-size:12px;color:#555;text-decoration:none">Change my name</a>
 			<a href="#" id="msg-compose-disable-link" style="font-size:12px;color:#c0392b;text-decoration:none">Disable messaging</a>
@@ -5280,16 +5321,21 @@ let _msgPollTimer = null;
 let _msgLog       = [];   // [{id, ts, from, from_label, to, to_label, text}]
 let _msgEnabled   = false;
 const _msgNotifiedIds = new Set(); // tracks IDs already shown as modals
+let _msgSeenId = 0;                // highest message id the user has actually been shown (persisted)
 
 // Restore saved subscription from localStorage
 try {
 	const _saved = JSON.parse(localStorage.getItem('aprs_msg_session') || 'null');
 	if (_saved?.token) { _msgToken = _saved.token; _msgName = _saved.name; _msgLastId = _saved.last_id || 0; }
+	// Last message the user actually saw. Absent (existing users) → treat their
+	// current position as seen so old history doesn't flood in on first load.
+	const _seenRaw = localStorage.getItem('aprs_msg_seen_id');
+	_msgSeenId = (_seenRaw != null && isFinite(parseInt(_seenRaw, 10))) ? parseInt(_seenRaw, 10) : (_saved?.last_id || 0);
 } catch {}
 
 function _msgIsSubscribed() { return !!_msgToken; }
 
-async function _loadMsgHistory() {
+async function _loadMsgHistory(markAllSeen = false) {
 	if (!_msgToken) return false;
 	try {
 		const r = await fetch('index.php?messaging=history', {
@@ -5309,8 +5355,22 @@ async function _loadMsgHistory() {
 			const _s = JSON.parse(localStorage.getItem('aprs_msg_session') || 'null');
 			if (_s) { _s.last_id = _msgLastId; localStorage.setItem('aprs_msg_session', JSON.stringify(_s)); }
 		} catch {}
-		// Mark all history as seen — modals only fire for messages arriving via poll after page load
-		for (const m of _msgLog) _msgNotifiedIds.add(m.id);
+		if (markAllSeen) {
+			// Fresh subscribe: everything already on the server counts as seen.
+			for (const m of _msgLog) _msgNotifiedIds.add(m.id);
+			_markMsgSeen(_msgLastId);
+		} else {
+			// Returning to the page: replay RECEIVED messages that arrived while
+			// we were away (id > last seen) and were never shown, in order.
+			const _pending = [];
+			for (const m of _msgLog) {
+				if (m.id <= _msgSeenId) { _msgNotifiedIds.add(m.id); }
+				else if (m.from !== "web") { _pending.push(m); }
+			}
+			_pending.sort((a, b) => a.id - b.id);
+			for (const m of _pending) { _msgNotifiedIds.add(m.id); _enqueueMsgModal(m); }
+			_markMsgSeen(_msgLastId);
+		}
 		return true;
 	} catch {}
 	return true; // network error — keep token, polling will detect if truly gone
@@ -5355,7 +5415,7 @@ async function _autoSubscribe(password, name) {
 		// from login.txt on the next reload cleanly unsubscribes this client
 		try { localStorage.removeItem('aprs_msg_session'); } catch {}
 		_setSubscribedUI(true);
-		await _loadMsgHistory();
+		await _loadMsgHistory(true);
 		_startMsgPoll();
 	} catch {}
 }
@@ -5378,7 +5438,7 @@ document.getElementById('msg-sub-submit').addEventListener('click', async () => 
 		try { localStorage.setItem('aprs_msg_session', JSON.stringify({token: _msgToken, name: _msgName, last_id: 0})); } catch {}
 		document.getElementById('msg-sub-modal').style.display = 'none';
 		_setSubscribedUI(true);
-		await _loadMsgHistory();
+		await _loadMsgHistory(true);
 		_startMsgPoll();
 	} catch { errEl.textContent = 'Connection error. Please try again.'; }
 });
@@ -5460,6 +5520,24 @@ function _showComposeModal(toCallsign, toLabel, prefill) {
 	setTimeout(() => document.getElementById('msg-compose-text').focus(), 50);
 }
 document.getElementById('msg-compose-backdrop').addEventListener('click', () => document.getElementById('msg-compose-modal').style.display = 'none');
+// Incoming-message sound volume control (lives in the Send Message modal).
+// Slider 0..100 maps to the stored 0..1 volume; 0 = off. Adjusting it previews
+// the tone at the chosen level (the drag also unlocks the AudioContext).
+(function initMsgSoundCtl() {
+	const slider = document.getElementById('msg-sound-vol');
+	const label  = document.getElementById('msg-sound-vol-val');
+	if (!slider || !label) return;
+	const render = pct => { label.textContent = pct > 0 ? pct + '%' : 'Off'; };
+	const pct0 = Math.round(_getMsgVolume() * 100);
+	slider.value = pct0; render(pct0);
+	slider.addEventListener('input', () => render(parseInt(slider.value, 10)));
+	slider.addEventListener('change', () => {
+		const pct = parseInt(slider.value, 10);
+		_setMsgVolume(pct / 100);
+		_warmMsgAudio();               // slider drag is a user gesture — unlock audio
+		if (pct > 0) _playMsgTone();   // preview the chosen level
+	});
+})();
 document.getElementById('msg-compose-close').addEventListener('click',    () => document.getElementById('msg-compose-modal').style.display = 'none');
 document.getElementById('msg-compose-broadcast').addEventListener('change', function() {
 	const modal = document.getElementById('msg-compose-modal');
@@ -5567,20 +5645,55 @@ function _getMsgAudioCtx() {
 function _warmMsgAudio() {
 	try { _getMsgAudioCtx().resume(); } catch {}
 }
+// Browsers keep an AudioContext suspended until the user has interacted with the
+// page, so a tone fired from the message poll (no gesture) stays silent. Unlock
+// it on the first user interaction, and re-resume whenever the tab regains focus
+// (browsers suspend audio in background tabs). After this, message-arrival tones
+// play without needing the subscribe/slider gesture each time.
+['pointerdown', 'keydown', 'touchstart'].forEach(evt =>
+	window.addEventListener(evt, _warmMsgAudio, { passive: true }));
+document.addEventListener('visibilitychange', () => { if (!document.hidden) _warmMsgAudio(); });
+// Message-tone volume: a 0..1 fraction stored in localStorage. 0 = muted.
+// The fraction scales up to MSG_MAX_GAIN (kept below 1.0 so a beep does not
+// clip). Default 0.7 — noticeably louder than the old 0.35.
+const MSG_MAX_GAIN = 0.8;
+function _getMsgVolume() {
+	let v = parseFloat(localStorage.getItem('aprs_msg_volume'));
+	if (!isFinite(v)) v = 0.7;
+	return Math.max(0, Math.min(1, v));
+}
+function _setMsgVolume(v) {
+	try { localStorage.setItem('aprs_msg_volume', String(Math.max(0, Math.min(1, v)))); } catch {}
+}
 function _playMsgTone() {
 	try {
+		const vol = _getMsgVolume();
+		if (vol <= 0) return; // muted
+		const peak = vol * MSG_MAX_GAIN;
 		const ctx = _getMsgAudioCtx();
 		ctx.resume().then(() => {
-			const osc1 = ctx.createOscillator();
-			const osc2 = ctx.createOscillator();
-			const gain = ctx.createGain();
-			osc1.connect(gain); osc2.connect(gain); gain.connect(ctx.destination);
-			osc1.frequency.value = 880; osc2.frequency.value = 1109;
-			gain.gain.setValueAtTime(0, ctx.currentTime);
-			gain.gain.linearRampToValueAtTime(0.35, ctx.currentTime + 0.05);
-			gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.7);
-			osc1.start(); osc2.start(ctx.currentTime + 0.25);
-			osc1.stop(ctx.currentTime + 0.7); osc2.stop(ctx.currentTime + 0.7);
+			const t0 = ctx.currentTime;
+			// Urgent "dee-doo-dee-doo" warble. Square wave = harsh harmonics that
+			// cut through ambient noise far better than a pure sine chime.
+			const _beeps = [
+				{ f: 988,  at: 0.00, dur: 0.13 },
+				{ f: 1319, at: 0.17, dur: 0.13 },
+				{ f: 988,  at: 0.34, dur: 0.13 },
+				{ f: 1319, at: 0.51, dur: 0.24 },
+			];
+			for (const _b of _beeps) {
+				const osc = ctx.createOscillator();
+				const g   = ctx.createGain();
+				osc.type = 'square';
+				osc.frequency.value = _b.f;
+				osc.connect(g); g.connect(ctx.destination);
+				const s = t0 + _b.at, e = s + _b.dur;
+				g.gain.setValueAtTime(0, s);
+				g.gain.linearRampToValueAtTime(peak, s + 0.008);
+				g.gain.setValueAtTime(peak, e - 0.03);
+				g.gain.exponentialRampToValueAtTime(0.0008, e);
+				osc.start(s); osc.stop(e + 0.02);
+			}
 		});
 	} catch {}
 }
@@ -5591,8 +5704,23 @@ let _msgModalOpen = false;
 // messages that arrived while the Pi was offline (history-fail race condition).
 const _msgStartupTs = Date.now();
 
+function _markMsgSeen(id) {
+	if (id > _msgSeenId) {
+		_msgSeenId = id;
+		try { localStorage.setItem('aprs_msg_seen_id', String(_msgSeenId)); } catch {}
+	}
+}
+// Guarded entry used by the live poll: suppress the brief autologin-startup
+// window (avoids replaying stale messages during a history-fail race).
 function _showMsgModal(msg) {
 	if (window._aprsAutoMsgPw && Date.now() - _msgStartupTs < 8000) return;
+	_enqueueMsgModal(msg);
+}
+// Actually display a message: mark it seen, play the tone, queue the modal.
+// Called directly (no autologin guard) for messages replayed from a confirmed
+// history fetch when returning to the page.
+function _enqueueMsgModal(msg) {
+	_markMsgSeen(msg.id);
 	_playMsgTone();
 	_msgQueue.push(msg);
 	if (!_msgModalOpen) _showNextMsgModal();
