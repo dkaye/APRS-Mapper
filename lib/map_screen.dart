@@ -588,6 +588,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             iOS: DarwinNotificationDetails(
               presentAlert: true,
               presentSound: true,
+              // Custom alert sound bundled in the Runner app (ios/Runner/message.wav).
+              // Still obeys the silent switch / Focus like any notification sound.
+              sound: 'message.wav',
               presentBadge: true,
               interruptionLevel: InterruptionLevel.timeSensitive,
             ),
