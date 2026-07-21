@@ -205,10 +205,16 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     if (Platform.isAndroid) {
       final android = _notifPlugin
           .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+      // Old channel had the default sound; a channel's sound is immutable once
+      // created, so move to a new channel id to deliver the custom alert sound
+      // to existing installs.
+      await android?.deleteNotificationChannel(channelId: 'aprs_msg');
       await android?.createNotificationChannel(const AndroidNotificationChannel(
-        'aprs_msg',
+        'aprs_msg_2',
         'APRS Messages',
         importance: Importance.max,
+        playSound: true,
+        sound: RawResourceAndroidNotificationSound('message'),
       ));
       await android?.requestFullScreenIntentPermission();
       WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -567,12 +573,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           body: msg.text,
           notificationDetails: NotificationDetails(
             android: AndroidNotificationDetails(
-              'aprs_msg',
+              'aprs_msg_2',
               'APRS Messages',
               importance: Importance.max,
               priority: Priority.max,
               fullScreenIntent: true,
               playSound: true,
+              sound: const RawResourceAndroidNotificationSound('message'),
               enableVibration: true,
               vibrationPattern: Int64List.fromList([0, 400, 200, 400, 200, 400]),
               autoCancel: true,
