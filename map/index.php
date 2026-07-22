@@ -104,6 +104,10 @@ if (isset($_GET['json'])) {
 			$activeMobile[$cs] = ['id' => $displayId, 'tracker_id' => $t['id'], 'name' => $t['name'],
 				'sharing_mode' => ($t['sharing_mode'] ?? '') ?: ($t['pending_mode'] ?? ''), 'lastUpdate' => (int)($t['lastUpdate'] ?? 0),
 				'lat' => $t['aprs_lat'] ?? null, 'lon' => $t['aprs_lon'] ?? null,
+				// When the position itself was taken — may lag lastUpdate if the app
+				// sent a heartbeat with no fix. Used to age-compare against the
+				// daemon's position below.
+				'pos_ts' => (int)($t['aprs_ts'] ?? ($t['lastUpdate'] ?? 0)),
 				'ham_callsign' => $t['ham_callsign'] ?? null, 'has_session' => $hasSession,
 				'carrier' => $t['device_info']['carrier'] ?? null];
 		}
@@ -146,7 +150,17 @@ if (isset($_GET['json'])) {
 			}
 			if ($hd && !empty($hd['radio_type'])) $t['radio_type'] = $hd['radio_type'];
 		}
-		if ($am['lat'] !== null && $t['lat'] === null) { $t['lat'] = $am['lat']; $t['lon'] = $am['lon']; }
+		// Position = whichever source reported most recently. This used to fill in
+		// the app's position ONLY when the daemon had none, so once trackers.json
+		// held any fix — however old — it pinned the marker there permanently.
+		// Because the age/colour below still took the app's fresh timestamp, the
+		// marker rendered green and current at a position hours out of date, which
+		// is worse than showing it stale. Seen 2026-07-22: mobiles drawn up to
+		// 20 km from where they actually were, for hours.
+		if ($am['lat'] !== null && ($t['lat'] === null || $am['pos_ts'] > ($t['lastUpdate'] ?? 0))) {
+			$t['lat'] = $am['lat'];
+			$t['lon'] = $am['lon'];
+		}
 		if ($am['lastUpdate'] > ($t['lastUpdate'] ?? 0)) {
 			$age = $_now - $am['lastUpdate'];
 			$t['lastUpdate']          = $am['lastUpdate'];
