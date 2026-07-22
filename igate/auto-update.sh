@@ -53,6 +53,22 @@ sudo rsync -a "$TMP/systemd/" /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl restart stats-listener 2>/dev/null || true
 
+# ── Headless: drop the unused desktop ────────────────────────────────────────
+# The TFT is driven by direwatch over GPIO, not X, so lightdm has nothing to do
+# but fail at every boot. Beyond the wasted RAM and boot time, a permanently
+# failed unit hides real ones — `systemctl --failed` stops being a useful health
+# check when there is always something sitting in it. Idempotent: no-ops once
+# converged, so it costs nothing on subsequent nightly runs.
+if systemctl is-enabled lightdm >/dev/null 2>&1; then
+    log "Disabling unused desktop manager (lightdm)..."
+    sudo systemctl disable lightdm >/dev/null 2>&1 || true
+    sudo systemctl reset-failed lightdm >/dev/null 2>&1 || true
+fi
+if [ "$(systemctl get-default 2>/dev/null)" = "graphical.target" ]; then
+    log "Setting default boot target to multi-user (headless)..."
+    sudo systemctl set-default multi-user.target >/dev/null 2>&1 || true
+fi
+
 # Log rotation config
 if [ -f "$TMP/etc/logrotate.d/aprs" ]; then
     sudo cp "$TMP/etc/logrotate.d/aprs" /etc/logrotate.d/aprs
