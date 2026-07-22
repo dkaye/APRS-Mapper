@@ -133,10 +133,14 @@ For future updates, open TestFlight and tap **Update** next to APRS Map.
 
 #### Android
 
-1. Open the email from the event coordinator and tap the APK download link.
+1. On your Android phone or tablet, go to **[marsaprs.org/app](https://marsaprs.org/app/)**
+   and tap **Download the App**. This link always serves the current release, so it is
+   worth bookmarking.
 2. When prompted, open the file with **Package Installer**.
 3. If Android warns that the app is from an unknown source, tap **More details** → **Install anyway**.
 4. Tap **Open** when installation completes.
+
+To update later, download from the same link and install over the top — your settings are kept.
 
 The first time you run the app it will ask for location permission — tap **Allow**. When you first tap Share Location the app will also ask for notification and battery permissions; grant both (see [Share Location in the App](#share-location-in-the-app)).
 

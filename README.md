@@ -477,7 +477,30 @@ flutter pub get
 flutter build apk --release
 ```
 
-The signed APK is at `build/app/outputs/flutter-apk/app-release.apk`.
+The signed APK is at `build/app/outputs/flutter-apk/app-release.apk`. This is a
+**universal** APK (arm64-v8a, armeabi-v7a, x86_64 in one file) — do not use
+`--split-per-abi` for direct download, since the recipient would have to know their
+device's architecture and the wrong pick fails to install.
+
+**Publishing it** — copy to the Pi under a versioned name; the download page picks up
+the newest automatically:
+
+```bash
+cp build/app/outputs/flutter-apk/app-release.apk ~/Downloads/aprs-map-<version>-<build>.apk
+rsync -avz ~/Downloads/aprs-map-<version>-<build>.apk pi@192.168.0.180:/var/www/html/app/
+```
+
+| URL | Purpose |
+|---|---|
+| `https://marsaprs.org/app/` | Landing page — version, size, SHA-256, install steps |
+| `https://marsaprs.org/app/download.php` | **Permanent** download link; 302s to the newest APK |
+
+`map/app/` holds `index.php`, `download.php` and `_apk.php`; the APKs themselves are
+gitignored and live only on the Pi. The filename must match
+`aprs-map-<major>.<minor>.<patch>-<build>.apk` or it is ignored, and the highest build
+number wins. The stable URL redirects rather than being a fixed filename that gets
+overwritten, so Cloudflare and browser caches can't pin an old release to it — and old
+versions stay downloadable at their own paths.
 
 **Release signing** requires `android/key.properties` (gitignored):
 

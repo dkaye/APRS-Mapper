@@ -782,7 +782,21 @@ flutter build ios --release --no-codesign
 flutter pub get
 flutter build apk --release
 </code></pre>
-<p>The signed APK is at <code>build/app/outputs/flutter-apk/app-release.apk</code>.</p>
+<p>The signed APK is at <code>build/app/outputs/flutter-apk/app-release.apk</code>. This is a <strong>universal</strong> APK (arm64-v8a, armeabi-v7a, x86_64 in one file) — do not use <code>--split-per-abi</code> for direct download, since the recipient would have to know their device's architecture and the wrong pick fails to install.</p>
+<p><strong>Publishing it</strong> — copy to the Pi under a versioned name; the download page picks up the newest automatically:</p>
+<pre><code class="language-bash">cp build/app/outputs/flutter-apk/app-release.apk ~/Downloads/aprs-map-&lt;version&gt;-&lt;build&gt;.apk
+rsync -avz ~/Downloads/aprs-map-&lt;version&gt;-&lt;build&gt;.apk pi@192.168.0.180:/var/www/html/app/
+</code></pre>
+<table>
+<thead>
+<tr><th>URL</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>https://marsaprs.org/app/</code></td><td>Landing page — version, size, SHA-256, install steps</td></tr>
+<tr><td><code>https://marsaprs.org/app/download.php</code></td><td><strong>Permanent</strong> download link; 302s to the newest APK</td></tr>
+</tbody>
+</table>
+<p><code>map/app/</code> holds <code>index.php</code>, <code>download.php</code> and <code>_apk.php</code>; the APKs themselves are gitignored and live only on the Pi. The filename must match <code>aprs-map-&lt;major&gt;.&lt;minor&gt;.&lt;patch&gt;-&lt;build&gt;.apk</code> or it is ignored, and the highest build number wins. The stable URL redirects rather than being a fixed filename that gets overwritten, so Cloudflare and browser caches can't pin an old release to it — and old versions stay downloadable at their own paths.</p>
 <p><strong>Release signing</strong> requires <code>android/key.properties</code> (gitignored):</p>
 <pre><code>storePassword=&lt;password&gt;
 keyPassword=&lt;password&gt;
