@@ -2,7 +2,7 @@
 
 **Author:** Doug Kaye (K6DRK) · **Copyright:** 2026 Doug Kaye. All Rights Reserved.
 
-**Version:** Server & Displays (v1.20.0); Mobile App (v1.20.0); iGates (v5.0)
+**Version:** Server & Displays (v1.20.1); Mobile App (v1.20.1); iGates (v5.0)
 
 ---
 
@@ -12,10 +12,10 @@
 2. [System Architecture](#system-architecture)
 3. [NetBird VPN](#netbird-vpn)
 4. [iGates (v5.0)](#igates-v50)
-5. [APRS Server (v1.20.0)](#aprs-server-v1201)
+5. [APRS Server (v1.20.1)](#aprs-server-v1201)
    - [Cloudflare Tunnel](#cloudflare-tunnel)
-6. [Display Pis (v1.20.0)](#display-pis-v1201)
-7. [Mobile Apps (v1.20.0)](#mobile-apps-v1201)
+6. [Display Pis (v1.20.1)](#display-pis-v1201)
+7. [Mobile Apps (v1.20.1)](#mobile-apps-v1201)
    - [Architecture](#app-architecture) · [Location Sharing Flow](#location-sharing-flow) · [Smart Track](#smart-track) · [Building & Distributing](#building-distributing) · [Background Location](#background-location)
 8. [User Interfaces](#user-interfaces)
 9. [Authentication](#authentication)
@@ -74,18 +74,18 @@ APRS Radio (144.39 MHz)
            ▼
 ┌──────────────────────────────────────┐     ┌──────────────────────────────┐
 │           APRS-IS Network            │◀────│  Mobile App  (iOS/Android)   │
-│         noam.aprs2.net:14580         │     │  Flutter v1.20.0               │
+│         noam.aprs2.net:14580         │     │  Flutter v1.20.1               │
 └────────────────┬─────────────────────┘     │  TCP 14580 (inject position) │
                  │ TCP 14580                 └──────────────┬───────────────┘
 ┌────────────────▼─────────────────────┐                    │ HTTPS (map + config + session)
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.20.0      │
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.20.1      │
 │  aprsDaemon.php → trackers.json      │◀───────────────────┘
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.20.0
+│  Display Pi  (×2)      │  Pi 4 · v1.20.1
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -190,7 +190,7 @@ Log: `/var/log/direwolf/watchdog.log`
 
 ---
 
-## APRS Server (v1.20.0)
+## APRS Server (v1.20.1)
 
 The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
 APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
@@ -276,7 +276,7 @@ The tunnel token is obtained from the **Cloudflare Zero Trust dashboard**:
 
 ---
 
-## Display Pis (v1.20.0)
+## Display Pis (v1.20.1)
 
 A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
 `marsaprs.org`. It is a read-only display device — no long-term local configuration or data storage.
@@ -323,7 +323,7 @@ For details on using the map, see [USERGUIDE.MD](https://marsaprs.org/userguide.
 
 ---
 
-## Mobile Apps (v1.20.0)
+## Mobile Apps (v1.20.1)
 
 Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.
 
@@ -538,7 +538,7 @@ To distribute: share the APK via Google Drive or email. Testers tap the download
 
 **Each release:**
 
-1. Bump `version` in `pubspec.yaml` (e.g. `1.19.1+8` → `1.20.0+9` — the build number after `+` must increase with each upload).
+1. Bump `version` in `pubspec.yaml` (e.g. `1.20.0+9` → `1.20.1+10` — the build number after `+` must increase with each upload).
 2. Build a signed App Bundle (AAB):
    ```bash
    flutter build appbundle --release

@@ -15,7 +15,7 @@
  *   ?config  Map/background/course/tracker config from config.yaml (ETag-cached)
  */
 
-define('WEB_VERSION', '1.20.0+9');
+define('WEB_VERSION', '1.20.1+10');
 
 // ── Client/server API contract version ────────────────────────────────────────
 // Advertised in the ?json and ?config responses so mobile apps can detect an
@@ -108,6 +108,9 @@ if (isset($_GET['json'])) {
 				// sent a heartbeat with no fix. Used to age-compare against the
 				// daemon's position below.
 				'pos_ts' => (int)($t['aprs_ts'] ?? ($t['lastUpdate'] ?? 0)),
+				// Fix quality, app 1.20.1+10 and later; null for older apps.
+				'acc'    => isset($t['aprs_acc']) ? (float)$t['aprs_acc'] : null,
+				'fix_ts' => isset($t['aprs_fix_ts']) ? (int)$t['aprs_fix_ts'] : null,
 				'ham_callsign' => $t['ham_callsign'] ?? null, 'has_session' => $hasSession,
 				'carrier' => $t['device_info']['carrier'] ?? null];
 		}
@@ -160,6 +163,12 @@ if (isset($_GET['json'])) {
 		if ($am['lat'] !== null && ($t['lat'] === null || $am['pos_ts'] > ($t['lastUpdate'] ?? 0))) {
 			$t['lat'] = $am['lat'];
 			$t['lon'] = $am['lon'];
+			// Quality belongs to the app fix, so only attach it when that fix is
+			// the one being displayed — never label a radio position with it.
+			if ($am['acc'] !== null) $t['accuracy'] = $am['acc'];
+			if ($am['fix_ts'] !== null && $am['fix_ts'] > 0) {
+				$t['fix_age'] = max(0, $am['pos_ts'] - $am['fix_ts']);
+			}
 		}
 		if ($am['lastUpdate'] > ($t['lastUpdate'] ?? 0)) {
 			$age = $_now - $am['lastUpdate'];
@@ -193,6 +202,10 @@ if (isset($_GET['json'])) {
 			if ($ms['sharing_mode'] !== '') $entry['sharing_mode'] = $ms['sharing_mode'];
 			if ($ms['ham_callsign'] !== null) $entry['ham_callsign'] = $ms['ham_callsign'];
 			if ($ms['carrier'] !== null) $entry['carrier'] = $ms['carrier'];
+			if ($ms['acc'] !== null) $entry['accuracy'] = $ms['acc'];
+			if ($ms['fix_ts'] !== null && $ms['fix_ts'] > 0) {
+				$entry['fix_age'] = max(0, $ms['pos_ts'] - $ms['fix_ts']);
+			}
 			$trackers[] = $entry;
 		}
 	}
@@ -1026,6 +1039,12 @@ if (isset($_GET['mobile'])) {
 		$token   = $input['token'] ?? '';
 		$lat     = isset($input['lat']) ? round((float)$input['lat'], 6) : null;
 		$lon     = isset($input['lon']) ? round((float)$input['lon'], 6) : null;
+		// Optional since app 1.20.1+10. `acc` = 68%-confidence radius in metres;
+		// `fix_ts` = when the phone's OS computed the fix (NOT when it was sent),
+		// so a cached position sent minutes later is detectable. Older apps omit
+		// both and simply carry no quality information.
+		$acc     = isset($input['acc']) && is_numeric($input['acc']) ? round((float)$input['acc'], 1) : null;
+		$fixTs   = isset($input['fix_ts']) ? (int)$input['fix_ts'] : null;
 		$ackIds  = array_map('intval', $input['ack_ids'] ?? []);
 		$rawMode = trim($input['sharing_mode'] ?? '');
 		if ($rawMode === 'drive_cycle') $rawMode = 'drive';
@@ -1034,7 +1053,7 @@ if (isset($_GET['mobile'])) {
 
 		$found = false; $blocked = false; $foundCallsign = null; $foundHamCallsign = null; $foundName = ''; $pendingMsgs = []; $pendingMode = '';
 		$shouldInject = false;
-		modifyMobileTrackers($mobileFile, function($data) use ($token, $lat, $lon, $ackIds, $updMode, &$found, &$blocked, &$foundCallsign, &$foundHamCallsign, &$foundName, &$pendingMsgs, &$pendingMode, &$shouldInject) {
+		modifyMobileTrackers($mobileFile, function($data) use ($token, $lat, $lon, $acc, $fixTs, $ackIds, $updMode, &$found, &$blocked, &$foundCallsign, &$foundHamCallsign, &$foundName, &$pendingMsgs, &$pendingMode, &$shouldInject) {
 			$now = time();
 			foreach ($data as &$t) {
 				if (empty($t['token']) || !hash_equals($t['token'], $token)) continue;
@@ -1065,6 +1084,11 @@ if (isset($_GET['mobile'])) {
 						$t['aprs_lat'] = $lat;
 						$t['aprs_lon'] = $lon;
 						$t['aprs_ts']  = $now;
+						// Quality of THIS fix. Cleared when absent so a tracker
+						// that downgrades to an older app can't keep showing a
+						// stale accuracy from a previous beacon.
+						if ($acc !== null) $t['aprs_acc'] = $acc; else unset($t['aprs_acc']);
+						if ($fixTs !== null && $fixTs > 0) $t['aprs_fix_ts'] = $fixTs; else unset($t['aprs_fix_ts']);
 					}
 				}
 				break;
@@ -2398,7 +2422,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 			<button id="qs-close">&times;</button>
 		</div>
 		<div id="qs-body">
-			<div class="qs-ver">Version <?= WEB_VERSION ?> &middot; July 21, 2026</div>
+			<div class="qs-ver">Version <?= WEB_VERSION ?> &middot; July 22, 2026</div>
 			<div class="qs-note">You can reopen this guide anytime from <strong>Help &rarr; Quick Start</strong>.</div>
 
 			<div class="qs-sec">
@@ -3286,6 +3310,11 @@ function makeTrackerIcon(shape, fillColor, size) {
 	return L.divIcon({ html: svg, className: 'tracker-marker', iconSize: [d, d], iconAnchor: [sz, sz], popupAnchor: [0, -sz] });
 }
 
+// Break a breadcrumb trail when consecutive crumbs are more than this far apart
+// in time. Well beyond any normal beacon interval (15 s driving … 2 min parked),
+// so it only fires on a genuine reporting gap.
+const TRAIL_GAP_BREAK_SEC = 900;   // 15 minutes
+
 function _mapTip(text, ms = 5000) {
 	const el = document.createElement('div');
 	el.textContent = text;
@@ -3294,11 +3323,32 @@ function _mapTip(text, ms = 5000) {
 	setTimeout(() => el.remove(), ms);
 }
 
+// Fix-quality line for mobile trackers. Silent when the position is good, and
+// silent for apps older than 1.20.1+10, which send no quality data — absence of
+// a warning therefore means "no reason to doubt it", never "verified good".
+// Thresholds: GPS is typically <20 m; Wi-Fi positioning tens of metres; a
+// cell-tower estimate hundreds to thousands.
+const FIX_ACC_WARN = 100;   // metres
+const FIX_AGE_WARN = 120;   // seconds between the fix and the beacon carrying it
+function fixQualityHtml(t) {
+	const bits = [];
+	if (typeof t.accuracy === 'number' && t.accuracy >= FIX_ACC_WARN) {
+		bits.push(`accurate to about ${Math.round(t.accuracy)} m`);
+	}
+	if (typeof t.fix_age === 'number' && t.fix_age >= FIX_AGE_WARN) {
+		const m = Math.round(t.fix_age / 60);
+		bits.push(`fix was ${m} min old when sent`);
+	}
+	if (!bits.length) return '';
+	return `<div style="color:#c0392b;font-size:11px;margin-top:3px">⚠ ${esc(bits.join(' · '))}</div>`;
+}
+
 function popupHtml(t) {
 	let html = `<b>${esc(t.name)}</b> (${esc(t.id)})<br>${esc(t.callsign)}<br>Last heard ${esc(t.time)} ago`;
 	if (t.mobile) {
 		const carrier = t.carrier ? ` · ${esc(t.carrier)}` : '';
 		html += `<div class="popup-path" style="color:#555;font-style:italic">Mobile device${carrier}</div>`;
+		html += fixQualityHtml(t);
 	} else if (t.path) {
 		html += `<div class="popup-path">${formatAprsPath(t.path)}</div>`;
 	}
@@ -3417,12 +3467,21 @@ function showTrackerHistory(callsign, color) {
 
 				// Connecting lines oldest → newest [→ current marker if cellular]
 				const ordered = [...trailEntries].reverse();
-				const pts = ordered.map(e => [e.lat, e.lon]);
+				const pts = ordered.map(e => [e.lat, e.lon, e.ts]);
 				const cur = connectToCurrent ? markers[callsign] : null;
-				if (cur) pts.push([cur.getLatLng().lat, cur.getLatLng().lng]);
+				// ts null = the live marker; never gap-broken, since it is the
+				// same fix as the newest crumb.
+				if (cur) pts.push([cur.getLatLng().lat, cur.getLatLng().lng, null]);
 
 				for (let i = 0; i < pts.length - 1; i++) {
-					const [lat1, lon1] = pts[i], [lat2, lon2] = pts[i + 1];
+					const [lat1, lon1, ts1] = pts[i], [lat2, lon2, ts2] = pts[i + 1];
+					// Leave a break where the tracker stopped reporting. Joining
+					// across a gap draws a confident line through country nobody
+					// observed, and reads as travel: M077 on 2026-07-22 showed a
+					// 19 km line across Marin that was really a 19-hour silence
+					// with the phone moved in between. Two disconnected clusters
+					// are honest; a straight line is not.
+					if (ts1 != null && ts2 != null && (ts2 - ts1) > TRAIL_GAP_BREAK_SEC) continue;
 					layers.push(L.polyline([[lat1, lon1], [lat2, lon2]], {
 						color: dotColor, weight: 3, dashArray: '4 7', opacity: 0.80, pane: 'historyPane'
 					}).addTo(map));

@@ -193,7 +193,7 @@
 <div id="content">
 <h1 id="mars-aprs-system">MARS APRS System</h1>
 <p><strong>Author:</strong> Doug Kaye (K6DRK) · <strong>Copyright:</strong> 2026 Doug Kaye. All Rights Reserved.</p>
-<p><strong>Version:</strong> Server &amp; Displays (v1.20.0); Mobile App (v1.20.0); iGates (v5.0)</p>
+<p><strong>Version:</strong> Server &amp; Displays (v1.20.1); Mobile App (v1.20.1); iGates (v5.0)</p>
 <hr />
 <h2 id="table-of-contents">Table of Contents</h2>
 <ol>
@@ -201,10 +201,10 @@
 <li><a href="#system-architecture">System Architecture</a></li>
 <li><a href="#netbird-vpn">NetBird VPN</a></li>
 <li><a href="#igates-v50">iGates (v5.0)</a></li>
-<li><a href="#aprs-server-v1201">APRS Server (v1.20.0)</a></li>
+<li><a href="#aprs-server-v1201">APRS Server (v1.20.1)</a></li>
 <li><a href="#cloudflare-tunnel">Cloudflare Tunnel</a></li>
-<li><a href="#display-pis-v1201">Display Pis (v1.20.0)</a></li>
-<li><a href="#mobile-apps-v1201">Mobile Apps (v1.20.0)</a></li>
+<li><a href="#display-pis-v1201">Display Pis (v1.20.1)</a></li>
+<li><a href="#mobile-apps-v1201">Mobile Apps (v1.20.1)</a></li>
 <li><a href="#app-architecture">Architecture</a> · <a href="#location-sharing-flow">Location Sharing Flow</a> · <a href="#smart-track">Smart Track</a> · <a href="#building-distributing">Building &amp; Distributing</a> · <a href="#background-location">Background Location</a></li>
 <li><a href="#user-interfaces">User Interfaces</a></li>
 <li><a href="#authentication">Authentication</a></li>
@@ -262,18 +262,18 @@ forwarding or static public IP addresses.</p>
            ▼
 ┌──────────────────────────────────────┐     ┌──────────────────────────────┐
 │           APRS-IS Network            │◀────│  Mobile App  (iOS/Android)   │
-│         noam.aprs2.net:14580         │     │  Flutter v1.20.0               │
+│         noam.aprs2.net:14580         │     │  Flutter v1.20.1               │
 └────────────────┬─────────────────────┘     │  TCP 14580 (inject position) │
                  │ TCP 14580                 └──────────────┬───────────────┘
 ┌────────────────▼─────────────────────┐                    │ HTTPS (map + config + session)
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.20.0      │
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.20.1      │
 │  aprsDaemon.php → trackers.json      │◀───────────────────┘
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.20.0
+│  Display Pi  (×2)      │  Pi 4 · v1.20.1
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -447,7 +447,7 @@ igate-watchdog.sh  (cron, every minute)
 </table>
 <p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code></p>
 <hr />
-<h2 id="aprs-server-v1201">APRS Server (v1.20.0)</h2>
+<h2 id="aprs-server-v1201">APRS Server (v1.20.1)</h2>
 <p>The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
 APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
 NetBird monitor and WiFi credential manager. It is reachable at <code>marsaprs.org</code> via a
@@ -552,7 +552,7 @@ sudo systemctl start cloudflared
 <p>The tunnel token is obtained from the <strong>Cloudflare Zero Trust dashboard</strong>:
 <em>Networks → Tunnels → \&lt;tunnel&gt; → Configure → Install and run connector</em></p>
 <hr />
-<h2 id="display-pis-v1201">Display Pis (v1.20.0)</h2>
+<h2 id="display-pis-v1201">Display Pis (v1.20.1)</h2>
 <p>A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
 <code>marsaprs.org</code>. It is a read-only display device — no long-term local configuration or data storage.
 Two display Pis are in use: <strong>NetControl</strong> (operator screen) and <strong>BigTV</strong> (large audience
@@ -587,7 +587,7 @@ keeps journal entries in RAM. Both configured via <code>files.tar.gz</code> and 
 <p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code> · VNC: <code>vnc://&lt;ip&gt;:5901</code></p>
 <p>For details on using the map, see <a href="https://marsaprs.org/userguide.html?back=/readme.html">USERGUIDE.MD</a>.</p>
 <hr />
-<h2 id="mobile-apps-v1201">Mobile Apps (v1.20.0)</h2>
+<h2 id="mobile-apps-v1201">Mobile Apps (v1.20.1)</h2>
 <p>Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.</p>
 <p><strong>Repository:</strong> <code>/Users/doug/aprs-map</code> (separate from this marsaprs repo)</p>
 <h3 id="app-architecture">App Architecture</h3>
@@ -823,7 +823,7 @@ storeFile=&lt;absolute path to .jks or .p12&gt;
 </ol>
 <p><strong>Each release:</strong></p>
 <ol>
-<li>Bump <code>version</code> in <code>pubspec.yaml</code> (e.g. <code>1.19.1+8</code> → <code>1.20.0+9</code> — the build number after <code>+</code> must increase with each upload).</li>
+<li>Bump <code>version</code> in <code>pubspec.yaml</code> (e.g. <code>1.20.0+9</code> → <code>1.20.1+10</code> — the build number after <code>+</code> must increase with each upload).</li>
 <li>Build a signed App Bundle (AAB):
    <code>bash
    flutter build appbundle --release</code>
