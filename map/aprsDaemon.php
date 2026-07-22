@@ -55,7 +55,12 @@ function debug($message) {
 
 function fatal($message) {
 	echo("FATAL: $message\n");
-	exit();
+	// Non-zero: a fatal IS a failure, and systemd's restart policy keys off the
+	// exit code. Bare exit() returns 0, so a dropped APRS-IS connection looked
+	// like a clean shutdown and Restart=on-failure declined to act — on
+	// 2026-07-22 that left the map frozen for 10 hours after a
+	// "Connection reset by peer".
+	exit(1);
 }
 
 if(!defined('APRS_DAEMON_INCLUDE_ONLY') && isset($argc) && $argc>1) {

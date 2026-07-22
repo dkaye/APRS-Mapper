@@ -10,10 +10,15 @@ Description=APRS Tracker Map Daemon
 Documentation=file:///var/www/html/README.MD
 After=network-online.target
 Wants=network-online.target
-# Give up after 5 crashes in 5 minutes; leaves service in failed state
+# Give up after 10 restarts in 30 minutes; leaves the service in failed state
 # so the problem is visible: systemctl status aprs-daemon
-StartLimitIntervalSec=300
-StartLimitBurst=5
+#
+# Deliberately more forgiving than the old 5-in-5-minutes: APRS-IS outages last
+# minutes, and the tight window meant a brief upstream failure exhausted the
+# budget and parked the daemon permanently — needing a human to notice. A real
+# crash loop (instant exit) still burns 10 restarts in ~5 min and stops.
+StartLimitIntervalSec=1800
+StartLimitBurst=10
 
 [Service]
 Type=simple
@@ -24,9 +29,17 @@ WorkingDirectory=/var/www/html
 ExecStart=/usr/local/bin/aprs-daemon.sh
 UMask=0002
 
-# Restart on any non-zero exit; not on clean shutdown (systemctl stop)
-Restart=on-failure
-RestartSec=10
+# Restart on ANY exit, including code 0. An explicit `systemctl stop` still
+# stops it for good — systemd never re-runs a unit it was told to stop.
+#
+# Was on-failure, which trusted the daemon to report failure honestly. It did
+# not: aprsDaemon.php's fatal() used a bare exit() (= 0), so losing the APRS-IS
+# connection read as a clean shutdown and the unit stayed down for 10 hours on
+# 2026-07-22. fatal() now exits 1, but this daemon has no business ever exiting
+# on its own, so Restart=always is the honest policy and removes the dependence
+# on every future exit path getting its code right.
+Restart=always
+RestartSec=30
 
 # systemd creates /run/aprs-daemon/ (PID file) and
 # /var/log/aprs-daemon/ (log file), both owned by www-data
