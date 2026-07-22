@@ -190,6 +190,7 @@ function initSessionPlayer(data, opts) {
     let showTracks           = true;
     let showRadio            = true;
     let showCellular         = true;
+    let showRadioLinks       = true;   // beacon → receiving igate/digipeater lines
     let showNames            = true;
     let selectedCarriers     = new Set(['all']);
 
@@ -290,7 +291,10 @@ function initSessionPlayer(data, opts) {
             const t     = fmtTime(b.time);
             const coord = [b.latitude, b.longitude];
 
-            if (!mob) {
+            // Radio links: only RF beacons are received by an igate/digipeater,
+            // so cellular positions (injected straight into APRS-IS) have no
+            // link to draw.
+            if (!mob && showRadioLinks) {
                 if (Object.hasOwn(b, 'rx_lat')) {
                     L.polyline([coord, [b.rx_lat, b.rx_lng]], {color:'red', weight:1}).addTo(trackerGroup);
                 } else if (Object.hasOwn(igates, b.receiver)) {
@@ -375,6 +379,19 @@ function initSessionPlayer(data, opts) {
         byId('show-tracks')?.addEventListener('change', e => { showTracks = e.target.checked; draw_tracker(); });
         byId('show-radio')?.addEventListener('change', e => { showRadio = e.target.checked; update_filtered_beacon_list(false); });
         byId('show-cellular')?.addEventListener('change', e => { showCellular = e.target.checked; update_filtered_beacon_list(false); });
+        byId('show-radio-links')?.addEventListener('change', e => {
+            showRadioLinks = e.target.checked;
+            // The links terminate on radio beacons, so turning them on without
+            // those beacons visible would leave lines pointing at nothing.
+            if (showRadioLinks && !showRadio) {
+                showRadio = true;
+                const rb = byId('show-radio');
+                if (rb) rb.checked = true;
+                update_filtered_beacon_list(false);   // redraws
+                return;
+            }
+            draw_tracker();
+        });
         byId('show-course')?.addEventListener('change', e => { e.target.checked ? map.addLayer(courseGroup) : map.removeLayer(courseGroup); });
         byId('show-names')?.addEventListener('change', e => {
             showNames = e.target.checked;
