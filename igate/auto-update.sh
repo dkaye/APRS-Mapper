@@ -84,6 +84,21 @@ if [ -f "$CFG" ] && ! grep -q "dashboardversion = \"$IGATE_VERSION\"" "$CFG"; th
     sudo sed -i -E 's/(\$dashboardversion *= *")[0-9]+\.[0-9]+(")/\1'"$IGATE_VERSION"'\2/' "$CFG"
 fi
 
+# Direwolf version is detected, not hard-coded: these gates build direwolf from
+# source, so `apt-cache policy` reports "(none)" and the dashboard's auto-detect
+# gives up. Read it from the binary's own banner instead (falling back to the
+# running log), then stamp the real value into config.php so the dashboard shows
+# the truth and stays correct across direwolf upgrades with no code change.
+DW_BIN=$(command -v direwolf 2>/dev/null || echo /usr/local/bin/direwolf)
+DW_VER=$({ timeout 3 "$DW_BIN" -c /dev/null 2>&1 || true; } \
+    | grep -oE 'Dire Wolf Release [0-9]+\.[0-9]+(\.[0-9]+)?' | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+[ -z "$DW_VER" ] && DW_VER=$(sudo grep -ohE 'Dire Wolf Release [0-9]+\.[0-9]+(\.[0-9]+)?' \
+    /var/log/direwolf/console.log 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+if [ -n "$DW_VER" ] && [ -f "$CFG" ] && ! grep -q "direwolfversion = \"$DW_VER\"" "$CFG"; then
+    log "Stamping detected Dire Wolf version $DW_VER into config.php..."
+    sudo sed -i -E 's/(\$direwolfversion *= *")[^"]*(")/\1'"$DW_VER"'\2/' "$CFG"
+fi
+
 DWC=/home/pi/direwolf.conf
 if [ -f "$DWC" ] && grep -qE 'comment="iGate [0-9]+\.[0-9]+ by' "$DWC" \
                  && ! grep -q "comment=\"iGate $IGATE_VERSION by" "$DWC"; then
