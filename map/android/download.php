@@ -1,6 +1,6 @@
 <?php
 /**
- * Permanent download URL: https://marsaprs.org/app/download.php
+ * Permanent download URL: https://marsaprs.org/android/download.php
  *
  * Redirects to the newest versioned APK. This indirection is the whole point:
  * the URL in emails, QR codes and the user guide never changes, while each

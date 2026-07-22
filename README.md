@@ -487,15 +487,15 @@ the newest automatically:
 
 ```bash
 cp build/app/outputs/flutter-apk/app-release.apk ~/Downloads/aprs-map-<version>-<build>.apk
-rsync -avz ~/Downloads/aprs-map-<version>-<build>.apk pi@192.168.0.180:/var/www/html/app/
+rsync -avz ~/Downloads/aprs-map-<version>-<build>.apk pi@192.168.0.180:/var/www/html/android/
 ```
 
 | URL | Purpose |
 |---|---|
-| `https://marsaprs.org/app/` | Landing page — version, size, SHA-256, install steps |
-| `https://marsaprs.org/app/download.php` | **Permanent** download link; 302s to the newest APK |
+| `https://marsaprs.org/android/` | Landing page — version, size, SHA-256, install steps |
+| `https://marsaprs.org/android/download.php` | **Permanent** download link; 302s to the newest APK |
 
-`map/app/` holds `index.php`, `download.php` and `_apk.php`; the APKs themselves are
+`map/android/` holds `index.php`, `download.php` and `_apk.php`; the APKs themselves are
 gitignored and live only on the Pi. The filename must match
 `aprs-map-<major>.<minor>.<patch>-<build>.apk` or it is ignored, and the highest build
 number wins. The stable URL redirects rather than being a fixed filename that gets

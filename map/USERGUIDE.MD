@@ -133,7 +133,7 @@ For future updates, open TestFlight and tap **Update** next to APRS Map.
 
 #### Android
 
-1. On your Android phone or tablet, go to **[marsaprs.org/app](https://marsaprs.org/app/)**
+1. On your Android phone or tablet, go to **[marsaprs.org/android](https://marsaprs.org/android/)**
    and tap **Download the App**. This link always serves the current release, so it is
    worth bookmarking.
 2. When prompted, open the file with **Package Installer**.

@@ -1,6 +1,6 @@
 <?php
 /**
- * Landing page for the Android app download: https://marsaprs.org/app/
+ * Landing page for the Android app download: https://marsaprs.org/android/
  *
  * Shows what the current build is and how to install it. Sideloaded APKs trip
  * Android's unknown-sources warning, so the install steps are on the page the
