@@ -1,6 +1,11 @@
 [Unit]
 Description=Direwolf APRS modem and iGate
 After=dw-startup.service
+# No start rate limit: an unattended iGate should keep retrying forever rather
+# than give up and sit dead until someone happens to notice. Must be in [Unit] —
+# systemd ignores it under [Service], which is where it used to be, so the
+# default limit was silently still in force.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -10,8 +15,11 @@ ExecStart=/home/pi/direwolf-run.sh
 Nice=-5
 Restart=on-failure
 RestartSec=10
-KillMode=process-group
-StartLimitIntervalSec=0
+# ExecStart is a wrapper script, so stopping must take down the whole cgroup or
+# direwolf itself would be left running. "process-group" is not a valid value —
+# systemd rejected it and fell back to this, the default; naming it explicitly
+# makes the requirement visible instead of accidental.
+KillMode=control-group
 
 [Install]
 WantedBy=multi-user.target
