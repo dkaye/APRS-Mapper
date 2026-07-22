@@ -2,7 +2,7 @@
 
 **Author:** Doug Kaye (K6DRK) · **Copyright:** 2026 Doug Kaye. All Rights Reserved.
 
-**Version:** Server & Displays (v1.20.1); Mobile App (v1.20.1); iGates (v5.0)
+**Version:** Server & Displays (v1.20.1); Mobile App (v1.20.1); iGates (v5.1)
 
 ---
 
@@ -11,7 +11,7 @@
 1. [Overview](#overview)
 2. [System Architecture](#system-architecture)
 3. [NetBird VPN](#netbird-vpn)
-4. [iGates (v5.0)](#igates-v50)
+4. [iGates (v5.1)](#igates-v51)
 5. [APRS Server (v1.20.1)](#aprs-server-v1201)
    - [Cloudflare Tunnel](#cloudflare-tunnel)
 6. [Display Pis (v1.20.1)](#display-pis-v1201)
@@ -65,7 +65,7 @@ APRS Radio (144.39 MHz)
       │
       ▼
 ┌─────────────────────┐
-│  iGate  (×N)        │  Pi Zero 2 W · v5.0
+│  iGate  (×N)        │  Pi Zero 2 W · v5.1
 │  RTL-SDR dongle     │
 │  direwolf TNC       │
 │  direwatch.py       │
@@ -131,7 +131,7 @@ We have therefore implemented a system that allows us to turn NetBird on and off
 
 ---
 
-## iGates (v5.0)
+## iGates (v5.1)
 
 An iGate receives APRS radio packets and forwards them to the APRS-IS network. Each iGate
 is a Raspberry Pi Zero 2 W with a USB RTL-SDR dongle listening on 144.39 MHz. An optional

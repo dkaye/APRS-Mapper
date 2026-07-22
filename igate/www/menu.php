@@ -1,6 +1,6 @@
 <?php
 /**
- * menu.php — K6DRK iGate v5.0 navigation menu partial
+ * menu.php — K6DRK iGate v5.1 navigation menu partial
  *
  * Renders the top navigation bar included on every iGate dashboard page.
  * Highlights the active tab and links to igate.php, system.php, and

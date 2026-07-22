@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# iGate configuration wizard — K6DRK iGate v5.0
+# iGate configuration wizard — K6DRK iGate v5.1
 #
 # Sets site-specific values in direwolf.conf and /var/www/html/config.php.
 # Safe to run multiple times. Press Enter at any prompt to keep the current value.
@@ -187,7 +187,7 @@ cur_filter=$(grep "^FILTER " "$DIREWOLF_CONF" 2>/dev/null | sed 's/^FILTER[[:spa
 # ── Banner ────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${CYAN}╔══════════════════════════════════════════╗${RESET}"
-echo -e "${CYAN}║        iGate v5.0 — Configuration        ║${RESET}"
+echo -e "${CYAN}║        iGate v5.1 — Configuration        ║${RESET}"
 echo -e "${CYAN}╚══════════════════════════════════════════╝${RESET}"
 echo ""
 echo "Press Enter at any prompt to keep the current value shown in [brackets]."
@@ -429,7 +429,7 @@ sed -i "s|^MYCALL .*|MYCALL $CALLSIGN|" "$DIREWOLF_CONF"
 sed -i "s|^IGLOGIN .*|IGLOGIN $IGLOGIN_CALL $PASSCODE|" "$DIREWOLF_CONF"
 sed -i "s|lat=[^ ]*|lat=$LAT|g" "$DIREWOLF_CONF"
 sed -i "s|long=[^ ]*|long=$LON|g" "$DIREWOLF_CONF"
-sed -i "s|comment=\"[^\"]*\"|comment=\"iGate 5.0 by $BASE_CALL, $LOCATION\"|" "$DIREWOLF_CONF"
+sed -i "s|comment=\"[^\"]*\"|comment=\"iGate 5.1 by $BASE_CALL, $LOCATION\"|" "$DIREWOLF_CONF"
 if [ -n "$FILTER_EXPR" ]; then
     # Escape & and \ so sed doesn't treat them as metacharacters in replacement
     FILTER_SAFE="${FILTER_EXPR//\\/\\\\}"

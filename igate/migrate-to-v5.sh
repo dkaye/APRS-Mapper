@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# migrate-to-v5.sh — Migrate an old iGate to v5.0
+# migrate-to-v5.sh — Migrate an old iGate to v5.1
 #
 # Backs up direwolf.conf and config.php, runs install.sh, restores configs, reboots.
 # Safe to run on a live iGate — config is preserved, direwolf will be briefly offline
@@ -23,7 +23,7 @@ SCP="sshpass -p $PASS scp $SSHOPTS"
 BACKUP="/tmp/igate-v5-migration"
 
 echo ""
-echo "=== iGate v5.0 Migration: $HOST ==="
+echo "=== iGate v5.1 Migration: $HOST ==="
 echo ""
 
 # ── Step 1: Back up configs ───────────────────────────────────────────────────
@@ -94,7 +94,7 @@ fi
 sleep 2
 echo "--- Installing v5 crontab..."
 $SSH "crontab - << 'EOF'
-# K6DRK iGate v5.0
+# K6DRK iGate v5.1
 #
 # Health watchdog: SDR + IP every minute, internet every 5 min
 * * * * * /home/pi/igate-watchdog.sh

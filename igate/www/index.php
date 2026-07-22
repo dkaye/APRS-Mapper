@@ -1,6 +1,6 @@
 <?php
 /**
- * index.php — K6DRK iGate v5.0 dashboard home page
+ * index.php — K6DRK iGate v5.1 dashboard home page
  *
  * Entry point for the iGate web UI. Shows system status, Direwolf state,
  * and a summary of recent APRS activity. Redirects to igate.php for

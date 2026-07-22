@@ -3,7 +3,7 @@
 # ©2025 Doug Kaye, K6DRK#
 
 #
-# iGate Configuration File for K6DRK iGate v5.0
+# iGate Configuration File for K6DRK iGate v5.1
 
 
 #=======================================
@@ -26,7 +26,7 @@ IGLOGIN CONFIGURE_ME PASSCODE
 
 # Replace the lat=CONFIGURE_ME and long=CONFIGURE_ME values as appropriate for your location.
 # Replace "Kentfield, California" with whatever you'd like displayed for your location.
-PBEACON sendto=IG delay=0:30 every=30:00 symbol="igate" overlay=R lat=CONFIGURE_ME long=CONFIGURE_ME comment="iGate 5.0 by K6DRK, CONFIGURE_ME"
+PBEACON sendto=IG delay=0:30 every=30:00 symbol="igate" overlay=R lat=CONFIGURE_ME long=CONFIGURE_ME comment="iGate 5.1 by K6DRK, CONFIGURE_ME"
 
 # t/p: forward only packets with position reports
 # ! d/*: exclude packets received from any digipeater

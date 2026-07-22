@@ -1,5 +1,5 @@
 """
-dw-startup.py — K6DRK iGate v5.0
+dw-startup.py — K6DRK iGate v5.1
 
 Boot sequence on the TFT display:
   1. "Booting..."      — shown immediately at power-on
@@ -159,7 +159,7 @@ for countdown in range(10, -1, -1):
         (disk,                        "#FF4444"),
         (temp,                        "#FF00FF"),
         ("APRS iGate",                "#FFFF00"),
-        (f"by K6DRK v5.0  {countdown}", "#FFFF00"),
+        (f"by K6DRK v5.1  {countdown}", "#FFFF00"),
     ]
 
     draw.rectangle((0, 0, W, H), fill=0)

@@ -1,6 +1,6 @@
 <?php
 /**
- * functions.php — K6DRK iGate v5.0 shared utility functions
+ * functions.php — K6DRK iGate v5.1 shared utility functions
  *
  * Helper functions used across the iGate web dashboard: packet decoding,
  * data formatting, Direwolf log parsing, and system stat helpers.

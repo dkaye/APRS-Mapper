@@ -1,6 +1,6 @@
 <?php
 /**
- * initialize.php — K6DRK iGate v5.0 bootstrap and configuration loader
+ * initialize.php — K6DRK iGate v5.1 bootstrap and configuration loader
  *
  * Loaded first by every iGate dashboard page. Reads config.php, sets up
  * global variables, initializes the database connection, and defines

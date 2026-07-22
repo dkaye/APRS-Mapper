@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# K6DRK iGate v5.0 — Installation Script
+# K6DRK iGate v5.1 — Installation Script
 #
 # Run once on a fresh Raspberry Pi OS installation.
 # Pi Imager should have already configured: hostname, pi/guacamole, WiFi, SSH, timezone.
@@ -21,7 +21,7 @@ msg()  { printf "\n\033[1;34m=== %s ===\033[0m\n" "$1"; }
 ok()   { printf "\033[0;32m✓ %s\033[0m\n" "$1"; }
 warn() { printf "\033[0;33m⚠ %s\033[0m\n" "$1"; }
 
-msg "iGate v5.0 Installation"
+msg "iGate v5.1 Installation"
 echo "This takes about 7 minutes on a Pi 4, 21 minutes on a Pi Zero 2W."
 echo ""
 
@@ -198,7 +198,7 @@ ok "Services enabled (start on next reboot)"
 # ── Crontab ───────────────────────────────────────────────────────────────────
 msg "Installing crontab"
 crontab - << 'EOF'
-# K6DRK iGate v5.0
+# K6DRK iGate v5.1
 #
 # Health watchdog: SDR + IP every minute, internet every 5 min
 * * * * * /home/pi/igate-watchdog.sh

@@ -1,6 +1,6 @@
 <?php
 /**
- * igate.php — K6DRK iGate v5.0 main iGate status and packet log page
+ * igate.php — K6DRK iGate v5.1 main iGate status and packet log page
  *
  * Displays live Direwolf packet activity, heard stations, and RF statistics
  * for the iGate. Pulled from Direwolf logs and the local packet database.

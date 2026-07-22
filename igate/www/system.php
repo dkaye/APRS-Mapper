@@ -1,6 +1,6 @@
 <?php
 /**
- * system.php — K6DRK iGate v5.0 system information page
+ * system.php — K6DRK iGate v5.1 system information page
  *
  * Displays Raspberry Pi hardware stats (CPU, memory, temperature, disk)
  * and service status for Direwolf and the APRS daemon. Used by operators

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# iGate nightly update — K6DRK iGate v5.0
+# iGate nightly update — K6DRK iGate v5.1
 #
 # Downloads files.tar.gz from marsaprs.org and applies it.
 # Run daily at 4:01am via cron. Safe to run manually at any time.
@@ -67,6 +67,28 @@ fi
 if [ "$(systemctl get-default 2>/dev/null)" = "graphical.target" ]; then
     log "Setting default boot target to multi-user (headless)..."
     sudo systemctl set-default multi-user.target >/dev/null 2>&1 || true
+fi
+
+# ── Version stamp in the two site-specific files ─────────────────────────────
+# config.php and direwolf.conf are deliberately never overwritten wholesale —
+# they carry each gate's callsign, location and radio setup. But both also embed
+# the iGate version, which is product-level rather than site-level, so without
+# this a gate reports and beacons its install-time version forever. These
+# rewrite only the version substring and leave callsign/location untouched.
+# The beacon text takes effect at the 04:10 reboot that follows this run.
+IGATE_VERSION="5.1"
+
+CFG=/var/www/html/config.php
+if [ -f "$CFG" ] && ! grep -q "dashboardversion = \"$IGATE_VERSION\"" "$CFG"; then
+    log "Stamping dashboard version $IGATE_VERSION into config.php..."
+    sudo sed -i -E 's/(\$dashboardversion *= *")[0-9]+\.[0-9]+(")/\1'"$IGATE_VERSION"'\2/' "$CFG"
+fi
+
+DWC=/home/pi/direwolf.conf
+if [ -f "$DWC" ] && grep -qE 'comment="iGate [0-9]+\.[0-9]+ by' "$DWC" \
+                 && ! grep -q "comment=\"iGate $IGATE_VERSION by" "$DWC"; then
+    log "Stamping beacon version $IGATE_VERSION into direwolf.conf..."
+    sed -i -E 's/(comment="iGate )[0-9]+\.[0-9]+( by)/\1'"$IGATE_VERSION"'\2/' "$DWC"
 fi
 
 # Log rotation config
