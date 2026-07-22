@@ -150,17 +150,20 @@ function initSessionPlayer(data, opts) {
     new BottomButtons().addTo(map);
 
     // ── IGates + Digipeaters ───────────────────────────────────────────────
+    // Held in their own layer group so the Show iGates/Digipeaters checkbox can
+    // detach them wholesale, the same way courseGroup works below.
+    const igateGroup = L.layerGroup().addTo(map);
     const igateNameMarkers = [];
     Object.keys(igates).forEach(key => {
         const mk = L.circleMarker([igates[key].lat, igates[key].lng], {radius:10, color:'red'})
-            .addTo(map)
+            .addTo(igateGroup)
             .bindTooltip(igates[key].name, {permanent:true, direction:'bottom', offset:[0,10]});
         mk.openTooltip();
         igateNameMarkers.push(mk);
     });
     Object.keys(digipeaters).forEach(key => {
         const mk = L.circleMarker([digipeaters[key].lat, digipeaters[key].lng], {radius:10, color:'black'})
-            .addTo(map)
+            .addTo(igateGroup)
             .bindTooltip(digipeaters[key].name, {permanent:true, direction:'bottom', offset:[0,10]});
         mk.openTooltip();
         igateNameMarkers.push(mk);
@@ -191,6 +194,7 @@ function initSessionPlayer(data, opts) {
     let showRadio            = true;
     let showCellular         = true;
     let showRadioLinks       = true;   // beacon → receiving igate/digipeater lines
+    let showIgates           = true;   // igate + digipeater markers
     let showNames            = true;
     let selectedCarriers     = new Set(['all']);
 
@@ -376,14 +380,31 @@ function initSessionPlayer(data, opts) {
 
         byId('ctrl-close')?.addEventListener('click', () => byId('controls-modal').close());
 
-        byId('show-tracks')?.addEventListener('change', e => { showTracks = e.target.checked; draw_tracker(); });
-        byId('show-radio')?.addEventListener('change', e => { showRadio = e.target.checked; update_filtered_beacon_list(false); });
-        byId('show-cellular')?.addEventListener('change', e => { showCellular = e.target.checked; update_filtered_beacon_list(false); });
-        byId('show-radio-links')?.addEventListener('change', e => {
-            showRadioLinks = e.target.checked;
-            // The links terminate on radio beacons, so turning them on without
-            // those beacons visible would leave lines pointing at nothing.
-            if (showRadioLinks && !showRadio) {
+        // Radio links depend on both their endpoints being drawn: the radio
+        // beacon they start from and the igate/digipeater they end at. These two
+        // helpers keep state, checkbox and map in step when one control has to
+        // switch another on.
+        function setIgatesVisible(on) {
+            showIgates = on;
+            const cb = byId('show-igates');
+            if (cb) cb.checked = on;
+            if (on) {
+                map.addLayer(igateGroup);
+                // Tooltips can only be opened while the marker is on the map, so
+                // re-apply the Show Names state on the way back in.
+                igateNameMarkers.forEach(mk => showNames ? mk.openTooltip() : mk.closeTooltip());
+            } else {
+                map.removeLayer(igateGroup);
+            }
+        }
+
+        function setRadioLinks(on) {
+            showRadioLinks = on;
+            const cb = byId('show-radio-links');
+            if (cb) cb.checked = on;
+            if (!on) { draw_tracker(); return; }
+            if (!showIgates) setIgatesVisible(true);
+            if (!showRadio) {
                 showRadio = true;
                 const rb = byId('show-radio');
                 if (rb) rb.checked = true;
@@ -391,11 +412,29 @@ function initSessionPlayer(data, opts) {
                 return;
             }
             draw_tracker();
+        }
+
+        byId('show-tracks')?.addEventListener('change', e => { showTracks = e.target.checked; draw_tracker(); });
+        byId('show-radio')?.addEventListener('change', e => { showRadio = e.target.checked; update_filtered_beacon_list(false); });
+        byId('show-cellular')?.addEventListener('change', e => { showCellular = e.target.checked; update_filtered_beacon_list(false); });
+        byId('show-igates')?.addEventListener('change', e => {
+            setIgatesVisible(e.target.checked);
+            // A link runs from a beacon to its receiving igate/digipeater. With
+            // those markers hidden the lines would end in empty space, so drop
+            // the links too — and let the checkbox actually turn off, which a
+            // one-way "force on" rule would prevent.
+            if (!showIgates && showRadioLinks) setRadioLinks(false);
+            else draw_tracker();
+        });
+        byId('show-radio-links')?.addEventListener('change', e => {
+            setRadioLinks(e.target.checked);
         });
         byId('show-course')?.addEventListener('change', e => { e.target.checked ? map.addLayer(courseGroup) : map.removeLayer(courseGroup); });
         byId('show-names')?.addEventListener('change', e => {
             showNames = e.target.checked;
-            igateNameMarkers.forEach(mk => showNames ? mk.openTooltip() : mk.closeTooltip());
+            // Only touch tooltips while the markers are actually on the map —
+            // openTooltip on a detached layer does nothing useful.
+            if (showIgates) igateNameMarkers.forEach(mk => showNames ? mk.openTooltip() : mk.closeTooltip());
             draw_tracker();
         });
 
