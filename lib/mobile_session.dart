@@ -124,12 +124,22 @@ class MobileSession {
   /// Heartbeat update. On iOS, include lat/lon so the server injects to APRS-IS
   /// (raw TCP sockets are blocked in iOS background; HTTP is not).
   /// Returns null if session is gone (404), otherwise list of pending messages.
-  Future<List<InboundMessage>?> update({double? lat, double? lon, List<int> ackIds = const [], String sharingMode = ''}) async {
+  Future<List<InboundMessage>?> update({double? lat, double? lon, double? accuracyM, DateTime? fixTime, List<int> ackIds = const [], String sharingMode = ''}) async {
     final t = token;
     if (t == null) return null;
     try {
       final body = <String, dynamic>{'token': t};
-      if (lat != null && lon != null) { body['lat'] = lat; body['lon'] = lon; }
+      if (lat != null && lon != null) {
+        body['lat'] = lat;
+        body['lon'] = lon;
+        // Optional quality fields — a server that predates them ignores them,
+        // and an older app that omits them still works. Lets operators tell a
+        // 5 m GPS lock from a 3 km cell-tower estimate or a stale cached fix.
+        if (accuracyM != null && accuracyM > 0 && accuracyM.isFinite) {
+          body['acc'] = double.parse(accuracyM.toStringAsFixed(1));
+        }
+        if (fixTime != null) body['fix_ts'] = fixTime.millisecondsSinceEpoch ~/ 1000;
+      }
       if (ackIds.isNotEmpty) body['ack_ids'] = ackIds;
       if (sharingMode.isNotEmpty) body['sharing_mode'] = sharingMode;
       final response = await http.post(

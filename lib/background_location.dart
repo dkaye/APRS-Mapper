@@ -36,6 +36,11 @@ class BackgroundLocationService {
   Timer? _heartbeatTimer;
   Timer? _msgPollTimer;
   LatLng? _lastPosition;
+  // Quality metadata for _lastPosition. Sent with each beacon so the server can
+  // tell a sharp GPS lock from a coarse Wi-Fi/cell estimate or a cached fix —
+  // all three arrive as plain coordinates and are otherwise indistinguishable.
+  double? _lastAccuracyM;   // 68%-confidence radius, metres
+  DateTime? _lastFixTime;   // when the OS computed THIS fix, not when we sent it
   LatLng? _lastUploadPosition;
   DateTime? _lastUploadTime;
   bool _sharingActive = false;
@@ -88,6 +93,8 @@ class BackgroundLocationService {
       _positionSub = Geolocator.getPositionStream(locationSettings: settings)
           .listen((pos) {
         _lastPosition = LatLng(pos.latitude, pos.longitude);
+        _lastAccuracyM = pos.accuracy;
+        _lastFixTime = pos.timestamp;
         _positionController.add(pos);
         if (_sharingActive) {
           unawaited(_maybeUploadFromStream());
@@ -103,6 +110,8 @@ class BackgroundLocationService {
     _positionSub?.cancel();
     _positionSub = null;
     _lastPosition = null;
+    _lastAccuracyM = null;
+    _lastFixTime = null;
     _lastUploadPosition = null;
     _lastUploadTime = null;
   }
@@ -368,6 +377,11 @@ class BackgroundLocationService {
         final cached = await Geolocator.getLastKnownPosition();
         if (cached != null) {
           _lastPosition = LatLng(cached.latitude, cached.longitude);
+          // Carry the cached fix's own accuracy and age through — this is
+          // precisely the case where the position may be badly out of date, so
+          // it must not be reported as if it were current.
+          _lastAccuracyM = cached.accuracy;
+          _lastFixTime = cached.timestamp;
         }
       }
     }
@@ -395,6 +409,8 @@ class BackgroundLocationService {
     final msgs = await _session.update(
       lat: pos?.latitude,
       lon: pos?.longitude,
+      accuracyM: pos == null ? null : _lastAccuracyM,
+      fixTime: pos == null ? null : _lastFixTime,
       ackIds: ackIds,
       sharingMode: modeToSend,
     );
