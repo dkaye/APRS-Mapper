@@ -202,43 +202,43 @@
 <li><a href="#native-app-ios-android">Native App (iOS &amp; Android)</a></li>
 <li><a href="#getting-the-app">Getting the App</a></li>
 <li><a href="#app-drawer">App Drawer</a></li>
-<li><a href="#tracker-detail">Tracker Detail</a></li>
+<li><a href="#tapping-markers-on-the-map">Tapping markers on the map</a></li>
 <li><a href="#reload-tiles">Reload Tiles</a></li>
 <li><a href="#share-location-in-the-app">Share Location in the App</a></li>
 <li><a href="#limitations">Limitations</a></li>
 <li><a href="#main-map">Main Map</a></li>
-<li><a href="#sidebar">Sidebar (L)</a></li>
-<li><a href="#sidebar-1">Sidebar (S)</a><ul>
+<li><a href="#sidebar-l">Sidebar (L)</a></li>
+<li><a href="#sidebar-s">Sidebar (S)</a><ul>
 <li><a href="#opening-the-drawer">Opening the Drawer</a></li>
 <li><a href="#drawer-sections">Drawer Sections</a></li>
 </ul>
 </li>
-<li><a href="#tracker-list">Tracker List</a><ul>
-<li><a href="#clicking-a-tracker">Clicking a tracker (desktop — three-click cycle)</a></li>
-<li><a href="#tapping-a-tracker">Tapping a tracker (mobile — tap vs. long press)</a></li>
+<li><a href="#tracker-list-ls">Tracker List</a><ul>
+<li><a href="#clicking-a-tracker-l">Clicking a tracker (desktop — three-click cycle)</a></li>
+<li><a href="#tapping-a-tracker-s">Tapping a tracker (mobile — tap vs. long press)</a></li>
 </ul>
 </li>
-<li><a href="#courses">Courses</a></li>
-<li><a href="#aid-stations-and-igates">Aid Stations and iGates</a></li>
-<li><a href="#backgrounds">Backgrounds</a></li>
+<li><a href="#courses-ls">Courses</a></li>
+<li><a href="#aid-stations-and-igates-l-s">Aid Stations and iGates</a></li>
+<li><a href="#backgrounds-ls">Backgrounds</a></li>
 <li><a href="#share-location-s">Share Location (S)</a></li>
-<li><a href="#messaging-ls">Messaging (L,S)</a></li>
-<li><a href="#origin-marker--distance-and-bearing">Origin Marker — Distance and Bearing</a></li>
-<li><a href="#reset-map">Reset Map</a></li>
-<li><a href="#save-map">Save Map</a></li>
-<li><a href="#kiosk-mode">Kiosk Mode</a></li>
-<li><a href="#clients">Clients</a></li>
+<li><a href="#messaging-l-s">Messaging (L,S)</a></li>
+<li><a href="#origin-marker-distance-and-bearing-ls">Origin Marker — Distance and Bearing</a></li>
+<li><a href="#reset-map-ls">Reset Map</a></li>
+<li><a href="#save-map-ls">Save Map</a></li>
+<li><a href="#kiosk-mode-l">Kiosk Mode</a></li>
+<li><a href="#clients-l">Clients</a></li>
 <li><a href="#signing-in">Signing In</a></li>
-<li><a href="#admin-page">Admin Page</a></li>
-<li><a href="#editing-the-configuration">Editing the Configuration</a><ul>
+<li><a href="#admin-page-ls">Admin Page</a></li>
+<li><a href="#editing-the-configuration-ls">Editing the Configuration</a><ul>
 <li><a href="#trackers">Trackers</a></li>
 <li><a href="#tracker-style">Tracker Style</a></li>
 <li><a href="#default-section-visibility">Default Section Visibility</a></li>
 <li><a href="#map-default-view">Map Default View</a></li>
 <li><a href="#import-and-export">Import and Export</a></li>
-<li><a href="#backgrounds-1">Backgrounds</a></li>
-<li><a href="#courses-1">Courses</a></li>
-<li><a href="#aid-stations-and-igates-1">Aid Stations and iGates</a></li>
+<li><a href="#backgrounds">Backgrounds</a></li>
+<li><a href="#courses">Courses</a></li>
+<li><a href="#aid-stations-and-igates">Aid Stations and iGates</a></li>
 <li><a href="#legend">Legend</a></li>
 <li><a href="#mobile-tracking">Mobile Tracking</a></li>
 </ul>
@@ -255,7 +255,7 @@
 </ul>
 </li>
 <li><a href="#analyzer">Analyzer</a></li>
-<li><a href="#netbird-status-monitor">NetBird Status Monitor</a></li>
+<li><a href="#netbird-status-monitor-ls">NetBird Status Monitor</a></li>
 <li><a href="#accessing-the-monitor">Accessing the Monitor</a></li>
 <li><a href="#status-page">Status Page</a><ul>
 <li><a href="#summary-bar">Summary Bar</a></li>
@@ -266,10 +266,8 @@
 <li><a href="#device-admin-page">Device Admin Page</a><ul>
 <li><a href="#enabling-and-disabling-devices">Enabling and Disabling Devices</a></li>
 <li><a href="#adding-editing-and-deleting-devices">Adding, Editing, and Deleting Devices</a></li>
-<li><a href="#ssh-terminal">SSH Terminal</a></li>
 </ul>
 </li>
-<li><a href="#hostname-self-reporting">Hostname Self-Reporting</a></li>
 <li><a href="#wifi-manager">WiFi Manager</a></li>
 <li><a href="#cloudflare-tunnel">Cloudflare Tunnel</a></li>
 <li><a href="#troubleshooting">Troubleshooting</a></li>
@@ -1012,12 +1010,14 @@ active. This is pre-filled automatically when using the provider browser.</p>
 <p>Click the <strong>Manage Location Files</strong> button to open the course manager panel. This panel shows
 every course file across all events in a sortable table with columns for file name, event,
 and last modified date. Click any column header to sort; click again to reverse the order.</p>
-<p><strong>Adding a course to the current event -* The rightmost column shows either a green ✓ (the file is already in the current event) or
-an </strong>Add<strong> button. Clicking </strong>Add** adds the course to the current event's course list.
+<h4 id="adding-a-course-to-the-current-event">Adding a course to the current event</h4>
+<p>The rightmost column shows either a green ✓ (the file is already in the current event) or
+an <strong>Add</strong> button. Clicking <strong>Add</strong> adds the course to the current event's course list.
 The change is local until you save.</p>
 <p>If the file comes from a different event, it is automatically copied into the current
 event's directory when you save.</p>
-<p><strong>Uploading a new file -</strong> Click <strong>Upload</strong> (or drag and drop a file onto the panel) to upload a new course file.
+<h4 id="uploading-a-new-file">Uploading a new file</h4>
+<p>Click <strong>Upload</strong> (or drag and drop a file onto the panel) to upload a new course file.
 Supported formats: <code>.gpx</code>, <code>.kml</code>, <code>.geojson</code>, <code>.json</code>.</p>
 <p>The uploaded file is saved into the default event's directory and appears immediately in
 the table and the Courses section.</p>

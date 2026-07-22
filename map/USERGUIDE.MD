@@ -13,39 +13,39 @@ This document is a guide for users of the MARS APRS system. For technical detail
 - [Native App (iOS & Android)](#native-app-ios-android)
   - [Getting the App](#getting-the-app)
   - [App Drawer](#app-drawer)
-  - [Tracker Detail](#tracker-detail)
+  - [Tapping markers on the map](#tapping-markers-on-the-map)
   - [Reload Tiles](#reload-tiles)
   - [Share Location in the App](#share-location-in-the-app)
   - [Limitations](#limitations)
 - [Main Map](#main-map)
-  - [Sidebar (L)](#sidebar)
-  - [Sidebar (S)](#sidebar-1)
+  - [Sidebar (L)](#sidebar-l)
+  - [Sidebar (S)](#sidebar-s)
     - [Opening the Drawer](#opening-the-drawer)
     - [Drawer Sections](#drawer-sections)
-  - [Tracker List](#tracker-list)
-    - [Clicking a tracker (desktop — three-click cycle)](#clicking-a-tracker)
-    - [Tapping a tracker (mobile — tap vs. long press)](#tapping-a-tracker)
-  - [Courses](#courses)
-  - [Aid Stations and iGates](#aid-stations-and-igates)
-  - [Backgrounds](#backgrounds)
+  - [Tracker List](#tracker-list-ls)
+    - [Clicking a tracker (desktop — three-click cycle)](#clicking-a-tracker-l)
+    - [Tapping a tracker (mobile — tap vs. long press)](#tapping-a-tracker-s)
+  - [Courses](#courses-ls)
+  - [Aid Stations and iGates](#aid-stations-and-igates-l-s)
+  - [Backgrounds](#backgrounds-ls)
   - [Share Location (S)](#share-location-s)
-  - [Messaging (L,S)](#messaging-ls)
-  - [Origin Marker — Distance and Bearing](#origin-marker--distance-and-bearing)
-  - [Reset Map](#reset-map)
-  - [Save Map](#save-map)
-  - [Kiosk Mode](#kiosk-mode)
-  - [Clients](#clients)
+  - [Messaging (L,S)](#messaging-l-s)
+  - [Origin Marker — Distance and Bearing](#origin-marker-distance-and-bearing-ls)
+  - [Reset Map](#reset-map-ls)
+  - [Save Map](#save-map-ls)
+  - [Kiosk Mode](#kiosk-mode-l)
+  - [Clients](#clients-l)
 - [Signing In](#signing-in)
-- [Admin Page](#admin-page)
-  - [Editing the Configuration](#editing-the-configuration)
+- [Admin Page](#admin-page-ls)
+  - [Editing the Configuration](#editing-the-configuration-ls)
     - [Trackers](#trackers)
     - [Tracker Style](#tracker-style)
     - [Default Section Visibility](#default-section-visibility)
     - [Map Default View](#map-default-view)
     - [Import and Export](#import-and-export)
-    - [Backgrounds](#backgrounds-1)
-    - [Courses](#courses-1)
-    - [Aid Stations and iGates](#aid-stations-and-igates-1)
+    - [Backgrounds](#backgrounds)
+    - [Courses](#courses)
+    - [Aid Stations and iGates](#aid-stations-and-igates)
     - [Legend](#legend)
     - [Mobile Tracking](#mobile-tracking)
   - [Event Management](#event-management)
@@ -56,7 +56,7 @@ This document is a guide for users of the MARS APRS system. For technical detail
     - [Adding a course to the current event](#adding-a-course-to-the-current-event)
     - [Uploading a new file](#uploading-a-new-file)
 - [Analyzer](#analyzer)
-- [NetBird Status Monitor](#netbird-status-monitor)
+- [NetBird Status Monitor](#netbird-status-monitor-ls)
   - [Accessing the Monitor](#accessing-the-monitor)
   - [Status Page](#status-page)
     - [Summary Bar](#summary-bar)
@@ -65,8 +65,6 @@ This document is a guide for users of the MARS APRS system. For technical detail
   - [Device Admin Page](#device-admin-page)
     - [Enabling and Disabling Devices](#enabling-and-disabling-devices)
     - [Adding, Editing, and Deleting Devices](#adding-editing-and-deleting-devices)
-    - [SSH Terminal](#ssh-terminal)
-  - [Hostname Self-Reporting](#hostname-self-reporting)
 - [WiFi Manager](#wifi-manager)
 - [Cloudflare Tunnel](#cloudflare-tunnel)
 - [Troubleshooting](#troubleshooting)
@@ -757,14 +755,18 @@ Click the **Manage Location Files** button to open the course manager panel. Thi
 every course file across all events in a sortable table with columns for file name, event,
 and last modified date. Click any column header to sort; click again to reverse the order.
 
-**Adding a course to the current event -* The rightmost column shows either a green ✓ (the file is already in the current event) or
+#### Adding a course to the current event
+
+The rightmost column shows either a green ✓ (the file is already in the current event) or
 an **Add** button. Clicking **Add** adds the course to the current event's course list.
 The change is local until you save.
 
 If the file comes from a different event, it is automatically copied into the current
 event's directory when you save.
 
-**Uploading a new file -** Click **Upload** (or drag and drop a file onto the panel) to upload a new course file.
+#### Uploading a new file
+
+Click **Upload** (or drag and drop a file onto the panel) to upload a new course file.
 Supported formats: `.gpx`, `.kml`, `.geojson`, `.json`.
 
 The uploaded file is saved into the default event's directory and appears immediately in
