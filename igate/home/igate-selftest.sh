@@ -31,8 +31,11 @@ trap 'sudo pkill -9 -f rtl_power >/dev/null 2>&1; rm -rf "$TMP"; sudo systemctl 
 HOST=$(hostname)
 IPADDR=$(hostname -I 2>/dev/null | awk '{print $1}')
 MODEL=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null)
-DONGLE=$(sudo journalctl -u direwolf -b --no-pager 2>/dev/null \
-    | grep -aoE '0:[[:space:]]*.+SN:[[:space:]]*[0-9A-Fa-f]+' | tail -1 | sed 's/^0:[[:space:]]*//')
+# -o cat prints just the message body (no "Jul 23 20:41:45 host proc:" prefix),
+# so the "0:" in a timestamp like 20:41:45 can't be mistaken for the device index.
+DONGLE=$(sudo journalctl -u direwolf -b -o cat --no-pager 2>/dev/null \
+    | grep -aoE '[0-9]+:[[:space:]]+[A-Za-z].+SN:[[:space:]]*[0-9A-Fa-f]+' | tail -1 \
+    | sed -E 's/^[0-9]+:[[:space:]]*//')
 IGVER=$(grep -oE 'dashboardversion *= *"[^"]*"' /var/www/html/config.php 2>/dev/null | grep -oE '[0-9.]+' | head -1)
 META=$(printf '{"host":"%s","ip":"%s","pi_model":"%s","dongle":"%s","igate_version":"%s","ts":"%s"}' \
     "$HOST" "$IPADDR" "$MODEL" "$DONGLE" "$IGVER" "$(date '+%Y-%m-%dT%H:%M:%S')")
