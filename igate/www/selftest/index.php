@@ -114,7 +114,10 @@ $COLOR = ['GOOD' => '#1a7f37', 'MARGINAL' => '#9a6700', 'BAD' => '#c0392b'];
         <td class="muted" style="max-width:200px;overflow:hidden;text-overflow:ellipsis"><?= htmlspecialchars(g($r,'dongle','—')) ?></td>
         <td class="muted"><?= htmlspecialchars(str_replace('Raspberry Pi ','',(string)g($r,'pi_model','—'))) ?></td>
         <td class="muted"><?= htmlspecialchars(g($r,'igate_version','—')) ?></td>
-        <td class="muted"><?= htmlspecialchars(age(g($r,'ts'))) ?></td>
+<?php // "Reported" age from _received (server time, TZ-aware). The gate's own ts
+      // has no timezone and PHP runs in UTC, so parsing ts directly is off by the
+      // gate's UTC offset. ?>
+        <td class="muted"><?= htmlspecialchars(age(g($r,'_received') ?: g($r,'ts'))) ?></td>
       </tr>
     <?php endforeach; ?>
     </tbody>
