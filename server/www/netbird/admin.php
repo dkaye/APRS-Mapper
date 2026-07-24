@@ -173,6 +173,7 @@ tr.device-row.disabled td:not(.toggle-cell):not(.action-cell){opacity:.4}
   <button class="btn-add" onclick="openModal(null)">+ Add Device</button>
   <a href="index.php" class="hdr-btn">← Back</a>
   <a href="https://marsaprs.org" class="hdr-btn">Map</a>
+  <a href="/igate/selftest/" class="hdr-btn">iGate Test</a>
   <a href="/wifi/" class="hdr-btn">WiFi</a>
   <a href="/userguide.html?back=/netbird/admin.php" class="hdr-btn">User Guide</a>
   <a href="?logout=1" class="hdr-btn">Sign Out</a>
