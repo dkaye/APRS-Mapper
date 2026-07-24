@@ -27,11 +27,18 @@ usort($rows, function ($a, $b) {
 
 $total = count($rows);
 $good = count(array_filter($rows, fn($r) => g($r, 'grade') === 'GOOD'));
-$best = null;
+// "Best" is the lowest APRS-guard spur (NOT the noise floor — floor just reflects
+// how much RF the antenna is hearing, not gate health). Several gates commonly
+// tie at 0.0 dB, so track the value and how many share it rather than crowning one.
+$bestSpur = null;
 foreach ($rows as $r) {
     if (g($r, 'grade') === 'error') continue;
-    if ($best === null || (float)g($r, 'aprs_guard_spur_db', 99) < (float)g($best, 'aprs_guard_spur_db', 99)) $best = $r;
+    $s = (float)g($r, 'aprs_guard_spur_db', 99);
+    if ($bestSpur === null || $s < $bestSpur) $bestSpur = $s;
 }
+$isBestSpur = fn($r) => $bestSpur !== null && g($r, 'grade') !== 'error'
+    && abs((float)g($r, 'aprs_guard_spur_db', 99) - $bestSpur) < 0.05;
+$bestCount = count(array_filter($rows, $isBestSpur));
 
 function age($iso) {
     if (!$iso) return '—';
@@ -84,9 +91,9 @@ $COLOR = ['GOOD' => '#1a7f37', 'MARGINAL' => '#9a6700', 'BAD' => '#c0392b'];
 <?php else: ?>
   <div class="summary">
     <div class="card"><div class="n"><?= $good ?>/<?= $total ?></div><div class="l">Gates GOOD</div></div>
-    <?php if ($best): ?>
-    <div class="card best"><div class="n" style="color:#1a7f37"><?= htmlspecialchars(number_format((float)g($best,'aprs_guard_spur_db',0),1)) ?> dB</div>
-      <div class="l">Best &mdash; <?= htmlspecialchars(g($best,'host')) ?></div></div>
+    <?php if ($bestSpur !== null): ?>
+    <div class="card best"><div class="n" style="color:#1a7f37"><?= htmlspecialchars(number_format($bestSpur, 1)) ?> dB</div>
+      <div class="l">Best guard spur<?= $bestCount > 1 ? ' &mdash; '.$bestCount.' gates tied' : '' ?></div></div>
     <?php endif; ?>
   </div>
 
@@ -100,8 +107,8 @@ $COLOR = ['GOOD' => '#1a7f37', 'MARGINAL' => '#9a6700', 'BAD' => '#c0392b'];
       $grade = g($r, 'grade', '?'); $col = $COLOR[$grade] ?? '#6b7280';
       $spur = g($r, 'aprs_guard_spur_db'); $spur = is_numeric($spur) ? (float)$spur : null;
       $off  = g($r, 'aprs_guard_offset_khz');
-      $vsbest = ($spur !== null && $best) ? $spur - (float)g($best,'aprs_guard_spur_db',0) : null;
-      $isBest = $best && g($r,'host') === g($best,'host');
+      $vsbest = ($spur !== null && $bestSpur !== null) ? $spur - $bestSpur : null;
+      $isBest = $isBestSpur($r);
     ?>
       <tr<?= $isBest ? ' class="best"' : '' ?>>
         <td><strong><?= htmlspecialchars(g($r,'host','?')) ?></strong></td>
@@ -133,6 +140,9 @@ $COLOR = ['GOOD' => '#1a7f37', 'MARGINAL' => '#9a6700', 'BAD' => '#c0392b'];
       whose clock/power emissions couple in. Move the dongle out of the case on a short USB extension &mdash; that
       alone typically drops the spur ~15&nbsp;dB. A <code>Comb?&nbsp;yes</code> confirms self-noise (a regular comb of
       spurs across the band, which no real signal produces).</p>
+    <p><strong>Floor</strong> is informational, not a ranking &mdash; &ldquo;Best&rdquo; is the lowest guard-band spur, not
+      the lowest floor. A lower floor just means the receiver is hearing less ambient RF (quieter site or weaker
+      antenna); it doesn&rsquo;t make a gate healthier.</p>
     <p class="muted">The test max-holds across several sweeps with an occurrence filter, so it works with the
       antenna connected &mdash; one-off over-the-air signals are rejected, only always-present internal spurs count.
       Reports refresh nightly during each gate&rsquo;s auto-update.</p>
