@@ -163,5 +163,15 @@ fi
 log "Updating WiFi connections..."
 /home/pi/update-wifi.php
 
+# ── SDR self-noise test ───────────────────────────────────────────────────────
+# Measures the internal-birdie level near the APRS channel (see the fleet
+# dashboard at marsaprs.org/igate/selftest/). Frees the SDR for ~1 min; the
+# 04:10 reboot restarts everything anyway. Time-bounded and non-fatal.
+if [ -x /home/pi/igate-selftest.sh ]; then
+    log "Running SDR self-noise test..."
+    timeout -k 15 200 /home/pi/igate-selftest.sh 2>&1 | grep -aiE 'selftest:' \
+        | while read -r l; do log "$l"; done || log "self-test skipped (non-fatal)"
+fi
+
 log "=== iGate auto-update complete ==="
 date > /home/pi/LastUpdate

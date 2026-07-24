@@ -49,9 +49,16 @@ scp "$IGATE_DIR/migrate-to-v5.sh"  "$REMOTE:$REMOTE_DIR/migrate-to-v5.sh"
 echo "Syncing www/ to aprs-pi..."
 ssh "$REMOTE" "mkdir -p $REMOTE_DIR/wifi"
 rsync -a --delete "$IGATE_DIR/www/wifi/" "$REMOTE:$REMOTE_DIR/wifi/"
+
+# Self-noise dashboard + upload endpoint. The data/ dir holds gate uploads and
+# must survive deploys (hence no --delete of it) and be web-server writable.
+echo "Syncing self-noise dashboard..."
+ssh "$REMOTE" "mkdir -p $REMOTE_DIR/selftest/data"
+rsync -a --exclude=data/ "$IGATE_DIR/www/selftest/" "$REMOTE:$REMOTE_DIR/selftest/"
+
 # .htaccess prevents Cloudflare from caching files.tar.gz and shell scripts
 scp "$IGATE_DIR/www/.htaccess" "$REMOTE:$REMOTE_DIR/.htaccess"
-ssh "$REMOTE" "sudo chown -R pi:www-data $REMOTE_DIR && sudo find $REMOTE_DIR -type d -exec chmod 775 {} + && sudo find $REMOTE_DIR -type f -exec chmod 664 {} +"
+ssh "$REMOTE" "sudo chown -R pi:www-data $REMOTE_DIR && sudo find $REMOTE_DIR -type d -exec chmod 775 {} + && sudo find $REMOTE_DIR -type f -exec chmod 664 {} + && sudo chmod 775 $REMOTE_DIR/selftest/data"
 
 echo ""
 echo "Done. Files live at:"
