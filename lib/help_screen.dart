@@ -10,7 +10,7 @@ import 'map_config.dart';
 /// Release date shown under the Quick Start title. The version number itself
 /// comes from PackageInfo (i.e. pubspec.yaml), but the date has no such source —
 /// bump it by hand alongside the version.
-const kGuideDate = 'July 22, 2026';
+const kGuideDate = 'July 24, 2026';
 
 const _tipStyle = TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4);
 const _tipStyleBold = TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4, fontWeight: FontWeight.w600);

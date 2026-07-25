@@ -9,7 +9,14 @@ class MapConfig {
   // a new/breaking server contract. NOT the app's marketing version.
   static const int clientApiVersion = 1;
 
-  static const String tileUrl = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+  // Base map tiles come through the MARS tile proxy on our own server, not from
+  // OpenStreetMap directly. OSM blocks bulk downloads (which broke first-run
+  // offline map downloads); the proxy serves pre-seeded event areas locally and
+  // fetches/caches anywhere else on demand, so users never hit OSM. This is both
+  // the offline-download source and the on-screen base layer, so the two match
+  // and downloaded tiles display from the cache. Server config (offline_map.url)
+  // can override it.
+  static const String tileUrl = 'https://marsaprs.org/tiles.php/{z}/{x}/{y}.png';
 
   static const String storeName = 'aprsMapStore';
 

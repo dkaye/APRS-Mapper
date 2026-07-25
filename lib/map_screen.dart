@@ -233,6 +233,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _initNotifications();
     _config = widget.config;
+    // Base layer follows the server's offline-map tile source, so it matches the
+    // offline download URL (shared FMTC cache) and an event can retarget both by
+    // setting offline_map.url. Falls back to the compiled default (the proxy).
+    if (_config.offlineTileUrl.isNotEmpty) _tileUrl = _config.offlineTileUrl;
     _beaconIntervalsSec = List.of(_config.beaconIntervalsSec);
     _beaconDistancesMi  = List.of(_config.beaconDistancesMi);
     _initCourseVisibility();
