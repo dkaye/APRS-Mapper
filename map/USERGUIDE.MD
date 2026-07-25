@@ -1,6 +1,6 @@
 # APRS Tracker Map — User Guide
 
-**Version 1.20.1 · July 22, 2026**
+**Version 1.20.2 · July 24, 2026**
 
 ---
 
@@ -190,7 +190,7 @@ Each tracker's map marker shows the **tracker ID** (such as "H1") as a label nex
 
 ### Reload Tiles
 
-The **Reload Tiles** button in the drawer footer downloads and caches map tiles for the area currently visible on screen. Use this before heading into areas with poor cell coverage to ensure the map background stays visible when you go offline. Cached tiles are used automatically when the network is unavailable.
+The **Reload Tiles** button in the drawer footer downloads and caches map tiles for the area currently visible on screen. Use this before heading into areas with poor cell coverage to ensure the map background stays visible when you go offline. Cached tiles are used automatically when the network is unavailable. Map tiles are served through the MARS server, which keeps a permanent copy of event areas, so this download is fast and reliable even at the start of a busy event.
 
 ### Share Location in the App
 

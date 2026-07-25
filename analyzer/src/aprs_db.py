@@ -234,6 +234,13 @@ class aprs_db_connection:
                 if not is_duplicate and item["latitude"] != 0.0 and item["longitude"] != 0.0:
                     unique_beacons.append(item)
             filtered_data.extend(unique_beacons)
+        # Dedup groups beacons by callsign, so filtered_data comes out in
+        # callsign blocks. Sort globally by time so the returned list is
+        # chronological: the player maps its time-range slider to list
+        # indices, so index order MUST equal time order or the range readout
+        # reports the last callsign's last beacon (not the newest beacon) as
+        # the end. Track drawing no longer relies on callsign adjacency.
+        filtered_data.sort(key=lambda b: b["time"])
         return filtered_data
 
     def get_event_recording_times(self, event_name):

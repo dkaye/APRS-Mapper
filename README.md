@@ -2,7 +2,7 @@
 
 **Author:** Doug Kaye (K6DRK) · **Copyright:** 2026 Doug Kaye. All Rights Reserved.
 
-**Version:** Server & Displays (v1.20.1); Mobile App (v1.20.1); iGates (v5.1)
+**Version:** Server & Displays (v1.20.2); Mobile App (v1.20.2); iGates (v5.1)
 
 ---
 
@@ -12,10 +12,10 @@
 2. [System Architecture](#system-architecture)
 3. [NetBird VPN](#netbird-vpn)
 4. [iGates (v5.1)](#igates-v51)
-5. [APRS Server (v1.20.1)](#aprs-server-v1201)
+5. [APRS Server (v1.20.2)](#aprs-server-v1202)
    - [Cloudflare Tunnel](#cloudflare-tunnel)
-6. [Display Pis (v1.20.1)](#display-pis-v1201)
-7. [Mobile Apps (v1.20.1)](#mobile-apps-v1201)
+6. [Display Pis (v1.20.2)](#display-pis-v1202)
+7. [Mobile Apps (v1.20.2)](#mobile-apps-v1202)
    - [Architecture](#app-architecture) · [Location Sharing Flow](#location-sharing-flow) · [Smart Track](#smart-track) · [Building & Distributing](#building-distributing) · [Background Location](#background-location)
 8. [User Interfaces](#user-interfaces)
 9. [Authentication](#authentication)
@@ -74,18 +74,18 @@ APRS Radio (144.39 MHz)
            ▼
 ┌──────────────────────────────────────┐     ┌──────────────────────────────┐
 │           APRS-IS Network            │◀────│  Mobile App  (iOS/Android)   │
-│         noam.aprs2.net:14580         │     │  Flutter v1.20.1               │
+│         noam.aprs2.net:14580         │     │  Flutter v1.20.2               │
 └────────────────┬─────────────────────┘     │  TCP 14580 (inject position) │
                  │ TCP 14580                 └──────────────┬───────────────┘
 ┌────────────────▼─────────────────────┐                    │ HTTPS (map + config + session)
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.20.1      │
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.20.2      │
 │  aprsDaemon.php → trackers.json      │◀───────────────────┘
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.20.1
+│  Display Pi  (×2)      │  Pi 4 · v1.20.2
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -98,6 +98,7 @@ APRS Radio (144.39 MHz)
 | `direwatch.py` | iGate | Drives TFT status display |
 | `aprsDaemon.php` | Server | Pulls from APRS-IS; writes `trackers.json`, `igates.json`, `aidstations.json` |
 | `index.php` | Server | Serves the live map; JSON polling endpoint |
+| `tiles.php` | Server | Map-tile proxy + cache; serves OpenStreetMap tiles from a pre-seeded permanent base plus an on-demand browse cache, so clients never fetch from OSM directly |
 | `admin/index.php` | Server | Admin UI; event and tracker management |
 | `netbird-poller.py` | Server | Polls all Pi devices over VPN; writes `stats.json` |
 | `wifi/` | Server | Master WiFi credential store; distributes to all Pis |
@@ -190,7 +191,7 @@ Log: `/var/log/direwolf/watchdog.log`
 
 ---
 
-## APRS Server (v1.20.1)
+## APRS Server (v1.20.2)
 
 The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
 APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
@@ -276,7 +277,7 @@ The tunnel token is obtained from the **Cloudflare Zero Trust dashboard**:
 
 ---
 
-## Display Pis (v1.20.1)
+## Display Pis (v1.20.2)
 
 A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
 `marsaprs.org`. It is a read-only display device — no long-term local configuration or data storage.
@@ -323,7 +324,7 @@ For details on using the map, see [USERGUIDE.MD](https://marsaprs.org/userguide.
 
 ---
 
-## Mobile Apps (v1.20.1)
+## Mobile Apps (v1.20.2)
 
 Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.
 
@@ -369,10 +370,26 @@ The app is a Flutter application with a hybrid architecture:
 | `lib/background_task_handler.dart` | Android foreground service stub; no-op handler; keeps process alive |
 | `lib/mobile_session.dart` | HTTP client for `?mobile=join/update/leave` API |
 | `lib/aprs_client.dart` | Legacy — TCP socket to APRS-IS; no longer used (server-side injection replaced direct TCP) |
-| `lib/remote_config.dart` | Polls `?config` endpoint; parses event configuration |
-| `lib/map_config.dart` | Constants: server URL |
+| `lib/remote_config.dart` | Polls `?config` endpoint; parses event configuration, including `offline_map.url` (the tile source) |
+| `lib/map_config.dart` | Constants: server URL; default map-tile URL (the MARS tile proxy) |
 | `android/app/src/main/AndroidManifest.xml` | Android permissions |
 | `ios/Runner/Info.plist` | iOS background mode declaration |
+
+### Offline Maps & Tile Proxy
+
+Both the on-screen base map and the offline download pull map tiles from the **MARS tile proxy** (`marsaprs.org/tiles.php/{z}/{x}/{y}.png`) rather than from OpenStreetMap directly. This was introduced in 1.20.2 to fix first-run offline-map downloads: OpenStreetMap blocks bulk tile downloads per-IP, so the app's download of an event area would fail. Routing everything through our own server means each tile is fetched from OSM **at most once** (server-side, with a proper `User-Agent`), which both keeps the app working and is far gentler on OSM than every client fetching its own tiles.
+
+**Server side (`map/tiles.php`)** serves each tile from, in order:
+
+1. `tiles/base/` — a **permanent, pre-seeded** cache of event areas (e.g. Marin). Never auto-deleted; this is what offline event downloads pull from, so those downloads never touch OSM.
+2. `tiles/cache/` — an **on-demand "browse" cache**, filled the first time anyone pans to an area outside the seeded regions.
+3. **OpenStreetMap** — on a miss, fetched once, cached into `tiles/cache/`, and returned. If OSM is unreachable a transparent tile is returned with a short cache time so it retries soon.
+
+**Seeding** (`map/tiles-seed.sh <minLat> <maxLat> <minLon> <maxLon> <minZoom> <maxZoom>`) politely fetches a lat/lon box into the permanent base cache (single-threaded, small delay, proper `User-Agent`). Marin z10–14 (`tiles-seed.sh 37.80 38.25 -123.05 -122.30 10 14`, ~1,300 tiles) is seeded.
+
+**Cleanup** (`map/tiles-clean.sh`, nightly cron at 04:17) trims the browse cache — deletes tiles not re-fetched in 90 days — which bounds the cache size while keeping popular areas fresh; it **never** touches `tiles/base`.
+
+**Config override:** the tile URL is the server config's `offline_map.url`, which `index.php?config` defaults to the proxy. An event can point both the display layer and the offline download at a different source by setting `offline_map.url` in its config. The app reads it via `remote_config.dart`; the compiled fallback lives in `map_config.dart`. Because the display and download URLs match, downloaded tiles render from the shared offline cache (FMTC keys tiles by URL).
 
 ### Location Sharing Flow
 
@@ -538,7 +555,7 @@ To distribute: share the APK via Google Drive or email. Testers tap the download
 
 **Each release:**
 
-1. Bump `version` in `pubspec.yaml` (e.g. `1.20.0+9` → `1.20.1+10` — the build number after `+` must increase with each upload).
+1. Bump `version` in `pubspec.yaml` (e.g. `1.20.1+10` → `1.20.2+11` — the build number after `+` must increase with each upload).
 2. Build a signed App Bundle (AAB):
    ```bash
    flutter build appbundle --release
@@ -937,7 +954,7 @@ no password modal is shown.
 
 **What is recorded:** For each received packet that matches a tracked callsign: callsign, latitude, longitude, Unix timestamp, receiving station (iGate), and the full APRS path string. Stored in the `beacons` table of `aprs.db` (SQLite), keyed to the current event by `event_id`.
 
-**Deduplication:** Consecutive beacons for the same callsign at the same position within a short interval are collapsed during the `get_ordered_deduplicated_beacons()` query so they don't clutter the playback trail.
+**Deduplication:** Consecutive beacons for the same callsign at the same position within a short interval are collapsed during the `get_ordered_deduplicated_beacons()` query so they don't clutter the playback trail. The query dedupes per callsign and then returns the list **sorted globally by time**, so the playback range maps its list-index sliders directly to a chronological window (see Map & Controls).
 
 **Aid stations as iGates:** Aid stations and rest stops that have an APRS callsign configured in the Admin UI are treated as iGates on the Analyzer map — their coordinates are loaded from `config.yaml`, their received packets are displayed with red receiver lines, and they appear as map markers alongside regular iGates.
 
@@ -971,7 +988,7 @@ The Analyzer map is a Leaflet map using the same tile backgrounds configured in 
 | Show Courses | Toggle GPX/KML/GeoJSON course overlays |
 | Show Names | Toggle name labels for trackers, iGates, and aid stations |
 | Auto-Refresh | Slider: poll interval from 30 s to 5 min (per-client; does not affect recording) |
-| Beacon Time Range | Two sliders: trim the displayed beacon window by index; each slider shows the actual date and time of the first/last beacon in range |
+| Beacon Time Range | Two sliders trim the displayed beacon window; each slider shows the actual date/time of the first/last beacon in range. Because beacons are returned in global time order, the window is chronological — the end slider tracks the newest beacon across all trackers (not whichever tracker happened to sort last), and each track is drawn from every tracker's own previous point so interleaved ordering doesn't break the trails |
 
 *Right column — Filtering*
 
@@ -996,9 +1013,10 @@ All files live under `/home/pi/analyzer/` on the server Pi.
 |------|---------|
 | `src/flask_app.py` | Flask application: routes, auth, config loading, beacon enrichment, template rendering |
 | `src/aprs_daemon.py` | APRS-IS listener; inserts beacons into SQLite; reads tracker list from `config.yaml` and `mobile_trackers.json` |
-| `src/aprs_db.py` | SQLite wrapper: event management, beacon insert, ordered/deduplicated beacon fetch, recording time range queries |
+| `src/aprs_db.py` | SQLite wrapper: event management, beacon insert, deduplicated + globally time-sorted beacon fetch, recording time range queries |
 | `src/aprs.db` | SQLite database; excluded from deploys |
-| `src/templates/event_map.html` | Main map page (Leaflet + controls modal + all JS filtering/drawing logic) |
+| `src/templates/event_map.html` | Main live map page (Leaflet + controls modal); loads the shared player engine |
+| `src/static/session_player.js` | Shared rendering + playback engine (filtering, time-range sliders, track drawing) used by both the live map and exported sessions |
 | `src/auth_db.py` | Python auth library: validates `marsaprs_session` cookie against `users.db` |
 
 Configuration is read live from `/var/www/html/admin/config.yaml` (the active event symlink) and `/var/www/html/mobile_trackers.json` on every page load — no restart needed when the event or tracker list changes.

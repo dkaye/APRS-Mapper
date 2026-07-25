@@ -286,8 +286,6 @@ function initSessionPlayer(data, opts) {
     function draw_tracker() {
         trackerGroup.clearLayers();
         time_tooltips = [];
-        let last_cs    = '';
-        let last_coord = [];
         const lastPosByCallsign = {};
         active_beacon_list.forEach(b => {
             const mob   = mobileCallsigns.has(b.callsign);
@@ -315,10 +313,12 @@ function initSessionPlayer(data, opts) {
                 }
             }
 
-            if (b.callsign === last_cs && showTracks)
-                L.polyline([last_coord, coord], {color, weight:2, dashArray:'4 6'}).addTo(trackerGroup);
-            last_cs    = b.callsign;
-            last_coord = coord;
+            // Connect to this callsign's own previous point, not the list's
+            // previous entry — the beacon list is now globally time-sorted, so
+            // consecutive entries are usually different trackers.
+            const prevPos = lastPosByCallsign[b.callsign];
+            if (prevPos && showTracks)
+                L.polyline([prevPos.coord, coord], {color, weight:2, dashArray:'4 6'}).addTo(trackerGroup);
             lastPosByCallsign[b.callsign] = {coord, color};
 
             const mk = L.circleMarker(coord, {radius:5, color, weight:2})

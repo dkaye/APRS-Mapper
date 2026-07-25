@@ -15,7 +15,7 @@
  *   ?config  Map/background/course/tracker config from config.yaml (ETag-cached)
  */
 
-define('WEB_VERSION', '1.20.1+10');
+define('WEB_VERSION', '1.20.2+11');
 
 // ── Client/server API contract version ────────────────────────────────────────
 // Advertised in the ?json and ?config responses so mobile apps can detect an
@@ -409,7 +409,14 @@ if (isset($_GET['config'])) {
 		'mobile_enabled'      => $mobileEnabled,
 		'mobile_beacons'      => $beaconCfg,
 		'messaging_enabled'   => !empty(trim($cfg['messaging_password'] ?? '')),
-		'offline_map'         => (object)($cfg['offline_map'] ?? []),
+		// Offline-map tile source. Default the url to the MARS tile proxy so the
+		// app downloads (and displays) through our own server rather than hitting
+		// OpenStreetMap directly — OSM blocks bulk downloads, which was breaking
+		// first-run map downloads. An event can still override via offline_map in
+		// its config. Served by tiles.php (proxy + cache).
+		'offline_map'         => (object)(((array)($cfg['offline_map'] ?? [])) + [
+			'url' => 'https://marsaprs.org/tiles.php/{z}/{x}/{y}.png',
+		]),
 	]);
 	exit;
 }
