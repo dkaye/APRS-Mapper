@@ -12,6 +12,7 @@
 2. [System Architecture](#system-architecture)
 3. [NetBird VPN](#netbird-vpn)
 4. [iGates (v5.1)](#igates-v51)
+   - [iGate Diagnostics](#igate-diagnostics)
 5. [APRS Server (v1.20.2)](#aprs-server-v1202)
    - [Cloudflare Tunnel](#cloudflare-tunnel)
 6. [Display Pis (v1.20.2)](#display-pis-v1202)
@@ -169,9 +170,46 @@ igate-watchdog.sh  (cron, every minute)
 - **IP address** — logs a warning if the device has no IP address.
 - **Internet** — every 5 minutes, if NetBird is connected, pings `8.8.8.8`. On failure, launches `dw-nointernet.py` (same 2-minute countdown + reboot pattern).
 
-The watchdog suppresses all checks while `dw-startup.py` is running (boot sequence) or while a reboot is already pending (`/tmp/aprs-rebooting`). TFT presence is detected by reading GPIO 23: `pinctrl get 23 | grep -q hi`.
+The watchdog suppresses all checks while `dw-startup.py` is running (boot sequence), while a reboot is already pending (`/tmp/aprs-rebooting`), or while `sdr-usb-test` is running (`/tmp/sdr-usb-test.pause` — see [iGate Diagnostics](#igate-diagnostics) below), so a diagnostic that owns the SDR is never fought by the watchdog restarting direwolf. TFT presence is detected by reading GPIO 23: `pinctrl get 23 | grep -q hi`.
 
 Log: `/var/log/direwolf/watchdog.log`
+
+### iGate Diagnostics
+
+Two tools help keep the fleet's receivers healthy — one automatic, one on demand.
+
+**SDR self-noise self-test (automatic).** `igate-selftest.sh` runs nightly (from
+`auto-update.sh`, before the 4:10 am reboot) and can also be run by hand
+(`bash ~/igate-selftest.sh`). It briefly stops direwolf, sweeps 144–148 MHz with
+`rtl_power`, and measures the level of any internal birdie (self-generated spur) in the
+APRS guard band (144.37–144.42 MHz) relative to the surrounding noise floor. It grades the
+receiver **GOOD / MARGINAL / BAD**, writes the result to `~/selftest.json`, and uploads it
+to the fleet dashboard at **`https://marsaprs.org/igate/selftest/`**. The dashboard lists
+each gate by **callsign and name**, its grade, guard-band spur in dB, noise floor, and last
+report time, and flags the quietest receiver as "Best." A MARGINAL/BAD grade usually means
+RF self-noise coupling into the SDR (shielding/placement) — but a flaky dongle or bad USB
+connection can fake it too, so reseat the dongle before assuming a shielding problem.
+
+**Flaky-USB dongle test, `sdr-usb-test` (on demand).** Some RTL-SDR dongles have cracked
+USB-A solder joints or worn connectors and drop off the USB bus intermittently. On an iGate
+that shows up as "SDR Not Found" and reboot loops. `sdr-usb-test` isolates the dongle and
+watches the kernel USB log for spontaneous disconnects, then for disconnects you induce by
+wiggling the connector. It is standalone: it pauses the watchdog
+(`/tmp/sdr-usb-test.pause`), stops direwolf, and streams from the dongle to load the USB
+link like real operation, restoring everything on exit.
+
+```bash
+sdr-usb-test                 # 5-min passive test, then a 20-s wiggle test
+sdr-usb-test --quick         # 60-s passive + 15-s wiggle (fast check)
+sdr-usb-test --no-wiggle     # passive only (also auto-selected with no TTY)
+sdr-usb-test 120 15          # custom passive / wiggle seconds
+```
+
+Verdicts: **PASS** — no disconnects in either phase (healthy); **FAIL** — drops on its own
+→ replace the dongle; **SUSPECT** — stable at rest but drops when disturbed → reseat the
+plug/adapter, else replace. The source lives at `igate/home/sdr-usb-test.sh` in this repo;
+`install.sh` and `auto-update.sh` symlink it to `/usr/local/bin/sdr-usb-test` so it runs
+from anywhere. Log: `~/sdr-usb-test.log`.
 
 **Key files on the iGate Pi:**
 
@@ -186,6 +224,8 @@ Log: `/var/log/direwolf/watchdog.log`
 | `dw-nosdr.py` | `/home/pi/direwatch/` | "No SDR found" countdown display |
 | `dw-nointernet.py` | `/home/pi/direwatch/` | "No internet" countdown display |
 | `StatsRequestListener.php` | `/home/pi/` | UDP responder for NetBird monitor |
+| `igate-selftest.sh` | `/home/pi/` | Nightly SDR self-noise test → fleet dashboard |
+| `sdr-usb-test.sh` | `/home/pi/` (→ `/usr/local/bin/sdr-usb-test`) | Flaky-USB dongle test (run over SSH) |
 
 **SSH:** `ssh pi@<ip>` · Password: `guacamole`
 

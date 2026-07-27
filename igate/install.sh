@@ -242,6 +242,7 @@ msg "Setting permissions"
 sudo chown -R pi:pi /home/pi
 sudo chmod 755 /home/pi
 chmod +x /home/pi/*.sh /home/pi/*.php
+sudo ln -sf /home/pi/sdr-usb-test.sh /usr/local/bin/sdr-usb-test   # run 'sdr-usb-test' from anywhere
 ok "Permissions set"
 
 # ── Time sync ─────────────────────────────────────────────────────────────────

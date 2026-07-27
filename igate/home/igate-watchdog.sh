@@ -19,6 +19,7 @@ pinctrl get 23 | grep -q hi && display=1
 # ── Suppress all checks during boot sequence or pending reboot ────────────────
 pgrep -f dw-startup.py > /dev/null 2>&1 && exit 0
 [ -f /tmp/aprs-rebooting ] && exit 0
+[ -f /tmp/sdr-usb-test.pause ] && exit 0   # sdr-usb-test owns the SDR; don't restart direwolf
 
 # ── SDR check ─────────────────────────────────────────────────────────────────
 if lsusb | grep -qiE '0bda:2838|0bda:2832|RTL28'; then

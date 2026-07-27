@@ -228,17 +228,22 @@ function initSessionPlayer(data, opts) {
             });
         }
         localStorage.setItem(storagePrefix + '_tracker', JSON.stringify(selected));
-        update_filtered_beacon_list(false);
+        update_filtered_beacon_list('reset');
     }
 
     function applyIgateSelection() {
         const selected = Array.from(igate_selector.selectedOptions).map(o => o.value);
         selectedIgates = new Set(selected.length ? selected : ['all']);
-        update_filtered_beacon_list(false);
+        update_filtered_beacon_list('reset');
     }
 
     // ── Filtering / playback range ─────────────────────────────────────────
-    function update_filtered_beacon_list(range_update_only) {
+    function update_filtered_beacon_list(mode) {
+        // mode: 'reset'  — filter/selection changed → show the full (new) range
+        //       'keep'   — slider drag → keep the indices the handler just set
+        //       'sticky' — live refresh with new beacons → keep the user's window,
+        //                  following the growing end only if it was at the live edge
+        const prev_count     = current_beacon_count;
         active_beacon_list   = [];
         const candidate_list = [];
         current_beacon_count = 0;
@@ -253,15 +258,28 @@ function initSessionPlayer(data, opts) {
             candidate_list.push(b);
             current_beacon_count++;
         });
-        if (!range_update_only) {
-            const ss = document.getElementById('set-first-beacon');
-            const es = document.getElementById('set-last-beacon');
+        if (mode === 'reset') {
             display_range_start = 0;
             display_range_end   = current_beacon_count;
-            ss.max = String(Math.max(current_beacon_count - 1, 0));
-            es.max = String(current_beacon_count);
-            if (ss.value !== '0') ss.value = '0';
-            es.value = String(current_beacon_count);
+        } else if (mode === 'sticky') {
+            // Beacons are appended chronologically (newest last), so existing
+            // indices stay valid. Follow the growing end only if the user was
+            // already parked at the live edge; otherwise leave their window put.
+            const followEnd = display_range_end >= prev_count;
+            display_range_end   = followEnd ? current_beacon_count
+                                            : Math.min(display_range_end, current_beacon_count);
+            display_range_start = Math.min(display_range_start, Math.max(display_range_end - 1, 0));
+        }
+        // 'keep' leaves the indices exactly as the slider handler set them.
+        if (mode !== 'keep') {
+            const ss = document.getElementById('set-first-beacon');
+            const es = document.getElementById('set-last-beacon');
+            if (ss && es) {
+                ss.max   = String(Math.max(current_beacon_count - 1, 0));
+                es.max   = String(current_beacon_count);
+                ss.value = String(display_range_start);
+                es.value = String(display_range_end);
+            }
         }
         for (let i = display_range_start; i < display_range_end; i++)
             active_beacon_list.push(candidate_list[i]);
@@ -269,12 +287,19 @@ function initSessionPlayer(data, opts) {
         const _bel = document.getElementById('beacon-end-label');
         const _fa  = candidate_list[display_range_start];
         const _la  = candidate_list[Math.min(display_range_end, candidate_list.length) - 1];
-        if (_bsl) _bsl.textContent = _fa ? fmtTime(_fa.time) : '—';
-        if (_bel) _bel.textContent = _la ? fmtTime(_la.time) : '—';
+        // When the End slider is at the far right it tracks the live edge, so new
+        // beacons keep flowing in — label it "Current" instead of a timestamp that
+        // would otherwise look frozen. The Start side always shows the earliest
+        // displayed beacon's time, wherever that slider sits.
+        const atLiveEdge = current_beacon_count > 0 && display_range_end >= current_beacon_count;
+        const startText  = _fa ? fmtTime(_fa.time) : '—';
+        const endText    = atLiveEdge ? 'Current' : (_la ? fmtTime(_la.time) : '—');
+        if (_bsl) _bsl.textContent = startText;
+        if (_bel) _bel.textContent = endText;
         if (_fa && _la) {
             rangeReadout.innerHTML =
                 '<span style="color:#888;font-weight:normal;margin-right:7px">Beacon range</span>'
-                + esc(fmtTime(_fa.time)) + ' <span style="color:#aaa">→</span> ' + esc(fmtTime(_la.time));
+                + esc(startText) + ' <span style="color:#aaa">→</span> ' + esc(endText);
             rangeReadout.style.display = 'block';
         } else {
             rangeReadout.style.display = 'none';
@@ -408,15 +433,15 @@ function initSessionPlayer(data, opts) {
                 showRadio = true;
                 const rb = byId('show-radio');
                 if (rb) rb.checked = true;
-                update_filtered_beacon_list(false);   // redraws
+                update_filtered_beacon_list('reset');   // redraws
                 return;
             }
             draw_tracker();
         }
 
         byId('show-tracks')?.addEventListener('change', e => { showTracks = e.target.checked; draw_tracker(); });
-        byId('show-radio')?.addEventListener('change', e => { showRadio = e.target.checked; update_filtered_beacon_list(false); });
-        byId('show-cellular')?.addEventListener('change', e => { showCellular = e.target.checked; update_filtered_beacon_list(false); });
+        byId('show-radio')?.addEventListener('change', e => { showRadio = e.target.checked; update_filtered_beacon_list('reset'); });
+        byId('show-cellular')?.addEventListener('change', e => { showCellular = e.target.checked; update_filtered_beacon_list('reset'); });
         byId('show-igates')?.addEventListener('change', e => {
             setIgatesVisible(e.target.checked);
             // A link runs from a beacon to its receiving igate/digipeater. With
@@ -443,7 +468,7 @@ function initSessionPlayer(data, opts) {
         byId('carrier-select')?.addEventListener('change', function() {
             const sel = Array.from(this.selectedOptions).map(o => o.value);
             selectedCarriers = new Set(sel.length ? sel : ['all']);
-            update_filtered_beacon_list(false);
+            update_filtered_beacon_list('reset');
         });
 
         byId('set-first-beacon')?.addEventListener('input', e => {
@@ -452,7 +477,7 @@ function initSessionPlayer(data, opts) {
                 display_range_end = display_range_start + 1;
                 byId('set-last-beacon').value = String(display_range_end);
             }
-            update_filtered_beacon_list(true);
+            update_filtered_beacon_list('keep');
         });
         byId('set-last-beacon')?.addEventListener('input', e => {
             display_range_end = parseInt(e.target.value, 10);
@@ -460,7 +485,7 @@ function initSessionPlayer(data, opts) {
                 display_range_start = display_range_end - 1;
                 byId('set-first-beacon').value = String(display_range_start);
             }
-            update_filtered_beacon_list(true);
+            update_filtered_beacon_list('keep');
         });
 
         byId('save-map-btn')?.addEventListener('click', function() {
@@ -525,7 +550,7 @@ function initSessionPlayer(data, opts) {
     return {
         map,
         beaconCount: () => beacons.length,
-        redraw: () => update_filtered_beacon_list(false),
+        redraw: () => update_filtered_beacon_list('reset'),
         setBeacons: (list) => {
             beacons = list || [];
             // Add any newly seen callsigns (with known names) to the tracker select
@@ -537,7 +562,7 @@ function initSessionPlayer(data, opts) {
                     ex.add(b.callsign);
                 }
             });
-            update_filtered_beacon_list(false);
+            update_filtered_beacon_list('sticky');
         },
     };
 }

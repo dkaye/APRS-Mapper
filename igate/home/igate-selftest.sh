@@ -37,8 +37,16 @@ DONGLE=$(sudo journalctl -u direwolf -b -o cat --no-pager 2>/dev/null \
     | grep -aoE '[0-9]+:[[:space:]]+[A-Za-z].+SN:[[:space:]]*[0-9A-Fa-f]+' | tail -1 \
     | sed -E 's/^[0-9]+:[[:space:]]*//')
 IGVER=$(grep -oE 'dashboardversion *= *"[^"]*"' /var/www/html/config.php 2>/dev/null | grep -oE '[0-9.]+' | head -1)
-META=$(printf '{"host":"%s","ip":"%s","pi_model":"%s","dongle":"%s","igate_version":"%s","ts":"%s"}' \
-    "$HOST" "$IPADDR" "$MODEL" "$DONGLE" "$IGVER" "$(date '+%Y-%m-%dT%H:%M:%S')")
+# Callsign (MYCALL) and a friendly location name for the dashboard. The name is
+# the location tail of the PBEACON comment, e.g.
+#   comment="iGate 5.1 by MARS, Marconi Center, California" → "Marconi Center, California".
+MYCALL=$(grep -iE '^MYCALL[[:space:]]' /home/pi/direwolf.conf 2>/dev/null | awk '{print $2}' | head -1)
+NAME=$(grep -iE '^PBEACON' /home/pi/direwolf.conf 2>/dev/null | grep -oE 'comment="[^"]*"' | head -1 \
+    | sed -E 's/^comment="//; s/"$//; s/^iGate[^,]*,[[:space:]]*//')
+# JSON-escape backslashes and double quotes so META stays valid JSON.
+jesc() { printf '%s' "$1" | sed -E 's/\\/\\\\/g; s/"/\\"/g'; }
+META=$(printf '{"host":"%s","callsign":"%s","name":"%s","ip":"%s","pi_model":"%s","dongle":"%s","igate_version":"%s","ts":"%s"}' \
+    "$HOST" "$(jesc "$MYCALL")" "$(jesc "$NAME")" "$IPADDR" "$MODEL" "$DONGLE" "$IGVER" "$(date '+%Y-%m-%dT%H:%M:%S')")
 
 sudo systemctl stop direwolf >/dev/null 2>&1
 sleep 2

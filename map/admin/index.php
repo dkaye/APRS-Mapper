@@ -892,7 +892,7 @@ if (isset($_GET['backup'])) {
     $safeName = preg_replace('/[^a-zA-Z0-9_\-]/', '_', $name);
     aprs_admin_log('backup_event', ['event' => $name, 'files' => count($added)]);
     header('Content-Type: application/zip');
-    header('Content-Disposition: attachment; filename="' . $safeName . '.zip"');
+    header('Content-Disposition: attachment; filename="' . $safeName . '-' . date('Y-m-d') . '.zip"');
     header('Content-Length: ' . filesize($tmpFile));
     header('Cache-Control: no-store');
     readfile($tmpFile);
@@ -2061,11 +2061,16 @@ async function doBackup() {
         }
         const blob = await r.blob();
         const safeName = currentFilename.replace(/[^a-zA-Z0-9_\-]/g, '_');
+        // Include the local date in the backup filename, e.g. MyEvent-2026-07-27.zip
+        const d = new Date();
+        const stamp = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+                                      + '-' + String(d.getDate()).padStart(2, '0');
+        const zipName = safeName + '-' + stamp + '.zip';
 
         if (window.showSaveFilePicker) {
             try {
                 const handle = await window.showSaveFilePicker({
-                    suggestedName: safeName + '.zip',
+                    suggestedName: zipName,
                     types: [{ description: 'ZIP Archive', accept: { 'application/zip': ['.zip'] } }]
                 });
                 const writable = await handle.createWritable();
@@ -2081,7 +2086,7 @@ async function doBackup() {
         // Fallback for browsers without showSaveFilePicker
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url; a.download = safeName + '.zip'; a.click();
+        a.href = url; a.download = zipName; a.click();
         URL.revokeObjectURL(url);
         setStatus('Backup downloaded ✓', 'ok', 3000);
     } catch (e) {

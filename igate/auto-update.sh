@@ -38,6 +38,7 @@ tar -xzf "$TMP/files.tar.gz" --warning=no-unknown-keyword -C "$TMP"
 log "Updating /home/pi/ scripts..."
 rsync -a --ignore-times "$TMP/home/" /home/pi/
 chmod +x /home/pi/*.sh /home/pi/*.php
+sudo ln -sf /home/pi/sdr-usb-test.sh /usr/local/bin/sdr-usb-test   # run 'sdr-usb-test' from anywhere
 
 # Direwatch display scripts
 log "Updating direwatch scripts..."

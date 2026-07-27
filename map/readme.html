@@ -200,7 +200,8 @@
 <li><a href="#overview">Overview</a></li>
 <li><a href="#system-architecture">System Architecture</a></li>
 <li><a href="#netbird-vpn">NetBird VPN</a></li>
-<li><a href="#igates-v51">iGates (v5.1)</a></li>
+<li><a href="#igates-v51">iGates (v5.1)</a>
+<ul><li><a href="#igate-diagnostics">iGate Diagnostics</a></li></ul></li>
 <li><a href="#aprs-server-v1202">APRS Server (v1.20.2)</a></li>
 <li><a href="#cloudflare-tunnel">Cloudflare Tunnel</a></li>
 <li><a href="#display-pis-v1202">Display Pis (v1.20.2)</a></li>
@@ -391,8 +392,17 @@ igate-watchdog.sh  (cron, every minute)
 <li><strong>IP address</strong> — logs a warning if the device has no IP address.</li>
 <li><strong>Internet</strong> — every 5 minutes, if NetBird is connected, pings <code>8.8.8.8</code>. On failure, launches <code>dw-nointernet.py</code> (same 2-minute countdown + reboot pattern).</li>
 </ul>
-<p>The watchdog suppresses all checks while <code>dw-startup.py</code> is running (boot sequence) or while a reboot is already pending (<code>/tmp/aprs-rebooting</code>). TFT presence is detected by reading GPIO 23: <code>pinctrl get 23 | grep -q hi</code>.</p>
+<p>The watchdog suppresses all checks while <code>dw-startup.py</code> is running (boot sequence), while a reboot is already pending (<code>/tmp/aprs-rebooting</code>), or while <code>sdr-usb-test</code> is running (<code>/tmp/sdr-usb-test.pause</code> — see <a href="#igate-diagnostics">iGate Diagnostics</a> below), so a diagnostic that owns the SDR is never fought by the watchdog restarting direwolf. TFT presence is detected by reading GPIO 23: <code>pinctrl get 23 | grep -q hi</code>.</p>
 <p>Log: <code>/var/log/direwolf/watchdog.log</code></p>
+<h3 id="igate-diagnostics">iGate Diagnostics</h3>
+<p>Two tools help keep the fleet's receivers healthy — one automatic, one on demand.</p>
+<p><strong>SDR self-noise self-test (automatic).</strong> <code>igate-selftest.sh</code> runs nightly (from <code>auto-update.sh</code>, before the 4:10 am reboot) and can also be run by hand (<code>bash ~/igate-selftest.sh</code>). It briefly stops direwolf, sweeps 144–148 MHz with <code>rtl_power</code>, and measures the level of any internal birdie (self-generated spur) in the APRS guard band (144.37–144.42 MHz) relative to the surrounding noise floor. It grades the receiver <strong>GOOD / MARGINAL / BAD</strong>, writes the result to <code>~/selftest.json</code>, and uploads it to the fleet dashboard at <strong><a href="https://marsaprs.org/igate/selftest/">https://marsaprs.org/igate/selftest/</a></strong>. The dashboard lists each gate by <strong>callsign and name</strong>, its grade, guard-band spur in dB, noise floor, and last report time, and flags the quietest receiver as "Best." A MARGINAL/BAD grade usually means RF self-noise coupling into the SDR (shielding/placement) — but a flaky dongle or bad USB connection can fake it too, so reseat the dongle before assuming a shielding problem.</p>
+<p><strong>Flaky-USB dongle test, <code>sdr-usb-test</code> (on demand).</strong> Some RTL-SDR dongles have cracked USB-A solder joints or worn connectors and drop off the USB bus intermittently. On an iGate that shows up as "SDR Not Found" and reboot loops. <code>sdr-usb-test</code> isolates the dongle and watches the kernel USB log for spontaneous disconnects, then for disconnects you induce by wiggling the connector. It is standalone: it pauses the watchdog (<code>/tmp/sdr-usb-test.pause</code>), stops direwolf, and streams from the dongle to load the USB link like real operation, restoring everything on exit.</p>
+<pre><code>sdr-usb-test                 # 5-min passive test, then a 20-s wiggle test
+sdr-usb-test --quick         # 60-s passive + 15-s wiggle (fast check)
+sdr-usb-test --no-wiggle     # passive only (also auto-selected with no TTY)
+sdr-usb-test 120 15          # custom passive / wiggle seconds</code></pre>
+<p>Verdicts: <strong>PASS</strong> — no disconnects in either phase (healthy); <strong>FAIL</strong> — drops on its own → replace the dongle; <strong>SUSPECT</strong> — stable at rest but drops when disturbed → reseat the plug/adapter, else replace. The source lives at <code>igate/home/sdr-usb-test.sh</code> in this repo; <code>install.sh</code> and <code>auto-update.sh</code> symlink it to <code>/usr/local/bin/sdr-usb-test</code> so it runs from anywhere. Log: <code>~/sdr-usb-test.log</code>.</p>
 <p><strong>Key files on the iGate Pi:</strong></p>
 <table>
 <thead>
@@ -447,6 +457,16 @@ igate-watchdog.sh  (cron, every minute)
 <td><code>StatsRequestListener.php</code></td>
 <td><code>/home/pi/</code></td>
 <td>UDP responder for NetBird monitor</td>
+</tr>
+<tr>
+<td><code>igate-selftest.sh</code></td>
+<td><code>/home/pi/</code></td>
+<td>Nightly SDR self-noise test → fleet dashboard</td>
+</tr>
+<tr>
+<td><code>sdr-usb-test.sh</code></td>
+<td><code>/home/pi/</code> (→ <code>/usr/local/bin/sdr-usb-test</code>)</td>
+<td>Flaky-USB dongle test (run over SSH)</td>
 </tr>
 </tbody>
 </table>

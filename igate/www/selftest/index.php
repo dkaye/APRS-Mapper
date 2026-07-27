@@ -100,7 +100,7 @@ $COLOR = ['GOOD' => '#1a7f37', 'MARGINAL' => '#9a6700', 'BAD' => '#c0392b'];
   <table>
     <thead><tr>
       <th>Gate</th><th>Grade</th><th>APRS-guard spur</th><th>vs best</th><th>Comb?</th>
-      <th>Floor</th><th>Dongle</th><th>Board</th><th>iGate</th><th>Reported</th>
+      <th>Floor</th><th>Board</th><th>iGate</th><th>Reported</th>
     </tr></thead>
     <tbody>
     <?php foreach ($rows as $r):
@@ -111,14 +111,14 @@ $COLOR = ['GOOD' => '#1a7f37', 'MARGINAL' => '#9a6700', 'BAD' => '#c0392b'];
       $isBest = $isBestSpur($r);
     ?>
       <tr<?= $isBest ? ' class="best"' : '' ?>>
-        <td><strong><?= htmlspecialchars(g($r,'host','?')) ?></strong></td>
+        <td><strong><?= htmlspecialchars(g($r,'callsign') ?: g($r,'host','?')) ?></strong>
+          <?php $nm = g($r,'name'); if ($nm): ?><div class="muted" style="font-weight:normal;font-size:12px"><?= htmlspecialchars($nm) ?></div><?php endif; ?></td>
         <td><span class="pill" style="background:<?= $col ?>"><?= htmlspecialchars($grade) ?></span></td>
         <td class="num"><?= $spur !== null ? number_format($spur,1).' dB' : '—' ?>
           <?php if ($spur !== null && $off !== null): ?><span class="muted">@<?= htmlspecialchars(g($r,'aprs_guard_spur_mhz')) ?></span><?php endif; ?></td>
         <td class="num"><?= $vsbest !== null ? ($vsbest <= 0.05 ? '<span style="color:#1a7f37">best</span>' : '+'.number_format($vsbest,1)) : '—' ?></td>
         <td><?= g($r,'comb_detected') ? '<span style="color:#c0392b">yes</span>' : '<span class="muted">no</span>' ?></td>
         <td class="num muted"><?= htmlspecialchars(g($r,'floor_db','—')) ?></td>
-        <td class="muted" style="max-width:200px;overflow:hidden;text-overflow:ellipsis"><?= htmlspecialchars(g($r,'dongle','—')) ?></td>
         <td class="muted"><?= htmlspecialchars(str_replace('Raspberry Pi ','',(string)g($r,'pi_model','—'))) ?></td>
         <td class="muted"><?= htmlspecialchars(g($r,'igate_version','—')) ?></td>
 <?php // "Reported" age from _received (server time, TZ-aware). The gate's own ts
