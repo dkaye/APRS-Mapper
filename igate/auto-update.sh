@@ -82,7 +82,11 @@ IGATE_VERSION="5.1"
 CFG=/var/www/html/config.php
 if [ -f "$CFG" ] && ! grep -q "dashboardversion = \"$IGATE_VERSION\"" "$CFG"; then
     log "Stamping dashboard version $IGATE_VERSION into config.php..."
-    sudo sed -i -E 's/(\$dashboardversion *= *")[0-9]+\.[0-9]+(")/\1'"$IGATE_VERSION"'\2/' "$CFG"
+    # Match ANY current value ([^"]*), not just a dotted N.N version — old v4
+    # gates carry a date-style version (e.g. "20250430") with no dot, which the
+    # previous [0-9]+\.[0-9]+ pattern silently failed to rewrite, so they were
+    # stuck reporting the date forever. Mirrors the direwolfversion stamp below.
+    sudo sed -i -E 's/(\$dashboardversion *= *")[^"]*(")/\1'"$IGATE_VERSION"'\2/' "$CFG"
 fi
 
 # Direwolf version is detected, not hard-coded: these gates build direwolf from

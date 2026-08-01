@@ -23,7 +23,11 @@ command -v python3   >/dev/null 2>&1 || { echo "selftest: no python3 — skippin
 TMP=$(mktemp -d)
 # Always clean up and hand the SDR back to direwolf, whatever happens — including
 # force-killing any rtl_* left stuck in a blocking USB read.
-trap 'sudo pkill -9 -f rtl_power >/dev/null 2>&1; rm -rf "$TMP"; sudo systemctl start direwolf >/dev/null 2>&1 || true' EXIT
+# NB: match rtl_power by exact process name (-x), NOT -f. A -f pattern of
+# "rtl_power" also matches this very "sudo pkill -9 ... rtl_power" command line,
+# so pkill would SIGKILL its own sudo wrapper — which bash then reports as a
+# stray "Killed" line in otherwise-successful output.
+trap 'sudo pkill -9 -x rtl_power >/dev/null 2>&1; rm -rf "$TMP"; sudo systemctl start direwolf >/dev/null 2>&1 || true' EXIT
 
 # ── Metadata (gathered BEFORE freeing the SDR) ────────────────────────────────
 # The dongle string comes from direwolf's own boot log, not from probing the
@@ -72,7 +76,7 @@ print("%s,%s,%s,%s,%s,%s,%s" % (
     d.get('aprs_guard_spur_db',''), d.get('aprs_guard_spur_mhz',''),
     d.get('worst_band_spur_db',''), d.get('worst_band_spur_mhz','')))
 PYEOF
-    echo "selftest: $(python3 -c "import json;d=json.load(open('$OUT'));print('%s  APRS-guard spur %.1f dB @ %s MHz'%(d['grade'],d['aprs_guard_spur_db'],d['aprs_guard_spur_mhz']))" 2>/dev/null)"
+    echo "selftest: $(python3 -c "import json;d=json.load(open('$OUT'));f=d.get('aprs_guard_spur_mhz');print('%s  %s'%(d['grade'], 'APRS-guard spur %.1f dB @ %s MHz'%(d['aprs_guard_spur_db'],f) if f not in (None,'') else 'no measurable APRS-guard spur'))" 2>/dev/null)"
     # Upload to the fleet dashboard (non-fatal; the local copy is kept regardless).
     curl -fsS --max-time 20 -X POST -H 'Content-Type: application/json' \
         --data-binary @"$OUT" "https://marsaprs.org/igate/selftest/upload.php" >/dev/null 2>&1 \

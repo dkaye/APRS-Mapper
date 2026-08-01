@@ -9,6 +9,19 @@
  * ~0-3 dB with it moved out of the case (healthy).
  */
 $dir = __DIR__ . '/data';
+
+// Per-row Delete: remove a gate's stored report. POST + redirect (PRG) so a page
+// refresh doesn't repeat the delete. basename() confines the target to $dir, so a
+// crafted host value can't escape the data directory. The row reappears on the
+// gate's next self-test upload — this just clears stale/renamed entries.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete'])) {
+    $host   = basename((string) $_POST['delete']);
+    $target = "$dir/$host.json";
+    if ($host !== '' && is_file($target)) @unlink($target);
+    header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
+    exit;
+}
+
 $rows = [];
 foreach (glob("$dir/*.json") ?: [] as $f) {
     $d = json_decode(@file_get_contents($f), true);
@@ -78,6 +91,9 @@ $COLOR = ['GOOD' => '#1a7f37', 'MARGINAL' => '#9a6700', 'BAD' => '#c0392b'];
   .muted { color: #9aa5b1; }
   .note { margin-top: 16px; font-size: 12.5px; color: #6b7280; line-height: 1.5; max-width: 80ch; }
   code { background: #eef0f2; padding: .1em .35em; border-radius: 3px; font-size: .9em; }
+  .del { font: inherit; font-size: 12px; border: 1px solid #d1d5db; background: #fff; color: #c0392b;
+    border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+  .del:hover { background: #c0392b; color: #fff; border-color: #c0392b; }
 </style>
 </head>
 <body>
@@ -100,7 +116,7 @@ $COLOR = ['GOOD' => '#1a7f37', 'MARGINAL' => '#9a6700', 'BAD' => '#c0392b'];
   <table>
     <thead><tr>
       <th>Gate</th><th>Grade</th><th>APRS-guard spur</th><th>vs best</th><th>Comb?</th>
-      <th>Floor</th><th>Board</th><th>iGate</th><th>Reported</th>
+      <th>Floor</th><th>Board</th><th>iGate</th><th>Reported</th><th></th>
     </tr></thead>
     <tbody>
     <?php foreach ($rows as $r):
@@ -125,6 +141,7 @@ $COLOR = ['GOOD' => '#1a7f37', 'MARGINAL' => '#9a6700', 'BAD' => '#c0392b'];
       // has no timezone and PHP runs in UTC, so parsing ts directly is off by the
       // gate's UTC offset. ?>
         <td class="muted"><?= htmlspecialchars(age(g($r,'_received') ?: g($r,'ts'))) ?></td>
+        <td><form method="post" style="margin:0" onsubmit="return confirm('Remove ' + <?= htmlspecialchars(json_encode(g($r,'callsign') ?: g($r,'host','?')), ENT_QUOTES) ?> + ' from the dashboard? It reappears on the gate\'s next self-test.')"><input type="hidden" name="delete" value="<?= htmlspecialchars(g($r,'host',''), ENT_QUOTES) ?>"><button type="submit" class="del" title="Remove this gate from the dashboard">Delete</button></form></td>
       </tr>
     <?php endforeach; ?>
     </tbody>

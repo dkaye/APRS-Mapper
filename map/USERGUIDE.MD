@@ -1,6 +1,6 @@
 # APRS Tracker Map — User Guide
 
-**Version 1.20.2 · July 24, 2026**
+**Version 1.20.3 · July 31, 2026**
 
 ---
 

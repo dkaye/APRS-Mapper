@@ -551,6 +551,60 @@ function initSessionPlayer(data, opts) {
         map,
         beaconCount: () => beacons.length,
         redraw: () => update_filtered_beacon_list('reset'),
+        // Reset the tracker + igate pulldowns to the config.yaml roster (map admin
+        // page) after an Erase All. Both are cleared then filled from `cfg`; trackers
+        // thereafter re-accumulate additively via setBeacons (mobiles as they beacon),
+        // and nothing is removed until the next Erase All.
+        repopulateFromConfig: (cfg) => {
+            const clear = id => {
+                const s = document.getElementById(id);
+                if (s) for (let i = s.options.length - 1; i >= 0; i--)
+                    if (s.options[i].value !== 'all') s.remove(i);
+                return s;
+            };
+            const tSel = clear('tracker-select');
+            const iSel = clear('igate-select');
+            if (tSel && cfg && cfg.trackers)
+                cfg.trackers.forEach(t => {
+                    const opt = new Option(t.label, t.callsign);
+                    if (t.mobile_pair) opt.dataset.mobilePair = t.mobile_pair;
+                    tSel.add(opt);
+                });
+            if (iSel && cfg) {
+                Object.entries(cfg.igates || {}).forEach(([cs, v]) => iSel.add(new Option(`${v.name} (${cs})`, cs)));
+                Object.entries(cfg.digipeaters || {}).forEach(([cs, v]) => iSel.add(new Option(`${v.name} (${cs})`, cs)));
+            }
+            if (tSel) tSel.value = 'all';
+            if (iSel) iSel.value = 'all';
+            selectedIgates   = new Set(['all']);
+            showAllTrackers  = true;
+            currentCallsigns = new Set();
+            localStorage.removeItem(storagePrefix + '_tracker');
+            update_filtered_beacon_list('reset');
+        },
+        // Additively add config.yaml trackers/igates that aren't already options
+        // (e.g. after they're added in the map admin page). Never clears or removes.
+        addConfigOptions: (cfg) => {
+            if (!cfg) return;
+            const tSel = document.getElementById('tracker-select');
+            if (tSel && cfg.trackers) {
+                const ex = new Set(Array.from(tSel.options).map(o => o.value));
+                cfg.trackers.forEach(t => {
+                    if (!ex.has(t.callsign)) {
+                        const opt = new Option(t.label, t.callsign);
+                        if (t.mobile_pair) opt.dataset.mobilePair = t.mobile_pair;
+                        tSel.add(opt); ex.add(t.callsign);
+                    }
+                });
+            }
+            const iSel = document.getElementById('igate-select');
+            if (iSel) {
+                const ex = new Set(Array.from(iSel.options).map(o => o.value));
+                const add = (cs, v) => { if (!ex.has(cs)) { iSel.add(new Option(`${v.name} (${cs})`, cs)); ex.add(cs); } };
+                Object.entries(cfg.igates || {}).forEach(([cs, v]) => add(cs, v));
+                Object.entries(cfg.digipeaters || {}).forEach(([cs, v]) => add(cs, v));
+            }
+        },
         setBeacons: (list) => {
             beacons = list || [];
             // Add any newly seen callsigns (with known names) to the tracker select

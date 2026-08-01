@@ -218,16 +218,12 @@ def load_config():
                                 'is_mobile': True, 'mobile_pair': None})
         represented_mobile.add(cs)
 
-    # 4. registered-but-not-yet-active mobile trackers from mobile_trackers.json
-    for cs, entry in mobile_reg.items():
-        if cs in represented_mobile:
-            continue
-        name = entry.get('name', cs)
-        mid  = entry.get('id', cs)
-        trackers[cs] = name
-        tracker_options.append({'callsign': cs, 'label': f"{name} ({mid})",
-                                'name': name,
-                                'is_mobile': True, 'mobile_pair': None})
+    # NB: we deliberately do NOT add the rest of mobile_trackers.json here. That is
+    # the GLOBAL device registry (all phones ever registered, event=None), not the
+    # current event. The tracker roster must be exactly the event's trackers — the
+    # same watch-list the daemon records for: config.yaml trackers + trackers.json
+    # (get_trackers_for_event). Trackers that shared then stopped stay via their
+    # recorded beacons (added on the client by setBeacons), not via this registry.
 
     carriers_map = {cs: entry['device_info']['carrier']
                     for cs, entry in mobile_reg.items()
@@ -413,6 +409,23 @@ def flush_api():
     return jsonify({'deleted': deleted})
 
 
+@app.route('/api/config_pulldowns')
+def config_pulldowns():
+    """The current event's tracker roster + iGates/digipeaters, read fresh. This is
+    exactly the event's trackers (config.yaml + trackers.json — the same watch-list
+    the daemon records for), NOT the global mobile registry. The pulldowns are
+    (re)built from this after an Erase All and topped up on each refresh; trackers
+    that shared then stopped stay via their recorded beacons (added by setBeacons)."""
+    try:
+        _, _, igates, digis, _, tracker_options, _ = load_config()
+    except Exception as ex:
+        return jsonify({'error': str(ex)}), 500
+    trackers = [{'callsign': t['callsign'], 'label': t['label'],
+                 'mobile_pair': t.get('mobile_pair')}
+                for t in tracker_options]
+    return jsonify({'trackers': trackers, 'igates': igates, 'digipeaters': digis})
+
+
 @app.route('/event/<event_name>')
 def show_event_map(event_name):
     yaml_event, yaml_trackers, event_igates, event_digipeaters, mobile_callsigns, tracker_options, carriers_map = load_config()
@@ -464,9 +477,17 @@ def show_event_map(event_name):
     # Stored names from DB as fallback for removed/renamed trackers
     historical_names = db.get_all_tracker_names()
 
+    # Cache-bust the static JS by its mtime so a deploy is picked up without a
+    # manual hard-refresh (the browser otherwise serves a stale session_player.js).
+    try:
+        js_version = int(os.path.getmtime(os.path.join(app.static_folder, 'session_player.js')))
+    except OSError:
+        js_version = 0
+
     user = current_user()
     return render_template(
         'event_map.html',
+        js_version=js_version,
         event_name=event_name,
         username=user['username'] if user else '',
         beacon_list=beacons_json,

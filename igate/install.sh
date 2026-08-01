@@ -180,10 +180,16 @@ sudo chown pi:pi /var/log/direwolf
 ok "RAM logs configured (/var/log → tmpfs after reboot; saves to /var/log-saved/ nightly)"
 
 # ── Lighttpd (web server) ─────────────────────────────────────────────────────
+# NB: lighty-enable-mod returns EXIT 1 when the module is already enabled, which
+# under `set -e` aborts the whole install before the systemd-enable and crontab
+# sections below. That is exactly what happens when install.sh is re-run on an
+# existing gate (e.g. via migrate-to-v5.sh), leaving stats-listener/direwatch/
+# dw-startup disabled. "Already enabled" is success for us, so don't let it kill
+# the run.
 msg "Configuring lighttpd"
-sudo lighty-enable-mod fastcgi
-sudo lighty-enable-mod fastcgi-php
-sudo service lighttpd force-reload
+sudo lighty-enable-mod fastcgi     || true
+sudo lighty-enable-mod fastcgi-php || true
+sudo service lighttpd force-reload || true
 ok "Lighttpd configured"
 
 # ── Systemd services ──────────────────────────────────────────────────────────

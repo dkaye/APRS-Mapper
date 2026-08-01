@@ -47,11 +47,17 @@ fi
 
 echo "    Backed up to $BACKUP/$HOST/"
 
-# ── Step 2: Kill any screen sessions running direwolf ────────────────────────
-echo "--- Stopping screen sessions..."
-$SSH "sudo pkill -f 'SCREEN.*direwolf' 2>/dev/null || true; \
-      sudo pkill -f 'direwolf-start' 2>/dev/null || true; \
-      sudo pkill -f 'direwolf -c' 2>/dev/null || true; \
+# ── Step 2: Stop direwolf (systemd service AND any v4 screen session) ─────────
+# NB: bracket the first char of each -f pattern ([S]CREEN, [d]irewolf) so pkill
+# cannot match THIS very ssh command line — an un-bracketed 'direwolf -c' etc.
+# also matches the remote shell running the pkill and self-kills it (SIGTERM),
+# which aborts the migration before install.sh ever launches.
+echo "--- Stopping direwolf (service + any screen session)..."
+$SSH "sudo systemctl stop direwolf 2>/dev/null || true; \
+      sudo pkill -f '[S]CREEN.*direwolf' 2>/dev/null || true; \
+      sudo pkill -f '[d]irewolf-start' 2>/dev/null || true; \
+      sudo pkill -x direwolf 2>/dev/null || true; \
+      sudo pkill -x rtl_fm 2>/dev/null || true; \
       true"
 
 # ── Step 3: Run install.sh in background (survives SSH timeout/reboot) ───────

@@ -295,7 +295,7 @@
             </div>
         </dialog>
 
-        <script src="{{ url_for('static', filename='session_player.js') }}"></script>
+        <script src="{{ url_for('static', filename='session_player.js') }}?v={{ js_version }}"></script>
         <script>
             // ── API URLs — Flask-generated so the /analyzer/ prefix is correct ──
             const URL_DAEMON      = '{{ url_for("daemon_api") }}';
@@ -303,6 +303,7 @@
             const URL_BEACONS     = '{{ url_for("event_beacon_json", event_name=event_name) }}';
             const URL_CHECK_ADMIN = '{{ url_for("check_admin_api") }}';
             const URL_EXPORT      = '{{ url_for("export_session_api", event_name=event_name) }}';
+            const URL_CONFIG_PULLDOWNS = '{{ url_for("config_pulldowns") }}';
 
             // ── Session data for the shared rendering/playback engine ───────────
             // session_player.js owns the map, layers, tracker filtering, time-range
@@ -365,6 +366,15 @@
                 fetch(URL_BEACONS)
                     .then(r => r.json())
                     .then(data => { if (player) player.setBeacons(data); });
+            }
+
+            // Pick up trackers/iGates added in the map admin page since load, so they
+            // appear in the pulldowns without a reload (additive; never removes).
+            function syncConfigAdditions() {
+                fetch(URL_CONFIG_PULLDOWNS)
+                    .then(r => r.json())
+                    .then(cfg => { if (player) player.addConfigOptions(cfg); })
+                    .catch(() => {});
             }
 
             // ── Init ────────────────────────────────────────────────────────────
@@ -548,7 +558,19 @@
                             } else {
                                 adminAuthenticated = true;
                                 flushModal.close();
-                                location.reload();
+                                // Erased. Clear the map, then repopulate the tracker/
+                                // igate pulldowns from config.yaml (the map admin
+                                // roster) only. Mobiles re-accumulate as they beacon;
+                                // nothing is removed until the next Erase All.
+                                player.setBeacons([]);
+                                fetch(URL_CONFIG_PULLDOWNS)
+                                    .then(r => r.json())
+                                    .then(cfg => player.repopulateFromConfig(cfg))
+                                    .catch(() => player.repopulateFromConfig(null));
+                                const recStarted = document.getElementById('rec-started');
+                                const recNoData  = document.getElementById('rec-no-data');
+                                if (recStarted) recStarted.style.display = 'none';
+                                if (recNoData)  recNoData.style.display  = 'block';
                             }
                         });
                 }
@@ -600,7 +622,7 @@
                 }
                 function setRefreshRate(secs) {
                     if (refreshInterval) clearInterval(refreshInterval);
-                    refreshInterval = setInterval(fetchBeacons, secs * 1000);
+                    refreshInterval = setInterval(() => { fetchBeacons(); syncConfigAdditions(); }, secs * 1000);
                     document.getElementById('refresh-rate-label').textContent = formatRefreshLabel(secs);
                 }
                 const refreshSlider = document.getElementById('refresh-rate');
