@@ -6149,6 +6149,10 @@ function _initVoice() {
 	_recog.continuous = true; _recog.interimResults = true; _recog.lang = navigator.language || 'en-US';
 	_micBase = '';
 	_recog.onresult = e => {
+		// Ignore trailing results delivered after the mic was turned off (e.g. a
+		// final chunk that lands just after Send) — otherwise it re-populates the
+		// just-cleared composer.
+		if (!_recognizing) return;
 		let interim = '', final = '';
 		for (let i = e.resultIndex; i < e.results.length; i++) { const r = e.results[i]; if (r.isFinal) final += r[0].transcript; else interim += r[0].transcript; }
 		const ta = document.getElementById('msg-compose-text');
