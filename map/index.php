@@ -1909,13 +1909,13 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 
 /* ── Chat panel (right-docked, persistent) ───────────────────────────────── */
 #msg-panel {
-    position: fixed; top: 0; right: 0; bottom: 0; width: 380px; max-width: 100vw;
+    position: fixed; top: 0; right: 0; bottom: 0; width: 640px; max-width: 100vw;
     background: #fff; z-index: 9000; display: flex; flex-direction: column;
     box-shadow: -3px 0 18px rgba(0,0,0,0.18);
     transform: translateX(100%); transition: transform 0.22s ease; visibility: hidden;
 }
 #msg-panel.open { transform: none; visibility: visible; }
-@media (max-width: 640px) { #msg-panel { width: 100%; } }
+@media (max-width: 720px) { #msg-panel { width: 100%; } }
 #msg-panel-header {
     display: flex; align-items: center; gap: 8px; padding: 11px 12px;
     background: #1a5276; color: #fff; flex: 0 0 auto;
@@ -1931,9 +1931,26 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
     font-size: 16px; line-height: 1; border-radius: 4px; opacity: 0.9;
 }
 #msg-panel-header button.msg-icon-btn:hover { background: rgba(255,255,255,0.15); opacity: 1; }
-#msg-panel-body { flex: 1; min-height: 0; position: relative; }
-.msg-view { position: absolute; inset: 0; display: flex; flex-direction: column; }
-#msg-thread-view { display: none; }
+/* Two-pane body: conversation list (left) + thread (right), side by side. */
+#msg-panel-body { flex: 1; min-height: 0; display: flex; flex-direction: row; }
+.msg-view { display: flex; flex-direction: column; min-height: 0; }
+#msg-list-view { flex: 0 0 232px; border-right: 1px solid #e6e6e6; }
+#msg-thread-view { flex: 1; min-width: 0; }
+/* Thread pane's own header (the selected conversation) — the panel header stays "Messages". */
+#msg-thread-head { flex: 0 0 auto; padding: 9px 12px; border-bottom: 1px solid #eee; background: #fafafa; display: none; }
+#msg-thread-head.on { display: block; }
+#msg-thread-head .tn { font-size: 14px; font-weight: 600; color: #222; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#msg-thread-head .ts { font-size: 11px; color: #888; }
+#msg-thread-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; text-align: center; color: #aaa; font-size: 13px; padding: 24px; }
+.msg-conv-item.sel { background: #eaf3fb; }
+.msg-conv-item.sel:hover { background: #e2eef9; }
+/* Narrow screens collapse to a single pane, toggled by .thread-active. */
+@media (max-width: 720px) {
+    #msg-list-view { flex: 1 1 auto; border-right: none; }
+    #msg-panel:not(.thread-active) #msg-thread-view { display: none; }
+    #msg-panel.thread-active #msg-list-view { display: none; }
+    #msg-panel.thread-active #msg-panel-back { display: block; }
+}
 
 /* Conversation list */
 #msg-conv-scroll { flex: 1; min-height: 0; overflow-y: auto; }
@@ -2476,7 +2493,8 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 		</div>
 		<!-- Thread -->
 		<div id="msg-thread-view" class="msg-view">
-			<div id="msg-thread-scroll"><div id="msg-thread-empty">Start the conversation below.</div></div>
+			<div id="msg-thread-head"><div class="tn"></div><div class="ts"></div></div>
+			<div id="msg-thread-scroll"><div id="msg-thread-placeholder">Select a conversation, or start a new message.</div></div>
 			<div id="msg-compose-error"></div>
 			<div id="msg-composer">
 				<textarea id="msg-compose-text" maxlength="280" rows="1" placeholder="Type a message…"></textarea>
@@ -5594,12 +5612,14 @@ function _openPanel() {
 	document.getElementById('msg-panel').classList.add('open');
 	_msgPanelOpen = true;
 	_hideToast();
-	// Always open to the conversation list (the "inbox"), so a message that
-	// arrived while the panel was closed is visible at the top with its unread
-	// badge. Callers that want a specific thread (arrival toast, tracker-activate)
-	// open it explicitly right after this. Resuming a stale thread here would hide
-	// new traffic that landed in a different conversation.
+	// The inbox (left) is always visible on desktop. If messages arrived while
+	// the panel was closed, also open that conversation's thread (right) so the
+	// full exchange shows immediately. On a phone this shows the thread pane;
+	// callers that target a specific thread (toast, tracker-activate) open it
+	// right after. Poll keeps unread current even while closed.
 	_showListView();
+	const unread = [..._convs.values()].filter(c => (c.unread || 0) > 0).sort((a, b) => b.last_id - a.last_id);
+	if (unread.length) _openConversation(unread[0].id);
 	_refreshConversations();
 }
 function _closePanel() {
@@ -5610,21 +5630,29 @@ function _closePanel() {
 function _togglePanel() {
 	document.getElementById('msg-panel').classList.contains('open') ? _closePanel() : _openPanel();
 }
+// The inbox is always in the DOM (left pane); these just toggle which pane is
+// "active" (matters only on a phone, where CSS collapses to one pane) and set
+// the right pane to either a thread or the placeholder.
 function _showListView() {
 	_openConvId = null; _pendingConv = null;
-	document.getElementById('msg-list-view').style.display = 'flex';
-	document.getElementById('msg-thread-view').style.display = 'none';
-	document.getElementById('msg-panel-back').style.display = 'none';
+	document.getElementById('msg-panel').classList.remove('thread-active');
 	document.getElementById('msg-panel-title').textContent = 'Messages';
 	document.getElementById('msg-panel-sub').textContent = _msgName ? ('as ' + _msgName) : '';
+	document.getElementById('msg-thread-head').classList.remove('on');
+	document.getElementById('msg-thread-scroll').innerHTML =
+		'<div id="msg-thread-placeholder">Select a conversation, or start a new message.</div>';
+	document.getElementById('msg-composer').classList.add('hidden');
+	document.getElementById('msg-compose-error').style.display = 'none';
 	_renderConvList();
 }
 function _showThreadView(titleHtml, subText) {
-	document.getElementById('msg-list-view').style.display = 'none';
-	document.getElementById('msg-thread-view').style.display = 'flex';
-	document.getElementById('msg-panel-back').style.display = 'block';
-	document.getElementById('msg-panel-title').innerHTML = titleHtml;
-	document.getElementById('msg-panel-sub').textContent = subText || '';
+	document.getElementById('msg-panel').classList.add('thread-active');
+	const head = document.getElementById('msg-thread-head');
+	head.classList.add('on');
+	head.querySelector('.tn').innerHTML = titleHtml;
+	head.querySelector('.ts').textContent = subText || '';
+	document.getElementById('msg-composer').classList.remove('hidden');
+	_renderConvList();   // keep the inbox's selection highlight in sync
 }
 
 // ── Conversation list ────────────────────────────────────────────────────────
@@ -5640,7 +5668,7 @@ async function _refreshConversations() {
 				unread:c.unread || 0, last_id:c.last_id || 0, preview:c.preview || null,
 			}));
 		}
-		if (_msgPanelOpen && _openConvId == null) _renderConvList();
+		if (_msgPanelOpen) _renderConvList();
 		_updateTotalUnread();
 	} catch {}
 }
@@ -5655,7 +5683,8 @@ function _renderConvList() {
 		const av = _avatarFor(c), pv = c.preview;
 		const prev = pv ? ((pv.self ? 'You: ' : '') + pv.text) : '';
 		const badge = c.unread > 0 ? '<span class="msg-badge">' + c.unread + '</span>' : '';
-		return '<div class="msg-conv-item" data-cid="' + c.id + '">' +
+		const sel = c.id === _openConvId ? ' sel' : '';
+		return '<div class="msg-conv-item' + sel + '" data-cid="' + c.id + '">' +
 			'<div class="msg-conv-avatar ' + av.cls + '">' + _esc(av.txt) + '</div>' +
 			'<div class="msg-conv-main"><div class="msg-conv-name">' + _esc(_convLabel(c)) + '</div>' +
 			'<div class="msg-conv-preview">' + _esc(prev) + '</div></div>' +
@@ -5774,7 +5803,7 @@ async function _poll() {
 		if (d.last_id > _msgLastId) { _msgLastId = d.last_id; _persistSession(); }
 		if (d.messages && d.messages.length) {
 			for (const m of d.messages) _ingestIncoming(m);
-			if (_msgPanelOpen && _openConvId == null) _renderConvList();
+			if (_msgPanelOpen) _renderConvList();
 			_updateTotalUnread();
 		}
 	} catch {}
@@ -5804,7 +5833,7 @@ function _ingestIncoming(m) {
 async function _markConvRead(cid) {
 	const c = _convs.get(cid);
 	if (!c) return;
-	if (c.unread) { c.unread = 0; if (_msgPanelOpen && _openConvId == null) _renderConvList(); _updateTotalUnread(); }
+	if (c.unread) { c.unread = 0; if (_msgPanelOpen) _renderConvList(); _updateTotalUnread(); }
 	const ids = (c.messages || []).filter(m => m.from_id !== _msgMeId).map(m => m.id);
 	if (ids.length) { try { await _msgApi('read', {body:{ids}}); } catch {} }
 }
