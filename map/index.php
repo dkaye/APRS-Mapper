@@ -1915,7 +1915,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
     transform: translateX(100%); transition: transform 0.22s ease; visibility: hidden;
 }
 #msg-panel.open { transform: none; visibility: visible; }
-@media (max-width: 720px) { #msg-panel { width: 100%; } }
+@media (max-width: 560px) { #msg-panel { width: 100%; } }
 #msg-panel-header {
     display: flex; align-items: center; gap: 8px; padding: 11px 12px;
     background: #1a5276; color: #fff; flex: 0 0 auto;
@@ -1945,7 +1945,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 .msg-conv-item.sel { background: #eaf3fb; }
 .msg-conv-item.sel:hover { background: #e2eef9; }
 /* Narrow screens collapse to a single pane, toggled by .thread-active. */
-@media (max-width: 720px) {
+@media (max-width: 560px) {
     #msg-list-view { flex: 1 1 auto; border-right: none; }
     #msg-panel:not(.thread-active) #msg-thread-view { display: none; }
     #msg-panel.thread-active #msg-list-view { display: none; }
@@ -5618,8 +5618,13 @@ function _openPanel() {
 	// callers that target a specific thread (toast, tracker-activate) open it
 	// right after. Poll keeps unread current even while closed.
 	_showListView();
-	const unread = [..._convs.values()].filter(c => (c.unread || 0) > 0).sort((a, b) => b.last_id - a.last_id);
-	if (unread.length) _openConversation(unread[0].id);
+	// In two-pane mode (wide) the inbox stays visible, so also open the most-recent
+	// unread thread on the right. On a phone (single pane) that would HIDE the inbox,
+	// so there we just show the inbox and let the operator tap in.
+	if (window.innerWidth > 560) {
+		const unread = [..._convs.values()].filter(c => (c.unread || 0) > 0).sort((a, b) => b.last_id - a.last_id);
+		if (unread.length) _openConversation(unread[0].id);
+	}
 	_refreshConversations();
 }
 function _closePanel() {
@@ -5680,12 +5685,11 @@ function _renderConvList() {
 		return;
 	}
 	scroll.innerHTML = items.map(c => {
-		const av = _avatarFor(c), pv = c.preview;
+		const pv = c.preview;
 		const prev = pv ? ((pv.self ? 'You: ' : '') + pv.text) : '';
 		const badge = c.unread > 0 ? '<span class="msg-badge">' + c.unread + '</span>' : '';
 		const sel = c.id === _openConvId ? ' sel' : '';
 		return '<div class="msg-conv-item' + sel + '" data-cid="' + c.id + '">' +
-			'<div class="msg-conv-avatar ' + av.cls + '">' + _esc(av.txt) + '</div>' +
 			'<div class="msg-conv-main"><div class="msg-conv-name">' + _esc(_convLabel(c)) + '</div>' +
 			'<div class="msg-conv-preview">' + _esc(prev) + '</div></div>' +
 			'<div class="msg-conv-meta"><span class="msg-conv-time">' + (pv ? _msgShortTime(pv.ts) : '') + '</span>' + badge + '</div></div>';
@@ -6120,13 +6124,15 @@ function _wireMsgUI() {
 }
 
 // ── Voice input (Web Speech API, on-device) ──────────────────────────────────
-let _recog = null, _recognizing = false;
+let _recog = null, _recognizing = false, _micUserStop = false;
 function _initVoice() {
 	const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 	const mic = document.getElementById('msg-mic-btn');
 	if (!SR) { mic.classList.add('unsupported'); return; }
 	_recog = new SR();
-	_recog.continuous = false; _recog.interimResults = true; _recog.lang = navigator.language || 'en-US';
+	// Continuous: keep listening until the operator taps the mic again. It must
+	// not stop on its own after a pause.
+	_recog.continuous = true; _recog.interimResults = true; _recog.lang = navigator.language || 'en-US';
 	let base = '';
 	_recog.onresult = e => {
 		let interim = '', final = '';
@@ -6135,11 +6141,23 @@ function _initVoice() {
 		if (final) base += final;
 		ta.value = (base + interim).replace(/\s+/g, ' ').trimStart(); _autoGrow(ta);
 	};
-	const stop = () => { _recognizing = false; mic.classList.remove('listening'); };
-	_recog.onend = stop; _recog.onerror = stop;
+	_recog.onend = () => {
+		// Browsers end recognition on their own after silence/network blips even
+		// when continuous — restart unless the operator turned it off.
+		if (_recognizing && !_micUserStop) { try { _recog.start(); return; } catch {} }
+		_recognizing = false; _micUserStop = false; mic.classList.remove('listening');
+	};
+	_recog.onerror = e => {
+		// Permission/hardware denials are fatal; transient errors (no-speech,
+		// aborted, network) fall through to onend, which restarts.
+		if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+			_recognizing = false; _micUserStop = false; mic.classList.remove('listening');
+		}
+	};
 	mic.addEventListener('click', () => {
-		if (_recognizing) { _recog.stop(); return; }
+		if (_recognizing) { _micUserStop = true; _recognizing = false; mic.classList.remove('listening'); try { _recog.stop(); } catch {} return; }
 		base = document.getElementById('msg-compose-text').value; if (base && !base.endsWith(' ')) base += ' ';
+		_micUserStop = false;
 		try { _recog.start(); _recognizing = true; mic.classList.add('listening'); } catch {}
 	});
 }
