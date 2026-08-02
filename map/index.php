@@ -5779,6 +5779,7 @@ async function _sendCurrent() {
 	try {
 		const d = await _msgApi('send', {body});
 		if (d.error) { errEl.textContent = d.error; errEl.style.display = 'block'; return; }
+		_stopMic();                 // mic goes off on send; also clears the dictation buffer
 		ta.value = ''; _autoGrow(ta);
 		const cid = d.conversation_id;
 		_pendingConv = null; _openConvId = cid;
@@ -6126,7 +6127,18 @@ function _wireMsgUI() {
 }
 
 // ── Voice input (Web Speech API, on-device) ──────────────────────────────────
-let _recog = null, _recognizing = false, _micUserStop = false;
+let _recog = null, _recognizing = false, _micUserStop = false, _micBase = '';
+// Turn the mic off and forget the accumulated transcript (called on send, so a
+// sent message doesn't get re-filled with the old dictation and the mic doesn't
+// keep holding the microphone — an active mic also suspends the arrival tone).
+function _stopMic() {
+	_micBase = '';
+	if (!_recog || !_recognizing) return;
+	_micUserStop = true; _recognizing = false;
+	const mic = document.getElementById('msg-mic-btn');
+	if (mic) mic.classList.remove('listening');
+	try { _recog.stop(); } catch {}
+}
 function _initVoice() {
 	const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 	const mic = document.getElementById('msg-mic-btn');
@@ -6135,13 +6147,13 @@ function _initVoice() {
 	// Continuous: keep listening until the operator taps the mic again. It must
 	// not stop on its own after a pause.
 	_recog.continuous = true; _recog.interimResults = true; _recog.lang = navigator.language || 'en-US';
-	let base = '';
+	_micBase = '';
 	_recog.onresult = e => {
 		let interim = '', final = '';
 		for (let i = e.resultIndex; i < e.results.length; i++) { const r = e.results[i]; if (r.isFinal) final += r[0].transcript; else interim += r[0].transcript; }
 		const ta = document.getElementById('msg-compose-text');
-		if (final) base += final;
-		ta.value = (base + interim).replace(/\s+/g, ' ').trimStart(); _autoGrow(ta);
+		if (final) _micBase += final;
+		ta.value = (_micBase + interim).replace(/\s+/g, ' ').trimStart(); _autoGrow(ta);
 	};
 	_recog.onend = () => {
 		// Browsers end recognition on their own after silence/network blips even
@@ -6157,8 +6169,8 @@ function _initVoice() {
 		}
 	};
 	mic.addEventListener('click', () => {
-		if (_recognizing) { _micUserStop = true; _recognizing = false; mic.classList.remove('listening'); try { _recog.stop(); } catch {} return; }
-		base = document.getElementById('msg-compose-text').value; if (base && !base.endsWith(' ')) base += ' ';
+		if (_recognizing) { _stopMic(); return; }
+		_micBase = document.getElementById('msg-compose-text').value; if (_micBase && !_micBase.endsWith(' ')) _micBase += ' ';
 		_micUserStop = false;
 		try { _recog.start(); _recognizing = true; mic.classList.add('listening'); } catch {}
 	});
