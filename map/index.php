@@ -1931,6 +1931,14 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
     font-size: 16px; line-height: 1; border-radius: 4px; opacity: 0.9;
 }
 #msg-panel-header button.msg-icon-btn:hover { background: rgba(255,255,255,0.15); opacity: 1; }
+#msg-speaker-btn { opacity: 0.5; }               /* off (muted) by default */
+#msg-speaker-btn.on { opacity: 1; background: rgba(255,255,255,0.22); }
+#msg-panel-close {
+    background: rgba(255,255,255,0.16); border: 1px solid rgba(255,255,255,0.5); color: #fff;
+    cursor: pointer; padding: 5px 12px; margin-left: 4px; border-radius: 5px;
+    font-size: 13px; font-weight: 600; font-family: inherit; line-height: 1;
+}
+#msg-panel-close:hover { background: rgba(255,255,255,0.3); }
 /* Two-pane body: conversation list (left) + thread (right), side by side. */
 #msg-panel-body { flex: 1; min-height: 0; display: flex; flex-direction: row; }
 .msg-view { display: flex; flex-direction: column; min-height: 0; }
@@ -2459,8 +2467,11 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 			<div id="msg-panel-title">Messages</div>
 			<div id="msg-panel-sub"></div>
 		</div>
+		<button id="msg-speaker-btn" class="msg-icon-btn" title="Read messages aloud">
+			<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05A4.5 4.5 0 0 0 16.5 12zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+		</button>
 		<button id="msg-settings-btn" class="msg-icon-btn" title="Settings">&#9881;</button>
-		<button id="msg-panel-close" class="msg-icon-btn" title="Close">&times;</button>
+		<button id="msg-panel-close" title="Close messages">Close</button>
 		<div id="msg-settings-menu">
 			<label class="mi-lbl">Signed in as <b id="msg-me-name"></b></label>
 			<button class="mi" id="msg-mi-rename">Change my name</button>
@@ -5518,6 +5529,8 @@ let _msgEnabled = false;
 let _msgPanelOpen = false;
 let _msgPollTimer = null;
 let _msgUiInitialized = false;
+let _msgSpeak = false;         // read arriving messages aloud (speaker toggle)
+try { _msgSpeak = localStorage.getItem('aprs_msg_speak') === '1'; } catch {}
 
 const _convs   = new Map();   // id -> {id,kind,title,members,unread,last_id,preview,messages,loaded}
 let _openConvId = null;       // conversation shown in the thread view
@@ -5845,6 +5858,7 @@ function _ingestIncoming(m) {
 	else if (isNew) { c.unread = (c.unread || 0) + 1; }
 	if (isNew) {
 		_playMsgTone();
+		if (_msgSpeak) setTimeout(() => _speakMessage(m), 850);   // read aloud, after the alert tone
 		if (!isOpen) _notifyArrival(m, c);
 	}
 }
@@ -6027,6 +6041,8 @@ function _wireMsgUI() {
 	});
 	document.getElementById('msg-panel-close').addEventListener('click', _closePanel);
 	document.getElementById('msg-panel-back').addEventListener('click', _showListView);
+	document.getElementById('msg-speaker-btn').addEventListener('click', _toggleSpeak);
+	_updateSpeakerBtn();
 	document.getElementById('msg-settings-btn').addEventListener('click', e => { e.stopPropagation(); _toggleSettings(); });
 	document.getElementById('msg-panel').addEventListener('click', e => {
 		const menu = document.getElementById('msg-settings-menu');
@@ -6326,6 +6342,32 @@ function _playMsgTone() {
 				osc.start(s); osc.stop(e + 0.02);
 			}
 		});
+	} catch {}
+}
+
+// ── Read messages aloud (speaker toggle, Web Speech synthesis) ───────────────
+function _updateSpeakerBtn() {
+	const b = document.getElementById('msg-speaker-btn');
+	if (!b) return;
+	b.classList.toggle('on', _msgSpeak);
+	b.title = _msgSpeak ? 'Reading messages aloud — tap to turn off' : 'Read arriving messages aloud';
+}
+function _toggleSpeak() {
+	_msgSpeak = !_msgSpeak;
+	try { localStorage.setItem('aprs_msg_speak', _msgSpeak ? '1' : '0'); } catch {}
+	_updateSpeakerBtn();
+	if (_msgSpeak) {
+		// Turning it on is a user gesture — unlock speech and confirm audibly.
+		try { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance('Reading messages aloud')); } catch {}
+	} else { try { speechSynthesis.cancel(); } catch {} }
+}
+function _speakMessage(m) {
+	if (!_msgSpeak || !window.speechSynthesis) return;
+	try {
+		const who = _msgSenderName(m);
+		const u = new SpeechSynthesisUtterance((who && who !== '—' ? who + ' says. ' : '') + (m.text || ''));
+		u.rate = 1.0; u.volume = 1.0;
+		speechSynthesis.speak(u);
 	} catch {}
 }
 
