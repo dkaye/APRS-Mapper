@@ -281,9 +281,33 @@ function messaging_legacy_send(array $ctx, string $token, string $text, string $
     $db = new MessagingDb();
     $me = _msg_resolve_sender($db, $ctx, $token);
     if (!$me) return [404, ['error'=>'Token not found']];
+    $to  = trim($to);
+    $pos = isset($me['lat'], $me['lon'])
+         ? ['lat'=>(float)$me['lat'], 'lon'=>(float)$me['lon'], 'ts'=>$me['pos_ts'] ? (int)$me['pos_ts'] : null] : null;
+
+    // Reply into the conversation the mobile last received a message in, so a
+    // reply to a GROUP goes back to the whole group (operator sees it in that
+    // thread; the other members receive it) instead of forking a new 1:1. Skip
+    // broadcasts — you don't reply-all to an announcement. The app sends
+    // to=<sender name>; honor a genuinely different operator only when they
+    // aren't already in that conversation.
+    $recent = $db->recentInboundConversation((int)$me['id']);
+    if ($recent && $recent['kind'] !== 'broadcast') {
+        $toOp = ($to !== '' && strcasecmp($to, 'web') !== 0)
+              ? $db->participantByKey($ctx['event'], $to) : null;
+        if (!$toOp || $db->isConversationMember((int)$recent['id'], (int)$toOp['id'])) {
+            $conv = (int)$recent['id'];
+            $deliverTo = $db->conversationRecipients($ctx['event'], $conv, false, (int)$me['id']);
+            if ($deliverTo) {
+                $mid = $db->insertMessage($ctx['event'], $conv, (int)$me['id'], $text, $deliverTo, false, $pos);
+                return [200, ['ok'=>true, 'id'=>$mid]];
+            }
+        }
+    }
+
+    // No conversation to reply into → start a direct thread to the operators.
     $ops = $db->onlineOperators($ctx['event'], 60);
     if (!$ops) return [503, ['error'=>'no_receivers', 'message'=>'No one is currently monitoring messages. Try again later.']];
-    $to = trim($to);
     $recips = [];
     if ($to !== '' && strcasecmp($to, 'web') !== 0) {
         foreach ($ops as $o) if (strcasecmp($o['display_name'], $to) === 0) { $recips[] = (int)$o['id']; break; }
@@ -291,8 +315,6 @@ function messaging_legacy_send(array $ctx, string $token, string $text, string $
     if (!$recips) $recips = array_map(fn($o) => (int)$o['id'], $ops);   // 'web' / unknown → all operators
     [$conv, $kind] = $db->resolveConversation($ctx['event'], (int)$me['id'], $recips, false, null, null);
     $deliverTo = $db->conversationRecipients($ctx['event'], $conv, false, (int)$me['id']);
-    $pos = isset($me['lat'], $me['lon'])
-         ? ['lat'=>(float)$me['lat'], 'lon'=>(float)$me['lon'], 'ts'=>$me['pos_ts'] ? (int)$me['pos_ts'] : null] : null;
     $mid = $db->insertMessage($ctx['event'], $conv, (int)$me['id'], $text, $deliverTo, false, $pos);
     return [200, ['ok'=>true, 'id'=>$mid]];
 }

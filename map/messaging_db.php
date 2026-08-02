@@ -436,6 +436,26 @@ class MessagingDb
         return $this->hydrate(array_reverse($rows));
     }
 
+    /** Conversation of the most recent message DELIVERED to $participantId — what a
+     *  legacy mobile reply should go back to (so a group reply reaches the group).
+     *  Returns ['id'=>int,'kind'=>str] or null. */
+    public function recentInboundConversation(int $participantId): ?array
+    {
+        return $this->one(
+            'SELECT c.id, c.kind FROM deliveries d
+               JOIN messages m ON m.id = d.message_id
+               JOIN conversations c ON c.id = m.conversation_id
+             WHERE d.recipient_id = :p
+             ORDER BY m.id DESC LIMIT 1', [':p'=>$participantId]);
+    }
+
+    /** True if $participantId is a member of the conversation. */
+    public function isConversationMember(int $conversationId, int $participantId): bool
+    {
+        return (bool)$this->one('SELECT 1 FROM conversation_members WHERE conversation_id=:c AND participant_id=:p',
+                                [':c'=>$conversationId, ':p'=>$participantId]);
+    }
+
     /** Operator participants active within $secs (the "who is monitoring" set). */
     public function onlineOperators(string $event, int $secs): array
     {
