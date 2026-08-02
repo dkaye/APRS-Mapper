@@ -1934,7 +1934,9 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 /* Two-pane body: conversation list (left) + thread (right), side by side. */
 #msg-panel-body { flex: 1; min-height: 0; display: flex; flex-direction: row; }
 .msg-view { display: flex; flex-direction: column; min-height: 0; }
-#msg-list-view { flex: 0 0 232px; border-right: 1px solid #e6e6e6; }
+/* min-width:0 + overflow:hidden so a long (nowrap) preview can't blow the list
+   pane past its 232px basis and crush the thread. */
+#msg-list-view { flex: 0 0 232px; min-width: 0; overflow: hidden; border-right: 1px solid #e6e6e6; }
 #msg-thread-view { flex: 1; min-width: 0; }
 /* Thread pane's own header (the selected conversation) — the panel header stays "Messages". */
 #msg-thread-head { flex: 0 0 auto; padding: 9px 12px; border-bottom: 1px solid #eee; background: #fafafa; display: none; }
