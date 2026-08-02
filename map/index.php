@@ -5594,8 +5594,12 @@ function _openPanel() {
 	document.getElementById('msg-panel').classList.add('open');
 	_msgPanelOpen = true;
 	_hideToast();
-	if (_openConvId == null && !_pendingConv) _showListView();
-	if (_openConvId != null) _markConvRead(_openConvId);
+	// Always open to the conversation list (the "inbox"), so a message that
+	// arrived while the panel was closed is visible at the top with its unread
+	// badge. Callers that want a specific thread (arrival toast, tracker-activate)
+	// open it explicitly right after this. Resuming a stale thread here would hide
+	// new traffic that landed in a different conversation.
+	_showListView();
 	_refreshConversations();
 }
 function _closePanel() {
@@ -5779,6 +5783,12 @@ function _ingestIncoming(m) {
 	const cid = m.conversation_id;
 	let c = _convs.get(cid);
 	if (!c) { c = {id:cid, kind:'direct', title:null, members:[], unread:0, last_id:0, preview:null, messages:[], loaded:false}; _convs.set(cid, c); }
+	// Label a freshly-seen conversation from the sender right away (for a direct
+	// thread the sender IS the other member), so the list/toast don't read
+	// "Conversation" until the next server refresh fills members in.
+	if (!c.members || !c.members.length) {
+		c.members = [{id:m.from_id, kind:m.from_kind, key:m.from_key, short_id:m.from_short, display_name:m.from_name}];
+	}
 	const isNew = !_msgSeen.has(m.id);
 	if (isNew) { _msgSeen.add(m.id); if (Array.isArray(c.messages)) c.messages.push(m); }
 	c.last_id = Math.max(c.last_id || 0, m.id);
