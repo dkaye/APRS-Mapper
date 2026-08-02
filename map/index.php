@@ -5555,17 +5555,28 @@ function _onAuthLost() {
 }
 
 // ── Label helpers ────────────────────────────────────────────────────────────
+// The label the sidebar/map shows for a mobile tracker (its live "ID Name"), so
+// the inbox and threads match what the operator sees on the map. Null if the
+// tracker isn't currently on the map.
+function _mobileTrackerLabel(callsign) {
+	if (typeof _mobileTrackers === 'undefined' || !callsign) return null;
+	const t = _mobileTrackers.find(x => x.callsign === callsign);
+	return t ? ([t.id, t.name].filter(Boolean).join(' ') || callsign) : null;
+}
 function _participantLabel(p) {
+	if (p.kind === 'mobile') { const l = _mobileTrackerLabel(p.key); if (l) return l; }
 	const name = p.display_name || p.name || p.key;
 	if (p.kind === 'mobile' && p.short_id) return (name && name !== p.key) ? p.short_id + ' ' + name : p.short_id;
 	return name || p.key;
 }
 function _msgSenderName(m) {
+	if (m.from_kind === 'mobile') { const l = _mobileTrackerLabel(m.from_key); if (l) return l; }
 	const name = m.from_name || m.from_key || '';
 	if (m.from_kind === 'mobile' && m.from_short) return (name && name !== m.from_key) ? m.from_short + ' ' + name : m.from_short;
 	return name || '—';
 }
 function _senderLabelHtml(m) {
+	if (m.from_kind === 'mobile') { const l = _mobileTrackerLabel(m.from_key); if (l) return _esc(l); }
 	const name = m.from_name || m.from_key || '';
 	if (m.from_kind === 'mobile' && m.from_short) return '<span class="sid">' + _esc(m.from_short) + '</span> ' + _esc(name);
 	return _esc(name);
@@ -5576,7 +5587,7 @@ function _convLabel(c) {
 	const o = c.members || [];
 	if (!o.length) return 'Conversation';
 	if (o.length === 1) return _participantLabel(o[0]);
-	return o.map(m => m.short_id || m.display_name || m.key).join(', ');
+	return o.map(m => (m.kind === 'mobile' && _mobileTrackerLabel(m.key)) || m.short_id || m.display_name || m.key).join(', ');
 }
 function _threadSub(c) {
 	if (c.kind === 'broadcast') return 'Everyone on the map';
