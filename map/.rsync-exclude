@@ -2,3 +2,4 @@
 *.json
 config.yaml
 password.txt
+events/

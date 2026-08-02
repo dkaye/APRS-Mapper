@@ -25,3 +25,7 @@ igate/home/direwolf.conf
 
 # Display Pi — per-device WiFi credential files
 display/home/wifi.conf
+
+# Runtime / event-specific data — lives on the server, never in the repo
+/map/events/
+/map/config.yaml
