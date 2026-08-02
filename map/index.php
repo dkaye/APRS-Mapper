@@ -480,213 +480,20 @@ if (isset($_GET['clientstatus'])) {
 
 // ── Messaging endpoints ───────────────────────────────────────────────────────
 if (isset($_GET['messaging'])) {
-	header('Content-Type: application/json');
-	$action         = $_GET['messaging'];
-	$webSessionsFile = '/run/aprs/web_sessions.json';
-
+	// Operator messaging API — dispatched to the SQLite-backed core in
+	// map/messaging.php (participants, conversations, deliveries + receipts).
 	require_once 'config_parse.php';
-	$_mcfg       = parseConfigYaml('config.yaml');
-	$msgPassword = trim($_mcfg['messaging_password'] ?? '');
-	$cfgReal     = realpath('config.yaml');
-	$messagesFile = $cfgReal ? dirname($cfgReal) . '/messages.json' : null;
-
-	$validateWebToken = function($token) use ($webSessionsFile) {
-		if (!$token || !file_exists($webSessionsFile)) return false;
-		$fh = fopen($webSessionsFile, 'r');
-		if (!$fh) return false;
-		flock($fh, LOCK_SH); $data = json_decode(stream_get_contents($fh), true) ?: []; flock($fh, LOCK_UN); fclose($fh);
-		foreach ($data as $s) { if (!empty($s['token']) && hash_equals($s['token'], $token)) return $s; }
-		return false;
-	};
-
-	$modifyJsonFile = function($file, $fn) {
-		$fh = fopen($file, 'c+');
-		if (!$fh) return false;
-		flock($fh, LOCK_EX);
-		$c    = stream_get_contents($fh);
-		$data = json_decode($c, true) ?: [];
-		$data = $fn($data);
-		ftruncate($fh, 0); rewind($fh);
-		fwrite($fh, json_encode($data, JSON_PRETTY_PRINT) . "\n");
-		flock($fh, LOCK_UN); fclose($fh);
-		return true;
-	};
-
-	if ($action === 'subscribe') {
-		$input = json_decode(file_get_contents('php://input'), true) ?: [];
-		$name  = substr(trim(preg_replace('/[^A-Za-z0-9 \-]/', '', $input['name'] ?? '')), 0, 30);
-		$pw    = trim($input['password'] ?? '');
-		if (!$name) { http_response_code(400); echo json_encode(['error' => 'Name required']); exit; }
-		if ($msgPassword === '' || !hash_equals($msgPassword, $pw)) {
-			http_response_code(403); echo json_encode(['error' => 'Incorrect password']); exit;
-		}
-		$token = bin2hex(random_bytes(16));
-		$modifyJsonFile($webSessionsFile, function($data) use ($token, $name) {
-			$data[] = ['token' => $token, 'name' => $name, 'ts' => time()];
-			return array_slice($data, -50);
-		});
-		echo json_encode(['token' => $token, 'name' => $name]);
-		exit;
-	}
-
-	if ($action === 'rename') {
-		$input    = json_decode(file_get_contents('php://input'), true) ?: [];
-		$webToken = trim($input['web_token'] ?? '');
-		$newName  = substr(trim(preg_replace('/[^A-Za-z0-9 \-]/', '', $input['name'] ?? '')), 0, 30);
-		if (!$newName) { http_response_code(400); echo json_encode(['error' => 'Name required']); exit; }
-		$session = $validateWebToken($webToken);
-		if (!$session) { http_response_code(403); echo json_encode(['error' => 'Not subscribed']); exit; }
-		$modifyJsonFile($webSessionsFile, function($data) use ($webToken, $newName) {
-			foreach ($data as &$s) {
-				if (!empty($s['token']) && hash_equals($s['token'], $webToken)) { $s['name'] = $newName; break; }
-			}
-			return $data;
-		});
-		echo json_encode(['ok' => true, 'name' => $newName]);
-		exit;
-	}
-
-	if ($action === 'send') {
-		$input    = json_decode(file_get_contents('php://input'), true) ?: [];
-		$webToken = trim($input['web_token'] ?? '');
-		$session  = $validateWebToken($webToken);
-		if (!$session) { http_response_code(403); echo json_encode(['error' => 'Not subscribed']); exit; }
-		$to   = trim($input['to'] ?? '');
-		$text = substr(trim($input['text'] ?? ''), 0, 280);
-		if (!$text) { http_response_code(400); echo json_encode(['error' => 'Message text required']); exit; }
-		if (!$to)   { http_response_code(400); echo json_encode(['error' => 'Recipient required']); exit; }
-		$broadcast = ($to === '*');
-		$mobileFile = __DIR__ . '/mobile_trackers.json';
-		$mobileData = [];
-		$fh = fopen($mobileFile, 'r');
-		if ($fh) { flock($fh, LOCK_SH); $_mtd = json_decode(stream_get_contents($fh), true) ?: []; $mobileData = isset($_mtd['trackers']) ? $_mtd['trackers'] : $_mtd; flock($fh, LOCK_UN); fclose($fh); }
-		$toLabel = $broadcast ? '*' : $to;
-		if (!$broadcast) { foreach ($mobileData as $t) { if (($t['callsign'] ?? '') === $to) { $toLabel = $t['name'] ?? $to; break; } } }
-		$msgId = null;
-		if ($messagesFile) {
-			$modifyJsonFile($messagesFile, function($msgs) use ($session, $to, $toLabel, $text, $broadcast, $messagesFile, &$msgId) {
-				$msgId = msgNextId($msgs, $messagesFile);
-				$msgs[] = ['id' => $msgId, 'ts' => time(), 'from' => 'web', 'from_label' => $session['name'],
-				           'to' => $to, 'to_label' => $toLabel, 'text' => $text, 'broadcast' => $broadcast];
-				return $msgs;
-			});
-		}
-		$pendingEntry = ['id' => $msgId ?? 0, 'from_label' => $session['name'], 'text' => $text, 'ts' => time()];
-		$fh = fopen($mobileFile, 'c+');
-		if ($fh) {
-			flock($fh, LOCK_EX);
-			$_mfraw = json_decode(stream_get_contents($fh), true) ?: [];
-			$_mfcounter = $_mfraw['counter'] ?? 0;
-			$data = isset($_mfraw['trackers']) ? $_mfraw['trackers'] : $_mfraw;
-			foreach ($data as &$t) {
-				if (empty($t['token'])) continue;
-				if ($broadcast || ($t['callsign'] ?? '') === $to) $t['pending_msgs'][] = $pendingEntry;
-			}
-			unset($t);
-			ftruncate($fh, 0); rewind($fh);
-			fwrite($fh, json_encode(['counter' => $_mfcounter, 'trackers' => $data], JSON_PRETTY_PRINT) . "\n");
-			flock($fh, LOCK_UN); fclose($fh);
-		}
-		echo json_encode(['ok' => true, 'id' => $msgId]);
-		exit;
-	}
-
-	if ($action === 'poll') {
-		$webToken = trim($_GET['web_token'] ?? '');
-		$sinceId  = (int)($_GET['since_id'] ?? 0);
-		$session  = $validateWebToken($webToken);
-		if (!$session) { http_response_code(403); echo json_encode(['error' => 'Not subscribed']); exit; }
-		$myName = $session['name'] ?? '';
-		$modifyJsonFile($webSessionsFile, function($data) use ($webToken) {
-			foreach ($data as &$s) {
-				if (!empty($s['token']) && hash_equals($s['token'], $webToken)) { $s['ts'] = time(); break; }
-			}
-			return $data;
-		});
-		$msgs = []; $lastId = $sinceId;
-		if ($messagesFile && file_exists($messagesFile)) {
-			$fh = fopen($messagesFile, 'r');
-			if ($fh) {
-				flock($fh, LOCK_SH); $all = json_decode(stream_get_contents($fh), true) ?: []; flock($fh, LOCK_UN); fclose($fh);
-				foreach ($all as $m) {
-					// 'web' = addressed to all web operators (legacy / broadcast);
-					// $myName = addressed to this specific operator by name.
-					if ((int)$m['id'] > $sinceId && ($m['to'] === 'web' || $m['to'] === $myName || !empty($m['broadcast']))) {
-						$msgs[] = $m;
-						if ((int)$m['id'] > $lastId) $lastId = (int)$m['id'];
-					}
-				}
-			}
-		}
-		echo json_encode(['messages' => $msgs, 'last_id' => $lastId]);
-		exit;
-	}
-
-	if ($action === 'history') {
-		$input = json_decode(file_get_contents('php://input'), true) ?: [];
-		$webToken = trim($input['web_token'] ?? $_GET['web_token'] ?? '');
-		if (!$validateWebToken($webToken)) { http_response_code(403); echo json_encode(['error' => 'Not subscribed']); exit; }
-		$all = [];
-		if ($messagesFile && file_exists($messagesFile)) {
-			$fh = fopen($messagesFile, 'r');
-			if ($fh) { flock($fh, LOCK_SH); $all = json_decode(stream_get_contents($fh), true) ?: []; flock($fh, LOCK_UN); fclose($fh); }
-		}
-		$lastId = $all ? max(array_column($all, 'id')) : 0;
-		echo json_encode([
-			'messages'       => $all,
-			'last_id'        => $lastId,
-			'can_delete_all' => msgHasAuthPermission('messages.delete_all'),
-		]);
-		exit;
-	}
-
-	// Wipes the entire message log. Requires BOTH an active messaging
-	// subscription and a signed-in account holding messages.delete_all.
-	if ($action === 'delete_all') {
-		$input    = json_decode(file_get_contents('php://input'), true) ?: [];
-		$webToken = trim($input['web_token'] ?? '');
-		if (!$validateWebToken($webToken)) { http_response_code(403); echo json_encode(['error' => 'Not subscribed']); exit; }
-		if (!msgHasAuthPermission('messages.delete_all')) {
-			http_response_code(403);
-			echo json_encode(['error' => 'You do not have permission to delete messages.']);
-			exit;
-		}
-		$deleted = 0;
-		if ($messagesFile) {
-			$fh = fopen($messagesFile, 'c+');
-			if ($fh) {
-				flock($fh, LOCK_EX);
-				$all = json_decode(stream_get_contents($fh), true) ?: [];
-				$deleted = count($all);
-				// Preserve the ID high-water mark so client watermarks stay valid.
-				$max = msgReadCounter($messagesFile);
-				foreach ($all as $m) $max = max($max, (int)($m['id'] ?? 0));
-				msgWriteCounter($messagesFile, $max);
-				ftruncate($fh, 0); rewind($fh);
-				fwrite($fh, "[]\n");
-				flock($fh, LOCK_UN); fclose($fh);
-			}
-		}
-		// Drop undelivered messages still queued for mobile trackers, otherwise
-		// they would pop up on phones after the log was supposedly cleared.
-		$mobileFile = __DIR__ . '/mobile_trackers.json';
-		$fh = fopen($mobileFile, 'c+');
-		if ($fh) {
-			flock($fh, LOCK_EX);
-			$raw     = json_decode(stream_get_contents($fh), true) ?: [];
-			$counter = $raw['counter'] ?? 0;
-			$data    = isset($raw['trackers']) ? $raw['trackers'] : $raw;
-			foreach ($data as &$t) { if (isset($t['pending_msgs'])) $t['pending_msgs'] = []; }
-			unset($t);
-			ftruncate($fh, 0); rewind($fh);
-			fwrite($fh, json_encode(['counter' => $counter, 'trackers' => $data], JSON_PRETTY_PRINT) . "\n");
-			flock($fh, LOCK_UN); fclose($fh);
-		}
-		echo json_encode(['ok' => true, 'deleted' => $deleted]);
-		exit;
-	}
-
-	http_response_code(400); echo json_encode(['error' => 'Unknown action']); exit;
+	require_once __DIR__ . '/messaging.php';
+	$_mcfg = parseConfigYaml('config.yaml');
+	$ctx = [
+		'event'       => messaging_ctx_event($_mcfg),
+		'msgPassword' => trim($_mcfg['messaging_password'] ?? ''),
+		'mobileFile'  => __DIR__ . '/mobile_trackers.json',
+		'authPerm'    => 'msgHasAuthPermission',
+	];
+	$body = json_decode(file_get_contents('php://input'), true) ?: [];
+	messaging_handle($_GET['messaging'], $body, $ctx);
+	exit;
 }
 
 // ── Messaging helpers ─────────────────────────────────────────────────────────
@@ -841,6 +648,16 @@ if (isset($_GET['mobile'])) {
 	}
 
 	if (!$mobileOn) { http_response_code(403); echo json_encode(['error' => 'Mobile tracking is not enabled']); exit; }
+
+	// Messaging context for the legacy-compat shim (old ?mobile=… message
+	// endpoints now read/write the SQLite core in map/messaging.php).
+	require_once __DIR__ . '/messaging.php';
+	$msgCtx = [
+		'event'       => messaging_ctx_event($_mcfg),
+		'msgPassword' => trim($_mcfg['messaging_password'] ?? ''),
+		'mobileFile'  => $mobileFile,
+		'authPerm'    => 'msgHasAuthPermission',
+	];
 
 	// Atomic read-modify-write with exclusive lock.
 	// File format: {"counter": N, "trackers": [...]} (or legacy plain array on first read).
@@ -1069,15 +886,13 @@ if (isset($_GET['mobile'])) {
 
 		$found = false; $blocked = false; $foundCallsign = null; $foundHamCallsign = null; $foundName = ''; $pendingMsgs = []; $pendingMode = '';
 		$shouldInject = false;
-		modifyMobileTrackers($mobileFile, function($data) use ($token, $lat, $lon, $acc, $fixTs, $ackIds, $updMode, &$found, &$blocked, &$foundCallsign, &$foundHamCallsign, &$foundName, &$pendingMsgs, &$pendingMode, &$shouldInject) {
+		modifyMobileTrackers($mobileFile, function($data) use ($token, $lat, $lon, $acc, $fixTs, $ackIds, $updMode, &$found, &$blocked, &$foundCallsign, &$foundHamCallsign, &$foundName, &$pendingMode, &$shouldInject) {
 			$now = time();
 			foreach ($data as &$t) {
 				if (empty($t['token']) || !hash_equals($t['token'], $token)) continue;
 				if (!empty($t['blocked'])) { $blocked = true; break; }
 				$found = true; $foundCallsign = $t['callsign'] ?? null; $foundHamCallsign = $t['ham_callsign'] ?? null; $foundName = $t['name'] ?? '';
-				$pendingMsgs = $t['pending_msgs'] ?? [];
 				$pendingMode = $t['pending_mode'] ?? '';
-				if ($ackIds) $t['pending_msgs'] = array_values(array_filter($t['pending_msgs'] ?? [], fn($m) => !in_array((int)$m['id'], $ackIds)));
 				if ($pendingMode !== '') unset($t['pending_mode']);
 				if ($updMode !== '' && $updMode !== ($t['sharing_mode'] ?? '')) {
 					$t['sharing_mode'] = $updMode;
@@ -1131,6 +946,8 @@ if (isset($_GET['mobile'])) {
 			}
 			if ($_fh2) fclose($_fh2);
 		}
+		// Pending messages come from the SQLite core (acks $ackIds, returns un-acked).
+		$pendingMsgs = messaging_legacy_pending($msgCtx, $token, $ackIds) ?? [];
 		$resp = ['ok' => true, 'messages' => $pendingMsgs];
 		if ($pendingMode !== '') $resp['set_mode'] = $pendingMode;
 		echo json_encode($resp);
@@ -1141,132 +958,41 @@ if (isset($_GET['mobile'])) {
 		$token  = $input['token'] ?? '';
 		$ackIds = array_map('intval', $input['ack_ids'] ?? []);
 		if (!$token) { http_response_code(400); echo json_encode(['error' => 'Missing token']); exit; }
-		$pendingMsgs = [];
-		modifyMobileTrackers($mobileFile, function($data) use ($token, $ackIds, &$pendingMsgs) {
-			foreach ($data as &$t) {
-				if (empty($t['token']) || !hash_equals($t['token'], $token)) continue;
-				$pendingMsgs = $t['pending_msgs'] ?? [];
-				if ($ackIds) $t['pending_msgs'] = array_values(array_filter($t['pending_msgs'] ?? [], fn($m) => !in_array((int)$m['id'], $ackIds)));
-				break;
-			}
-			unset($t);
-			return $data;
-		});
-		echo json_encode(['messages' => $pendingMsgs]);
+		// Un-acked messages from the SQLite core; empty (not 404) on a stale token,
+		// since poll is a lightweight check — `update` is the session-liveness authority.
+		echo json_encode(['messages' => messaging_legacy_pending($msgCtx, $token, $ackIds) ?? []]);
 		exit;
 	}
 
 	if ($action === 'msghistory') {
 		$token = $input['token'] ?? '';
 		if (!$token) { http_response_code(400); echo json_encode(['error' => 'Missing token']); exit; }
-		$callsign = null;
-		$fh = fopen($mobileFile, 'r');
-		if ($fh) { flock($fh, LOCK_SH); $d = json_decode(stream_get_contents($fh), true) ?: []; flock($fh, LOCK_UN); fclose($fh);
-			$trackers = isset($d['trackers']) ? $d['trackers'] : $d;
-			foreach ($trackers as $t) { if (!empty($t['token']) && hash_equals($t['token'], $token)) { $callsign = $t['callsign'] ?? null; break; } } }
-		if (!$callsign) { http_response_code(404); echo json_encode(['error' => 'Token not found']); exit; }
-		$cfgReal = realpath('config.yaml');
-		$messagesFile = $cfgReal ? dirname($cfgReal) . '/messages.json' : null;
-		$msgs = [];
-		if ($messagesFile && file_exists($messagesFile)) {
-			$fh = fopen($messagesFile, 'r');
-			if ($fh) { flock($fh, LOCK_SH); $all = json_decode(stream_get_contents($fh), true) ?: []; flock($fh, LOCK_UN); fclose($fh);
-				foreach ($all as $m) {
-					if ($m['from'] === $callsign || $m['to'] === $callsign || !empty($m['broadcast'])) $msgs[] = $m;
-				}
-				$msgs = array_slice($msgs, -20);
-			}
-		}
+		$msgs = messaging_legacy_history($msgCtx, $token);
+		if ($msgs === null) { http_response_code(404); echo json_encode(['error' => 'Token not found']); exit; }
 		echo json_encode(['messages' => $msgs]);
 		exit;
 	}
 
 	if ($action === 'message') {
 		$token = $input['token'] ?? '';
-		$text  = substr(trim($input['text'] ?? ''), 0, 280);
-		// Optional destination web operator (by name). Absent (older apps) →
-		// 'web', which every subscribed operator receives (legacy behavior).
+		// Optional destination operator (by name). Absent (older apps) → 'web',
+		// which every operator currently monitoring receives (legacy behavior).
 		$toWeb = substr(trim($input['to'] ?? ''), 0, 30);
 		if (!$token) { http_response_code(400); echo json_encode(['error' => 'Missing token']); exit; }
-		if (!$text)  { http_response_code(400); echo json_encode(['error' => 'Message required']); exit; }
-		$found = null;
-		$fh = fopen($mobileFile, 'r');
-		if ($fh) { flock($fh, LOCK_SH); $d = json_decode(stream_get_contents($fh), true) ?: []; flock($fh, LOCK_UN); fclose($fh);
-			$trackers = isset($d['trackers']) ? $d['trackers'] : $d;
-			foreach ($trackers as $t) { if (!empty($t['token']) && hash_equals($t['token'], $token)) { $found = $t; break; } } }
-		if (!$found) { http_response_code(404); echo json_encode(['error' => 'Token not found']); exit; }
-		$webSessionsFile = '/run/aprs/web_sessions.json';
-		$hasActiveReceiver = false;
-		if (file_exists($webSessionsFile)) {
-			$fh = fopen($webSessionsFile, 'r');
-			if ($fh) {
-				flock($fh, LOCK_SH); $sessions = json_decode(stream_get_contents($fh), true) ?: []; flock($fh, LOCK_UN); fclose($fh);
-				foreach ($sessions as $s) {
-					if (!empty($s['ts']) && (time() - (int)$s['ts']) < 60) { $hasActiveReceiver = true; break; }
-				}
-			}
-		}
-		if (!$hasActiveReceiver) {
-			http_response_code(503);
-			echo json_encode(['error' => 'no_receivers', 'message' => 'No one is currently monitoring messages. Try again later.']);
-			exit;
-		}
-		$cfgReal = realpath('config.yaml');
-		$messagesFile = $cfgReal ? dirname($cfgReal) . '/messages.json' : null;
-		$msgId = null;
-		if ($messagesFile) {
-			$fh = fopen($messagesFile, 'c+');
-			if ($fh) {
-				flock($fh, LOCK_EX);
-				$msgs = json_decode(stream_get_contents($fh), true) ?: [];
-				$msgId = msgNextId($msgs, $messagesFile);
-				$_entry = ['id' => $msgId, 'ts' => time(), 'from' => $found['callsign'],
-				           'from_label' => $found['name'] ?? $found['callsign'],
-				           'to' => $toWeb !== '' ? $toWeb : 'web',
-				           'to_label' => $toWeb !== '' ? $toWeb : 'web', 'text' => $text, 'broadcast' => false];
-				// Stamp the sender's most recent known position onto the message, so
-				// operators can see where someone was when they sent it. aprs_lat/lon
-				// is the tracker's latest beacon; aprs_ts dates it, since a stale fix
-				// (poor GPS, no data) can be much older than the message itself.
-				if (isset($found['aprs_lat'], $found['aprs_lon'])
-					&& is_numeric($found['aprs_lat']) && is_numeric($found['aprs_lon'])) {
-					$_entry['lat'] = (float)$found['aprs_lat'];
-					$_entry['lon'] = (float)$found['aprs_lon'];
-					if (!empty($found['aprs_ts'])) $_entry['pos_ts'] = (int)$found['aprs_ts'];
-				}
-				$msgs[] = $_entry;
-				ftruncate($fh, 0); rewind($fh);
-				fwrite($fh, json_encode($msgs, JSON_PRETTY_PRINT) . "\n");
-				flock($fh, LOCK_UN); fclose($fh);
-			}
-		}
-		echo json_encode(['ok' => true, 'id' => $msgId]);
+		[$code, $resp] = messaging_legacy_send($msgCtx, $token, $input['text'] ?? '', $toWeb);
+		if ($code !== 200) http_response_code($code);
+		echo json_encode($resp);
 		exit;
 	}
 
 	if ($action === 'web_recipients') {
-		// List web operators currently monitoring messages (active in last 60 s),
-		// so the app can offer a destination picker. Requires a valid tracker
-		// token before revealing operator names.
+		// Operators currently monitoring messages (active in last 60 s), so the app
+		// can offer a destination picker. Requires a valid tracker token first.
 		$token = $input['token'] ?? '';
 		if (!$token) { http_response_code(400); echo json_encode(['error' => 'Missing token']); exit; }
-		$isTracker = false;
-		$fh = fopen($mobileFile, 'r');
-		if ($fh) { flock($fh, LOCK_SH); $d = json_decode(stream_get_contents($fh), true) ?: []; flock($fh, LOCK_UN); fclose($fh);
-			$trackers = isset($d['trackers']) ? $d['trackers'] : $d;
-			foreach ($trackers as $t) { if (!empty($t['token']) && hash_equals($t['token'], $token)) { $isTracker = true; break; } } }
-		if (!$isTracker) { http_response_code(404); echo json_encode(['error' => 'Token not found']); exit; }
-		$webSessionsFile = '/run/aprs/web_sessions.json';
-		$names = [];
-		if (file_exists($webSessionsFile)) {
-			$fh = fopen($webSessionsFile, 'r');
-			if ($fh) { flock($fh, LOCK_SH); $sessions = json_decode(stream_get_contents($fh), true) ?: []; flock($fh, LOCK_UN); fclose($fh);
-				foreach ($sessions as $s) {
-					if (!empty($s['name']) && !empty($s['ts']) && (time() - (int)$s['ts']) < 60) $names[$s['name']] = true;
-				}
-			}
-		}
-		echo json_encode(['recipients' => array_keys($names)]);
+		$names = messaging_legacy_recipients($msgCtx, $token);
+		if ($names === null) { http_response_code(404); echo json_encode(['error' => 'Token not found']); exit; }
+		echo json_encode(['recipients' => $names]);
 		exit;
 	}
 
@@ -2161,33 +1887,6 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 .aprs-path-empty { color: #999; font-style: italic; font-size: 13px; }
 
 /* ── Messaging ──────────────────────────────────────────────────────────── */
-#msg-sub-modal, #msg-compose-modal {
-    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 9000;
-}
-#msg-sub-backdrop, #msg-compose-backdrop {
-    position: absolute; inset: 0; background: rgba(0,0,0,0.45);
-}
-#msg-sub-box, #msg-compose-box {
-    position: relative; background: #fff; border-radius: 8px; padding: 18px 20px 16px;
-    width: 480px; max-width: calc(100vw - 32px); z-index: 1; box-shadow: 0 4px 24px rgba(0,0,0,0.25);
-}
-#msg-sub-header, #msg-compose-header {
-    display: flex; justify-content: space-between; align-items: center;
-    font-size: 15px; font-weight: 600; margin-bottom: 14px;
-}
-#msg-sub-header button, #msg-compose-header button {
-    background: none; border: none; font-size: 20px; cursor: pointer; color: #888; padding: 0 2px; line-height: 1;
-}
-#msg-compose-to-sel {
-    flex: 1; min-width: 0; padding: 6px 8px; font-family: inherit; font-size: 13px;
-    border: 1px solid #ccc; border-radius: 4px; background: #fff; color: #333;
-}
-#msg-sub-submit, #msg-compose-send {
-    width: 100%; padding: 9px; background: #2980b9; color: #fff;
-    border: none; border-radius: 5px; font-size: 14px; cursor: pointer; font-family: inherit;
-}
-#msg-sub-submit:hover, #msg-compose-send:hover { background: #2471a3; }
-#msg-sub-submit:disabled, #msg-compose-send:disabled { cursor: default; background: #5b93b9; }
 .btn-spinner {
     display: inline-block; width: 13px; height: 13px; margin-right: 7px; vertical-align: -2px;
     border: 2px solid rgba(255,255,255,0.45); border-top-color: #fff; border-radius: 50%;
@@ -2195,41 +1894,172 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 }
 @keyframes btn-spin { to { transform: rotate(360deg); } }
 
-#msg-incoming-modal {
-    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 9500;
-}
-#msg-incoming-backdrop {
-    position: absolute; inset: 0; background: rgba(0,0,0,0.55);
-}
-#msg-incoming-box {
+/* Subscribe modal (still a small dialog — everything else is the chat panel). */
+#msg-sub-modal { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 9600; }
+#msg-sub-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+#msg-sub-box {
     position: relative; background: #fff; border-radius: 8px; padding: 18px 20px 16px;
-    width: 480px; max-width: calc(100vw - 32px); z-index: 1;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.25);
-    animation: msg-pop-in 0.15s ease;
+    width: 380px; max-width: calc(100vw - 32px); z-index: 1; box-shadow: 0 4px 24px rgba(0,0,0,0.25);
 }
-@keyframes msg-pop-in { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-#msg-incoming-header {
-    display: flex; justify-content: space-between; align-items: center;
-    font-size: 15px; font-weight: 700; color: #1a5276; margin-bottom: 12px;
+#msg-sub-header { display: flex; justify-content: space-between; align-items: center; font-size: 15px; font-weight: 600; margin-bottom: 14px; }
+#msg-sub-header button { background: none; border: none; font-size: 20px; cursor: pointer; color: #888; padding: 0 2px; line-height: 1; }
+#msg-sub-submit { width: 100%; padding: 9px; background: #2980b9; color: #fff; border: none; border-radius: 5px; font-size: 14px; cursor: pointer; font-family: inherit; }
+#msg-sub-submit:hover { background: #2471a3; }
+#msg-sub-submit:disabled { cursor: default; background: #5b93b9; }
+
+/* ── Chat panel (right-docked, persistent) ───────────────────────────────── */
+#msg-panel {
+    position: fixed; top: 0; right: 0; bottom: 0; width: 380px; max-width: 100vw;
+    background: #fff; z-index: 9000; display: flex; flex-direction: column;
+    box-shadow: -3px 0 18px rgba(0,0,0,0.18);
+    transform: translateX(100%); transition: transform 0.22s ease; visibility: hidden;
 }
-#msg-incoming-header button {
-    background: none; border: none; font-size: 20px; cursor: pointer; color: #888; padding: 0 2px; line-height: 1;
+#msg-panel.open { transform: none; visibility: visible; }
+@media (max-width: 640px) { #msg-panel { width: 100%; } }
+#msg-panel-header {
+    display: flex; align-items: center; gap: 8px; padding: 11px 12px;
+    background: #1a5276; color: #fff; flex: 0 0 auto;
 }
-#msg-incoming-reply {
-    flex: 1; padding: 9px; background: #2980b9; color: #fff;
-    border: none; border-radius: 5px; font-size: 14px; cursor: pointer; font-family: inherit;
+#msg-panel-back {
+    background: none; border: none; color: #fff; font-size: 20px; line-height: 1;
+    cursor: pointer; padding: 2px 4px; display: none;
 }
-#msg-incoming-reply:hover { background: #2471a3; }
-#msg-incoming-ok {
-    flex: 1; padding: 9px; background: #e8e8e8; color: #333;
-    border: 1px solid #ccc; border-radius: 5px; font-size: 14px; cursor: pointer; font-family: inherit;
+#msg-panel-title { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#msg-panel-sub { font-size: 11px; font-weight: 400; color: #cfe0ec; }
+#msg-panel-header button.msg-icon-btn {
+    background: none; border: none; color: #fff; cursor: pointer; padding: 3px 5px;
+    font-size: 16px; line-height: 1; border-radius: 4px; opacity: 0.9;
 }
-#msg-incoming-ok:hover { background: #d8d8d8; }
-.msg-thread-entry { padding: 4px 0; border-bottom: 1px solid #ececec; line-height: 1.4; }
-.msg-thread-entry:last-child { border-bottom: none; }
-.msg-thread-from { font-weight: 600; color: #333; }
-.msg-thread-web { color: #1a5276; }
-.msg-thread-time { color: #aaa; font-size: 10px; margin-left: 6px; }
+#msg-panel-header button.msg-icon-btn:hover { background: rgba(255,255,255,0.15); opacity: 1; }
+#msg-panel-body { flex: 1; min-height: 0; position: relative; }
+.msg-view { position: absolute; inset: 0; display: flex; flex-direction: column; }
+#msg-thread-view { display: none; }
+
+/* Conversation list */
+#msg-conv-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.msg-conv-item {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+    border-bottom: 1px solid #f0f0f0; cursor: pointer;
+}
+.msg-conv-item:hover { background: #f6f9fb; }
+.msg-conv-avatar {
+    flex: 0 0 auto; width: 38px; height: 38px; border-radius: 50%;
+    background: #dce6ee; color: #1a5276; font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; text-align: center; line-height: 1.05;
+}
+.msg-conv-avatar.op { background: #d8e9d8; color: #2a7a2a; }
+.msg-conv-avatar.all { background: #fbeecb; color: #a9781a; }
+.msg-conv-main { flex: 1; min-width: 0; }
+.msg-conv-name { font-size: 14px; font-weight: 600; color: #222; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msg-conv-preview { font-size: 12px; color: #888; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.msg-conv-meta { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.msg-conv-time { font-size: 10px; color: #aaa; font-variant-numeric: tabular-nums; }
+.msg-badge {
+    min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; border-radius: 9px;
+    background: #c0392b; color: #fff; font-size: 11px; font-weight: 700; line-height: 18px;
+    text-align: center;
+}
+#msg-conv-empty { padding: 28px 20px; text-align: center; color: #999; font-size: 13px; }
+#msg-new-btn {
+    margin: 10px 12px; padding: 9px; background: #2980b9; color: #fff; border: none;
+    border-radius: 6px; font-size: 14px; cursor: pointer; font-family: inherit; flex: 0 0 auto;
+}
+#msg-new-btn:hover { background: #2471a3; }
+#msg-conv-footer { flex: 0 0 auto; padding: 8px 12px; border-top: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+.msg-link { background: none; border: none; color: #2980b9; font-size: 12px; cursor: pointer; padding: 2px; font-family: inherit; }
+.msg-link:hover { text-decoration: underline; }
+
+/* Thread view */
+#msg-thread-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; background: #f4f6f8; }
+.msg-bubble-row { display: flex; margin-bottom: 8px; }
+.msg-bubble-row.me { justify-content: flex-end; }
+.msg-bubble {
+    max-width: 80%; padding: 7px 10px 5px; border-radius: 12px; font-size: 14px; line-height: 1.35;
+    background: #fff; color: #222; box-shadow: 0 1px 1px rgba(0,0,0,0.08); word-break: break-word;
+}
+.msg-bubble-row.me .msg-bubble { background: #2980b9; color: #fff; }
+.msg-bubble-sender { font-size: 11px; font-weight: 700; color: #1a5276; margin-bottom: 2px; }
+.msg-bubble-sender .sid { color: #888; font-weight: 600; }
+.msg-bubble-foot { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+.msg-bubble-time { font-size: 10px; color: #aaa; font-variant-numeric: tabular-nums; }
+.msg-bubble-row.me .msg-bubble-time { color: #d6e6f2; }
+.msg-bubble-locbtn { background: none; border: none; padding: 0; cursor: pointer; color: #b0b6bb; line-height: 0; }
+.msg-bubble-locbtn:hover { color: #c0392b; }
+.msg-bubble-row.me .msg-bubble-locbtn { color: #cfe0ec; }
+.msg-receipt { font-size: 10px; color: #d6e6f2; }
+#msg-thread-empty { text-align: center; color: #999; font-size: 13px; padding: 30px 20px; }
+
+/* Composer — always visible, never covered by an incoming message */
+#msg-composer { flex: 0 0 auto; display: flex; align-items: flex-end; gap: 6px; padding: 8px; border-top: 1px solid #e2e2e2; background: #fff; }
+#msg-composer.hidden { display: none; }
+#msg-compose-text {
+    flex: 1; min-width: 0; resize: none; font-family: inherit; font-size: 14px;
+    border: 1px solid #ccc; border-radius: 16px; padding: 8px 12px; max-height: 96px; line-height: 1.3;
+}
+#msg-mic-btn, #msg-send-btn {
+    flex: 0 0 auto; width: 38px; height: 38px; border-radius: 50%; border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; color: #fff;
+}
+#msg-mic-btn { background: #7f8c9a; }
+#msg-mic-btn.listening { background: #c0392b; animation: msg-pulse 1s infinite; }
+#msg-mic-btn.unsupported { display: none; }
+@keyframes msg-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
+#msg-send-btn { background: #2980b9; }
+#msg-send-btn:hover { background: #2471a3; }
+#msg-send-btn:disabled { background: #9db8cc; cursor: default; }
+#msg-compose-error { color: #c0392b; font-size: 12px; padding: 0 10px 6px; display: none; }
+
+/* Recipient picker (new-message sheet) */
+#msg-pick-modal { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 9300; }
+#msg-pick-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.45); }
+#msg-pick-box { position: relative; background: #fff; border-radius: 8px; width: 360px; max-width: calc(100vw - 32px); max-height: calc(100vh - 80px); z-index: 1; display: flex; flex-direction: column; box-shadow: 0 4px 24px rgba(0,0,0,0.25); }
+#msg-pick-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px 8px; font-size: 15px; font-weight: 600; }
+#msg-pick-header button { background: none; border: none; font-size: 20px; cursor: pointer; color: #888; }
+#msg-pick-search { margin: 0 16px 8px; padding: 7px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; font-family: inherit; }
+#msg-pick-list { overflow-y: auto; padding: 0 8px 8px; }
+.msg-pick-item { display: flex; align-items: center; gap: 10px; padding: 9px 8px; border-radius: 6px; cursor: pointer; }
+.msg-pick-item:hover { background: #f2f6f9; }
+.msg-pick-item.sel { background: #eaf3fb; }
+.msg-pick-check { flex: 0 0 auto; width: 18px; color: #2980b9; font-weight: 700; }
+#msg-pick-footer { padding: 10px 16px; border-top: 1px solid #eee; display: flex; gap: 8px; }
+#msg-pick-go { flex: 1; padding: 9px; background: #2980b9; color: #fff; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; font-family: inherit; }
+#msg-pick-go:disabled { background: #9db8cc; cursor: default; }
+.msg-online-dot { width: 8px; height: 8px; border-radius: 50%; background: #cbd2d8; flex: 0 0 auto; }
+.msg-online-dot.on { background: #27ae60; }
+
+/* Settings dropdown */
+#msg-settings-menu {
+    position: absolute; top: 46px; right: 8px; background: #fff; border-radius: 8px; z-index: 20;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2); width: 240px; padding: 8px; display: none;
+}
+#msg-settings-menu.open { display: block; }
+#msg-settings-menu .mi { display: block; width: 100%; text-align: left; background: none; border: none; padding: 9px 8px; font-size: 13px; color: #333; cursor: pointer; border-radius: 5px; font-family: inherit; }
+#msg-settings-menu .mi:hover { background: #f2f6f9; }
+#msg-settings-menu .mi.danger { color: #c0392b; }
+#msg-settings-menu hr { border: none; border-top: 1px solid #eee; margin: 6px 4px; }
+#msg-settings-menu .msg-vol-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; }
+#msg-settings-menu label.mi-lbl { font-size: 12px; color: #666; padding: 4px 8px 2px; display: block; }
+#msg-rename-wrap { padding: 4px 8px 8px; display: none; }
+#msg-rename-input { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid #ccc; border-radius: 5px; font-size: 13px; font-family: inherit; }
+#msg-rename-error { color: #c0392b; font-size: 11px; min-height: 13px; }
+
+/* Unread badge on the sidebar Messaging button */
+#msg-messaging-btn { position: relative; }
+#msg-btn-badge {
+    display: none; position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px;
+    padding: 0 5px; box-sizing: border-box; border-radius: 9px; background: #c0392b; color: #fff;
+    font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;
+}
+
+/* Arrival toast (panel closed) */
+#msg-toast {
+    position: fixed; bottom: 18px; right: 18px; z-index: 9700; max-width: 320px;
+    background: #1a5276; color: #fff; border-radius: 10px; padding: 11px 14px; cursor: pointer;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.3); display: none; animation: msg-pop-in 0.15s ease;
+}
+@keyframes msg-pop-in { from { transform: scale(0.92); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+#msg-toast .tt { font-weight: 700; font-size: 13px; margin-bottom: 2px; }
+#msg-toast .tb { font-size: 13px; opacity: 0.92; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── Messaging: full message log ─────────────────────────────────────────── */
 #msg-all-modal {
@@ -2602,42 +2432,80 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 	</div>
 </div>
 
-<!-- ── Messaging: compose modal ───────────────────────────────────────────── -->
-<div id="msg-compose-modal" style="display:none">
-	<div id="msg-compose-backdrop"></div>
-	<div id="msg-compose-box">
-		<div id="msg-compose-header"><span id="msg-compose-title">Send Message</span><button id="msg-compose-close">&times;</button></div>
-		<div id="msg-compose-to" style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-			<label for="msg-compose-to-sel" style="font-size:13px;color:#555;font-weight:600">To:</label>
-			<select id="msg-compose-to-sel"></select>
+<!-- ── Messaging: chat panel ──────────────────────────────────────────────── -->
+<div id="msg-panel">
+	<div id="msg-panel-header">
+		<button id="msg-panel-back" title="Back to conversations">&#8592;</button>
+		<div style="flex:1;min-width:0">
+			<div id="msg-panel-title">Messages</div>
+			<div id="msg-panel-sub"></div>
 		</div>
-		<div id="msg-compose-thread" style="display:none;max-height:280px;overflow-y:auto;border:1px solid #e0e0e0;border-radius:4px;padding:6px 8px;margin-bottom:10px;background:#f9f9f9;font-size:12px"></div>
-		<textarea id="msg-compose-text" maxlength="280" rows="3" placeholder="Type your message…" style="width:100%;box-sizing:border-box;font-size:14px;font-family:inherit;border:1px solid #ccc;border-radius:4px;padding:8px;resize:vertical"></textarea>
-		<div id="msg-compose-error" style="color:#c0392b;font-size:13px;min-height:18px;margin-top:6px"></div>
-		<button id="msg-compose-send" style="margin-top:8px">Send</button>
-			<div id="msg-sound-ctl" style="margin-top:12px;padding-top:10px;border-top:1px solid #eee">
-				<label for="msg-sound-vol" style="font-size:12px;color:#555;display:block;margin-bottom:4px">🔔 Incoming message sound</label>
-				<div style="display:flex;align-items:center;gap:8px">
-					<input type="range" id="msg-sound-vol" min="0" max="100" step="5" value="70" style="flex:1" title="Volume for the tone played when a message arrives (0 = off)">
-					<span id="msg-sound-vol-val" style="font-size:12px;color:#555;width:34px;text-align:right">70%</span>
+		<button id="msg-settings-btn" class="msg-icon-btn" title="Settings">&#9881;</button>
+		<button id="msg-panel-close" class="msg-icon-btn" title="Close">&times;</button>
+		<div id="msg-settings-menu">
+			<label class="mi-lbl">Signed in as <b id="msg-me-name"></b></label>
+			<button class="mi" id="msg-mi-rename">Change my name</button>
+			<div id="msg-rename-wrap">
+				<input id="msg-rename-input" type="text" maxlength="30" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="New name">
+				<div id="msg-rename-error"></div>
+				<div style="display:flex;gap:6px;margin-top:6px">
+					<button class="mi" id="msg-rename-save" style="background:#2980b9;color:#fff;text-align:center">Save</button>
+					<button class="mi" id="msg-rename-cancel" style="background:#eee;text-align:center">Cancel</button>
 				</div>
 			</div>
-		<div style="margin-top:12px;padding-top:10px;border-top:1px solid #eee;display:flex;justify-content:space-between;gap:10px">
-			<a href="#" id="msg-compose-all-link" style="font-size:12px;color:#2980b9;text-decoration:none">View all messages</a>
-			<a href="#" id="msg-compose-rename-link" style="font-size:12px;color:#555;text-decoration:none">Change my name</a>
-			<a href="#" id="msg-compose-disable-link" style="font-size:12px;color:#c0392b;text-decoration:none">Disable messaging</a>
+			<hr>
+			<label class="mi-lbl">🔔 Incoming message sound</label>
+			<div class="msg-vol-row">
+				<input type="range" id="msg-sound-vol" min="0" max="100" step="5" value="70" style="flex:1" title="Volume for the tone played when a message arrives (0 = off)">
+				<span id="msg-sound-vol-val" style="font-size:12px;color:#555;width:34px;text-align:right">70%</span>
+			</div>
+			<hr>
+			<button class="mi" id="msg-mi-all">View all messages…</button>
+			<button class="mi danger" id="msg-mi-disable">Sign out of messaging</button>
 		</div>
-		<div id="msg-rename-panel" style="display:none;margin-top:10px">
-			<label style="font-size:12px;color:#555">New name:</label>
-			<input id="msg-rename-input" type="text" maxlength="30" autocomplete="off" autocorrect="off" spellcheck="false" style="width:100%;box-sizing:border-box;margin-top:4px;padding:6px 8px;border:1px solid #ccc;border-radius:4px;font-size:13px;font-family:inherit">
-			<div id="msg-rename-error" style="color:#c0392b;font-size:12px;min-height:14px;margin-top:4px"></div>
-			<div style="display:flex;gap:8px;margin-top:8px">
-				<button id="msg-rename-save">Save Name</button>
-				<button id="msg-rename-cancel" style="background:#eee;color:#444;border-color:#ccc">Cancel</button>
+	</div>
+	<div id="msg-panel-body">
+		<!-- Conversation list -->
+		<div id="msg-list-view" class="msg-view">
+			<button id="msg-new-btn">✏️ New message</button>
+			<div id="msg-conv-scroll"><div id="msg-conv-empty">No conversations yet.</div></div>
+			<div id="msg-conv-footer">
+				<span style="font-size:11px;color:#999">MARS Messaging</span>
+				<button class="msg-link" id="msg-all-link">View all messages</button>
+			</div>
+		</div>
+		<!-- Thread -->
+		<div id="msg-thread-view" class="msg-view">
+			<div id="msg-thread-scroll"><div id="msg-thread-empty">Start the conversation below.</div></div>
+			<div id="msg-compose-error"></div>
+			<div id="msg-composer">
+				<textarea id="msg-compose-text" maxlength="280" rows="1" placeholder="Type a message…"></textarea>
+				<button id="msg-mic-btn" title="Dictate message" aria-label="Dictate message">
+					<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V22h2v-3.08A7 7 0 0 0 19 12h-2z"/></svg>
+				</button>
+				<button id="msg-send-btn" title="Send" aria-label="Send">
+					<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+				</button>
 			</div>
 		</div>
 	</div>
 </div>
+
+<!-- ── Messaging: recipient picker (new message) ──────────────────────────── -->
+<div id="msg-pick-modal" style="display:none">
+	<div id="msg-pick-backdrop"></div>
+	<div id="msg-pick-box">
+		<div id="msg-pick-header"><span>New message</span><button id="msg-pick-close">&times;</button></div>
+		<input id="msg-pick-search" placeholder="Search people…" autocomplete="off">
+		<div id="msg-pick-list"></div>
+		<div id="msg-pick-footer">
+			<button id="msg-pick-go" disabled>Start conversation</button>
+		</div>
+	</div>
+</div>
+
+<!-- ── Messaging: arrival toast (panel closed) ────────────────────────────── -->
+<div id="msg-toast"><div class="tt"></div><div class="tb"></div></div>
 
 <!-- ── Messaging: full message log ────────────────────────────────────────── -->
 <div id="msg-all-modal" style="display:none">
@@ -2651,21 +2519,6 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 				<button id="msg-all-delete" style="display:none">Delete All Messages</button>
 				<button id="msg-all-export" disabled>Export CSV</button>
 			</div>
-		</div>
-	</div>
-</div>
-
-<!-- ── Messaging: incoming message modal ──────────────────────────────────── -->
-<div id="msg-incoming-modal" style="display:none">
-	<div id="msg-incoming-backdrop"></div>
-	<div id="msg-incoming-box">
-		<div id="msg-incoming-header"><span>📨 Message</span><button id="msg-incoming-close">&times;</button></div>
-		<div id="msg-incoming-from" style="font-weight:700;font-size:14px;margin-bottom:6px"></div>
-		<div id="msg-incoming-thread" style="display:none;max-height:280px;overflow-y:auto;font-size:12px"></div>
-		<div id="msg-incoming-text" style="font-size:15px;line-height:1.5;margin-bottom:14px"></div>
-		<div style="display:flex;gap:8px">
-			<button id="msg-incoming-reply" style="display:none">Reply</button>
-			<button id="msg-incoming-ok">Close</button>
 		</div>
 	</div>
 </div>
@@ -3785,7 +3638,7 @@ function _noteMobileTrackers(trackers) {
 		.map(t => ({callsign: t.callsign, id: t.id || '', name: t.name || ''}));
 	mob.sort((a, b) => naturalCompare(a.id, b.id));
 	_mobileTrackers = mob;
-	if (_composeModalOpen()) _populateComposeRecipients();
+	if (typeof _msgPickerOpen === 'function' && _msgPickerOpen()) _refreshPicker();
 }
 function updateLegend(trackers) {
 	_noteTrackerIds(trackers);
@@ -5631,451 +5484,693 @@ if (isMobile) {
 	resetBtn.addEventListener('click',    e => { e.stopPropagation(); clearAllSelections(); map.setView([defaultView.lat, defaultView.lon], defaultView.zoom); closeMobileDrawer(); });
 }
 
-// ── Messaging ─────────────────────────────────────────────────────────────────
+// ── Messaging (chat panel) ──────────────────────────────────────────────────
+// Persistent right-docked chat panel: a conversation list, a thread view, and a
+// composer that is always visible (never covered by an incoming message). Driven
+// by the SQLite-backed ?messaging= API (participants, conversations, threads,
+// deliveries). Live updates arrive via a 5 s poll and append without reloading.
 
-let _msgToken     = null;
-let _msgName      = null;
-let _msgLastId    = 0;
+let _msgToken   = null;
+let _msgName    = null;
+let _msgMeId    = null;
+let _msgLastId  = 0;
+let _msgEnabled = false;
+let _msgPanelOpen = false;
 let _msgPollTimer = null;
-let _msgLog       = [];   // [{id, ts, from, from_label, to, to_label, text}]
-let _msgEnabled   = false;
-const _msgNotifiedIds = new Set(); // tracks IDs already shown as modals
-let _msgSeenId = 0;                // highest message id the user has actually been shown (persisted)
-
-// Restore saved subscription from localStorage
-try {
-	const _saved = JSON.parse(localStorage.getItem('aprs_msg_session') || 'null');
-	if (_saved?.token) { _msgToken = _saved.token; _msgName = _saved.name; _msgLastId = _saved.last_id || 0; }
-	// Last message the user actually saw. Absent (existing users) → treat their
-	// current position as seen so old history doesn't flood in on first load.
-	const _seenRaw = localStorage.getItem('aprs_msg_seen_id');
-	_msgSeenId = (_seenRaw != null && isFinite(parseInt(_seenRaw, 10))) ? parseInt(_seenRaw, 10) : (_saved?.last_id || 0);
-} catch {}
-
-function _msgIsSubscribed() { return !!_msgToken; }
-
-// The history endpoint returns the WHOLE log — including traffic between other
-// operators and other trackers. These decide what belongs to *this* operator so
-// conversation views don't show someone else's messages.
-// Operator-sent messages all carry from:'web', so the sender's name is the only
-// thing distinguishing mine from another operator's.
-function _msgSentByMe(m) { return m.from === 'web' && (m.from_label || '') === _msgName; }
-// 'web' = addressed to every operator; _msgName = addressed to me by name.
-function _msgSentToMe(m) { return m.to === 'web' || (!!_msgName && m.to === _msgName); }
-function _msgInvolvesMe(m) { return !!m && (_msgSentByMe(m) || _msgSentToMe(m)); }
-
-async function _loadMsgHistory(markAllSeen = false) {
-	if (!_msgToken) return false;
-	try {
-		const r = await fetch('index.php?messaging=history', {
-			method: 'POST',
-			headers: {'Content-Type': 'application/json'},
-			body: JSON.stringify({web_token: _msgToken})
-		});
-		if (r.status === 403) {
-			_msgToken = null; _msgName = null;
-			try { localStorage.removeItem('aprs_msg_session'); } catch {}
-			return false;
-		}
-		const d = await r.json();
-		_msgLog = d.messages || [];
-		_msgLastId = d.last_id || 0;
-		try {
-			const _s = JSON.parse(localStorage.getItem('aprs_msg_session') || 'null');
-			if (_s) { _s.last_id = _msgLastId; localStorage.setItem('aprs_msg_session', JSON.stringify(_s)); }
-		} catch {}
-		if (markAllSeen) {
-			// Fresh subscribe: everything already on the server counts as seen.
-			for (const m of _msgLog) _msgNotifiedIds.add(m.id);
-			_markMsgSeen(_msgLastId);
-		} else {
-			// Returning to the page: replay RECEIVED messages that arrived while
-			// we were away (id > last seen) and were never shown, in order.
-			const _pending = [];
-			for (const m of _msgLog) {
-				if (m.id <= _msgSeenId) { _msgNotifiedIds.add(m.id); }
-				else if (m.from !== "web" && _msgInvolvesMe(m)) { _pending.push(m); }
-				else { _msgNotifiedIds.add(m.id); }
-			}
-			_pending.sort((a, b) => a.id - b.id);
-			for (const m of _pending) { _msgNotifiedIds.add(m.id); _enqueueMsgModal(m); }
-			_markMsgSeen(_msgLastId);
-		}
-		return true;
-	} catch {}
-	return true; // network error — keep token, polling will detect if truly gone
-}
-
-function _setSubscribedUI(subscribed) {
-	// msg-messaging-btn stays visible whenever messaging is enabled
-}
-
 let _msgUiInitialized = false;
-function _initMsgUI(enabled) {
-	if (!enabled) return;
-	if (_msgUiInitialized) return;
-	_msgUiInitialized = true;
-	_msgEnabled = true;
-	document.getElementById('msg-messaging-btn').style.display = '';
-	if (_msgIsSubscribed()) {
-		_setSubscribedUI(true);
-		_loadMsgHistory().then(ok => {
-			if (!ok) {
-				_setSubscribedUI(false);
-				if (window._aprsAutoMsgPw) _autoSubscribe(window._aprsAutoMsgPw, window._aprsAutoOp);
-			} else {
-				_startMsgPoll();
-			}
-		});
-	} else if (window._aprsAutoMsgPw) {
-		_autoSubscribe(window._aprsAutoMsgPw, window._aprsAutoOp);
-	}
+
+const _convs   = new Map();   // id -> {id,kind,title,members,unread,last_id,preview,messages,loaded}
+let _openConvId = null;       // conversation shown in the thread view
+let _pendingConv = null;      // {recipients} for a not-yet-created conversation
+const _msgSeen = new Set();   // message ids already placed in a thread (dedupe)
+
+// Restore a saved subscription.
+try {
+	const _s = JSON.parse(localStorage.getItem('aprs_msg_session') || 'null');
+	if (_s?.token) { _msgToken = _s.token; _msgName = _s.name; _msgLastId = _s.last_id || 0; }
+} catch {}
+function _msgIsSubscribed() { return !!_msgToken; }
+function _persistSession() {
+	try { localStorage.setItem('aprs_msg_session', JSON.stringify({token:_msgToken, name:_msgName, last_id:_msgLastId})); } catch {}
 }
-
-async function _autoSubscribe(password, name) {
-	try {
-		const r = await fetch('index.php?messaging=subscribe', {
-			method: 'POST', headers: {'Content-Type': 'application/json'},
-			body: JSON.stringify({name: name || 'Operator', password})
-		});
-		const d = await r.json();
-		if (d.error) return;
-		_msgToken = d.token; _msgName = d.name; _msgLastId = 0;
-		// Don't persist to localStorage — session is ephemeral so removing line 2
-		// from login.txt on the next reload cleanly unsubscribes this client
-		try { localStorage.removeItem('aprs_msg_session'); } catch {}
-		_setSubscribedUI(true);
-		await _loadMsgHistory(true);
-		_startMsgPoll();
-	} catch {}
-}
-
-document.getElementById('msg-sub-backdrop').addEventListener('click', () => document.getElementById('msg-sub-modal').style.display = 'none');
-document.getElementById('msg-sub-close').addEventListener('click',    () => document.getElementById('msg-sub-modal').style.display = 'none');
-document.getElementById('msg-sub-submit').addEventListener('click', async () => {
-	const name = document.getElementById('msg-sub-name').value.trim();
-	const pw   = document.getElementById('msg-sub-pw').value;
-	const errEl = document.getElementById('msg-sub-error');
-	if (!name) { errEl.textContent = 'Please enter your name.'; return; }
-	if (!pw)   { errEl.textContent = 'Please enter the messaging password.'; return; }
-	errEl.textContent = '';
-	try {
-		const r = await fetch('index.php?messaging=subscribe', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name, password: pw}) });
-		const d = await r.json();
-		if (d.error) { errEl.textContent = d.error; return; }
-		_msgToken = d.token; _msgName = d.name; _msgLastId = 0;
-		_warmMsgAudio(); // unlock AudioContext while we're inside a user gesture
-		try { localStorage.setItem('aprs_msg_session', JSON.stringify({token: _msgToken, name: _msgName, last_id: 0})); } catch {}
-		document.getElementById('msg-sub-modal').style.display = 'none';
-		_setSubscribedUI(true);
-		await _loadMsgHistory(true);
-		_startMsgPoll();
-	} catch { errEl.textContent = 'Connection error. Please try again.'; }
-});
-
-// Messaging button — opens compose when subscribed, subscribe modal otherwise
-document.getElementById('msg-messaging-btn').addEventListener('click', () => {
-	if (_msgIsSubscribed()) {
-		_showComposeModal('*', 'All Trackers');
-	} else {
-		const _savedMsg = JSON.parse(localStorage.getItem('aprs_msg_session') || 'null');
-		const _savedName = _savedMsg?.name || '';
-		document.getElementById('msg-sub-name').value = _savedName;
-		document.getElementById('msg-sub-pw').value   = '';
-		document.getElementById('msg-sub-error').textContent = '';
-		document.getElementById('msg-sub-modal').style.display = 'flex';
-		setTimeout(() => (_savedName ? document.getElementById('msg-sub-pw') : document.getElementById('msg-sub-name')).focus(), 50);
-	}
-});
-
-// Right-click / Ctrl+click on sidebar tracker rows → compose to that tracker
-function _handleTrackerActivate(cs, name) {
-	if (_msgIsSubscribed()) {
-		_showComposeModal(cs, name + ' (' + cs + ')');
-	} else {
-		// Prompt to subscribe first
-		document.getElementById('msg-sub-name').value = '';
-		document.getElementById('msg-sub-pw').value   = '';
-		document.getElementById('msg-sub-error').textContent = '';
-		document.getElementById('msg-sub-modal').style.display = 'flex';
-		setTimeout(() => document.getElementById('msg-sub-name').focus(), 50);
-	}
-}
-document.getElementById('legend').addEventListener('contextmenu', e => {
-	const item = e.target.closest('.legend-item');
-	if (!item || !_msgEnabled) return;
-	e.preventDefault();
-	const cs   = item.dataset.callsign;
-	const name = item.querySelector('.legend-name')?.textContent || cs;
-	_handleTrackerActivate(cs, name);
-});
-document.getElementById('legend').addEventListener('click', e => {
-	if (!e.ctrlKey && !e.metaKey) return;
-	const item = e.target.closest('.legend-item');
-	if (!item || !_msgEnabled) return;
-	e.stopImmediatePropagation();
-	const cs   = item.dataset.callsign;
-	const name = item.querySelector('.legend-name')?.textContent || cs;
-	_handleTrackerActivate(cs, name);
-}, true);
-
-// Compose modal
-// Callsign ('*' for all trackers) whose conversation the compose thread is
-// showing. Tracks the recipient dropdown.
-let _composeThreadTo = null;
-
-// Renders the conversation between this operator and _composeThreadTo. Split out
-// of _showComposeModal so the poll can refresh it in place when a message lands
-// while the modal is open.
-function _renderComposeThread() {
-	const threadEl = document.getElementById('msg-compose-thread');
-	if (!threadEl || _composeThreadTo === null) return;
-	const to = _composeThreadTo;
-	// Only messages involving this operator — the history feed also carries other
-	// operators' conversations.
-	const relevant = _msgLog.filter(m => _msgInvolvesMe(m) && (
-		to === '*' ? (m.broadcast || m.to === '*') : (m.from === to || m.to === to)
-	));
-	if (!relevant.length) { threadEl.style.display = 'none'; threadEl.innerHTML = ''; return; }
-	// Stay pinned to the newest message only if the user hadn't scrolled up.
-	const atBottom = threadEl.scrollHeight - threadEl.scrollTop - threadEl.clientHeight < 24;
-	threadEl.innerHTML = relevant.map(m => {
-		const isMe = m.from === 'web';
-		const who  = isMe ? `<span class="msg-thread-from msg-thread-web">${_esc(m.from_label)}</span>` : `<span class="msg-thread-from">${_esc(m.from_label)}</span>`;
-		const d    = new Date(m.ts * 1000);
-		const t    = d.toLocaleDateString([], {month:'2-digit',day:'2-digit'}) + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-		return `<div class="msg-thread-entry">${who}<span class="msg-thread-time">${t}</span><br>${_esc(m.text)}</div>`;
-	}).join('');
-	threadEl.style.display = '';
-	if (atBottom) setTimeout(() => { threadEl.scrollTop = threadEl.scrollHeight; }, 0);
-}
-
-function _composeModalOpen() {
-	const m = document.getElementById('msg-compose-modal');
-	return !!m && m.style.display !== 'none' && m.style.display !== '';
-}
-
+function _clearSession() { try { localStorage.removeItem('aprs_msg_session'); } catch {} }
 function _escAttr(s) { return _esc(s).replace(/"/g, '&quot;'); }
 
-// Recipient dropdown: "All Trackers" plus every mobile tracker currently on the
-// map. Repopulated as trackers come and go, preserving the current selection.
-function _populateComposeRecipients(want) {
-	const sel = document.getElementById('msg-compose-to-sel');
-	if (!sel) return;
-	const target = want !== undefined ? want : (sel.value || '*');
-	const opts = ['<option value="*">All Trackers</option>'];
-	let found = target === '*';
-	for (const t of _mobileTrackers) {
-		if (t.callsign === target) found = true;
-		const label = [t.id, t.name].filter(Boolean).join(' ') || t.callsign;
-		opts.push(`<option value="${_escAttr(t.callsign)}">${_esc(label)}</option>`);
-	}
-	// A tracker chosen from the sidebar may have since dropped off the live feed;
-	// keep it selectable rather than silently switching the recipient.
-	if (!found) {
-		const label = [_trackerIdByCs[target], target].filter(Boolean).join(' ');
-		opts.push(`<option value="${_escAttr(target)}">${_esc(label)} (offline)</option>`);
-	}
-	sel.innerHTML = opts.join('');
-	sel.value = target;
-	if (!sel.value) sel.value = '*';
+// ── API ─────────────────────────────────────────────────────────────────────
+async function _msgApi(action, opts = {}) {
+	const r = await fetch('index.php?messaging=' + action, {
+		method: 'POST', headers: {'Content-Type':'application/json'},
+		body: JSON.stringify(Object.assign({token: _msgToken}, opts.body || {})),
+	});
+	if (r.status === 403 && action !== 'subscribe') { _onAuthLost(); throw new Error('auth'); }
+	return r.json();
+}
+function _onAuthLost() {
+	_msgToken = null; _msgName = null; _msgMeId = null;
+	_clearSession();
+	if (_msgPollTimer) { clearInterval(_msgPollTimer); _msgPollTimer = null; }
+	_updateBtnBadge(0);
+	// An ephemeral autologin session can transparently re-subscribe.
+	if (window._aprsAutoMsgPw) _autoSubscribe(window._aprsAutoMsgPw, window._aprsAutoOp);
 }
 
-function _showComposeModal(toCallsign, toLabel, prefill) {
-	_populateComposeRecipients(toCallsign || '*');
-	document.getElementById('msg-compose-text').value        = prefill || '';
-	document.getElementById('msg-compose-error').textContent = '';
-	_composeThreadTo = document.getElementById('msg-compose-to-sel').value;
-	document.getElementById('msg-compose-thread').scrollTop = 0;
-	_renderComposeThread();
-	document.getElementById('msg-rename-panel').style.display = 'none';
-	document.getElementById('msg-compose-modal').style.display = 'flex';
-	setTimeout(() => document.getElementById('msg-compose-text').focus(), 50);
+// ── Label helpers ────────────────────────────────────────────────────────────
+function _participantLabel(p) {
+	const name = p.display_name || p.name || p.key;
+	if (p.kind === 'mobile' && p.short_id) return (name && name !== p.key) ? p.short_id + ' ' + name : p.short_id;
+	return name || p.key;
 }
-document.getElementById('msg-compose-backdrop').addEventListener('click', () => document.getElementById('msg-compose-modal').style.display = 'none');
-// Incoming-message sound volume control (lives in the Send Message modal).
-// Slider 0..100 maps to the stored 0..1 volume; 0 = off. Adjusting it previews
-// the tone at the chosen level (the drag also unlocks the AudioContext).
-(function initMsgSoundCtl() {
-	const slider = document.getElementById('msg-sound-vol');
-	const label  = document.getElementById('msg-sound-vol-val');
-	if (!slider || !label) return;
-	const render = pct => { label.textContent = pct > 0 ? pct + '%' : 'Off'; };
-	const pct0 = Math.round(_getMsgVolume() * 100);
-	slider.value = pct0; render(pct0);
-	slider.addEventListener('input', () => render(parseInt(slider.value, 10)));
-	slider.addEventListener('change', () => {
-		const pct = parseInt(slider.value, 10);
-		_setMsgVolume(pct / 100);
-		_warmMsgAudio();               // slider drag is a user gesture — unlock audio
-		if (pct > 0) _playMsgTone();   // preview the chosen level
-	});
-})();
-document.getElementById('msg-compose-close').addEventListener('click',    () => document.getElementById('msg-compose-modal').style.display = 'none');
-// Switching recipient swaps the thread to that conversation.
-document.getElementById('msg-compose-to-sel').addEventListener('change', function() {
-	_composeThreadTo = this.value;
-	document.getElementById('msg-compose-thread').scrollTop = 0;
-	_renderComposeThread();
-});
-document.getElementById('msg-compose-send').addEventListener('click', async () => {
-	const btn    = document.getElementById('msg-compose-send');
-	if (btn.disabled) return; // in-flight — ignore duplicate clicks
-	const modal  = document.getElementById('msg-compose-modal');
-	const sel     = document.getElementById('msg-compose-to-sel');
-	const to      = sel.value;
-	// Match what the server stores: the tracker's plain name (or '*' for a
-	// broadcast) — NOT the dropdown's "ID Name" text, which would render as
-	// "M083 M083 James" once _msgWho prefixes the ID again.
-	const _trk    = _mobileTrackers.find(t => t.callsign === to);
-	const toLabel = to === '*' ? '*' : ((_trk && _trk.name) || to);
-	const text   = document.getElementById('msg-compose-text').value.trim();
-	const errEl  = document.getElementById('msg-compose-error');
-	if (!text) { errEl.textContent = 'Please enter a message.'; return; }
-	errEl.textContent = '';
-	// Disable + spinner while the send is in flight so the button can't be double-clicked.
-	const btnHtml = btn.innerHTML;
-	btn.disabled = true;
-	btn.innerHTML = '<span class="btn-spinner"></span>Sending…';
+function _msgSenderName(m) {
+	const name = m.from_name || m.from_key || '';
+	if (m.from_kind === 'mobile' && m.from_short) return (name && name !== m.from_key) ? m.from_short + ' ' + name : m.from_short;
+	return name || '—';
+}
+function _senderLabelHtml(m) {
+	const name = m.from_name || m.from_key || '';
+	if (m.from_kind === 'mobile' && m.from_short) return '<span class="sid">' + _esc(m.from_short) + '</span> ' + _esc(name);
+	return _esc(name);
+}
+function _convLabel(c) {
+	if (c.kind === 'broadcast') return 'All Trackers';
+	if (c.title) return c.title;
+	const o = c.members || [];
+	if (!o.length) return 'Conversation';
+	if (o.length === 1) return _participantLabel(o[0]);
+	return o.map(m => m.short_id || m.display_name || m.key).join(', ');
+}
+function _threadSub(c) {
+	if (c.kind === 'broadcast') return 'Everyone on the map';
+	const o = c.members || [];
+	if (o.length === 1) return o[0].kind === 'mobile' ? o[0].key : 'Operator';
+	if (o.length > 1) return o.length + ' people';
+	return '';
+}
+function _initials(name) {
+	const w = String(name || '').trim().split(/\s+/).filter(Boolean);
+	if (!w.length) return '?';
+	return (w[0][0] + (w.length > 1 ? w[w.length-1][0] : '')).toUpperCase();
+}
+function _avatarFor(c) {
+	if (c.kind === 'broadcast') return {cls:'all', txt:'ALL'};
+	const o = c.members || [];
+	if (o.length === 1) {
+		const p = o[0];
+		if (p.kind === 'operator') return {cls:'op', txt:_initials(p.display_name)};
+		return {cls:'', txt: p.short_id || _initials(p.display_name)};
+	}
+	return {cls:'', txt: String(o.length || '?')};
+}
+
+// ── Time formats ─────────────────────────────────────────────────────────────
+function _msgClockTime(ts) { return new Date(ts * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
+function _msgShortTime(ts) {
+	const d = new Date(ts * 1000), now = new Date();
+	if (d.toDateString() === now.toDateString()) return _msgClockTime(ts);
+	return d.toLocaleDateString([], {month:'numeric', day:'numeric'});
+}
+
+// ── Panel open / close / views ───────────────────────────────────────────────
+function _openPanel() {
+	document.getElementById('msg-panel').classList.add('open');
+	_msgPanelOpen = true;
+	_hideToast();
+	if (_openConvId == null && !_pendingConv) _showListView();
+	if (_openConvId != null) _markConvRead(_openConvId);
+	_refreshConversations();
+}
+function _closePanel() {
+	document.getElementById('msg-panel').classList.remove('open');
+	_msgPanelOpen = false;
+	_closeSettings();
+}
+function _togglePanel() {
+	document.getElementById('msg-panel').classList.contains('open') ? _closePanel() : _openPanel();
+}
+function _showListView() {
+	_openConvId = null; _pendingConv = null;
+	document.getElementById('msg-list-view').style.display = 'flex';
+	document.getElementById('msg-thread-view').style.display = 'none';
+	document.getElementById('msg-panel-back').style.display = 'none';
+	document.getElementById('msg-panel-title').textContent = 'Messages';
+	document.getElementById('msg-panel-sub').textContent = _msgName ? ('as ' + _msgName) : '';
+	_renderConvList();
+}
+function _showThreadView(titleHtml, subText) {
+	document.getElementById('msg-list-view').style.display = 'none';
+	document.getElementById('msg-thread-view').style.display = 'flex';
+	document.getElementById('msg-panel-back').style.display = 'block';
+	document.getElementById('msg-panel-title').innerHTML = titleHtml;
+	document.getElementById('msg-panel-sub').textContent = subText || '';
+}
+
+// ── Conversation list ────────────────────────────────────────────────────────
+async function _refreshConversations() {
+	if (!_msgToken) return;
 	try {
-		const r = await fetch('index.php?messaging=send', { method: 'POST', headers: {'Content-Type':'application/json'},
-			body: JSON.stringify({web_token: _msgToken, to, text}) });
+		const d = await _msgApi('conversations');
+		if (!d || !d.conversations) return;
+		for (const c of d.conversations) {
+			const ex = _convs.get(c.id) || {messages:[], loaded:false};
+			_convs.set(c.id, Object.assign(ex, {
+				id:c.id, kind:c.kind, title:c.title, members:c.members || [],
+				unread:c.unread || 0, last_id:c.last_id || 0, preview:c.preview || null,
+			}));
+		}
+		if (_msgPanelOpen && _openConvId == null) _renderConvList();
+		_updateTotalUnread();
+	} catch {}
+}
+function _renderConvList() {
+	const scroll = document.getElementById('msg-conv-scroll');
+	const items = [..._convs.values()].filter(c => c.last_id > 0).sort((a, b) => b.last_id - a.last_id);
+	if (!items.length) {
+		scroll.innerHTML = '<div id="msg-conv-empty">No conversations yet.<br>Tap “New message” to start one.</div>';
+		return;
+	}
+	scroll.innerHTML = items.map(c => {
+		const av = _avatarFor(c), pv = c.preview;
+		const prev = pv ? ((pv.self ? 'You: ' : '') + pv.text) : '';
+		const badge = c.unread > 0 ? '<span class="msg-badge">' + c.unread + '</span>' : '';
+		return '<div class="msg-conv-item" data-cid="' + c.id + '">' +
+			'<div class="msg-conv-avatar ' + av.cls + '">' + _esc(av.txt) + '</div>' +
+			'<div class="msg-conv-main"><div class="msg-conv-name">' + _esc(_convLabel(c)) + '</div>' +
+			'<div class="msg-conv-preview">' + _esc(prev) + '</div></div>' +
+			'<div class="msg-conv-meta"><span class="msg-conv-time">' + (pv ? _msgShortTime(pv.ts) : '') + '</span>' + badge + '</div></div>';
+	}).join('');
+	scroll.querySelectorAll('.msg-conv-item').forEach(el =>
+		el.addEventListener('click', () => _openConversation(+el.dataset.cid)));
+}
+
+// ── Thread view ──────────────────────────────────────────────────────────────
+async function _openConversation(cid) {
+	const c = _convs.get(cid);
+	if (!c) return;
+	_openConvId = cid; _pendingConv = null;
+	_showThreadView(_esc(_convLabel(c)), _threadSub(c));
+	document.getElementById('msg-compose-text').value = '';
+	_autoGrow(document.getElementById('msg-compose-text'));
+	_renderThread(c);
+	try {
+		const d = await _msgApi('thread', {body:{conversation_id: cid}});
+		if (d && d.messages) {
+			c.messages = d.messages; c.loaded = true;
+			for (const m of d.messages) _msgSeen.add(m.id);
+			if (_openConvId === cid) _renderThread(c);
+		}
+	} catch {}
+	_markConvRead(cid);
+	setTimeout(() => document.getElementById('msg-compose-text').focus(), 60);
+}
+function _bubbleHtml(m, c) {
+	const me = (m.from_id === _msgMeId);
+	const sender = me ? '' : '<div class="msg-bubble-sender">' + _senderLabelHtml(m) + '</div>';
+	const loc = (typeof m.lat === 'number' && typeof m.lon === 'number')
+		? '<button class="msg-bubble-locbtn" data-mid="' + m.id + '" title="Show where this was sent from">' + MSG_PIN_SVG + '</button>' : '';
+	return '<div class="msg-bubble-row ' + (me ? 'me' : 'them') + '">' +
+		'<div class="msg-bubble">' + sender +
+		'<div class="msg-bubble-text">' + _esc(m.text) + '</div>' +
+		'<div class="msg-bubble-foot">' + loc + '<span class="msg-bubble-time">' + _msgClockTime(m.ts) + '</span></div>' +
+		'</div></div>';
+}
+function _renderThread(c) {
+	const scroll = document.getElementById('msg-thread-scroll');
+	const msgs = c.messages || [];
+	if (!msgs.length) { scroll.innerHTML = '<div id="msg-thread-empty">No messages yet. Say hello 👋</div>'; return; }
+	scroll.innerHTML = msgs.map(m => _bubbleHtml(m, c)).join('');
+	_wireLocButtons(scroll);
+	setTimeout(() => { scroll.scrollTop = scroll.scrollHeight; }, 0);
+}
+function _appendBubble(c, m) {
+	const scroll = document.getElementById('msg-thread-scroll');
+	if (document.getElementById('msg-thread-empty')) scroll.innerHTML = '';
+	const atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 60;
+	scroll.insertAdjacentHTML('beforeend', _bubbleHtml(m, c));
+	_wireLocButtons(scroll.lastElementChild);
+	if (atBottom) scroll.scrollTop = scroll.scrollHeight;
+}
+function _wireLocButtons(root) {
+	root.querySelectorAll('.msg-bubble-locbtn').forEach(b => {
+		if (b._wired) return; b._wired = true;
+		b.addEventListener('click', e => { e.stopPropagation(); _showMsgLocation(_msgFindById(+b.dataset.mid)); });
+	});
+}
+function _msgFindById(id) {
+	for (const c of _convs.values()) { const m = (c.messages || []).find(x => x.id === id); if (m) return m; }
+	return null;
+}
+
+// ── Composer ─────────────────────────────────────────────────────────────────
+function _autoGrow(ta) { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 96) + 'px'; }
+async function _sendCurrent() {
+	const ta = document.getElementById('msg-compose-text');
+	const text = ta.value.trim();
+	const errEl = document.getElementById('msg-compose-error');
+	errEl.style.display = 'none';
+	if (!text) return;
+	const btn = document.getElementById('msg-send-btn');
+	btn.disabled = true;
+	const body = {text};
+	if (_pendingConv) {
+		body.recipients = _pendingConv.recipients;
+	} else if (_openConvId != null) {
+		const c = _convs.get(_openConvId);
+		if (c && c.kind === 'broadcast') body.recipients = 'all';
+		else body.conversation_id = _openConvId;
+	} else { btn.disabled = false; return; }
+	try {
+		const d = await _msgApi('send', {body});
+		if (d.error) { errEl.textContent = d.error; errEl.style.display = 'block'; return; }
+		ta.value = ''; _autoGrow(ta);
+		const cid = d.conversation_id;
+		_pendingConv = null; _openConvId = cid;
+		await _refreshConversations();
+		const d2 = await _msgApi('thread', {body:{conversation_id: cid}});
+		const c = _convs.get(cid) || {id:cid, kind:d.kind, members:[], messages:[]};
+		c.messages = (d2 && d2.messages) || c.messages || [];
+		c.loaded = true;
+		for (const m of c.messages) _msgSeen.add(m.id);
+		_convs.set(cid, c);
+		if (_openConvId === cid) { _showThreadView(_esc(_convLabel(c)), _threadSub(c)); _renderThread(c); }
+	} catch (e) {
+		if (e.message !== 'auth') { errEl.textContent = 'Send failed. Please try again.'; errEl.style.display = 'block'; }
+	} finally { btn.disabled = false; ta.focus(); }
+}
+
+// ── Live poll ────────────────────────────────────────────────────────────────
+function _startPoll() {
+	if (_msgPollTimer) return;
+	_msgPollTimer = setInterval(_poll, 5000);
+	_poll();
+}
+async function _poll() {
+	if (!_msgToken) return;
+	try {
+		const d = await _msgApi('poll', {body:{since_id: _msgLastId}});
+		if (!d) return;
+		if (d.last_id > _msgLastId) { _msgLastId = d.last_id; _persistSession(); }
+		if (d.messages && d.messages.length) {
+			for (const m of d.messages) _ingestIncoming(m);
+			if (_msgPanelOpen && _openConvId == null) _renderConvList();
+			_updateTotalUnread();
+		}
+	} catch {}
+}
+function _ingestIncoming(m) {
+	const cid = m.conversation_id;
+	let c = _convs.get(cid);
+	if (!c) { c = {id:cid, kind:'direct', title:null, members:[], unread:0, last_id:0, preview:null, messages:[], loaded:false}; _convs.set(cid, c); }
+	const isNew = !_msgSeen.has(m.id);
+	if (isNew) { _msgSeen.add(m.id); if (Array.isArray(c.messages)) c.messages.push(m); }
+	c.last_id = Math.max(c.last_id || 0, m.id);
+	c.preview = {text:m.text, ts:m.ts, from_id:m.from_id, from_name:m.from_name, from_short:m.from_short, self:false};
+	const isOpen = (_openConvId === cid) && _msgPanelOpen;
+	if (isOpen) { if (isNew) _appendBubble(c, m); _markConvRead(cid); }
+	else if (isNew) { c.unread = (c.unread || 0) + 1; }
+	if (isNew) {
+		_playMsgTone();
+		if (!isOpen) _notifyArrival(m, c);
+	}
+}
+async function _markConvRead(cid) {
+	const c = _convs.get(cid);
+	if (!c) return;
+	if (c.unread) { c.unread = 0; if (_msgPanelOpen && _openConvId == null) _renderConvList(); _updateTotalUnread(); }
+	const ids = (c.messages || []).filter(m => m.from_id !== _msgMeId).map(m => m.id);
+	if (ids.length) { try { await _msgApi('read', {body:{ids}}); } catch {} }
+}
+function _updateTotalUnread() {
+	let n = 0; for (const c of _convs.values()) n += (c.unread || 0);
+	_updateBtnBadge(n);
+}
+function _updateBtnBadge(n) {
+	const b = document.getElementById('msg-btn-badge');
+	if (!b) return;
+	if (n > 0) { b.textContent = n > 99 ? '99+' : n; b.style.display = 'block'; }
+	else b.style.display = 'none';
+}
+
+// ── Arrival toast (panel closed) ─────────────────────────────────────────────
+let _toastTimer = null;
+function _notifyArrival(m, c) {
+	if (_msgPanelOpen) return;
+	const toast = document.getElementById('msg-toast');
+	toast.querySelector('.tt').textContent = _convLabel(c);
+	toast.querySelector('.tb').textContent = (m.from_name ? m.from_name + ': ' : '') + m.text;
+	toast.style.display = 'block';
+	toast.onclick = () => { _hideToast(); _openPanel(); _openConversation(c.id); };
+	clearTimeout(_toastTimer);
+	_toastTimer = setTimeout(_hideToast, 8000);
+}
+function _hideToast() { document.getElementById('msg-toast').style.display = 'none'; }
+
+// ── New-message recipient picker ─────────────────────────────────────────────
+let _pickSel = new Set();
+let _pickParticipants = [];
+function _msgPickerOpen() { return document.getElementById('msg-pick-modal').style.display === 'flex'; }
+async function _openPicker() {
+	_pickSel = new Set();
+	document.getElementById('msg-pick-search').value = '';
+	document.getElementById('msg-pick-modal').style.display = 'flex';
+	document.getElementById('msg-pick-go').disabled = true;
+	_renderPicker();
+	setTimeout(() => document.getElementById('msg-pick-search').focus(), 50);
+	try { const d = await _msgApi('participants'); _pickParticipants = (d.participants || []).filter(p => !p.self); _renderPicker(); } catch {}
+}
+function _refreshPicker() { if (_msgPickerOpen()) _renderPicker(); }
+function _pickerOptions() {
+	const opts = [{key:'all', kind:'all', name:'All Trackers', sub:'Broadcast to everyone', online:true}];
+	const seen = new Set();
+	for (const p of _pickParticipants) {
+		seen.add(p.key);
+		opts.push({key:p.key, kind:p.kind, name:_participantLabel(p), sub:p.kind === 'operator' ? 'Operator' : p.key, online:p.online});
+	}
+	for (const t of _mobileTrackers) {
+		if (seen.has(t.callsign)) continue;
+		seen.add(t.callsign);
+		opts.push({key:t.callsign, kind:'mobile', name:[t.id, t.name].filter(Boolean).join(' ') || t.callsign, sub:t.callsign, online:true});
+	}
+	return opts;
+}
+function _pickerNameFor(key) { const o = _pickerOptions().find(x => x.key === key); return o ? o.name : key; }
+function _renderPicker() {
+	const q = document.getElementById('msg-pick-search').value.trim().toLowerCase();
+	const list = document.getElementById('msg-pick-list');
+	const opts = _pickerOptions().filter(o => !q || o.name.toLowerCase().includes(q) || o.key.toLowerCase().includes(q));
+	list.innerHTML = opts.map(o => {
+		const sel = _pickSel.has(o.key);
+		const dot = o.kind === 'all' ? '' : '<span class="msg-online-dot ' + (o.online ? 'on' : '') + '"></span>';
+		return '<div class="msg-pick-item ' + (sel ? 'sel' : '') + '" data-key="' + _escAttr(o.key) + '">' +
+			'<span class="msg-pick-check">' + (sel ? '✓' : '') + '</span>' + dot +
+			'<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">' + _esc(o.name) + '</div>' +
+			'<div style="font-size:11px;color:#888">' + _esc(o.sub) + '</div></div></div>';
+	}).join('') || '<div style="padding:16px;text-align:center;color:#999">No matches</div>';
+	list.querySelectorAll('.msg-pick-item').forEach(el => el.addEventListener('click', () => _togglePick(el.dataset.key)));
+	document.getElementById('msg-pick-go').disabled = _pickSel.size === 0;
+}
+function _togglePick(key) {
+	if (key === 'all') { _pickSel = _pickSel.has('all') ? new Set() : new Set(['all']); }
+	else { _pickSel.delete('all'); _pickSel.has(key) ? _pickSel.delete(key) : _pickSel.add(key); }
+	_renderPicker();
+}
+function _startFromPicker() {
+	const keys = [..._pickSel];
+	if (!keys.length) return;
+	document.getElementById('msg-pick-modal').style.display = 'none';
+	if (keys.length === 1 && keys[0] === 'all') { _openBroadcast(); return; }
+	const recipients = keys.includes('all') ? 'all' : keys;
+	_pendingConv = {recipients}; _openConvId = null;
+	const label = keys.includes('all') ? 'All Trackers' : keys.map(_pickerNameFor).join(', ');
+	_showThreadView(_esc(label), keys.length > 1 ? keys.length + ' people' : '');
+	document.getElementById('msg-thread-scroll').innerHTML = '<div id="msg-thread-empty">New conversation — type a message below.</div>';
+	document.getElementById('msg-compose-text').value = ''; _autoGrow(document.getElementById('msg-compose-text'));
+	setTimeout(() => document.getElementById('msg-compose-text').focus(), 60);
+}
+function _openBroadcast() {
+	const bc = [..._convs.values()].find(c => c.kind === 'broadcast');
+	if (bc) { _openConversation(bc.id); return; }
+	_pendingConv = {recipients:'all'}; _openConvId = null;
+	_showThreadView('All Trackers', 'Everyone on the map');
+	document.getElementById('msg-thread-scroll').innerHTML = '<div id="msg-thread-empty">Broadcast to every tracker — type a message below.</div>';
+	setTimeout(() => document.getElementById('msg-compose-text').focus(), 60);
+}
+
+// Right-click / Ctrl+click a sidebar tracker → message that tracker.
+function _handleTrackerActivate(cs, name) {
+	if (!_msgIsSubscribed()) { _openSubModal(); return; }
+	_openPanel();
+	const conv = [..._convs.values()].find(c => c.kind === 'direct' && (c.members || []).some(m => m.key === cs));
+	if (conv) { _openConversation(conv.id); return; }
+	_pendingConv = {recipients:[cs]}; _openConvId = null;
+	_showThreadView(_esc([_trackerIdByCs[cs], name].filter(Boolean).join(' ') || cs), cs);
+	document.getElementById('msg-thread-scroll').innerHTML = '<div id="msg-thread-empty">New conversation — type a message below.</div>';
+	setTimeout(() => document.getElementById('msg-compose-text').focus(), 60);
+}
+
+// ── Subscribe / init ─────────────────────────────────────────────────────────
+function _openSubModal() {
+	let saved = null; try { saved = JSON.parse(localStorage.getItem('aprs_msg_session') || 'null'); } catch {}
+	document.getElementById('msg-sub-name').value = saved?.name || '';
+	document.getElementById('msg-sub-pw').value = '';
+	document.getElementById('msg-sub-error').textContent = '';
+	document.getElementById('msg-sub-modal').style.display = 'flex';
+	setTimeout(() => (saved?.name ? document.getElementById('msg-sub-pw') : document.getElementById('msg-sub-name')).focus(), 50);
+}
+async function _doSubscribe(name, pw, errEl) {
+	try {
+		const r = await fetch('index.php?messaging=subscribe', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, password:pw})});
 		const d = await r.json();
 		if (d.error) { errEl.textContent = d.error; return; }
-		_msgLog.push({id: d.id || 0, ts: Math.floor(Date.now()/1000), from: 'web', from_label: _msgName,
-		              to, to_label: toLabel, text, broadcast: to === '*'});
-		if (_msgLog.length > 50) _msgLog.shift();
-		modal.style.display = 'none';
-	} catch { errEl.textContent = 'Send failed. Please try again.'; }
-	finally { btn.disabled = false; btn.innerHTML = btnHtml; }
-});
+		_msgToken = d.token; _msgName = d.name; _msgLastId = 0; _msgMeId = null;
+		_persistSession(); _warmMsgAudio();
+		document.getElementById('msg-sub-modal').style.display = 'none';
+		await _afterSubscribe();
+		_openPanel();
+	} catch { errEl.textContent = 'Connection error. Please try again.'; }
+}
+async function _autoSubscribe(password, name) {
+	try {
+		const r = await fetch('index.php?messaging=subscribe', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:name || 'Operator', password, reclaim:true})});
+		const d = await r.json();
+		if (d.error) return;
+		_msgToken = d.token; _msgName = d.name; _msgLastId = 0; _msgMeId = null;
+		_clearSession();
+		await _afterSubscribe();
+	} catch {}
+}
+async function _afterSubscribe() {
+	document.getElementById('msg-me-name').textContent = _msgName || '';
+	document.getElementById('msg-panel-sub').textContent = _msgName ? ('as ' + _msgName) : '';
+	try { const d = await _msgApi('participants'); if (d && d.me) _msgMeId = d.me; }
+	catch (e) { if (e.message === 'auth') return; }
+	await _refreshConversations();
+	_showListView();
+	_startPoll();
+}
 
-// ── All-messages log ──────────────────────────────────────────────────────
-// Pulls the complete server-side log (every message, both directions, all
-// trackers) rather than the 50-entry client cache in _msgLog.
+let _msgUiWired = false;
+function _initMsgUI(enabled) {
+	if (!enabled || _msgUiInitialized) return;
+	_msgUiInitialized = true; _msgEnabled = true;
+	const btn = document.getElementById('msg-messaging-btn');
+	btn.style.display = '';
+	if (!document.getElementById('msg-btn-badge')) { const s = document.createElement('span'); s.id = 'msg-btn-badge'; btn.appendChild(s); }
+	_wireMsgUI();
+	if (_msgIsSubscribed()) _afterSubscribe();
+	else if (window._aprsAutoMsgPw) _autoSubscribe(window._aprsAutoMsgPw, window._aprsAutoOp);
+}
+
+// ── Settings menu ────────────────────────────────────────────────────────────
+function _closeSettings() { document.getElementById('msg-settings-menu').classList.remove('open'); document.getElementById('msg-rename-wrap').style.display = 'none'; }
+function _toggleSettings() {
+	const m = document.getElementById('msg-settings-menu');
+	m.classList.toggle('open');
+	if (!m.classList.contains('open')) document.getElementById('msg-rename-wrap').style.display = 'none';
+}
+
+// ── Wiring (attached once, only when messaging is enabled) ────────────────────
+function _wireMsgUI() {
+	if (_msgUiWired) return; _msgUiWired = true;
+
+	document.getElementById('msg-messaging-btn').addEventListener('click', () => {
+		if (_msgIsSubscribed()) _togglePanel(); else _openSubModal();
+	});
+	document.getElementById('msg-panel-close').addEventListener('click', _closePanel);
+	document.getElementById('msg-panel-back').addEventListener('click', _showListView);
+	document.getElementById('msg-settings-btn').addEventListener('click', e => { e.stopPropagation(); _toggleSettings(); });
+	document.getElementById('msg-panel').addEventListener('click', e => {
+		const menu = document.getElementById('msg-settings-menu');
+		if (menu.classList.contains('open') && !menu.contains(e.target) && e.target.id !== 'msg-settings-btn') _closeSettings();
+	});
+
+	// New message / list footer
+	document.getElementById('msg-new-btn').addEventListener('click', _openPicker);
+	document.getElementById('msg-all-link').addEventListener('click', () => { _closeSettings(); _showAllMessages(); });
+	document.getElementById('msg-mi-all').addEventListener('click', () => { _closeSettings(); _showAllMessages(); });
+
+	// Composer
+	const ta = document.getElementById('msg-compose-text');
+	ta.addEventListener('input', () => _autoGrow(ta));
+	ta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); _sendCurrent(); } });
+	document.getElementById('msg-send-btn').addEventListener('click', _sendCurrent);
+	_initVoice();
+
+	// Picker
+	document.getElementById('msg-pick-close').addEventListener('click', () => document.getElementById('msg-pick-modal').style.display = 'none');
+	document.getElementById('msg-pick-backdrop').addEventListener('click', () => document.getElementById('msg-pick-modal').style.display = 'none');
+	document.getElementById('msg-pick-search').addEventListener('input', _renderPicker);
+	document.getElementById('msg-pick-go').addEventListener('click', _startFromPicker);
+
+	// Subscribe modal
+	document.getElementById('msg-sub-backdrop').addEventListener('click', () => document.getElementById('msg-sub-modal').style.display = 'none');
+	document.getElementById('msg-sub-close').addEventListener('click', () => document.getElementById('msg-sub-modal').style.display = 'none');
+	document.getElementById('msg-sub-submit').addEventListener('click', () => {
+		const name = document.getElementById('msg-sub-name').value.trim();
+		const pw = document.getElementById('msg-sub-pw').value;
+		const errEl = document.getElementById('msg-sub-error');
+		if (!name) { errEl.textContent = 'Please enter your name.'; return; }
+		if (!pw) { errEl.textContent = 'Please enter the messaging password.'; return; }
+		errEl.textContent = ''; _doSubscribe(name, pw, errEl);
+	});
+	document.getElementById('msg-sub-pw').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('msg-sub-submit').click(); });
+
+	// Settings: rename
+	document.getElementById('msg-mi-rename').addEventListener('click', () => {
+		const w = document.getElementById('msg-rename-wrap');
+		w.style.display = w.style.display === 'none' || !w.style.display ? 'block' : 'none';
+		if (w.style.display === 'block') { const i = document.getElementById('msg-rename-input'); i.value = _msgName || ''; document.getElementById('msg-rename-error').textContent = ''; setTimeout(() => i.focus(), 40); }
+	});
+	document.getElementById('msg-rename-cancel').addEventListener('click', () => document.getElementById('msg-rename-wrap').style.display = 'none');
+	document.getElementById('msg-rename-save').addEventListener('click', async () => {
+		const name = document.getElementById('msg-rename-input').value.trim();
+		const errEl = document.getElementById('msg-rename-error');
+		if (!name) { errEl.textContent = 'Enter a name.'; return; }
+		try {
+			const d = await _msgApi('rename', {body:{name}});
+			if (d.error) { errEl.textContent = d.error; return; }
+			_msgName = d.name; _persistSession();
+			document.getElementById('msg-me-name').textContent = _msgName;
+			document.getElementById('msg-panel-sub').textContent = 'as ' + _msgName;
+			_closeSettings();
+		} catch { errEl.textContent = 'Failed. Try again.'; }
+	});
+
+	// Settings: sign out
+	document.getElementById('msg-mi-disable').addEventListener('click', () => {
+		_onAuthLost.disabled = true;
+		_msgToken = null; _msgName = null; _msgMeId = null; _openConvId = null; _pendingConv = null;
+		_convs.clear(); _msgSeen.clear();
+		if (_msgPollTimer) { clearInterval(_msgPollTimer); _msgPollTimer = null; }
+		_clearSession(); _updateBtnBadge(0); _closePanel();
+	});
+
+	// Legend right-click / Ctrl+click → message that tracker
+	document.getElementById('legend').addEventListener('contextmenu', e => {
+		const item = e.target.closest('.legend-item');
+		if (!item || !_msgEnabled) return;
+		e.preventDefault();
+		_handleTrackerActivate(item.dataset.callsign, item.querySelector('.legend-name')?.textContent || item.dataset.callsign);
+	});
+	document.getElementById('legend').addEventListener('click', e => {
+		if (!e.ctrlKey && !e.metaKey) return;
+		const item = e.target.closest('.legend-item');
+		if (!item || !_msgEnabled) return;
+		e.stopImmediatePropagation();
+		_handleTrackerActivate(item.dataset.callsign, item.querySelector('.legend-name')?.textContent || item.dataset.callsign);
+	}, true);
+
+	// Sound slider (in the settings menu)
+	(function initSoundSlider() {
+		const slider = document.getElementById('msg-sound-vol'), label = document.getElementById('msg-sound-vol-val');
+		if (!slider || !label) return;
+		const render = pct => { label.textContent = pct > 0 ? pct + '%' : 'Off'; };
+		const pct0 = Math.round(_getMsgVolume() * 100);
+		slider.value = pct0; render(pct0);
+		slider.addEventListener('input', () => render(parseInt(slider.value, 10)));
+		slider.addEventListener('change', () => { const pct = parseInt(slider.value, 10); _setMsgVolume(pct / 100); _warmMsgAudio(); if (pct > 0) _playMsgTone(); });
+	})();
+
+	// Esc closes the top-most messaging surface.
+	document.addEventListener('keydown', e => {
+		if (e.key !== 'Escape') return;
+		if (document.getElementById('msg-all-modal').style.display === 'flex') { document.getElementById('msg-all-modal').style.display = 'none'; return; }
+		if (document.getElementById('msg-pick-modal').style.display === 'flex') { document.getElementById('msg-pick-modal').style.display = 'none'; return; }
+		if (document.getElementById('msg-sub-modal').style.display === 'flex') { document.getElementById('msg-sub-modal').style.display = 'none'; return; }
+		if (document.getElementById('msg-settings-menu').classList.contains('open')) { _closeSettings(); return; }
+		if (_msgPanelOpen) _closePanel();
+	});
+}
+
+// ── Voice input (Web Speech API, on-device) ──────────────────────────────────
+let _recog = null, _recognizing = false;
+function _initVoice() {
+	const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+	const mic = document.getElementById('msg-mic-btn');
+	if (!SR) { mic.classList.add('unsupported'); return; }
+	_recog = new SR();
+	_recog.continuous = false; _recog.interimResults = true; _recog.lang = navigator.language || 'en-US';
+	let base = '';
+	_recog.onresult = e => {
+		let interim = '', final = '';
+		for (let i = e.resultIndex; i < e.results.length; i++) { const r = e.results[i]; if (r.isFinal) final += r[0].transcript; else interim += r[0].transcript; }
+		const ta = document.getElementById('msg-compose-text');
+		if (final) base += final;
+		ta.value = (base + interim).replace(/\s+/g, ' ').trimStart(); _autoGrow(ta);
+	};
+	const stop = () => { _recognizing = false; mic.classList.remove('listening'); };
+	_recog.onend = stop; _recog.onerror = stop;
+	mic.addEventListener('click', () => {
+		if (_recognizing) { _recog.stop(); return; }
+		base = document.getElementById('msg-compose-text').value; if (base && !base.endsWith(' ')) base += ' ';
+		try { _recog.start(); _recognizing = true; mic.classList.add('listening'); } catch {}
+	});
+}
+
+// ── All-messages log (admin) ─────────────────────────────────────────────────
 let _msgAllRows = [];
-
-// Display stamp: "07-21 13:22:05" — no year, the log is always current-event.
 function _msgFmtStamp(ts) {
 	const d = new Date(ts * 1000), p = n => String(n).padStart(2, '0');
-	return p(d.getMonth() + 1) + '-' + p(d.getDate()) +
-	       ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+	return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
 }
-// Full stamp with year — CSV export only, where the file outlives the event.
-function _msgFmtStampFull(ts) {
-	return new Date(ts * 1000).getFullYear() + '-' + _msgFmtStamp(ts);
-}
-// Trackers render as "M083 James" (ID + name, never the callsign). Operators
-// render as their subscribed name.
-function _msgWho(label, cs) {
-	if (cs === 'web')  return (label && label !== 'web') ? label : 'Operator';
-	if (cs === '*')    return 'All Trackers';
-	if (!cs)           return label || '—';
-	const id = _trackerIdByCs[cs];
-	if (id) return (label && label !== cs && label !== id) ? id + ' ' + label : id;
-	// Unknown to the legend (tracker dropped, or an operator addressed by name).
-	return (label && label !== cs) ? label : cs;
-}
+function _msgFmtStampFull(ts) { return new Date(ts * 1000).getFullYear() + '-' + _msgFmtStamp(ts); }
+
+const MSG_PIN_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">' +
+	'<path fill="currentColor" d="M12 2c-3.87 0-7 3.13-7 7 0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"/></svg>';
 
 async function _showAllMessages() {
-	const modal  = document.getElementById('msg-all-modal');
-	const scroll = document.getElementById('msg-all-scroll');
-	const count  = document.getElementById('msg-all-count');
-	const expBtn = document.getElementById('msg-all-export');
-	const delBtn = document.getElementById('msg-all-delete');
-	_msgAllRows = [];
-	expBtn.disabled = true;
-	delBtn.style.display = 'none';
-	count.textContent = '';
+	const modal = document.getElementById('msg-all-modal'), scroll = document.getElementById('msg-all-scroll');
+	const count = document.getElementById('msg-all-count'), expBtn = document.getElementById('msg-all-export'), delBtn = document.getElementById('msg-all-delete');
+	_msgAllRows = []; expBtn.disabled = true; delBtn.style.display = 'none'; count.textContent = '';
 	scroll.innerHTML = '<div id="msg-all-status">Loading…</div>';
 	modal.style.display = 'flex';
 	let msgs;
 	try {
-		const r = await fetch('index.php?messaging=history&web_token=' + encodeURIComponent(_msgToken || ''));
-		const d = await r.json();
+		const d = await _msgApi('history');
 		if (d.error) throw new Error(d.error);
 		msgs = d.messages || [];
-		// Server-side check against the signed-in account's permissions; hiding
-		// the button is cosmetic, the delete_all endpoint re-checks.
 		if (d.can_delete_all) delBtn.style.display = '';
-	} catch {
-		scroll.innerHTML = '<div id="msg-all-status">Could not load the message log.</div>';
-		return;
-	}
+	} catch { scroll.innerHTML = '<div id="msg-all-status">Could not load the message log.</div>'; return; }
 	msgs.sort((a, b) => (a.ts - b.ts) || ((a.id || 0) - (b.id || 0)));
 	_msgAllRows = msgs;
-	if (!msgs.length) {
-		scroll.innerHTML = '<div id="msg-all-status">No messages yet.</div>';
-		return;
-	}
+	if (!msgs.length) { scroll.innerHTML = '<div id="msg-all-status">No messages yet.</div>'; return; }
 	const rows = msgs.map((m, i) => {
 		const bcast = !!m.broadcast;
-		const from  = _msgWho(m.from_label, m.from);
-		const to    = bcast ? 'All Trackers' : _msgWho(m.to_label, m.to);
-		const fCls  = m.from === 'web' ? ' class="msg-all-web"' : '';
-		// Position is only recorded for messages sent from a mobile tracker.
 		const loc = (typeof m.lat === 'number' && typeof m.lon === 'number')
-			? `<button class="msg-all-locbtn" data-idx="${i}" title="Show where this message was sent from">${MSG_PIN_SVG}</button>`
-			: '';
+			? '<button class="msg-all-locbtn" data-idx="' + i + '" title="Show where this message was sent from">' + MSG_PIN_SVG + '</button>' : '';
+		const fCls = m.from_kind === 'operator' ? ' class="msg-all-web"' : '';
 		return '<tr' + (bcast ? ' class="msg-all-bcast"' : '') + '>' +
 			'<td class="msg-all-time">' + _esc(_msgFmtStamp(m.ts)) + '</td>' +
 			'<td class="msg-all-loc">' + loc + '</td>' +
-			'<td class="msg-all-who"><span' + fCls + '>' + _esc(from) + '</span></td>' +
-			'<td class="msg-all-who">' + _esc(to) + '</td>' +
+			'<td class="msg-all-who"><span' + fCls + '>' + _esc(_msgSenderName(m)) + '</span></td>' +
+			'<td class="msg-all-who">' + _esc(m.to_label || '') + '</td>' +
 			'<td class="msg-all-text">' + _esc(m.text || '') + '</td></tr>';
 	}).join('');
-	scroll.innerHTML = '<table id="msg-all-table"><thead><tr>' +
-		'<th class="msg-all-time">Time</th><th class="msg-all-loc"></th><th class="msg-all-who">From</th>' +
-		'<th class="msg-all-who">To</th><th>Message</th></tr></thead><tbody>' + rows + '</tbody></table>';
-	scroll.querySelectorAll('.msg-all-locbtn').forEach(b =>
-		b.addEventListener('click', () => _showMsgLocation(_msgAllRows[+b.dataset.idx])));
+	scroll.innerHTML = '<table id="msg-all-table"><thead><tr><th class="msg-all-time">Time</th><th class="msg-all-loc"></th>' +
+		'<th class="msg-all-who">From</th><th class="msg-all-who">To</th><th>Message</th></tr></thead><tbody>' + rows + '</tbody></table>';
+	scroll.querySelectorAll('.msg-all-locbtn').forEach(b => b.addEventListener('click', () => _showMsgLocation(_msgAllRows[+b.dataset.idx])));
 	count.textContent = msgs.length + (msgs.length === 1 ? ' message' : ' messages');
 	expBtn.disabled = false;
 	scroll.scrollTop = scroll.scrollHeight;
 }
 
-// Map-pin glyph, used both for the table button and the marker dropped on the map.
-const MSG_PIN_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">' +
-	'<path fill="currentColor" d="M12 2c-3.87 0-7 3.13-7 7 0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"/></svg>';
-
-// Clicking the pin hands off to the main map: the message's location gets a
-// marker with a popup, and the log closes so the map is actually visible. Using
-// the real map (rather than a mini-map in the modal) keeps the course, aid
-// stations and every other tracker as context, and costs no extra tile loads.
+// Map pin — drop a marker where a message was sent from (mobiles only).
 let _msgLocMarker = null;
 function _showMsgLocation(m) {
 	if (!m || typeof m.lat !== 'number' || typeof m.lon !== 'number') return;
-	// Close the log AND the compose modal beneath it, or the map stays hidden.
 	document.getElementById('msg-all-modal').style.display = 'none';
-	document.getElementById('msg-compose-modal').style.display = 'none';
+	if (window.innerWidth <= 640) _closePanel();
 	if (_msgLocMarker) { map.removeLayer(_msgLocMarker); _msgLocMarker = null; }
-	const who  = _esc(_msgWho(m.from_label, m.from));
-	const sent = _esc(_msgFmtStamp(m.ts));
-	// Flag a position noticeably older than the message — the tracker may have
-	// been out of coverage, so this is where they last reported, not necessarily
-	// where they were standing when they typed.
-	const age  = m.pos_ts ? m.ts - m.pos_ts : 0;
-	const fix  = age > 120
-		? `<div style="color:#c0392b;font-size:11px;margin-top:3px">Position last reported ${_esc(_msgFmtAge(age))} before the message</div>`
-		: '';
+	const who = _esc(_msgSenderName(m)), sent = _esc(_msgFmtStamp(m.ts));
+	const age = m.pos_ts ? m.ts - m.pos_ts : 0;
+	const fix = age > 120 ? '<div style="color:#c0392b;font-size:11px;margin-top:3px">Position last reported ' + _esc(_msgFmtAge(age)) + ' before the message</div>' : '';
 	_msgLocMarker = L.marker([m.lat, m.lon], {
-		icon: L.divIcon({
-			className: 'msg-loc-pin',
+		icon: L.divIcon({ className: 'msg-loc-pin',
 			html: '<svg viewBox="0 0 24 24" width="30" height="30"><path fill="#c0392b" stroke="#fff" stroke-width="1.2" d="M12 2c-3.87 0-7 3.13-7 7 0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"/></svg>',
-			iconSize: [30, 30], iconAnchor: [15, 29], popupAnchor: [0, -27],
-		}),
+			iconSize: [30, 30], iconAnchor: [15, 29], popupAnchor: [0, -27] }),
 		zIndexOffset: 2000,
 	}).addTo(map);
-	_msgLocMarker.bindPopup(
-		`<div style="font-size:12px;line-height:1.45;max-width:230px">` +
-		`<div style="font-weight:700">${who}</div>` +
-		`<div style="color:#777;font-size:11px">${sent}</div>` +
-		`<div style="margin-top:5px">${_esc(m.text || '')}</div>${fix}</div>`
-	);
-	// Self-cleaning: dismissing the popup takes the marker with it.
-	_msgLocMarker.on('popupclose', () => {
-		if (_msgLocMarker) { map.removeLayer(_msgLocMarker); _msgLocMarker = null; }
-	});
+	_msgLocMarker.bindPopup('<div style="font-size:12px;line-height:1.45;max-width:230px"><div style="font-weight:700">' + who + '</div>' +
+		'<div style="color:#777;font-size:11px">' + sent + '</div><div style="margin-top:5px">' + _esc(m.text || '') + '</div>' + fix + '</div>');
+	_msgLocMarker.on('popupclose', () => { if (_msgLocMarker) { map.removeLayer(_msgLocMarker); _msgLocMarker = null; } });
 	map.setView([m.lat, m.lon], Math.max(map.getZoom(), 15));
 	_msgLocMarker.openPopup();
 }
@@ -6086,294 +6181,72 @@ function _msgFmtAge(secs) {
 	return Math.round(mins / 60) + ' hr';
 }
 
-function _msgCsvCell(v) {
-	const s = String(v == null ? '' : v);
-	return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-}
+function _msgCsvCell(v) { const s = String(v == null ? '' : v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
 function _exportAllMessages() {
 	if (!_msgAllRows.length) return;
-	const lines = [['ID', 'Time', 'UTC', 'From', 'From Callsign', 'To', 'To Callsign', 'Broadcast', 'Latitude', 'Longitude', 'Message']];
+	const lines = [['ID', 'Time', 'UTC', 'From', 'From Callsign', 'To', 'Broadcast', 'Latitude', 'Longitude', 'Message']];
 	for (const m of _msgAllRows) {
 		lines.push([
-			m.id || '',
-			_msgFmtStampFull(m.ts),
-			new Date(m.ts * 1000).toISOString(),
-			_msgWho(m.from_label, m.from),
-			m.from === 'web' ? '' : (m.from || ''),
-			m.broadcast ? 'All Trackers' : _msgWho(m.to_label, m.to),
-			(m.to === 'web' || m.to === '*') ? '' : (m.to || ''),
-			m.broadcast ? 'yes' : 'no',
-			typeof m.lat === 'number' ? m.lat.toFixed(6) : '',
-			typeof m.lon === 'number' ? m.lon.toFixed(6) : '',
+			m.id || '', _msgFmtStampFull(m.ts), new Date(m.ts * 1000).toISOString(),
+			_msgSenderName(m), m.from_kind === 'mobile' ? (m.from_key || '') : '',
+			m.to_label || '', m.broadcast ? 'yes' : 'no',
+			typeof m.lat === 'number' ? m.lat.toFixed(6) : '', typeof m.lon === 'number' ? m.lon.toFixed(6) : '',
 			m.text || '',
 		]);
 	}
-	// BOM so Excel reads UTF-8 correctly.
-	const csv  = '﻿' + lines.map(r => r.map(_msgCsvCell).join(',')).join('\r\n') + '\r\n';
-	const d    = new Date(), p = n => String(n).padStart(2, '0');
-	const name = 'aprs-messages-' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) +
-	             '-' + p(d.getHours()) + p(d.getMinutes()) + '.csv';
-	const url  = URL.createObjectURL(new Blob([csv], {type: 'text/csv;charset=utf-8'}));
-	const a    = document.createElement('a');
-	a.href = url; a.download = name;
+	const csv = '﻿' + lines.map(r => r.map(_msgCsvCell).join(',')).join('\r\n') + '\r\n';
+	const d = new Date(), p = n => String(n).padStart(2, '0');
+	const name = 'aprs-messages-' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + '.csv';
+	const url = URL.createObjectURL(new Blob([csv], {type: 'text/csv;charset=utf-8'}));
+	const a = document.createElement('a'); a.href = url; a.download = name;
 	document.body.appendChild(a); a.click(); a.remove();
 	setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-
-document.getElementById('msg-compose-all-link').addEventListener('click', e => { e.preventDefault(); _showAllMessages(); });
-document.getElementById('msg-all-close').addEventListener('click',    () => document.getElementById('msg-all-modal').style.display = 'none');
+document.getElementById('msg-all-close').addEventListener('click', () => document.getElementById('msg-all-modal').style.display = 'none');
 document.getElementById('msg-all-backdrop').addEventListener('click', () => document.getElementById('msg-all-modal').style.display = 'none');
 document.getElementById('msg-all-export').addEventListener('click', _exportAllMessages);
-
-// Delete All — irreversible, so it takes an explicit confirmation naming the count.
 document.getElementById('msg-all-delete').addEventListener('click', async () => {
-	const delBtn = document.getElementById('msg-all-delete');
-	const n = _msgAllRows.length;
-	if (!confirm('Permanently delete all ' + n + (n === 1 ? ' message' : ' messages') +
-	             ' for everyone?\n\nThis cannot be undone. Export first if you need a record.')) return;
-	const label = delBtn.textContent;
-	delBtn.disabled = true;
-	delBtn.textContent = 'Deleting…';
+	const delBtn = document.getElementById('msg-all-delete'), n = _msgAllRows.length;
+	if (!confirm('Permanently delete all ' + n + (n === 1 ? ' message' : ' messages') + ' for everyone?\n\nThis cannot be undone. Export first if you need a record.')) return;
+	const label = delBtn.textContent; delBtn.disabled = true; delBtn.textContent = 'Deleting…';
 	try {
-		const r = await fetch('index.php?messaging=delete_all', { method: 'POST', headers: {'Content-Type':'application/json'},
-			body: JSON.stringify({web_token: _msgToken}) });
-		const d = await r.json();
+		const d = await _msgApi('flush');
 		if (d.error) { alert(d.error); return; }
-		// Clear this browser's caches too; the compose-modal thread reads _msgLog.
-		_msgLog = [];
-		_msgAllRows = [];
-		_msgNotifiedIds.clear();
+		_convs.clear(); _msgSeen.clear(); _openConvId = null; _pendingConv = null;
 		document.getElementById('msg-all-scroll').innerHTML = '<div id="msg-all-status">No messages yet.</div>';
 		document.getElementById('msg-all-count').textContent = '';
 		document.getElementById('msg-all-export').disabled = true;
-		const thread = document.getElementById('msg-compose-thread');
-		if (thread) { thread.innerHTML = ''; thread.style.display = 'none'; }
+		_updateTotalUnread(); _showListView();
 	} catch { alert('Delete failed. Please try again.'); }
 	finally { delBtn.disabled = false; delBtn.textContent = label; }
 });
-document.addEventListener('keydown', e => {
-	if (e.key === 'Escape' && document.getElementById('msg-all-modal').style.display !== 'none') {
-		document.getElementById('msg-all-modal').style.display = 'none';
-	}
-});
 
-// Rename link
-document.getElementById('msg-compose-rename-link').addEventListener('click', e => {
-	e.preventDefault();
-	const panel = document.getElementById('msg-rename-panel');
-	panel.style.display = panel.style.display === 'none' ? '' : 'none';
-	if (panel.style.display !== 'none') {
-		const inp = document.getElementById('msg-rename-input');
-		inp.value = _msgName || '';
-		document.getElementById('msg-rename-error').textContent = '';
-		setTimeout(() => inp.focus(), 50);
-	}
-});
-document.getElementById('msg-rename-cancel').addEventListener('click', () => {
-	document.getElementById('msg-rename-panel').style.display = 'none';
-});
-document.getElementById('msg-rename-save').addEventListener('click', async () => {
-	const name  = document.getElementById('msg-rename-input').value.trim();
-	const errEl = document.getElementById('msg-rename-error');
-	if (!name) { errEl.textContent = 'Please enter a name.'; return; }
-	errEl.textContent = '';
-	try {
-		const r = await fetch('index.php?messaging=rename', { method: 'POST', headers: {'Content-Type':'application/json'},
-			body: JSON.stringify({web_token: _msgToken, name}) });
-		const d = await r.json();
-		if (d.error) { errEl.textContent = d.error; return; }
-		_msgName = d.name;
-		try { const s = JSON.parse(localStorage.getItem('aprs_msg_session') || '{}'); s.name = _msgName; localStorage.setItem('aprs_msg_session', JSON.stringify(s)); } catch {}
-		document.getElementById('msg-rename-panel').style.display = 'none';
-	} catch { errEl.textContent = 'Failed. Please try again.'; }
-});
-
-// Disable messaging link
-document.getElementById('msg-compose-disable-link').addEventListener('click', e => {
-	e.preventDefault();
-	_msgToken = null; _msgName = null; _msgLastId = 0; _msgLog = [];
-	clearInterval(_msgPollTimer); _msgPollTimer = null;
-	try { localStorage.removeItem('aprs_msg_session'); } catch {}
-	_setSubscribedUI(false);
-	document.getElementById('msg-compose-modal').style.display = 'none';
-});
-
-// Poll for incoming messages
-function _startMsgPoll() {
-	if (_msgPollTimer) return;
-	_msgPollTimer = setInterval(_pollMessages, 5000);
-	_pollMessages();
-}
-async function _pollMessages() {
-	if (!_msgToken) return;
-	try {
-		const r = await fetch(`index.php?messaging=poll&web_token=${encodeURIComponent(_msgToken)}&since_id=${_msgLastId}`);
-		if (r.status === 403) { _msgToken = null; _msgName = null; try { localStorage.removeItem('aprs_msg_session'); } catch {} clearInterval(_msgPollTimer); _msgPollTimer = null; _setSubscribedUI(false); return; }
-		const d = await r.json();
-		if (d.messages?.length) {
-			d.messages.forEach(m => {
-				_msgLog.push(m);
-				if (_msgLog.length > 50) _msgLog.shift();
-				if (!_msgNotifiedIds.has(m.id)) _showMsgModal(m);
-				_msgNotifiedIds.add(m.id);
-			});
-			_msgLastId = d.last_id;
-			// A message that lands while the Send Message window is open must show
-			// up there without the operator having to reopen it.
-			if (_composeModalOpen()) _renderComposeThread();
-			try { const _s = JSON.parse(localStorage.getItem('aprs_msg_session') || 'null'); if (_s) { _s.last_id = _msgLastId; localStorage.setItem('aprs_msg_session', JSON.stringify(_s)); } } catch {}
-		}
-	} catch {}
-}
-
+// ── Message-arrival sound (Web Audio) ────────────────────────────────────────
 let _msgAudioCtx = null;
-function _getMsgAudioCtx() {
-	if (!_msgAudioCtx || _msgAudioCtx.state === 'closed') _msgAudioCtx = new AudioContext();
-	return _msgAudioCtx;
-}
-function _warmMsgAudio() {
-	try { _getMsgAudioCtx().resume(); } catch {}
-}
-// Browsers keep an AudioContext suspended until the user has interacted with the
-// page, so a tone fired from the message poll (no gesture) stays silent. Unlock
-// it on the first user interaction, and re-resume whenever the tab regains focus
-// (browsers suspend audio in background tabs). After this, message-arrival tones
-// play without needing the subscribe/slider gesture each time.
-['pointerdown', 'keydown', 'touchstart'].forEach(evt =>
-	window.addEventListener(evt, _warmMsgAudio, { passive: true }));
+function _getMsgAudioCtx() { if (!_msgAudioCtx || _msgAudioCtx.state === 'closed') _msgAudioCtx = new AudioContext(); return _msgAudioCtx; }
+function _warmMsgAudio() { try { _getMsgAudioCtx().resume(); } catch {} }
+['pointerdown', 'keydown', 'touchstart'].forEach(evt => window.addEventListener(evt, _warmMsgAudio, { passive: true }));
 document.addEventListener('visibilitychange', () => { if (!document.hidden) _warmMsgAudio(); });
-// Message-tone volume: a 0..1 fraction stored in localStorage. 0 = muted.
-// The fraction scales up to MSG_MAX_GAIN (kept below 1.0 so a beep does not
-// clip). Default 0.7 — noticeably louder than the old 0.35.
 const MSG_MAX_GAIN = 0.8;
-function _getMsgVolume() {
-	let v = parseFloat(localStorage.getItem('aprs_msg_volume'));
-	if (!isFinite(v)) v = 0.7;
-	return Math.max(0, Math.min(1, v));
-}
-function _setMsgVolume(v) {
-	try { localStorage.setItem('aprs_msg_volume', String(Math.max(0, Math.min(1, v)))); } catch {}
-}
+function _getMsgVolume() { let v = parseFloat(localStorage.getItem('aprs_msg_volume')); if (!isFinite(v)) v = 0.7; return Math.max(0, Math.min(1, v)); }
+function _setMsgVolume(v) { try { localStorage.setItem('aprs_msg_volume', String(Math.max(0, Math.min(1, v)))); } catch {} }
 function _playMsgTone() {
 	try {
-		const vol = _getMsgVolume();
-		if (vol <= 0) return; // muted
-		const peak = vol * MSG_MAX_GAIN;
-		const ctx = _getMsgAudioCtx();
+		const vol = _getMsgVolume(); if (vol <= 0) return;
+		const peak = vol * MSG_MAX_GAIN, ctx = _getMsgAudioCtx();
 		ctx.resume().then(() => {
 			const t0 = ctx.currentTime;
-			// Urgent "dee-doo-dee-doo" warble. Square wave = harsh harmonics that
-			// cut through ambient noise far better than a pure sine chime.
-			const _beeps = [
-				{ f: 988,  at: 0.00, dur: 0.13 },
-				{ f: 1319, at: 0.17, dur: 0.13 },
-				{ f: 988,  at: 0.34, dur: 0.13 },
-				{ f: 1319, at: 0.51, dur: 0.24 },
-			];
-			for (const _b of _beeps) {
-				const osc = ctx.createOscillator();
-				const g   = ctx.createGain();
-				osc.type = 'square';
-				osc.frequency.value = _b.f;
-				osc.connect(g); g.connect(ctx.destination);
-				const s = t0 + _b.at, e = s + _b.dur;
-				g.gain.setValueAtTime(0, s);
-				g.gain.linearRampToValueAtTime(peak, s + 0.008);
-				g.gain.setValueAtTime(peak, e - 0.03);
-				g.gain.exponentialRampToValueAtTime(0.0008, e);
+			const beeps = [{f:988,at:0,dur:0.13},{f:1319,at:0.17,dur:0.13},{f:988,at:0.34,dur:0.13},{f:1319,at:0.51,dur:0.24}];
+			for (const b of beeps) {
+				const osc = ctx.createOscillator(), g = ctx.createGain();
+				osc.type = 'square'; osc.frequency.value = b.f; osc.connect(g); g.connect(ctx.destination);
+				const s = t0 + b.at, e = s + b.dur;
+				g.gain.setValueAtTime(0, s); g.gain.linearRampToValueAtTime(peak, s + 0.008);
+				g.gain.setValueAtTime(peak, e - 0.03); g.gain.exponentialRampToValueAtTime(0.0008, e);
 				osc.start(s); osc.stop(e + 0.02);
 			}
 		});
 	} catch {}
-}
-
-let _msgQueue = [];   // queued incoming messages waiting to display
-let _msgModalOpen = false;
-let _msgCurrent = null; // message currently shown in the Message window
-// Suppress incoming modals briefly on autologin startup to avoid showing
-// messages that arrived while the Pi was offline (history-fail race condition).
-const _msgStartupTs = Date.now();
-
-function _markMsgSeen(id) {
-	if (id > _msgSeenId) {
-		_msgSeenId = id;
-		try { localStorage.setItem('aprs_msg_seen_id', String(_msgSeenId)); } catch {}
-	}
-}
-// Guarded entry used by the live poll: suppress the brief autologin-startup
-// window (avoids replaying stale messages during a history-fail race).
-function _showMsgModal(msg) {
-	if (window._aprsAutoMsgPw && Date.now() - _msgStartupTs < 8000) return;
-	_enqueueMsgModal(msg, true);
-}
-// Actually display a message: mark it seen, play the tone, queue the modal.
-// Called directly (no autologin guard) for messages replayed from a confirmed
-// history fetch when returning to the page.
-function _enqueueMsgModal(msg, live = false) {
-	_markMsgSeen(msg.id);
-	_playMsgTone();
-	_msgQueue.push(msg);
-	// Closed → show it. Already open and the arrival continues the conversation
-	// on screen → advance immediately so it appears without a dismiss; the message
-	// it replaces drops into the thread above, so nothing disappears. Open but
-	// from someone else → stay queued, so what's being read isn't yanked away.
-	const continuesCurrent = live && _msgCurrent && msg.from === _msgCurrent.from;
-	if (!_msgModalOpen || continuesCurrent) _showNextMsgModal();
-}
-
-function _showNextMsgModal() {
-	if (!_msgQueue.length) { _msgModalOpen = false; _msgCurrent = null; return; }
-	_msgModalOpen = true;
-	const msg = _msgQueue.shift();
-	_msgCurrent = msg;
-	const canReply = msg.from !== 'web';
-	document.getElementById('msg-incoming-from').style.display = 'none';
-	// Show thread (prior messages with this sender)
-	const threadEl = document.getElementById('msg-incoming-thread');
-	// Only this operator's conversation with the sender: the history feed also
-	// carries other operators' traffic, which has no business in this window.
-	const prior = _msgLog.filter(m => m.id !== msg.id && _msgInvolvesMe(m)
-		&& (m.from === msg.from || m.to === msg.from)).slice(-8);
-	if (prior.length) {
-		threadEl.innerHTML = prior.map(m => {
-				const isMe = m.from === 'web';
-				const who  = isMe ? `<span class="msg-thread-from msg-thread-web">${_esc(m.from_label)}</span>` : `<span class="msg-thread-from">${_esc(m.from_label)}</span>`;
-				const t    = new Date(m.ts * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-				return `<div class="msg-thread-entry">${who}<span class="msg-thread-time">${t}</span><br>${_esc(m.text)}</div>`;
-			}).join('');
-		threadEl.style.display = '';
-		threadEl.style.marginBottom = '0';
-		setTimeout(() => { threadEl.scrollTop = threadEl.scrollHeight; }, 0);
-	} else {
-		threadEl.style.display = 'none';
-	}
-	// Render the new message as a thread entry with hr separator
-	const isNewMe = msg.from === 'web';
-	const newWho  = isNewMe ? `<span class="msg-thread-from msg-thread-web">${_esc(msg.from_label)}</span>` : `<span class="msg-thread-from">${_esc(msg.from_label)}</span>`;
-	const newT    = new Date(msg.ts * 1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-	document.getElementById('msg-incoming-text').innerHTML =
-		(prior.length ? '<hr style="margin:8px 0 10px">' : '')
-		+ `<div class="msg-thread-entry" style="font-size:15px">${newWho}<span class="msg-thread-time">${newT}</span><br>${_esc(msg.text)}</div>`;
-	const replyBtn = document.getElementById('msg-incoming-reply');
-	replyBtn.style.display = canReply ? '' : 'none';
-	replyBtn.onclick = () => {
-		document.getElementById('msg-incoming-modal').style.display = 'none';
-		_msgModalOpen = false;
-		_showNextMsgModal();
-		_showComposeModal(msg.from, msg.from_label + ' (' + msg.from + ')');
-	};
-	document.getElementById('msg-incoming-ok').onclick = () => {
-		document.getElementById('msg-incoming-modal').style.display = 'none';
-		_showNextMsgModal();
-	};
-	document.getElementById('msg-incoming-close').onclick = () => {
-		document.getElementById('msg-incoming-modal').style.display = 'none';
-		_msgQueue = [];
-		_msgModalOpen = false;
-		_msgCurrent = null;
-	};
-	document.getElementById('msg-incoming-backdrop').onclick = null; // don't close on backdrop click
-	document.getElementById('msg-incoming-modal').style.display = 'flex';
 }
 
 function _esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
