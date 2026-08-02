@@ -5873,27 +5873,21 @@ function _hideToast() { document.getElementById('msg-toast').style.display = 'no
 let _pickSel = new Set();
 let _pickParticipants = [];
 function _msgPickerOpen() { return document.getElementById('msg-pick-modal').style.display === 'flex'; }
-async function _openPicker() {
+function _openPicker() {
 	_pickSel = new Set();
 	document.getElementById('msg-pick-search').value = '';
 	document.getElementById('msg-pick-modal').style.display = 'flex';
 	document.getElementById('msg-pick-go').disabled = true;
 	_renderPicker();
 	setTimeout(() => document.getElementById('msg-pick-search').focus(), 50);
-	try { const d = await _msgApi('participants'); _pickParticipants = (d.participants || []).filter(p => !p.self); _renderPicker(); } catch {}
 }
 function _refreshPicker() { if (_msgPickerOpen()) _renderPicker(); }
+// The picker lists the current mobile trackers only (plus the All-Trackers
+// broadcast) — no operators, and no long MARSQ-… callsigns.
 function _pickerOptions() {
-	const opts = [{key:'all', kind:'all', name:'All Trackers', sub:'Broadcast to everyone', online:true}];
-	const seen = new Set();
-	for (const p of _pickParticipants) {
-		seen.add(p.key);
-		opts.push({key:p.key, kind:p.kind, name:_participantLabel(p), sub:p.kind === 'operator' ? 'Operator' : p.key, online:p.online});
-	}
+	const opts = [{key:'all', kind:'all', name:'All Trackers', sub:'Broadcast to everyone'}];
 	for (const t of _mobileTrackers) {
-		if (seen.has(t.callsign)) continue;
-		seen.add(t.callsign);
-		opts.push({key:t.callsign, kind:'mobile', name:[t.id, t.name].filter(Boolean).join(' ') || t.callsign, sub:t.callsign, online:true});
+		opts.push({key:t.callsign, kind:'mobile', name:[t.id, t.name].filter(Boolean).join(' ') || t.callsign, sub:''});
 	}
 	return opts;
 }
@@ -5901,15 +5895,15 @@ function _pickerNameFor(key) { const o = _pickerOptions().find(x => x.key === ke
 function _renderPicker() {
 	const q = document.getElementById('msg-pick-search').value.trim().toLowerCase();
 	const list = document.getElementById('msg-pick-list');
+	// Search still matches the callsign even though it isn't shown.
 	const opts = _pickerOptions().filter(o => !q || o.name.toLowerCase().includes(q) || o.key.toLowerCase().includes(q));
 	list.innerHTML = opts.map(o => {
 		const sel = _pickSel.has(o.key);
-		const dot = o.kind === 'all' ? '' : '<span class="msg-online-dot ' + (o.online ? 'on' : '') + '"></span>';
+		const sub = o.sub ? '<div style="font-size:11px;color:#888">' + _esc(o.sub) + '</div>' : '';
 		return '<div class="msg-pick-item ' + (sel ? 'sel' : '') + '" data-key="' + _escAttr(o.key) + '">' +
-			'<span class="msg-pick-check">' + (sel ? '✓' : '') + '</span>' + dot +
-			'<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">' + _esc(o.name) + '</div>' +
-			'<div style="font-size:11px;color:#888">' + _esc(o.sub) + '</div></div></div>';
-	}).join('') || '<div style="padding:16px;text-align:center;color:#999">No matches</div>';
+			'<span class="msg-pick-check">' + (sel ? '✓' : '') + '</span>' +
+			'<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">' + _esc(o.name) + '</div>' + sub + '</div></div>';
+	}).join('') || '<div style="padding:16px;text-align:center;color:#999">No mobile trackers</div>';
 	list.querySelectorAll('.msg-pick-item').forEach(el => el.addEventListener('click', () => _togglePick(el.dataset.key)));
 	document.getElementById('msg-pick-go').disabled = _pickSel.size === 0;
 }
