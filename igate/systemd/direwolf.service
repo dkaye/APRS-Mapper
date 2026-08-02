@@ -13,7 +13,7 @@ User=pi
 WorkingDirectory=/home/pi
 ExecStart=/home/pi/direwolf-run.sh
 Nice=-5
-Restart=on-failure
+Restart=always
 RestartSec=10
 # ExecStart is a wrapper script, so stopping must take down the whole cgroup or
 # direwolf itself would be left running. "process-group" is not a valid value —

@@ -348,6 +348,9 @@ function connectToAprsServer() {
 // Returns true if the file was reloaded, false if it was unchanged since the last load.
 function loadTrackers() {
 	global $trackers,$igates,$aidstations,$configFilename,$configFileMtime,$mobileRoot,$mobileEnabled;
+	// PHP caches stat results per request; a long-running CLI daemon would otherwise
+	// keep returning the mtime it first read and never notice a config change.
+	clearstatcache(true, $configFilename);
 	$mtime = filemtime($configFilename);
 	if ($mtime === $configFileMtime) return false;		//unchanged
 	$existing = array();
@@ -416,6 +419,8 @@ function loadTrackers() {
 // Also prunes stale mobile tracker entries from $trackers when sessions are removed.
 function loadMobileSessions() {
 	global $mobileSessions,$mobileMtime,$mobileTrackersFile,$trackers,$trackerHistory;
+	// Clear the cached stat so the long-running daemon sees each new write.
+	clearstatcache(true, $mobileTrackersFile);
 	$mtime = file_exists($mobileTrackersFile) ? filemtime($mobileTrackersFile) : 0;
 	if ($mtime === $mobileMtime) return false;
 	$mobileMtime = $mtime;
@@ -482,12 +487,15 @@ function loadMobileSessions() {
 function writeBeaconFile($filename, $entries) {
 	$output = array();
 	foreach ($entries as $g) $output[$g["callsign"]] = $g["lastBeacon"];
-	$fh = fopen($filename, 'w');
+	// Write to a temp file and rename() over the target: rename is atomic within a
+	// directory, so a LOCK_SH reader always sees the old or the new complete file —
+	// never the zero-byte window that fopen('w') opened before the lock was taken.
+	$tmp = $filename . '.tmp.' . getmypid();
+	$fh  = fopen($tmp, 'w');
 	if (!$fh) return;
-	flock($fh, LOCK_EX);
 	fwrite($fh, json_encode($output) . "\n");
-	flock($fh, LOCK_UN);
 	fclose($fh);
+	rename($tmp, $filename);
 }
 
 // Read trackers.json and update $trackers with the most recent lastUpdate and last known lat/lon for each callsign
@@ -557,12 +565,15 @@ function writeNewTrackerstatusFile($filename) {
 		if (!empty($tracker["ham"]))    $entry["ham"]    = true;
 		$output[]=$entry;
 	}
-	$fh = fopen($filename, 'w');
+	// Atomic write (temp + rename): readers taking LOCK_SH on trackers.json see the
+	// old or the new complete file, never the truncated 0-byte window that
+	// fopen('w') created before the exclusive lock was acquired.
+	$tmp = $filename . '.tmp.' . getmypid();
+	$fh  = fopen($tmp, 'w');
 	if (!$fh) fatal("Can't open trackerstatus file for writing");
-	flock($fh, LOCK_EX);
 	fwrite($fh, json_encode($output, JSON_PRETTY_PRINT) . "\n");
-	flock($fh, LOCK_UN);
 	fclose($fh);
+	rename($tmp, $filename);
 }
 
 if (!defined('APRS_DAEMON_INCLUDE_ONLY')) {

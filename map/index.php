@@ -64,18 +64,10 @@ if (isset($_GET['json'])) {
 	$igatesStatusFilename     = 'igates.json';
 	$aidstationsStatusFilename = 'aidstations.json';
 	$mobileFile   = __DIR__ . '/mobile_trackers.json';
-	$trackerMtime = file_exists($trackerStatusFilename) ? filemtime($trackerStatusFilename) : 0;
-	$configMtime  = file_exists('config.yaml')          ? filemtime('config.yaml')          : 0;
-	$igateMtime   = file_exists($igatesStatusFilename)  ? filemtime($igatesStatusFilename)  : 0;
-	$aidMtime     = file_exists($aidstationsStatusFilename) ? filemtime($aidstationsStatusFilename) : 0;
-	$mobileMtime  = file_exists($mobileFile)            ? filemtime($mobileFile)            : 0;
-	$etag = '"' . $trackerMtime . '-' . $configMtime . '-' . $igateMtime . '-' . $aidMtime . '-' . $mobileMtime . '"';
-	header('ETag: ' . $etag);
-	header('Cache-Control: no-cache');
-	if (isset($_SERVER['HTTP_IF_NONE_MATCH']) && $_SERVER['HTTP_IF_NONE_MATCH'] === $etag) {
-		http_response_code(304);
-		exit;
-	}
+	// ETag is computed from the response body itself (see the echo at the end of
+	// this block) so a 304 can actually fire. The previous mtime-based tag mixed in
+	// mobile_trackers.json's mtime, which changes every 1-3s while anyone uses the
+	// app, so every 5s poll was a full refetch and the 304 path was dead.
 	require_once 'config_parse.php';
 	$cfg          = parseConfigYaml('config.yaml');
 	$defaultEvent = $cfg['event'] ?? '';
@@ -85,7 +77,13 @@ if (isset($_GET['json'])) {
 	$contents = stream_get_contents($fh);
 	flock($fh, LOCK_UN);
 	fclose($fh);
-	$trackers = json_decode($contents, true) ?: [];
+	// Distinguish "empty roster" ("[]" → []) from a read/parse failure or a partial
+	// read (e.g. catching a mid-write truncation). Serving [] on failure silently
+	// wipes the whole sidebar, so fail closed with 503 and let the client keep its
+	// current data and retry on the next poll.
+	$decoded = json_decode($contents, true);
+	if (!is_array($decoded)) { http_response_code(503); exit; }
+	$trackers = $decoded;
 
 	// Read active mobile sessions for sidebar reconciliation
 	$activeMobile = [];	// callsign → [id, name]
@@ -227,8 +225,7 @@ if (isset($_GET['json'])) {
 		'stat_interval'  => (int)(  $_mob['beacon_stat_interval']  ?? 120),
 		'stat_distance'  => (float)($_mob['beacon_stat_distance']  ?? 1.0),
 	];
-	header('Content-Type: application/json');
-	echo json_encode([
+	$body = json_encode([
 		'api'                => ['version' => API_VERSION, 'min_client' => API_MIN_CLIENT],
 		'default_event'      => $defaultEvent,
 		'password_required'  => !empty($cfg['event_password'] ?? ''),
@@ -239,6 +236,18 @@ if (isset($_GET['json'])) {
 		'igate_beacons'      => $readBeaconFile($igatesStatusFilename),
 		'aid_beacons'        => $readBeaconFile($aidstationsStatusFilename),
 	]);
+	// Hash the actual response body: the ETag changes only when the payload does,
+	// so an unchanged poll returns 304 (real bandwidth saving) yet any change —
+	// including a mobile beacon — is reflected immediately.
+	$etag = '"' . md5($body) . '"';
+	header('ETag: ' . $etag);
+	header('Cache-Control: no-cache');
+	if (isset($_SERVER['HTTP_IF_NONE_MATCH']) && $_SERVER['HTTP_IF_NONE_MATCH'] === $etag) {
+		http_response_code(304);
+		exit;
+	}
+	header('Content-Type: application/json');
+	echo $body;
 	exit;
 }
 
@@ -3803,14 +3812,27 @@ function naturalCompare(a, b) {
 	return 0;
 }
 
-function updateDesktopLegend(trackers) {
+function updateDesktopLegend(trackers, merge = false) {
 	const legend  = document.getElementById('legend');
 	const current = new Set(trackers.map(t => t.callsign));
 	const sorted  = [...trackers].sort((a, b) => naturalCompare(a.id, b.id));
 
-	legend.querySelectorAll('.legend-item').forEach(el => {
-		if (!current.has(el.dataset.callsign)) el.remove();
-	});
+	// merge=true (config-placeholder pass): create/update only, never delete. A
+	// config-only list must not remove live rows — that dueled with the live poll
+	// every 5s and wiped the sidebar.
+	if (!merge) {
+		legend.querySelectorAll('.legend-item').forEach(el => {
+			if (!current.has(el.dataset.callsign)) el.remove();
+		});
+	}
+
+	// Re-order the DOM only when the sorted sequence actually changed. appendChild
+	// on an attached node detaches + re-inserts it, so doing it every poll tears
+	// down and rebuilds the whole list.
+	const _desired  = sorted.map(t => t.callsign);
+	const _curOrder = [...legend.querySelectorAll('.legend-item')].map(el => el.dataset.callsign);
+	const _orderChanged = merge || _desired.length !== _curOrder.length
+	                   || _desired.some((cs, i) => cs !== _curOrder[i]);
 
 	sorted.forEach(t => {
 		const hasPos = t.lat !== null && t.lon !== null;
@@ -3839,7 +3861,7 @@ function updateDesktopLegend(trackers) {
 		item.onclick = hasBeacon
 			? () => onLegendClick(t.callsign)
 			: () => showNoLocation(t.name || t.id);
-		legend.appendChild(item);  // re-insert in sorted position (moves existing elements)
+		if (_orderChanged) legend.appendChild(item);  // re-order only when the sequence changed
 	});
 }
 
@@ -3864,15 +3886,23 @@ function _modeIcon(mode, isMobile) {
 	return isMobile ? '' : radio;
 }
 
-function updateMobileLegend(trackers) {
+function updateMobileLegend(trackers, merge = false) {
 	const legend  = document.getElementById('m-legend');
 	const emptyEl = document.getElementById('m-legend-empty');
 	const current = new Set(trackers.map(t => t.callsign));
 	const sorted  = [...trackers].sort((a, b) => naturalCompare(a.id, b.id));
 
-	legend.querySelectorAll('.m-legend-item').forEach(el => {
-		if (!current.has(el.dataset.callsign)) el.remove();
-	});
+	// merge=true (config-placeholder pass): create/update only, never delete.
+	if (!merge) {
+		legend.querySelectorAll('.m-legend-item').forEach(el => {
+			if (!current.has(el.dataset.callsign)) el.remove();
+		});
+	}
+
+	const _desired  = sorted.map(t => t.callsign);
+	const _curOrder = [...legend.querySelectorAll('.m-legend-item')].map(el => el.dataset.callsign);
+	const _orderChanged = merge || _desired.length !== _curOrder.length
+	                   || _desired.some((cs, i) => cs !== _curOrder[i]);
 
 	sorted.forEach(t => {
 		let item = document.getElementById('m-legend-' + t.callsign);
@@ -3913,7 +3943,7 @@ function updateMobileLegend(trackers) {
 		item.querySelector('.m-name').textContent      = t.name;
 		item.querySelector('.m-mode').innerHTML        = _modeIcon(t.sharing_mode || '', t.mobile);
 		item.querySelector('.m-time').textContent      = t.lat === null ? '—' : color === 'red' ? 'stale' : t.time;
-		legend.appendChild(item);  // re-insert in sorted position (moves existing elements)
+		if (_orderChanged) legend.appendChild(item);  // re-order only when the sequence changed
 	});
 
 	emptyEl.style.display = legend.querySelectorAll('.m-legend-item').length ? 'none' : '';
@@ -4182,19 +4212,22 @@ function applyTrackerConfig(trackers) {
 	const idSel   = isMobile ? '.m-id'     : '.legend-id';
 	const nameSel = isMobile ? '.m-name'   : '.legend-name';
 
-	// If any config tracker is absent from the DOM (e.g. non-default event with
-	// different callsigns), rebuild the entire list with placeholder live-data fields.
-	// updateDesktopLegend / updateMobileLegend handle create, update, and remove.
-	if (trackers.some(t => !document.getElementById(pfx + t.callsign))) {
-		const synth = trackers.map(t => ({
+	// Add placeholder rows ONLY for config callsigns not yet in the DOM (e.g. a
+	// non-default event with different callsigns), in merge mode so live rows are
+	// left intact. Handing a config-only list to the legend updaters in normal
+	// (delete) mode removes every live row not in config — which, against the live
+	// poll's opposite delete, wiped the whole sidebar every 5s.
+	const missing = trackers.filter(t => !document.getElementById(pfx + t.callsign));
+	if (missing.length) {
+		const synth = missing.map(t => ({
 			callsign: t.callsign, id: t.id, name: t.name,
 			color: 'red', time: '—', lastUpdate: 0, lat: null, lon: null
 		}));
-		if (isMobile) updateMobileLegend(synth);
-		else updateDesktopLegend(synth);
-		return;
+		if (isMobile) updateMobileLegend(synth, true);
+		else          updateDesktopLegend(synth, true);
 	}
 
+	// Apply id/name edits to every present config row.
 	trackers.forEach(t => {
 		const item = document.getElementById(pfx + t.callsign);
 		if (!item) return;
