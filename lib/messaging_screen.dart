@@ -420,8 +420,8 @@ class _MessagingScreenState extends State<MessagingScreen> {
   // will be delivered when the recipient is next online.
   String _ackLabel(MsgReceipt? r) {
     if (r == null || r.total == 0) return 'Sent';
-    if (r.read > 0) return r.total > 1 ? 'Read ${r.read}/${r.total}' : 'Read ✓✓';
-    if (r.delivered > 0) return r.total > 1 ? 'Delivered ${r.delivered}/${r.total}' : 'Delivered ✓';
+    if (r.read > 0) return r.total > 1 ? 'Read by ${r.read} of ${r.total}' : 'Read ✓✓';
+    if (r.delivered > 0) return r.total > 1 ? 'Delivered to ${r.delivered} of ${r.total}' : 'Delivered ✓';
     return 'Sent';
   }
 
