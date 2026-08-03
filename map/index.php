@@ -5874,8 +5874,8 @@ async function _poll() {
 // delivered automatically when the recipient next comes online.
 function _ackLabel(r) {
 	if (!r || !r.total) return 'Sent';
-	if (r.read > 0) return r.total > 1 ? 'Read ' + r.read + '/' + r.total : 'Read ✓✓';
-	if (r.delivered > 0) return r.total > 1 ? 'Delivered ' + r.delivered + '/' + r.total : 'Delivered ✓';
+	if (r.read > 0) return r.total > 1 ? 'Read by ' + r.read + ' of ' + r.total : 'Read ✓✓';
+	if (r.delivered > 0) return r.total > 1 ? 'Delivered to ' + r.delivered + ' of ' + r.total : 'Delivered ✓';
 	return 'Sent';
 }
 function _ingestIncoming(m) {
