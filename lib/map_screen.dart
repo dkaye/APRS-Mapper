@@ -27,6 +27,7 @@ import 'config_service.dart';
 import 'course_layer.dart';
 import 'download_screen.dart';
 import 'help_screen.dart';
+import 'update_check.dart';
 import 'fixed_marker_layer.dart';
 import 'map_config.dart';
 import 'menu_drawer.dart';
@@ -301,6 +302,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _poller.start();
     _loadSavedMap();
     WidgetsBinding.instance.addPostFrameCallback((_) => _showHelpIfFirstLaunch());
+    _checkForSoftUpdate();
     _bgLocation.onBeaconSent = () {
       if (!mounted) return;
       setState(() => _shareBadgeOn = false);
@@ -1300,6 +1302,43 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     await Navigator.push(context, MaterialPageRoute(
       builder: (_) => HelpScreen(isOnline: _isOnline, isFirstLaunch: true),
     ));
+  }
+
+  // Soft "update available" nudge: if the server manifest lists a newer build
+  // than this one, offer a dismissable prompt. Never blocks; "Later" suppresses
+  // it until an even newer version ships. iOS opens the App Store; Android opens
+  // the APK download.
+  Future<void> _checkForSoftUpdate() async {
+    final info = await UpdateChecker.check();
+    if (info == null || !mounted) return;
+    final prefs = await SharedPreferences.getInstance();
+    if (info.build <= (prefs.getInt('update_dismissed_build') ?? 0)) return;
+    if (!mounted) return;
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Update available'),
+        content: Text(
+          'A new version of APRS Map (${info.version}) is available.'
+          '${info.notes.isNotEmpty ? '\n\n${info.notes}' : ''}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await prefs.setInt('update_dismissed_build', info.build);
+              if (ctx.mounted) Navigator.pop(ctx, false);
+            },
+            child: const Text('Later'),
+          ),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Update')),
+        ],
+      ),
+    );
+    if (go == true) {
+      try {
+        await launchUrl(Uri.parse(info.url), mode: LaunchMode.externalApplication);
+      } catch (_) {}
+    }
   }
 
   void _triggerBlink(Set<String> ids) {
