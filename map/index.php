@@ -498,28 +498,6 @@ if (isset($_GET['messaging'])) {
 
 // ── Messaging helpers ─────────────────────────────────────────────────────────
 
-// Next message ID. IDs must be strictly monotonic for the life of the install:
-// every operator browser polls with a since_id watermark, and the mobile app
-// tracks the highest ID it has seen. If "Delete All Messages" emptied the log
-// and IDs restarted at 1, every existing watermark would be higher than any new
-// message and clients would go permanently deaf. So the high-water mark is
-// mirrored in a sidecar counter file that survives a wipe.
-function msgNextId(array $msgs, string $messagesFile): int {
-	$max = 0;
-	foreach ($msgs as $m) $max = max($max, (int)($m['id'] ?? 0));
-	$next = max($max, msgReadCounter($messagesFile)) + 1;
-	msgWriteCounter($messagesFile, $next);
-	return $next;
-}
-function msgCounterFile(string $messagesFile): string { return $messagesFile . '.counter'; }
-function msgReadCounter(string $messagesFile): int {
-	$f = msgCounterFile($messagesFile);
-	return is_readable($f) ? (int)trim((string)@file_get_contents($f)) : 0;
-}
-function msgWriteCounter(string $messagesFile, int $v): void {
-	@file_put_contents(msgCounterFile($messagesFile), $v . "\n", LOCK_EX);
-}
-
 // True when the caller holds a signed-in marsaprs session carrying $perm.
 // Separate from the messaging password: subscribing to messages does not imply
 // any administrative rights.
@@ -840,25 +818,6 @@ if (isset($_GET['mobile'])) {
 		if ($isBlocked) { http_response_code(403); echo json_encode(['error' => 'Incorrect PIN']); exit; }
 		if ($hamConflict) { http_response_code(409); echo json_encode(['error' => "{$hamCallsign} is already registered to another tracker", 'field' => 'callsign']); exit; }
 		if ($newEntry === 'limit_reached') { http_response_code(503); echo json_encode(['error' => 'The limit of 1000 trackers has been reached. It is not possible to add your tracker at this time.']); exit; }
-		// Purge any messages to/from this callsign — it's a fresh assignment, likely a new user.
-		if ($isNewCallsign) {
-			$_cfgReal = realpath('config.yaml');
-			$_msgsFile = $_cfgReal ? dirname($_cfgReal) . '/messages.json' : null;
-			if ($_msgsFile && file_exists($_msgsFile)) {
-				$_cs = $newEntry['callsign'];
-				$_fh = fopen($_msgsFile, 'c+');
-				if ($_fh) {
-					flock($_fh, LOCK_EX);
-					$_msgs = json_decode(stream_get_contents($_fh), true) ?: [];
-					$_msgs = array_values(array_filter($_msgs, function($m) use ($_cs) {
-						return ($m['from'] ?? '') !== $_cs && ($m['to'] ?? '') !== $_cs;
-					}));
-					ftruncate($_fh, 0); rewind($_fh);
-					fwrite($_fh, json_encode($_msgs, JSON_PRETTY_PRINT) . "\n");
-					flock($_fh, LOCK_UN); fclose($_fh);
-				}
-			}
-		}
 		echo json_encode([
 			'id'       => $newEntry['id'],
 			'token'    => $newEntry['token'],
@@ -1971,12 +1930,25 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 #msg-allview-scroll { flex: 1; min-height: 0; overflow-y: auto; background: #f4f6f8; }
 .msg-all-item { padding: 7px 12px; border-bottom: 1px solid #e9e9e9; cursor: pointer; }
 .msg-all-item:hover { background: #eef3f7; }
-.msg-all-item .who { font-size: 12px; font-weight: 600; color: #1a5276; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msg-all-item .who { font-size: 12px; font-weight: 600; color: #1a5276; display: flex; align-items: center; }
+.msg-all-item .who .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msg-all-item .who .to { color: #888; font-weight: 400; }
-.msg-all-item .who .tm { color: #aaa; font-weight: 400; font-size: 10px; margin-left: 6px; font-variant-numeric: tabular-nums; }
+.msg-all-item .who .tm { color: #aaa; font-weight: 400; font-size: 10px; margin-left: auto; padding-left: 6px; font-variant-numeric: tabular-nums; flex: 0 0 auto; }
 .msg-all-item .tx { font-size: 14px; color: #222; margin-top: 2px; word-break: break-word; line-height: 1.35; }
 .msg-all-item mark { background: #ffe08a; padding: 0 1px; }
-#msg-allview-foot { flex: 0 0 auto; padding: 6px 12px; border-top: 1px solid #eee; font-size: 11px; color: #999; }
+#msg-allview-foot { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-top: 1px solid #eee; font-size: 11px; color: #999; }
+#msg-allview-count { flex: 1; min-width: 0; }
+#msg-allview-export {
+	flex: 0 0 auto; padding: 5px 12px; background: #2980b9; color: #fff; border: none;
+	border-radius: 5px; font-size: 12px; cursor: pointer; font-family: inherit;
+}
+#msg-allview-export:hover { background: #2471a3; }
+#msg-allview-export:disabled { background: #b0c4d4; cursor: default; }
+.msg-all-loc2 {
+	flex: 0 0 auto; background: none; border: none; padding: 2px 3px; cursor: pointer;
+	color: #b0b6bb; line-height: 0; border-radius: 3px;
+}
+.msg-all-loc2:hover { color: #c0392b; background: #eef1f4; }
 #msg-allview-empty { padding: 26px 20px; text-align: center; color: #999; font-size: 13px; }
 
 /* Conversation list */
@@ -2106,63 +2078,8 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 #msg-toast .tt { font-weight: 700; font-size: 13px; margin-bottom: 2px; }
 #msg-toast .tb { font-size: 13px; opacity: 0.92; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* ── Messaging: full message log ─────────────────────────────────────────── */
-#msg-all-modal {
-    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 9200;
-}
-#msg-all-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.5); }
-#msg-all-box {
-    position: relative; background: #fff; border-radius: 8px; padding: 18px 20px 16px;
-    width: 1100px; max-width: calc(100vw - 32px); max-height: calc(100vh - 64px);
-    z-index: 1; box-shadow: 0 4px 24px rgba(0,0,0,0.25);
-    display: flex; flex-direction: column;
-}
-#msg-all-header {
-    display: flex; justify-content: space-between; align-items: center;
-    font-size: 15px; font-weight: 600; margin-bottom: 12px;
-}
-#msg-all-header button {
-    background: none; border: none; font-size: 20px; cursor: pointer; color: #888; padding: 0 2px; line-height: 1;
-}
-#msg-all-scroll {
-    flex: 1; min-height: 120px; overflow: auto;
-    border: 1px solid #e0e0e0; border-radius: 4px;
-}
-#msg-all-status { padding: 20px; text-align: center; color: #888; font-size: 13px; }
-#msg-all-table { border-collapse: collapse; width: 100%; font-size: 12px; }
-#msg-all-table th {
-    position: sticky; top: 0; z-index: 1; background: #f2f2f2; text-align: left;
-    padding: 6px 8px; border-bottom: 1px solid #ddd; font-weight: 600; white-space: nowrap;
-}
-#msg-all-table td { padding: 5px 8px; border-bottom: 1px solid #f0f0f0; vertical-align: top; line-height: 1.4; }
-#msg-all-table tr:last-child td { border-bottom: none; }
-/* width:1% + nowrap shrink-wraps the metadata columns so Message takes the rest. */
-#msg-all-table td.msg-all-time, #msg-all-table th.msg-all-time { width: 1%; white-space: nowrap; color: #777; font-variant-numeric: tabular-nums; }
-#msg-all-table td.msg-all-who,  #msg-all-table th.msg-all-who  { width: 1%; white-space: nowrap; color: #333; font-weight: 600; }
-#msg-all-table td.msg-all-loc, #msg-all-table th.msg-all-loc { width: 1%; white-space: nowrap; padding: 2px 4px; text-align: center; }
-#msg-all-table td.msg-all-text { width: 100%; word-break: break-word; }
-.msg-all-locbtn {
-    background: none; border: none; padding: 2px 3px; cursor: pointer;
-    color: #b0b6bb; line-height: 0; border-radius: 3px;
-}
-.msg-all-locbtn:hover { color: #c0392b; background: #f2f2f2; }
+/* Map marker dropped by "show where this message was sent from". */
 .msg-loc-pin { background: none; border: none; filter: drop-shadow(0 1px 2px rgba(0,0,0,.4)); }
-#msg-all-table tr.msg-all-bcast td { background: #fffbe8; }
-#msg-all-table .msg-all-web { color: #1a5276; }
-#msg-all-footer { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 12px; }
-#msg-all-count { font-size: 12px; color: #777; }
-#msg-all-export {
-    padding: 8px 14px; background: #2980b9; color: #fff; border: none;
-    border-radius: 5px; font-size: 13px; cursor: pointer; font-family: inherit;
-}
-#msg-all-export:hover { background: #2471a3; }
-#msg-all-export:disabled { background: #b0c4d4; cursor: default; }
-#msg-all-delete {
-    padding: 8px 14px; background: #fff; color: #c0392b; border: 1px solid #e0b4ae;
-    border-radius: 5px; font-size: 13px; cursor: pointer; font-family: inherit;
-}
-#msg-all-delete:hover { background: #c0392b; color: #fff; border-color: #c0392b; }
-#msg-all-delete:disabled { opacity: 0.5; cursor: default; }
 </style>
 </head>
 <body>
@@ -2545,7 +2462,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 		<div id="msg-allview" class="msg-view">
 			<div id="msg-allview-search"><input id="msg-allview-searchbox" placeholder="Search all messages…" autocomplete="off"></div>
 			<div id="msg-allview-scroll"></div>
-			<div id="msg-allview-foot"><span id="msg-allview-count"></span></div>
+			<div id="msg-allview-foot"><span id="msg-allview-count"></span><button id="msg-allview-export" title="Download all messages as CSV" disabled>Export CSV</button></div>
 		</div>
 	</div>
 </div>
@@ -2565,22 +2482,6 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 
 <!-- ── Messaging: arrival toast (panel closed) ────────────────────────────── -->
 <div id="msg-toast"><div class="tt"></div><div class="tb"></div></div>
-
-<!-- ── Messaging: full message log ────────────────────────────────────────── -->
-<div id="msg-all-modal" style="display:none">
-	<div id="msg-all-backdrop"></div>
-	<div id="msg-all-box">
-		<div id="msg-all-header"><span>All Messages</span><button id="msg-all-close">&times;</button></div>
-		<div id="msg-all-scroll"><div id="msg-all-status">Loading…</div></div>
-		<div id="msg-all-footer">
-			<span id="msg-all-count"></span>
-			<div style="display:flex;gap:8px;align-items:center">
-				<button id="msg-all-delete" style="display:none">Delete All Messages</button>
-				<button id="msg-all-export" disabled>Export CSV</button>
-			</div>
-		</div>
-	</div>
-</div>
 
 <script>
 'use strict';
@@ -4656,11 +4557,9 @@ map.on('click', function() {
 // Escape reset the map.
 document.addEventListener('keydown', function(e) {
 	if (e.key !== 'Escape') return;
-	const allM = document.getElementById('msg-all-modal');
 	const pickM = document.getElementById('msg-pick-modal');
 	const subM = document.getElementById('msg-sub-modal');
 	const setMenu = document.getElementById('msg-settings-menu');
-	if (allM && allM.style.display === 'flex')   { allM.style.display = 'none'; return; }
 	if (pickM && pickM.style.display === 'flex')  { pickM.style.display = 'none'; return; }
 	if (subM && subM.style.display === 'flex')    { subM.style.display = 'none'; return; }
 	if (setMenu && setMenu.classList.contains('open')) { if (typeof _closeSettings === 'function') _closeSettings(); return; }
@@ -5772,6 +5671,7 @@ function _renderAllView() {
 		if (!q) return true;
 		return _msgSenderName(m).toLowerCase().includes(q) || (m.to_label || '').toLowerCase().includes(q) || (m.text || '').toLowerCase().includes(q);
 	});
+	document.getElementById('msg-allview-export').disabled = !_allViewRows.length;
 	if (!rows.length) {
 		scroll.innerHTML = '<div id="msg-allview-empty">' + (q ? 'No messages match “' + _esc(q) + '”.' : 'No messages yet.') + '</div>';
 		document.getElementById('msg-allview-count').textContent = '';
@@ -5779,14 +5679,22 @@ function _renderAllView() {
 	}
 	scroll.innerHTML = rows.map(m => {
 		const to = m.broadcast ? 'All Trackers' : (m.to_label || '');
-		return '<div class="msg-all-item" data-mid="' + m.id + '" title="Open this conversation to reply"><div class="who">' + _esc(_msgSenderName(m)) +
-			' <span class="to">→ ' + _esc(to) + '</span><span class="tm">' + _esc(_msgFmtStamp(m.ts)) + '</span></div>' +
+		const loc = (typeof m.lat === 'number' && typeof m.lon === 'number')
+			? '<button class="msg-all-loc2" data-mid="' + m.id + '" title="Show where this message was sent from">' + MSG_PIN_SVG + '</button>' : '';
+		return '<div class="msg-all-item" data-mid="' + m.id + '" title="Open this conversation to reply"><div class="who"><span class="nm">' + _esc(_msgSenderName(m)) +
+			' <span class="to">→ ' + _esc(to) + '</span></span><span class="tm">' + _esc(_msgFmtStamp(m.ts)) + '</span>' + loc + '</div>' +
 			'<div class="tx">' + _hlText(_esc(m.text || ''), q) + '</div></div>';
 	}).join('');
 	// Clicking a message opens its conversation so the operator can reply.
 	scroll.querySelectorAll('.msg-all-item').forEach(el => el.addEventListener('click', () => {
 		const m = _allViewRows.find(x => x.id === +el.dataset.mid);
 		if (m) _openFromAllView(m);
+	}));
+	// The map-pin drops a marker where the message was sent from (doesn't open the thread).
+	scroll.querySelectorAll('.msg-all-loc2').forEach(b => b.addEventListener('click', e => {
+		e.stopPropagation();
+		const m = _allViewRows.find(x => x.id === +b.dataset.mid);
+		if (m) _showMsgLocation(m);
 	}));
 	document.getElementById('msg-allview-count').textContent = rows.length + (rows.length === 1 ? ' message' : ' messages') + (q ? ' matching' : '');
 	scroll.scrollTop = scroll.scrollHeight;   // newest at the bottom
@@ -6227,13 +6135,14 @@ function _wireMsgUI() {
 
 	// New message / list footer
 	document.getElementById('msg-new-btn').addEventListener('click', _openPicker);
-	document.getElementById('msg-all-link').addEventListener('click', () => { _closeSettings(); _showAllMessages(); });
-	document.getElementById('msg-mi-all').addEventListener('click', () => { _closeSettings(); _showAllMessages(); });
+	document.getElementById('msg-all-link').addEventListener('click', () => { _closeSettings(); if (!_msgViewAll) _toggleViewAll(); });
+	document.getElementById('msg-mi-all').addEventListener('click', () => { _closeSettings(); if (!_msgViewAll) _toggleViewAll(); });
 
 	// View All toggle + in-view search
 	document.getElementById('msg-viewall-btn').addEventListener('click', _toggleViewAll);
 	document.getElementById('msg-allsearch-btn').addEventListener('click', _toggleAllSearch);
 	document.getElementById('msg-allview-searchbox').addEventListener('input', _renderAllView);
+	document.getElementById('msg-allview-export').addEventListener('click', _exportViewAll);
 
 	// Composer
 	const ta = document.getElementById('msg-compose-text');
@@ -6374,8 +6283,7 @@ function _initVoice() {
 	});
 }
 
-// ── All-messages log (admin) ─────────────────────────────────────────────────
-let _msgAllRows = [];
+// ── Chronological message helpers (View All feed + map-pin) ──────────────────
 function _msgFmtStamp(ts) {
 	const d = new Date(ts * 1000), p = n => String(n).padStart(2, '0');
 	return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
@@ -6385,48 +6293,11 @@ function _msgFmtStampFull(ts) { return new Date(ts * 1000).getFullYear() + '-' +
 const MSG_PIN_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">' +
 	'<path fill="currentColor" d="M12 2c-3.87 0-7 3.13-7 7 0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"/></svg>';
 
-async function _showAllMessages() {
-	const modal = document.getElementById('msg-all-modal'), scroll = document.getElementById('msg-all-scroll');
-	const count = document.getElementById('msg-all-count'), expBtn = document.getElementById('msg-all-export'), delBtn = document.getElementById('msg-all-delete');
-	_msgAllRows = []; expBtn.disabled = true; delBtn.style.display = 'none'; count.textContent = '';
-	scroll.innerHTML = '<div id="msg-all-status">Loading…</div>';
-	modal.style.display = 'flex';
-	let msgs;
-	try {
-		const d = await _msgApi('history');
-		if (d.error) throw new Error(d.error);
-		msgs = d.messages || [];
-		if (d.can_delete_all) delBtn.style.display = '';
-	} catch { scroll.innerHTML = '<div id="msg-all-status">Could not load the message log.</div>'; return; }
-	msgs.sort((a, b) => (a.ts - b.ts) || ((a.id || 0) - (b.id || 0)));
-	_msgAllRows = msgs;
-	if (!msgs.length) { scroll.innerHTML = '<div id="msg-all-status">No messages yet.</div>'; return; }
-	const rows = msgs.map((m, i) => {
-		const bcast = !!m.broadcast;
-		const loc = (typeof m.lat === 'number' && typeof m.lon === 'number')
-			? '<button class="msg-all-locbtn" data-idx="' + i + '" title="Show where this message was sent from">' + MSG_PIN_SVG + '</button>' : '';
-		const fCls = m.from_kind === 'operator' ? ' class="msg-all-web"' : '';
-		return '<tr' + (bcast ? ' class="msg-all-bcast"' : '') + '>' +
-			'<td class="msg-all-time">' + _esc(_msgFmtStamp(m.ts)) + '</td>' +
-			'<td class="msg-all-loc">' + loc + '</td>' +
-			'<td class="msg-all-who"><span' + fCls + '>' + _esc(_msgSenderName(m)) + '</span></td>' +
-			'<td class="msg-all-who">' + _esc(m.to_label || '') + '</td>' +
-			'<td class="msg-all-text">' + _esc(m.text || '') + '</td></tr>';
-	}).join('');
-	scroll.innerHTML = '<table id="msg-all-table"><thead><tr><th class="msg-all-time">Time</th><th class="msg-all-loc"></th>' +
-		'<th class="msg-all-who">From</th><th class="msg-all-who">To</th><th>Message</th></tr></thead><tbody>' + rows + '</tbody></table>';
-	scroll.querySelectorAll('.msg-all-locbtn').forEach(b => b.addEventListener('click', () => _showMsgLocation(_msgAllRows[+b.dataset.idx])));
-	count.textContent = msgs.length + (msgs.length === 1 ? ' message' : ' messages');
-	expBtn.disabled = false;
-	scroll.scrollTop = scroll.scrollHeight;
-}
-
 // Map pin — drop a marker where a message was sent from (mobiles only).
 let _msgLocMarker = null;
 function _showMsgLocation(m) {
 	if (!m || typeof m.lat !== 'number' || typeof m.lon !== 'number') return;
-	document.getElementById('msg-all-modal').style.display = 'none';
-	if (window.innerWidth <= 640) _closePanel();
+	if (window.innerWidth <= 640) _closePanel();   // reveal the map on phones
 	if (_msgLocMarker) { map.removeLayer(_msgLocMarker); _msgLocMarker = null; }
 	const who = _esc(_msgSenderName(m)), sent = _esc(_msgFmtStamp(m.ts));
 	const age = m.pos_ts ? m.ts - m.pos_ts : 0;
@@ -6451,10 +6322,11 @@ function _msgFmtAge(secs) {
 }
 
 function _msgCsvCell(v) { const s = String(v == null ? '' : v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
-function _exportAllMessages() {
-	if (!_msgAllRows.length) return;
+// Download the current View-All feed as CSV.
+function _exportViewAll() {
+	if (!_allViewRows.length) return;
 	const lines = [['ID', 'Time', 'UTC', 'From', 'From Callsign', 'To', 'Broadcast', 'Latitude', 'Longitude', 'Message']];
-	for (const m of _msgAllRows) {
+	for (const m of _allViewRows) {
 		lines.push([
 			m.id || '', _msgFmtStampFull(m.ts), new Date(m.ts * 1000).toISOString(),
 			_msgSenderName(m), m.from_kind === 'mobile' ? (m.from_key || '') : '',
@@ -6471,24 +6343,6 @@ function _exportAllMessages() {
 	document.body.appendChild(a); a.click(); a.remove();
 	setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-document.getElementById('msg-all-close').addEventListener('click', () => document.getElementById('msg-all-modal').style.display = 'none');
-document.getElementById('msg-all-backdrop').addEventListener('click', () => document.getElementById('msg-all-modal').style.display = 'none');
-document.getElementById('msg-all-export').addEventListener('click', _exportAllMessages);
-document.getElementById('msg-all-delete').addEventListener('click', async () => {
-	const delBtn = document.getElementById('msg-all-delete'), n = _msgAllRows.length;
-	if (!confirm('Permanently delete all ' + n + (n === 1 ? ' message' : ' messages') + ' for everyone?\n\nThis cannot be undone. Export first if you need a record.')) return;
-	const label = delBtn.textContent; delBtn.disabled = true; delBtn.textContent = 'Deleting…';
-	try {
-		const d = await _msgApi('flush');
-		if (d.error) { alert(d.error); return; }
-		_convs.clear(); _msgSeen.clear(); _openConvId = null; _pendingConv = null;
-		document.getElementById('msg-all-scroll').innerHTML = '<div id="msg-all-status">No messages yet.</div>';
-		document.getElementById('msg-all-count').textContent = '';
-		document.getElementById('msg-all-export').disabled = true;
-		_updateTotalUnread(); _showListView();
-	} catch { alert('Delete failed. Please try again.'); }
-	finally { delBtn.disabled = false; delBtn.textContent = label; }
-});
 
 // ── Message-arrival sound (Web Audio) ────────────────────────────────────────
 let _msgAudioCtx = null;

@@ -1268,9 +1268,6 @@ if (isset($_GET['delete_messages'])) {
     require_once __DIR__ . '/../messaging_db.php';
     $ev = trim($currentEventName) !== '' ? trim($currentEventName) : 'default';
     $deleted = (new MessagingDb())->flushEvent($ev);
-    // Also drop the retired per-event messages.json if it's still lying around.
-    $real = realpath($configPath);
-    if ($real) { $old = dirname($real) . '/messages.json'; if (file_exists($old)) @unlink($old); }
     aprs_admin_log('delete_all_messages', ['deleted' => $deleted, 'event' => $ev]);
     respondJson(['ok' => true, 'deleted' => $deleted]);
 }
