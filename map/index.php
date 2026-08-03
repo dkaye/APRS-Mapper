@@ -3072,24 +3072,26 @@ function trackerIconSize(callsign) {
 function refreshTrackerIcon(callsign) {
 	const m = markers[callsign];
 	if (!m) return;
-	const enlarged = callsign === selectedCallsign && trackerClickCount === 1;
+	const selected = callsign === selectedCallsign;   // force the label the whole time it's selected
 	m.setIcon(makeTrackerIcon(m._mobile && m._hamCallsign ? 'triangle' : m._mobile ? 'square' : 'circle', m._trackerColor, trackerIconSize(callsign)));
 	const tipEl = m.getTooltip()?.getElement();
-	if (tipEl) tipEl.classList.toggle('label-force-show', enlarged);
+	if (tipEl) tipEl.classList.toggle('label-force-show', selected);
 }
 function refreshIgateRadius(idx) {
 	const d = igateMarkers[idx]; if (!d) return;
-	const enlarged = selectedIgateIdx === idx && igateClickCount === 1;
+	const selected = selectedIgateIdx === idx;
+	const enlarged = selected && igateClickCount === 1;
 	d.m.setRadius(enlarged ? Math.round(scaledRadius(d.m._baseRadius) * 2) : scaledRadius(d.m._baseRadius));
 	const tipEl = d.m.getTooltip()?.getElement();
-	if (tipEl) tipEl.classList.toggle('label-force-show', enlarged);
+	if (tipEl) tipEl.classList.toggle('label-force-show', selected);
 }
 function refreshAidRadius(idx) {
 	const d = aidMarkers[idx]; if (!d) return;
-	const enlarged = selectedAidIdx === idx && aidClickCount === 1;
+	const selected = selectedAidIdx === idx;
+	const enlarged = selected && aidClickCount === 1;
 	d.m.setRadius(enlarged ? Math.round(scaledRadius(d.m._baseRadius) * 2) : scaledRadius(d.m._baseRadius));
 	const tipEl = d.m.getTooltip()?.getElement();
-	if (tipEl) tipEl.classList.toggle('label-force-show', enlarged);
+	if (tipEl) tipEl.classList.toggle('label-force-show', selected);
 }
 function _deselectIgate() {
 	if (selectedIgateIdx < 0) return;
@@ -3502,6 +3504,7 @@ function onIgateClick(idx) {
 	} else if (igateClickCount === 1) {
 		igateClickCount = 2;
 		refreshIgateRadius(idx);
+		triggerDotBlink(d);
 		map.setView(d.latlng, 15); setSheetOpen(false);
 	} else {
 		_deselectIgate();
@@ -3527,6 +3530,7 @@ function onAidClick(idx) {
 	} else if (aidClickCount === 1) {
 		aidClickCount = 2;
 		refreshAidRadius(idx);
+		triggerDotBlink(d);
 		map.setView(d.latlng, 15); setSheetOpen(false);
 	} else {
 		_deselectAid();
@@ -3560,7 +3564,8 @@ function onLegendClick(callsign) {
 		showTrackerHistory(callsign, color);
 	} else if (trackerClickCount === 1) {
 		trackerClickCount = 2;
-		refreshTrackerIcon(callsign); // restore to normal on zoom click
+		refreshTrackerIcon(callsign); // restore to normal size (label stays forced)
+		triggerBlink(callsign);       // blink again on the zoom click
 		const m = markers[callsign];
 		if (m) { map.setView(m.getLatLng(), 15); setSheetOpen(false); }
 	} else {
