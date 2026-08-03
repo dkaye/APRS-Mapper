@@ -1960,6 +1960,24 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
     #msg-panel.thread-active #msg-panel-back { display: block; }
 }
 
+/* ── All-messages view (View All toggle) ─────────────────────────────────── */
+#msg-viewall-btn.on, #msg-allsearch-btn.on { background: rgba(255,255,255,0.28); opacity: 1; }
+#msg-allview { display: none; }
+#msg-panel.allview #msg-list-view, #msg-panel.allview #msg-thread-view { display: none; }
+#msg-panel.allview #msg-allview { display: flex; flex: 1; min-width: 0; }
+#msg-allview-search { flex: 0 0 auto; padding: 8px; border-bottom: 1px solid #eee; display: none; }
+#msg-allview-search.on { display: block; }
+#msg-allview-searchbox { width: 100%; box-sizing: border-box; padding: 7px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; font-family: inherit; }
+#msg-allview-scroll { flex: 1; min-height: 0; overflow-y: auto; background: #f4f6f8; }
+.msg-all-item { padding: 7px 12px; border-bottom: 1px solid #e9e9e9; }
+.msg-all-item .who { font-size: 12px; font-weight: 600; color: #1a5276; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msg-all-item .who .to { color: #888; font-weight: 400; }
+.msg-all-item .who .tm { color: #aaa; font-weight: 400; font-size: 10px; margin-left: 6px; font-variant-numeric: tabular-nums; }
+.msg-all-item .tx { font-size: 14px; color: #222; margin-top: 2px; word-break: break-word; line-height: 1.35; }
+.msg-all-item mark { background: #ffe08a; padding: 0 1px; }
+#msg-allview-foot { flex: 0 0 auto; padding: 6px 12px; border-top: 1px solid #eee; font-size: 11px; color: #999; }
+#msg-allview-empty { padding: 26px 20px; text-align: center; color: #999; font-size: 13px; }
+
 /* Conversation list */
 #msg-conv-scroll { flex: 1; min-height: 0; overflow-y: auto; }
 .msg-conv-item {
@@ -2466,6 +2484,12 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 			<div id="msg-panel-title">Messages</div>
 			<div id="msg-panel-sub"></div>
 		</div>
+		<button id="msg-viewall-btn" class="msg-icon-btn" title="View all messages chronologically">
+			<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z"/></svg>
+		</button>
+		<button id="msg-allsearch-btn" class="msg-icon-btn" title="Search messages" style="display:none">
+			<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
+		</button>
 		<button id="msg-speaker-btn" class="msg-icon-btn" title="Read arriving messages aloud"></button>
 		<button id="msg-settings-btn" class="msg-icon-btn" title="Settings">&#9881;</button>
 		<button id="msg-panel-close" title="Close messages">Close</button>
@@ -2515,6 +2539,12 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 					<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
 				</button>
 			</div>
+		</div>
+		<!-- All messages (chronological, searchable) -->
+		<div id="msg-allview" class="msg-view">
+			<div id="msg-allview-search"><input id="msg-allview-searchbox" placeholder="Search all messages…" autocomplete="off"></div>
+			<div id="msg-allview-scroll"></div>
+			<div id="msg-allview-foot"><span id="msg-allview-count"></span></div>
 		</div>
 	</div>
 </div>
@@ -4633,6 +4663,8 @@ document.addEventListener('keydown', function(e) {
 	if (pickM && pickM.style.display === 'flex')  { pickM.style.display = 'none'; return; }
 	if (subM && subM.style.display === 'flex')    { subM.style.display = 'none'; return; }
 	if (setMenu && setMenu.classList.contains('open')) { if (typeof _closeSettings === 'function') _closeSettings(); return; }
+	if (typeof _allViewSearchOn !== 'undefined' && _allViewSearchOn) { _toggleAllSearch(); return; }
+	if (typeof _msgViewAll !== 'undefined' && _msgViewAll) { _toggleViewAll(); return; }
 	if (_msgPanelOpen) { if (typeof _closePanel === 'function') _closePanel(); return; }
 	_resetMapView();   // nothing open → reset the map
 });
@@ -5556,6 +5588,9 @@ let _pendingConv = null;      // {recipients} for a not-yet-created conversation
 const _msgSeen = new Set();   // message ids already placed in a thread (dedupe)
 const _deferredSpeak = new Set(); // ids to read aloud once their thread becomes active
 const _msgReceipts = new Map();   // message id -> {total, delivered, read} for MY sent messages
+let _msgViewAll = false;          // "View All" mode: every message, chronological
+let _allViewSearchOn = false;     // search box shown within View All
+let _allViewRows = [];            // all event messages (from history), sorted by time
 
 // Restore a saved subscription.
 try {
@@ -5677,6 +5712,7 @@ function _closePanel() {
 	document.getElementById('msg-panel').classList.remove('open');
 	_msgPanelOpen = false;
 	_closeSettings();
+	if (_msgViewAll) _toggleViewAll();   // exit View All so reopening shows conversations
 }
 function _togglePanel() {
 	document.getElementById('msg-panel').classList.contains('open') ? _closePanel() : _openPanel();
@@ -5704,6 +5740,67 @@ function _showThreadView(titleHtml, subText) {
 	head.querySelector('.ts').textContent = subText || '';
 	document.getElementById('msg-composer').classList.remove('hidden');
 	_renderConvList();   // keep the inbox's selection highlight in sync
+}
+
+// ── View All: every message across every thread, chronological + searchable ──
+function _toggleViewAll() {
+	_msgViewAll = !_msgViewAll;
+	const panel = document.getElementById('msg-panel');
+	panel.classList.toggle('allview', _msgViewAll);
+	document.getElementById('msg-viewall-btn').classList.toggle('on', _msgViewAll);
+	document.getElementById('msg-allsearch-btn').style.display = _msgViewAll ? '' : 'none';
+	document.getElementById('msg-panel-title').textContent = _msgViewAll ? 'All Messages' : 'Messages';
+	document.getElementById('msg-panel-sub').textContent = _msgViewAll ? 'every message, chronological' : (_msgName ? 'as ' + _msgName : '');
+	if (_msgViewAll) { _loadAllView(); }
+	else { _allViewSearchOn = false; _syncAllSearch(); }
+}
+async function _loadAllView() {
+	const scroll = document.getElementById('msg-allview-scroll');
+	scroll.innerHTML = '<div id="msg-allview-empty">Loading…</div>';
+	try {
+		const d = await _msgApi('history');
+		if (d.error) { scroll.innerHTML = '<div id="msg-allview-empty">' + _esc(d.error) + '</div>'; return; }
+		_allViewRows = (d.messages || []).slice().sort((a, b) => (a.ts - b.ts) || ((a.id || 0) - (b.id || 0)));
+		_renderAllView();
+	} catch { scroll.innerHTML = '<div id="msg-allview-empty">Could not load messages.</div>'; }
+}
+function _renderAllView() {
+	const scroll = document.getElementById('msg-allview-scroll');
+	const q = _allViewSearchOn ? document.getElementById('msg-allview-searchbox').value.trim().toLowerCase() : '';
+	const rows = _allViewRows.filter(m => {
+		if (!q) return true;
+		return _msgSenderName(m).toLowerCase().includes(q) || (m.to_label || '').toLowerCase().includes(q) || (m.text || '').toLowerCase().includes(q);
+	});
+	if (!rows.length) {
+		scroll.innerHTML = '<div id="msg-allview-empty">' + (q ? 'No messages match “' + _esc(q) + '”.' : 'No messages yet.') + '</div>';
+		document.getElementById('msg-allview-count').textContent = '';
+		return;
+	}
+	scroll.innerHTML = rows.map(m => {
+		const to = m.broadcast ? 'All Trackers' : (m.to_label || '');
+		return '<div class="msg-all-item"><div class="who">' + _esc(_msgSenderName(m)) +
+			' <span class="to">→ ' + _esc(to) + '</span><span class="tm">' + _esc(_msgFmtStamp(m.ts)) + '</span></div>' +
+			'<div class="tx">' + _hlText(_esc(m.text || ''), q) + '</div></div>';
+	}).join('');
+	document.getElementById('msg-allview-count').textContent = rows.length + (rows.length === 1 ? ' message' : ' messages') + (q ? ' matching' : '');
+	scroll.scrollTop = scroll.scrollHeight;   // newest at the bottom
+}
+function _toggleAllSearch() {
+	_allViewSearchOn = !_allViewSearchOn;
+	_syncAllSearch();
+	if (_allViewSearchOn) setTimeout(() => document.getElementById('msg-allview-searchbox').focus(), 50);
+	else { document.getElementById('msg-allview-searchbox').value = ''; _renderAllView(); }
+}
+function _syncAllSearch() {
+	document.getElementById('msg-allview-search').classList.toggle('on', _allViewSearchOn);
+	document.getElementById('msg-allsearch-btn').classList.toggle('on', _allViewSearchOn);
+}
+function _hlText(escaped, q) {
+	if (!q) return escaped;
+	try {
+		const re = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'ig');
+		return escaped.replace(re, '<mark>$1</mark>');
+	} catch { return escaped; }
 }
 
 // ── Conversation list ────────────────────────────────────────────────────────
@@ -5862,6 +5959,7 @@ async function _poll() {
 			for (const m of d.messages) _ingestIncoming(m);
 			if (_msgPanelOpen) _renderConvList();
 			_updateTotalUnread();
+			if (_msgViewAll) _loadAllView();   // keep the chronological feed live
 		} else if (acksChanged && _openConvId != null) {
 			// A recipient just fetched/read one of my messages — refresh the open
 			// thread so the delivered/read acknowledgement updates.
@@ -6110,6 +6208,11 @@ function _wireMsgUI() {
 	document.getElementById('msg-new-btn').addEventListener('click', _openPicker);
 	document.getElementById('msg-all-link').addEventListener('click', () => { _closeSettings(); _showAllMessages(); });
 	document.getElementById('msg-mi-all').addEventListener('click', () => { _closeSettings(); _showAllMessages(); });
+
+	// View All toggle + in-view search
+	document.getElementById('msg-viewall-btn').addEventListener('click', _toggleViewAll);
+	document.getElementById('msg-allsearch-btn').addEventListener('click', _toggleAllSearch);
+	document.getElementById('msg-allview-searchbox').addEventListener('input', _renderAllView);
 
 	// Composer
 	const ta = document.getElementById('msg-compose-text');
