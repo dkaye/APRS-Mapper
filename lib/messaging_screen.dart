@@ -3,7 +3,9 @@
 /// any-to-any + group recipients, live polling, delivery/read receipts, and an
 /// optional read-aloud (text-to-speech) toggle.
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -41,6 +43,8 @@ class _MessagingScreenState extends State<MessagingScreen> {
   final _scrollCtl = ScrollController();
   final _player = AudioPlayer();
   final _tts = FlutterTts();
+  final _picker = ImagePicker();
+  String? _pendingPhotoPath; // photo staged in the composer, not yet sent
   bool _speak = false;
 
   @override
@@ -199,13 +203,14 @@ class _MessagingScreenState extends State<MessagingScreen> {
   // ── Send ────────────────────────────────────────────────────────────────────
   Future<void> _send() async {
     final text = _composeCtl.text.trim();
-    if (text.isEmpty || _sending) return;
+    final photo = _pendingPhotoPath;
+    if ((text.isEmpty && photo == null) || _sending) return;
     setState(() => _sending = true);
     SendResult res;
     if (_pendingRecipients != null) {
-      res = await widget.client.send(recipients: _pendingRecipients, text: text);
+      res = await widget.client.send(recipients: _pendingRecipients, text: text, photoPath: photo);
     } else if (_open != null && _open!.id > 0) {
-      res = await widget.client.send(conversationId: _open!.id, text: text);
+      res = await widget.client.send(conversationId: _open!.id, text: text, photoPath: photo);
     } else {
       setState(() => _sending = false);
       return;
@@ -217,6 +222,7 @@ class _MessagingScreenState extends State<MessagingScreen> {
       return;
     }
     _composeCtl.clear();
+    setState(() => _pendingPhotoPath = null);
     final cid = res.conversationId;
     if (cid != null) {
       // Reload the (now real) conversation + thread.
@@ -366,25 +372,96 @@ class _MessagingScreenState extends State<MessagingScreen> {
         top: false,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            Expanded(
-              child: TextField(
-                controller: _composeCtl,
-                maxLength: 280,
-                minLines: 1,
-                maxLines: 4,
-                textInputAction: TextInputAction.newline,
-                decoration: const InputDecoration(hintText: 'Type a message…', border: OutlineInputBorder(), counterText: '', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            if (_pendingPhotoPath != null) _photoPreviewStrip(),
+            Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              IconButton(
+                icon: const Icon(Icons.add_photo_alternate_outlined),
+                color: _kBlue,
+                tooltip: 'Attach photo',
+                onPressed: _sending ? null : _attachPhoto,
               ),
-            ),
-            const SizedBox(width: 6),
-            _sending
-                ? const Padding(padding: EdgeInsets.all(10), child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)))
-                : IconButton.filled(style: IconButton.styleFrom(backgroundColor: _kBlue), icon: const Icon(Icons.send), onPressed: _send),
+              Expanded(
+                child: TextField(
+                  controller: _composeCtl,
+                  maxLength: 280,
+                  minLines: 1,
+                  maxLines: 4,
+                  textInputAction: TextInputAction.newline,
+                  decoration: const InputDecoration(hintText: 'Type a message…', border: OutlineInputBorder(), counterText: '', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
+                ),
+              ),
+              const SizedBox(width: 6),
+              _sending
+                  ? const Padding(padding: EdgeInsets.all(10), child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)))
+                  : IconButton.filled(style: IconButton.styleFrom(backgroundColor: _kBlue), icon: const Icon(Icons.send), onPressed: _send),
+            ]),
           ]),
         ),
       ),
     ]);
+  }
+
+  // Thumbnail of the photo staged in the composer, with a remove button.
+  Widget _photoPreviewStrip() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Stack(children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.file(File(_pendingPhotoPath!), width: 84, height: 84, fit: BoxFit.cover),
+          ),
+          Positioned(
+            top: -6, right: -6,
+            child: IconButton(
+              icon: const Icon(Icons.cancel, size: 22, color: Colors.black54),
+              tooltip: 'Remove photo',
+              onPressed: () => setState(() => _pendingPhotoPath = null),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  // Let the user pick a photo from the camera or their library, downscaled and
+  // compressed on-device (the server doesn't have GD to re-encode).
+  Future<void> _attachPhoto() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(leading: const Icon(Icons.photo_camera), title: const Text('Take a photo'), onTap: () => Navigator.pop(ctx, ImageSource.camera)),
+          ListTile(leading: const Icon(Icons.photo_library), title: const Text('Choose from library'), onTap: () => Navigator.pop(ctx, ImageSource.gallery)),
+        ]),
+      ),
+    );
+    if (source == null) return;
+    try {
+      final x = await _picker.pickImage(source: source, maxWidth: 1600, maxHeight: 1600, imageQuality: 82);
+      if (x != null && mounted) setState(() => _pendingPhotoPath = x.path);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not attach photo: $e'), backgroundColor: Colors.red[700]));
+    }
+  }
+
+  // Full-screen, pinch-to-zoom viewer for a photo tapped in a bubble.
+  void _openPhotoViewer(String url) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => Scaffold(
+        backgroundColor: Colors.black,
+        appBar: AppBar(backgroundColor: Colors.black, foregroundColor: Colors.white, elevation: 0),
+        body: Center(
+          child: InteractiveViewer(
+            maxScale: 5,
+            child: Image.network(url, fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const Text('Could not load photo', style: TextStyle(color: Colors.white70))),
+          ),
+        ),
+      ),
+    ));
   }
 
   Widget _bubble(MsgMessage m) {
@@ -403,7 +480,12 @@ class _MessagingScreenState extends State<MessagingScreen> {
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
           if (!me) Padding(padding: const EdgeInsets.only(bottom: 2), child: Text(m.senderLabel, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: _kDark))),
-          Text(m.text, style: TextStyle(fontSize: 14, color: me ? Colors.white : Colors.black87)),
+          if (m.hasPhoto) _bubblePhoto(m),
+          if (m.text.isNotEmpty)
+            Padding(
+              padding: EdgeInsets.only(top: m.hasPhoto ? 6 : 0),
+              child: Text(m.text, style: TextStyle(fontSize: 14, color: me ? Colors.white : Colors.black87)),
+            ),
           Padding(
             padding: const EdgeInsets.only(top: 2),
             child: Text(
@@ -412,6 +494,32 @@ class _MessagingScreenState extends State<MessagingScreen> {
             ),
           ),
         ]),
+      ),
+    );
+  }
+
+  // Attached-photo thumbnail inside a bubble; tap opens the full-screen viewer.
+  Widget _bubblePhoto(MsgMessage m) {
+    final url = widget.client.photoUrl(m.id);
+    final ar = (m.photoW != null && m.photoH != null && m.photoH! > 0) ? m.photoW! / m.photoH! : 4 / 3;
+    return GestureDetector(
+      onTap: () => _openPhotoViewer(url),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 220, maxHeight: 260),
+          child: AspectRatio(
+            aspectRatio: ar,
+            child: Image.network(
+              url,
+              fit: BoxFit.cover,
+              loadingBuilder: (ctx, child, prog) => prog == null
+                  ? child
+                  : Container(color: Colors.black12, alignment: Alignment.center, child: const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2))),
+              errorBuilder: (_, __, ___) => Container(color: Colors.black12, alignment: Alignment.center, padding: const EdgeInsets.all(16), child: const Icon(Icons.broken_image, color: Colors.black38)),
+            ),
+          ),
+        ),
       ),
     );
   }

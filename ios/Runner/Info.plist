@@ -39,6 +39,10 @@
 	<string>APRS Map shows your position on the map. With your permission, it can also share your location with other event participants.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>APRS Map does not use the microphone. This permission is required by an audio library used to play message notification sounds.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>APRS Map uses the camera so you can take a photo to attach to a message.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>APRS Map accesses your photo library so you can attach a photo to a message.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

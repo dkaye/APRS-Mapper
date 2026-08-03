@@ -114,7 +114,10 @@ class MsgMessage {
   final String fromName;
   final double? lat;
   final double? lon;
-  const MsgMessage({required this.id, required this.conversationId, required this.ts, required this.text, this.broadcast = false, required this.fromId, this.fromKind, this.fromKey, this.fromShort, this.fromName = '', this.lat, this.lon});
+  final bool hasPhoto;
+  final int? photoW;
+  final int? photoH;
+  const MsgMessage({required this.id, required this.conversationId, required this.ts, required this.text, this.broadcast = false, required this.fromId, this.fromKind, this.fromKey, this.fromShort, this.fromName = '', this.lat, this.lon, this.hasPhoto = false, this.photoW, this.photoH});
   factory MsgMessage.fromJson(Map<String, dynamic> j) => MsgMessage(
         id: (j['id'] as num).toInt(),
         conversationId: (j['conversation_id'] as num?)?.toInt() ?? 0,
@@ -128,6 +131,9 @@ class MsgMessage {
         fromName: j['from_name'] as String? ?? '',
         lat: (j['lat'] as num?)?.toDouble(),
         lon: (j['lon'] as num?)?.toDouble(),
+        hasPhoto: j['photo'] as bool? ?? false,
+        photoW: (j['photo_w'] as num?)?.toInt(),
+        photoH: (j['photo_h'] as num?)?.toInt(),
       );
   String get senderLabel {
     if (fromKind == 'mobile' && fromShort != null && fromShort!.isNotEmpty) {
@@ -218,14 +224,43 @@ class MessagingClient {
   }
 
   /// Send to a recipient set (new conversation) or into an existing conversation.
-  Future<SendResult> send({List<String>? recipients, int? conversationId, required String text}) async {
-    final body = <String, dynamic>{'text': text};
-    if (conversationId != null) body['conversation_id'] = conversationId;
-    if (recipients != null) body['recipients'] = recipients;
-    final d = await _post('send', body);
-    if (d == null) return const SendResult(ok: false, error: 'Network error');
-    if (d['error'] != null) return SendResult(ok: false, error: d['error'] as String);
-    return SendResult(ok: true, id: (d['id'] as num?)?.toInt(), conversationId: (d['conversation_id'] as num?)?.toInt());
+  /// With [photoPath], the message carries an attached photo (multipart upload);
+  /// [text] may then be empty (a photo-only message).
+  Future<SendResult> send({List<String>? recipients, int? conversationId, required String text, String? photoPath}) async {
+    final token = tokenProvider();
+    if (token == null) return const SendResult(ok: false, error: 'Not signed in');
+    try {
+      if (photoPath != null) {
+        final req = http.MultipartRequest('POST', _url('send'));
+        req.fields['token'] = token;
+        req.fields['text'] = text;
+        if (conversationId != null) req.fields['conversation_id'] = conversationId.toString();
+        if (recipients != null) req.fields['recipients'] = jsonEncode(recipients);
+        req.files.add(await http.MultipartFile.fromPath('photo', photoPath));
+        final streamed = await req.send().timeout(const Duration(seconds: 30));
+        final r = await http.Response.fromStream(streamed);
+        if (r.statusCode == 403) return const SendResult(ok: false, error: 'Not signed in');
+        final d = jsonDecode(r.body) as Map<String, dynamic>;
+        if (d['error'] != null) return SendResult(ok: false, error: d['error'] as String);
+        return SendResult(ok: true, id: (d['id'] as num?)?.toInt(), conversationId: (d['conversation_id'] as num?)?.toInt());
+      }
+      final body = <String, dynamic>{'text': text};
+      if (conversationId != null) body['conversation_id'] = conversationId;
+      if (recipients != null) body['recipients'] = recipients;
+      final d = await _post('send', body);
+      if (d == null) return const SendResult(ok: false, error: 'Network error');
+      if (d['error'] != null) return SendResult(ok: false, error: d['error'] as String);
+      return SendResult(ok: true, id: (d['id'] as num?)?.toInt(), conversationId: (d['conversation_id'] as num?)?.toInt());
+    } catch (_) {
+      return const SendResult(ok: false, error: 'Network error');
+    }
+  }
+
+  /// Auth-gated URL for a message's attached photo (token in the query so it can
+  /// be loaded directly by an Image widget).
+  String photoUrl(int messageId) {
+    final token = tokenProvider() ?? '';
+    return '${MapConfig.serverBaseUrl}/index.php?messaging=photo&id=$messageId&token=$token';
   }
 
   Future<void> read(List<int> ids) async {
