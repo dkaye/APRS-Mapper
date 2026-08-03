@@ -5876,12 +5876,11 @@ function _ingestIncoming(m) {
 	if (isOpen) { if (isNew) _appendBubble(c, m); _markConvRead(cid); }
 	else if (isNew) { c.unread = (c.unread || 0) + 1; }
 	if (isNew) {
-		// Read aloud only when this message is in the thread you're actually
-		// looking at (and you're not mid-compose) — so you hear what you can see.
-		// Otherwise defer the read until that thread becomes active, and alert
-		// with the tone in the meantime.
-		const composing = document.activeElement === document.getElementById('msg-compose-text');
-		if (_msgSpeak && isOpen && !composing) {
+		// Speaker on + this message is in the thread you're viewing → read it aloud,
+		// no tone. Otherwise play the alert tone (speaker off, OR the message is in
+		// a thread that isn't currently showing) and defer any read until its thread
+		// becomes active.
+		if (_msgSpeak && isOpen) {
 			_speakMessage(m);
 		} else {
 			if (_msgSpeak) _deferredSpeak.add(m.id);
