@@ -1931,8 +1931,6 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
     font-size: 16px; line-height: 1; border-radius: 4px; opacity: 0.9;
 }
 #msg-panel-header button.msg-icon-btn:hover { background: rgba(255,255,255,0.15); opacity: 1; }
-#msg-speaker-btn { opacity: 0.5; }               /* off (muted) by default */
-#msg-speaker-btn.on { opacity: 1; background: rgba(255,255,255,0.22); }
 #msg-panel-close {
     background: rgba(255,255,255,0.16); border: 1px solid rgba(255,255,255,0.5); color: #fff;
     cursor: pointer; padding: 5px 12px; margin-left: 4px; border-radius: 5px;
@@ -2467,9 +2465,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 			<div id="msg-panel-title">Messages</div>
 			<div id="msg-panel-sub"></div>
 		</div>
-		<button id="msg-speaker-btn" class="msg-icon-btn" title="Read messages aloud">
-			<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05A4.5 4.5 0 0 0 16.5 12zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
-		</button>
+		<button id="msg-speaker-btn" class="msg-icon-btn" title="Read arriving messages aloud"></button>
 		<button id="msg-settings-btn" class="msg-icon-btn" title="Settings">&#9881;</button>
 		<button id="msg-panel-close" title="Close messages">Close</button>
 		<div id="msg-settings-menu">
@@ -5857,8 +5853,8 @@ function _ingestIncoming(m) {
 	if (isOpen) { if (isNew) _appendBubble(c, m); _markConvRead(cid); }
 	else if (isNew) { c.unread = (c.unread || 0) + 1; }
 	if (isNew) {
-		_playMsgTone();
-		if (_msgSpeak) setTimeout(() => _speakMessage(m), 850);   // read aloud, after the alert tone
+		if (_msgSpeak) _speakMessage(m);   // speaker on → read aloud instead of the alert tone
+		else _playMsgTone();
 		if (!isOpen) _notifyArrival(m, c);
 	}
 }
@@ -6346,20 +6342,25 @@ function _playMsgTone() {
 }
 
 // ── Read messages aloud (speaker toggle, Web Speech synthesis) ───────────────
+// Speaker icons: plain (on) vs. slashed/muted (off, the default).
+const _SPK_ON  = '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>';
+const _SPK_OFF = '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 15.91 21 14 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>';
 function _updateSpeakerBtn() {
 	const b = document.getElementById('msg-speaker-btn');
 	if (!b) return;
-	b.classList.toggle('on', _msgSpeak);
+	b.innerHTML = _msgSpeak ? _SPK_ON : _SPK_OFF;
 	b.title = _msgSpeak ? 'Reading messages aloud — tap to turn off' : 'Read arriving messages aloud';
 }
 function _toggleSpeak() {
 	_msgSpeak = !_msgSpeak;
 	try { localStorage.setItem('aprs_msg_speak', _msgSpeak ? '1' : '0'); } catch {}
 	_updateSpeakerBtn();
-	if (_msgSpeak) {
-		// Turning it on is a user gesture — unlock speech and confirm audibly.
-		try { speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance('Reading messages aloud')); } catch {}
-	} else { try { speechSynthesis.cancel(); } catch {} }
+	try {
+		speechSynthesis.cancel();
+		// Silent warm-up so speech is unlocked within this user gesture (required on
+		// some browsers) — without saying anything audible.
+		if (_msgSpeak) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); }
+	} catch {}
 }
 function _speakMessage(m) {
 	if (!_msgSpeak || !window.speechSynthesis) return;
