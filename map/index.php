@@ -2008,6 +2008,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 .msg-bubble-foot { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
 .msg-bubble-time { font-size: 10px; color: #aaa; font-variant-numeric: tabular-nums; }
 .msg-bubble-row.me .msg-bubble-time { color: #d6e6f2; }
+.msg-bubble-ack { font-size: 10px; color: #cfe0ec; margin-left: auto; }
 .msg-bubble-locbtn { background: none; border: none; padding: 0; cursor: pointer; color: #b0b6bb; line-height: 0; }
 .msg-bubble-locbtn:hover { color: #c0392b; }
 .msg-bubble-row.me .msg-bubble-locbtn { color: #cfe0ec; }
@@ -5554,6 +5555,7 @@ let _openConvId = null;       // conversation shown in the thread view
 let _pendingConv = null;      // {recipients} for a not-yet-created conversation
 const _msgSeen = new Set();   // message ids already placed in a thread (dedupe)
 const _deferredSpeak = new Set(); // ids to read aloud once their thread becomes active
+const _msgReceipts = new Map();   // message id -> {total, delivered, read} for MY sent messages
 
 // Restore a saved subscription.
 try {
@@ -5768,10 +5770,11 @@ function _bubbleHtml(m, c) {
 	const sender = me ? '' : '<div class="msg-bubble-sender">' + _senderLabelHtml(m) + '</div>';
 	const loc = (typeof m.lat === 'number' && typeof m.lon === 'number')
 		? '<button class="msg-bubble-locbtn" data-mid="' + m.id + '" title="Show where this was sent from">' + MSG_PIN_SVG + '</button>' : '';
+	const ack = me ? '<span class="msg-bubble-ack">' + _ackLabel(_msgReceipts.get(m.id)) + '</span>' : '';
 	return '<div class="msg-bubble-row ' + (me ? 'me' : 'them') + '">' +
 		'<div class="msg-bubble">' + sender +
 		'<div class="msg-bubble-text">' + _esc(m.text) + '</div>' +
-		'<div class="msg-bubble-foot">' + loc + '<span class="msg-bubble-time">' + _msgClockTime(m.ts) + '</span></div>' +
+		'<div class="msg-bubble-foot">' + loc + '<span class="msg-bubble-time">' + _msgClockTime(m.ts) + '</span>' + ack + '</div>' +
 		'</div></div>';
 }
 function _renderThread(c) {
@@ -5851,12 +5854,29 @@ async function _poll() {
 		const d = await _msgApi('poll', {body:{since_id: _msgLastId}});
 		if (!d) return;
 		if (d.last_id > _msgLastId) { _msgLastId = d.last_id; _persistSession(); }
+		let acksChanged = false;
+		if (d.receipts && d.receipts.length) {
+			for (const r of d.receipts) { _msgReceipts.set(r.message_id, r); acksChanged = true; }
+		}
 		if (d.messages && d.messages.length) {
 			for (const m of d.messages) _ingestIncoming(m);
 			if (_msgPanelOpen) _renderConvList();
 			_updateTotalUnread();
+		} else if (acksChanged && _openConvId != null) {
+			// A recipient just fetched/read one of my messages — refresh the open
+			// thread so the delivered/read acknowledgement updates.
+			const c = _convs.get(_openConvId);
+			if (c) _renderThread(c);
 		}
 	} catch {}
+}
+// Delivery acknowledgement for one of MY sent messages. "Sent" = queued; it is
+// delivered automatically when the recipient next comes online.
+function _ackLabel(r) {
+	if (!r || !r.total) return 'Sent';
+	if (r.read > 0) return r.total > 1 ? 'Read ' + r.read + '/' + r.total : 'Read ✓✓';
+	if (r.delivered > 0) return r.total > 1 ? 'Delivered ' + r.delivered + '/' + r.total : 'Delivered ✓';
+	return 'Sent';
 }
 function _ingestIncoming(m) {
 	const cid = m.conversation_id;

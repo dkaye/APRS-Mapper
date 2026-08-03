@@ -392,16 +392,20 @@ class MessagingDb
         }
     }
 
-    /** Read/delivery receipts for messages this sender sent, since $sinceId. */
+    /** Delivery/read receipts for this sender's recent messages. Deliberately
+     *  covers the last N sent messages (not only id > $sinceId): a delivery or
+     *  read that lands AFTER the message-id watermark — e.g. the recipient comes
+     *  online later — must still update the sender's acknowledgement. $sinceId is
+     *  accepted for call-site compatibility but no longer bounds the result. */
     public function receiptsForSender(int $senderId, int $sinceId): array
     {
         return $this->all(
             'SELECT d.message_id, COUNT(*) AS total,
                     SUM(CASE WHEN d.delivered_ts IS NOT NULL THEN 1 ELSE 0 END) AS delivered,
                     SUM(CASE WHEN d.read_ts IS NOT NULL THEN 1 ELSE 0 END) AS read
-             FROM deliveries d JOIN messages m ON m.id=d.message_id
-             WHERE m.sender_id=:s AND m.id > :since
-             GROUP BY d.message_id', [':s'=>$senderId, ':since'=>$sinceId]);
+             FROM deliveries d
+             WHERE d.message_id IN (SELECT id FROM messages WHERE sender_id=:s ORDER BY id DESC LIMIT 50)
+             GROUP BY d.message_id', [':s'=>$senderId]);
     }
 
     // ── legacy mobile-app compat (old ?mobile=… protocol over the new core) ─────
