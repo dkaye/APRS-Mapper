@@ -1723,6 +1723,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return Scaffold(
       drawerScrimColor: Colors.transparent,
+      // Opening the sidebar returns to normal view — hide any revealed
+      // (eyeball-off) iGate/aid marker. Clear on open, not close: tapping a tile
+      // closes the drawer right after selecting, and clearing on close would
+      // wipe the reveal we just set.
+      onDrawerChanged: (isOpen) {
+        if (isOpen && _revealedFixed != null) setState(() => _revealedFixed = null);
+      },
       drawer: MenuDrawer(
         config: _config,
         trackers: _trackers,
