@@ -1806,6 +1806,16 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                   if ((z - _scaleZoom).abs() > 0.05) {
                     setState(() => _scaleZoom = z);
                   }
+                  // Any user map gesture (pan, zoom, fling) returns to normal
+                  // view: hide a revealed (eyeball-off) iGate/aid marker. The
+                  // programmatic centering move on selection uses
+                  // MapEventSource.mapController and is ignored, as are layout
+                  // size changes.
+                  if (_revealedFixed != null &&
+                      event.source != MapEventSource.mapController &&
+                      event.source != MapEventSource.nonRotatedSizeChange) {
+                    setState(() => _revealedFixed = null);
+                  }
                 },
               ),
               children: [
