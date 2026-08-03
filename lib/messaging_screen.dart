@@ -72,7 +72,17 @@ class _MessagingScreenState extends State<MessagingScreen> {
     final pr = await widget.client.participants();
     _myId = pr.me;
     await _loadConversations();
-    await _poll(); // prime the watermark
+    // Prime the poll watermark WITHOUT alerting, so opening the chat doesn't
+    // replay old messages as tones/speech — only genuinely new arrivals do.
+    final res = await widget.client.poll(0);
+    for (final m in res.messages) {
+      _seen.add(m.id);
+    }
+    for (final r in res.receipts) {
+      _receipts[r.messageId] = r;
+    }
+    if (res.lastId > _lastId) _lastId = res.lastId;
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadConversations() async {
@@ -258,31 +268,48 @@ class _MessagingScreenState extends State<MessagingScreen> {
   @override
   Widget build(BuildContext context) {
     final inThread = _open != null;
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: _kDark,
-        foregroundColor: Colors.white,
-        title: Text(inThread ? _open!.label : 'Messages', overflow: TextOverflow.ellipsis),
-        leading: inThread
-            ? IconButton(icon: const Icon(Icons.arrow_back), onPressed: _backToInbox)
-            : IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.of(context).pop()),
-        actions: [
-          IconButton(
-            tooltip: _speak ? 'Reading messages aloud — tap to mute' : 'Read arriving messages aloud',
-            icon: Icon(_speak ? Icons.volume_up : Icons.volume_off),
-            onPressed: _toggleSpeak,
-          ),
-        ],
-      ),
-      body: inThread ? _buildThread() : _buildInbox(),
-      floatingActionButton: inThread
-          ? null
-          : FloatingActionButton.extended(
-              backgroundColor: _kBlue,
-              onPressed: _openPicker,
-              icon: const Icon(Icons.edit),
-              label: const Text('New message'),
+    // Keep the window open until the user taps Close: the system back gesture
+    // only steps a thread back to the inbox; it never dismisses messaging.
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (_open != null) _backToInbox();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          backgroundColor: _kDark,
+          foregroundColor: Colors.white,
+          titleSpacing: inThread ? 0 : null,
+          title: Text(inThread ? _open!.label : 'Messages', overflow: TextOverflow.ellipsis),
+          leading: inThread ? IconButton(icon: const Icon(Icons.arrow_back), tooltip: 'Back to conversations', onPressed: _backToInbox) : null,
+          actions: [
+            IconButton(
+              tooltip: _speak ? 'Reading messages aloud — tap to mute' : 'Read arriving messages aloud',
+              icon: Icon(_speak ? Icons.volume_up : Icons.volume_off),
+              onPressed: _toggleSpeak,
             ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: TextButton.icon(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close, size: 18),
+                label: const Text('Close'),
+                style: TextButton.styleFrom(foregroundColor: Colors.white, backgroundColor: Colors.white24),
+              ),
+            ),
+          ],
+        ),
+        body: inThread ? _buildThread() : _buildInbox(),
+        floatingActionButton: inThread
+            ? null
+            : FloatingActionButton.extended(
+                backgroundColor: _kBlue,
+                onPressed: _openPicker,
+                icon: const Icon(Icons.edit),
+                label: const Text('New message'),
+              ),
+      ),
     );
   }
 
@@ -380,13 +407,22 @@ class _MessagingScreenState extends State<MessagingScreen> {
           Padding(
             padding: const EdgeInsets.only(top: 2),
             child: Text(
-              _clockTime(m.ts) + (rec != null ? (rec.read > 0 ? '  ✓✓' : (rec.delivered > 0 ? '  ✓' : '')) : ''),
+              _clockTime(m.ts) + (me ? '   ${_ackLabel(rec)}' : ''),
               style: TextStyle(fontSize: 10, color: me ? Colors.white70 : Colors.grey),
             ),
           ),
         ]),
       ),
     );
+  }
+
+  // Delivery acknowledgement for a message I sent. "Sent" means it's queued and
+  // will be delivered when the recipient is next online.
+  String _ackLabel(MsgReceipt? r) {
+    if (r == null || r.total == 0) return 'Sent';
+    if (r.read > 0) return r.total > 1 ? 'Read ${r.read}/${r.total}' : 'Read ✓✓';
+    if (r.delivered > 0) return r.total > 1 ? 'Delivered ${r.delivered}/${r.total}' : 'Delivered ✓';
+    return 'Sent';
   }
 
   String _clockTime(int ts) {
