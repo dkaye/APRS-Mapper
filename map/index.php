@@ -5532,6 +5532,7 @@ const _convs   = new Map();   // id -> {id,kind,title,members,unread,last_id,pre
 let _openConvId = null;       // conversation shown in the thread view
 let _pendingConv = null;      // {recipients} for a not-yet-created conversation
 const _msgSeen = new Set();   // message ids already placed in a thread (dedupe)
+const _deferredSpeak = new Set(); // ids to read aloud once their thread becomes active
 
 // Restore a saved subscription.
 try {
@@ -5738,6 +5739,7 @@ async function _openConversation(cid) {
 		}
 	} catch {}
 	_markConvRead(cid);
+	if (_openConvId === cid) _speakDeferred(cid);   // read anything that arrived while this wasn't active
 	setTimeout(() => document.getElementById('msg-compose-text').focus(), 60);
 }
 function _bubbleHtml(m, c) {
@@ -5810,7 +5812,7 @@ async function _sendCurrent() {
 		c.loaded = true;
 		for (const m of c.messages) _msgSeen.add(m.id);
 		_convs.set(cid, c);
-		if (_openConvId === cid) { _showThreadView(_esc(_convLabel(c)), _threadSub(c)); _renderThread(c); }
+		if (_openConvId === cid) { _showThreadView(_esc(_convLabel(c)), _threadSub(c)); _renderThread(c); _speakDeferred(cid); }
 	} catch (e) {
 		if (e.message !== 'auth') { errEl.textContent = 'Send failed. Please try again.'; errEl.style.display = 'block'; }
 	} finally { btn.disabled = false; ta.focus(); }
@@ -5853,9 +5855,28 @@ function _ingestIncoming(m) {
 	if (isOpen) { if (isNew) _appendBubble(c, m); _markConvRead(cid); }
 	else if (isNew) { c.unread = (c.unread || 0) + 1; }
 	if (isNew) {
-		if (_msgSpeak) _speakMessage(m);   // speaker on → read aloud instead of the alert tone
-		else _playMsgTone();
+		// Read aloud only when this message is in the thread you're actually
+		// looking at (and you're not mid-compose) — so you hear what you can see.
+		// Otherwise defer the read until that thread becomes active, and alert
+		// with the tone in the meantime.
+		const composing = document.activeElement === document.getElementById('msg-compose-text');
+		if (_msgSpeak && isOpen && !composing) {
+			_speakMessage(m);
+		} else {
+			if (_msgSpeak) _deferredSpeak.add(m.id);
+			_playMsgTone();
+		}
 		if (!isOpen) _notifyArrival(m, c);
+	}
+}
+// Read aloud any messages in $cid that were deferred while it wasn't the active
+// thread (they're now visible in the window). Spoken in id order.
+function _speakDeferred(cid) {
+	if (!_msgSpeak || !_deferredSpeak.size) return;
+	const c = _convs.get(cid);
+	if (!c) return;
+	for (const m of (c.messages || [])) {
+		if (_deferredSpeak.has(m.id)) { _deferredSpeak.delete(m.id); _speakMessage(m); }
 	}
 }
 async function _markConvRead(cid) {
@@ -6355,6 +6376,7 @@ function _toggleSpeak() {
 	_msgSpeak = !_msgSpeak;
 	try { localStorage.setItem('aprs_msg_speak', _msgSpeak ? '1' : '0'); } catch {}
 	_updateSpeakerBtn();
+	if (!_msgSpeak) _deferredSpeak.clear();
 	try {
 		speechSynthesis.cancel();
 		// Silent warm-up so speech is unlocked within this user gesture (required on
