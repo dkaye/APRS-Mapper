@@ -112,6 +112,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   // section eyeball is off — set when tapped in the drawer, cleared on any
   // "return to normal view" action (map tap, reset, recenter, new selection).
   String? _revealedFixed;
+  // A tracker whose full "ID Name" label is forced on the map (overriding the
+  // ID/Name eyeballs) because it was just tapped in the sidebar. Like
+  // _revealedFixed, it's transient — cleared on any subsequent action.
+  String? _fullLabelTrackerId;
   int _selectionClickCount = 0;
   Set<String> _blinkingIds = {};
   bool _blinkOn = true;
@@ -1194,7 +1198,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   // ── Map controls ──────────────────────────────────────────────────────────
 
   Future<void> _handleRecenter() async {
-    if (_revealedFixed != null) setState(() => _revealedFixed = null);
+    _clearTransientMapHighlights();
     if (_locationState == _LocationState.permanentlyDenied ||
         _locationState == _LocationState.denied) {
       if (!mounted) return;
@@ -1234,8 +1238,16 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _mapController.rotate(0);
   }
 
+  // Clear transient map highlights (a revealed eyeball-off iGate/aid, and a
+  // forced full "ID Name" tracker label) — the "return to normal view" reset.
+  void _clearTransientMapHighlights() {
+    if (_revealedFixed != null || _fullLabelTrackerId != null) {
+      setState(() { _revealedFixed = null; _fullLabelTrackerId = null; });
+    }
+  }
+
   void _handleReset() {
-    if (_revealedFixed != null) setState(() => _revealedFixed = null);
+    _clearTransientMapHighlights();
     if (_savedCenter != null) {
       _mapController.move(_savedCenter!, _savedZoom ?? _config.mapZoom);
       _mapController.rotate(_savedRotation ?? 0);
@@ -1387,6 +1399,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     setState(() {
       _selectedId = t.id;
       _revealedFixed = null;   // selecting a tracker returns to normal view
+      _fullLabelTrackerId = t.id;   // force ID+Name label until the next action
       _trailEntries = [];
       _cellTrailPts  = [];
       _radioTrailPts = [];
@@ -1404,6 +1417,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     setState(() {
       _selectedId = m.name;
       _revealedFixed = m.name;   // reveal it if its section eyeball is off
+      _fullLabelTrackerId = null;   // a fixed-marker selection reverts any tracker label
       _trailEntries  = [];
       _cellTrailPts  = [];
       _radioTrailPts = [];
@@ -1728,7 +1742,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       // closes the drawer right after selecting, and clearing on close would
       // wipe the reveal we just set.
       onDrawerChanged: (isOpen) {
-        if (isOpen && _revealedFixed != null) setState(() => _revealedFixed = null);
+        if (isOpen) _clearTransientMapHighlights();
       },
       drawer: MenuDrawer(
         config: _config,
@@ -1796,25 +1810,22 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 interactionOptions: const InteractionOptions(
                   flags: InteractiveFlag.all & ~InteractiveFlag.pinchMove,
                 ),
-                // Tapping the empty map returns to normal view: a revealed
-                // (eyeball-off) iGate/aid marker is hidden again.
-                onTap: (_, __) {
-                  if (_revealedFixed != null) setState(() => _revealedFixed = null);
-                },
+                // Tapping the empty map returns to normal view: hide a revealed
+                // (eyeball-off) iGate/aid marker and drop a forced tracker label.
+                onTap: (_, __) => _clearTransientMapHighlights(),
                 onMapEvent: (event) {
                   final z = _mapController.camera.zoom;
                   if ((z - _scaleZoom).abs() > 0.05) {
                     setState(() => _scaleZoom = z);
                   }
                   // Any user map gesture (pan, zoom, fling) returns to normal
-                  // view: hide a revealed (eyeball-off) iGate/aid marker. The
-                  // programmatic centering move on selection uses
-                  // MapEventSource.mapController and is ignored, as are layout
-                  // size changes.
-                  if (_revealedFixed != null &&
-                      event.source != MapEventSource.mapController &&
+                  // view: hide a revealed (eyeball-off) iGate/aid marker and drop
+                  // a forced tracker label. The programmatic centering move on
+                  // selection uses MapEventSource.mapController and is ignored, as
+                  // are layout size changes.
+                  if (event.source != MapEventSource.mapController &&
                       event.source != MapEventSource.nonRotatedSizeChange) {
-                    setState(() => _revealedFixed = null);
+                    _clearTransientMapHighlights();
                   }
                 },
               ),
@@ -1898,7 +1909,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 if (showTrackers && _isOnline)
                   TrackerLayer(
                     trackers: _trackers,
-                    selectedId: _selectedId,
+                    fullLabelId: _fullLabelTrackerId,
                     blinkingIds: _blinkingIds,
                     blinkOn: _blinkOn,
                     showIds: _showTrackerIds,

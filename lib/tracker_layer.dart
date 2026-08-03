@@ -16,7 +16,9 @@ const _leftPad  = (_markerW - _dotW) / 2; // dot center x = _markerW/2 ✓
 
 class TrackerLayer extends StatelessWidget {
   final List<TrackerData> trackers;
-  final String? selectedId;
+  // A tracker whose full "ID Name" label is forced (overriding the ID/Name
+  // eyeballs) because it was just tapped in the sidebar; transient.
+  final String? fullLabelId;
   final Set<String> blinkingIds;
   final bool blinkOn;
   final bool showIds;
@@ -26,7 +28,7 @@ class TrackerLayer extends StatelessWidget {
   const TrackerLayer({
     super.key,
     required this.trackers,
-    this.selectedId,
+    this.fullLabelId,
     this.blinkingIds = const {},
     this.blinkOn = true,
     this.showIds = true,
@@ -39,22 +41,23 @@ class TrackerLayer extends StatelessWidget {
     return MarkerLayer(
       markers: trackers.where((t) => t.hasPosition).map((t) {
         final color = _markerColor(t.color);
-        final selected = t.id == selectedId;
+        final fullLabel = t.id == fullLabelId;
         final blinking = blinkingIds.contains(t.id);
         final opacity = blinking ? (blinkOn ? 1.0 : 0.15) : 1.0;
 
         final dot = _TrackerMarker(color: color, mobile: t.mobile);
-        // A selected (short- or long-tapped) tracker always shows "id name". A resting
-        // tracker shows whatever the sidebar ID / Name eyes enable (both on by default).
+        // A just-tapped tracker briefly shows "id name" regardless of the eyes; it
+        // reverts on the next action. Otherwise show whatever the sidebar ID / Name
+        // eyes enable (both on by default).
         final restingParts = <String>[
           if (showIds) t.id,
           if (showNames && t.name.isNotEmpty) t.name,
         ];
-        final labelText = selected
+        final labelText = fullLabel
             ? (t.name.isNotEmpty ? '${t.id} ${t.name}' : t.id)
             : restingParts.join(' ');
 
-        final labelWidget = selected
+        final labelWidget = fullLabel
             ? Text(
                 labelText,
                 style: const TextStyle(
