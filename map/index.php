@@ -4613,16 +4613,15 @@ function _resetMapView() {
 	clearAllSelections();
 	map.setView([defaultView.lat, defaultView.lon], defaultView.zoom);
 }
-// Clicking the map background, or pressing the spacebar, closes the messaging
-// window (if open) and resets the map.
-function _dismissToMap() {
-	if (typeof _closePanel === 'function') _closePanel();
-	_resetMapView();
-}
-map.on('click', _dismissToMap);
-// Escape closes the top-most messaging surface first (a sub-modal or the
-// settings menu); once nothing is left to close, it closes the panel and
-// resets the map.
+// Clicking the map background just closes the messaging panel when it's open;
+// it never resets the map (a modal's backdrop intercepts clicks, so this only
+// applies to the docked panel).
+map.on('click', function() {
+	if (typeof _closePanel === 'function' && _msgPanelOpen) _closePanel();
+});
+// Escape closes the top-most open surface — a messaging sub-modal, the settings
+// menu, then the panel — one level per press. Only when nothing is open does
+// Escape reset the map.
 document.addEventListener('keydown', function(e) {
 	if (e.key !== 'Escape') return;
 	const allM = document.getElementById('msg-all-modal');
@@ -4633,7 +4632,8 @@ document.addEventListener('keydown', function(e) {
 	if (pickM && pickM.style.display === 'flex')  { pickM.style.display = 'none'; return; }
 	if (subM && subM.style.display === 'flex')    { subM.style.display = 'none'; return; }
 	if (setMenu && setMenu.classList.contains('open')) { if (typeof _closeSettings === 'function') _closeSettings(); return; }
-	_dismissToMap();
+	if (_msgPanelOpen) { if (typeof _closePanel === 'function') _closePanel(); return; }
+	_resetMapView();   // nothing open → reset the map
 });
 
 // ── Save Map button ────────────────────────────────────────────────────────
