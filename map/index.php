@@ -3955,7 +3955,9 @@ function loadConfig() {
 				if (cfg.courses)     applyCourses(cfg.courses);
 				if (cfg.aidstations) applyAidStations(cfg.aidstations);
 				if (cfg.igates)      applyIgates(cfg.igates);
-				if (cfg.section_visibility) applySectionVisibility(cfg.section_visibility);
+				// NOTE: section_visibility is deliberately NOT re-applied on polls — it
+				// is only a first-load default (applied via applyConfig). Re-applying it
+				// here would override the user's own show/hide toggles every poll.
 				// Trackers: skip if admin made local edits not yet saved to server
 				if (!storedLocalConfig?._localTrackerEdited && cfg.trackers) applyTrackerConfig(cfg.trackers);
 				if (cfg.mobile_beacons) _applyBeaconConfig(cfg.mobile_beacons);
