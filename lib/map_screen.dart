@@ -34,6 +34,8 @@ import 'online_poller.dart';
 import 'remote_config.dart';
 import 'tracker_data.dart';
 import 'tracker_layer.dart';
+import 'messaging_client.dart';
+import 'messaging_screen.dart';
 import 'widgets/mode_indicator.dart';
 import 'widgets/offline_banner.dart';
 import 'widgets/update_banner.dart';
@@ -137,6 +139,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
   // Background location / sharing
   final _bgLocation = BackgroundLocationService();
+  // Messaging client for the new chat screen (auth = the tracker token).
+  late final MessagingClient _msgClient = MessagingClient(() => _bgLocation.session.token);
   bool _isSharing = false;
   final _audioPlayer = AudioPlayer();
   final _notifPlugin = FlutterLocalNotificationsPlugin();
@@ -363,6 +367,18 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     };
   }
 
+  // Opens the redesigned chat screen (conversation list → thread → composer).
+  void _openMessaging() {
+    if (!_isSharing) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Start sharing your location to send messages'),
+        duration: Duration(seconds: 3),
+      ));
+      return;
+    }
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => MessagingScreen(client: _msgClient)));
+  }
+
   void _showSendMessageDialog({String? prefill}) {
     if (!_isSharing) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -571,6 +587,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _handleInboundMessage(InboundMessage msg) async {
+    // The chat screen is open and shows arriving messages live via its own poll,
+    // so don't also raise the legacy dialog/notification. (background_location
+    // still acks it so it isn't re-delivered.)
+    if (MessagingScreen.isOpen) return;
     setState(() {
       _msgLog.add((label: msg.fromLabel, text: msg.text, isMe: false, time: DateTime.fromMillisecondsSinceEpoch(msg.ts * 1000)));
       if (_msgLog.length > 30) _msgLog.removeAt(0);
@@ -2068,7 +2088,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         onShareToggle: _toggleSharing,
         onResetMap: _handleReset,
         onSaveMap: _handleSaveMap,
-        onSendMessage: _showSendMessageDialog,
+        onSendMessage: _openMessaging,
         onActivityModeChange: _isSharing ? _changeActivityMode : null,
         onStartSharingWithMode: _isSharing ? null : _startSharingWithMode,
       ),
