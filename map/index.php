@@ -1969,7 +1969,8 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 #msg-allview-search.on { display: block; }
 #msg-allview-searchbox { width: 100%; box-sizing: border-box; padding: 7px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; font-family: inherit; }
 #msg-allview-scroll { flex: 1; min-height: 0; overflow-y: auto; background: #f4f6f8; }
-.msg-all-item { padding: 7px 12px; border-bottom: 1px solid #e9e9e9; }
+.msg-all-item { padding: 7px 12px; border-bottom: 1px solid #e9e9e9; cursor: pointer; }
+.msg-all-item:hover { background: #eef3f7; }
 .msg-all-item .who { font-size: 12px; font-weight: 600; color: #1a5276; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .msg-all-item .who .to { color: #888; font-weight: 400; }
 .msg-all-item .who .tm { color: #aaa; font-weight: 400; font-size: 10px; margin-left: 6px; font-variant-numeric: tabular-nums; }
@@ -5778,12 +5779,32 @@ function _renderAllView() {
 	}
 	scroll.innerHTML = rows.map(m => {
 		const to = m.broadcast ? 'All Trackers' : (m.to_label || '');
-		return '<div class="msg-all-item"><div class="who">' + _esc(_msgSenderName(m)) +
+		return '<div class="msg-all-item" data-mid="' + m.id + '" title="Open this conversation to reply"><div class="who">' + _esc(_msgSenderName(m)) +
 			' <span class="to">→ ' + _esc(to) + '</span><span class="tm">' + _esc(_msgFmtStamp(m.ts)) + '</span></div>' +
 			'<div class="tx">' + _hlText(_esc(m.text || ''), q) + '</div></div>';
 	}).join('');
+	// Clicking a message opens its conversation so the operator can reply.
+	scroll.querySelectorAll('.msg-all-item').forEach(el => el.addEventListener('click', () => {
+		const m = _allViewRows.find(x => x.id === +el.dataset.mid);
+		if (m) _openFromAllView(m);
+	}));
 	document.getElementById('msg-allview-count').textContent = rows.length + (rows.length === 1 ? ' message' : ' messages') + (q ? ' matching' : '');
 	scroll.scrollTop = scroll.scrollHeight;   // newest at the bottom
+}
+// Open the conversation a View-All message belongs to, then leave View All so the
+// operator lands in the thread and can reply. If they aren't a member of that
+// conversation (traffic between others), build a stub so it renders — the reply
+// is still delivered to the conversation's members via its id.
+function _openFromAllView(m) {
+	const cid = m.conversation_id;
+	if (!cid) return;
+	if (_msgViewAll) _toggleViewAll();
+	if (!_convs.get(cid)) {
+		const others = (m.from_id !== _msgMeId)
+			? [{id:m.from_id, kind:m.from_kind, key:m.from_key, short_id:m.from_short, display_name:m.from_name}] : [];
+		_convs.set(cid, {id:cid, kind:m.broadcast ? 'broadcast' : 'direct', title:null, members:others, unread:0, last_id:m.id, preview:null, messages:[], loaded:false});
+	}
+	_openConversation(cid);
 }
 function _toggleAllSearch() {
 	_allViewSearchOn = !_allViewSearchOn;
