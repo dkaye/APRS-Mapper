@@ -156,7 +156,31 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           _locationState == _LocationState.notRequested) {
         _recheckLocationPermission();
       }
+    } else if (state == AppLifecycleState.paused) {
+      _maybeShowKeepOpenReminder();
     }
+  }
+
+  DateTime? _lastKeepOpenReminder;
+  // Tesla-style nudge: iOS suspends a backgrounded app, which pauses beacon
+  // uploads and message polling (Android keeps them alive via the foreground
+  // service, so this doesn't apply there). When the user leaves the app while
+  // actively sharing, remind them to keep it open. Throttled so quick
+  // app-switches don't stack notifications.
+  void _maybeShowKeepOpenReminder() {
+    if (!Platform.isIOS || !_isSharing) return;
+    final now = DateTime.now();
+    if (_lastKeepOpenReminder != null &&
+        now.difference(_lastKeepOpenReminder!) < const Duration(minutes: 3)) return;
+    _lastKeepOpenReminder = now;
+    unawaited(_notifPlugin.show(
+      id: 990101,
+      title: 'APRS Map',
+      body: 'Keep the app open if you want to be tracked or receive messages.',
+      notificationDetails: const NotificationDetails(
+        iOS: DarwinNotificationDetails(presentAlert: true, presentSound: false, presentBadge: false),
+      ),
+    ));
   }
 
   // Called on app resume to pick up permission changes made in Settings.
