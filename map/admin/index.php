@@ -100,7 +100,8 @@ $canEditTrackers = $canEdit || has_permission('admin.edit_trackers');
 // Block mutating POST requests for view-only users — except that a Trackers-only
 // editor (admin.edit_trackers) may reach the Trackers-section endpoints.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$canEdit) {
-    $trackerPostEndpoints = ['savetrackers', 'removemobile', 'removemobilebulk', 'blockmobile', 'hidemobile', 'renamemobile', 'setmode'];
+    $trackerPostEndpoints = ['savetrackers', 'removemobile', 'removemobilebulk', 'blockmobile', 'hidemobile',
+                             'renamemobile', 'setmode', 'setdisplayid', 'sethamcallsign', 'resetbeacons'];
     $isTrackerPost = false;
     foreach ($trackerPostEndpoints as $ep) { if (isset($_GET[$ep])) { $isTrackerPost = true; break; } }
     if (!($isTrackerPost && has_permission('admin.edit_trackers'))) {
