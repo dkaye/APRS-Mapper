@@ -15,7 +15,7 @@
  *   ?config  Map/background/course/tracker config from config.yaml (ETag-cached)
  */
 
-define('WEB_VERSION', '1.20.3+12');
+define('WEB_VERSION', '1.21.0+12');
 
 // ── Client/server API contract version ────────────────────────────────────────
 // Advertised in the ?json and ?config responses so mobile apps can detect an
@@ -110,6 +110,7 @@ if (isset($_GET['json'])) {
 				'acc'    => isset($t['aprs_acc']) ? (float)$t['aprs_acc'] : null,
 				'fix_ts' => isset($t['aprs_fix_ts']) ? (int)$t['aprs_fix_ts'] : null,
 				'ham_callsign' => $t['ham_callsign'] ?? null, 'has_session' => $hasSession,
+				'hidden' => !empty($t['hidden']),
 				'carrier' => $t['device_info']['carrier'] ?? null];
 		}
 	}
@@ -138,6 +139,7 @@ if (isset($_GET['json'])) {
 		$t['mobile'] = true;
 		$t['id']     = $am['id'];
 		$t['name']   = $am['name'];
+		$t['hidden'] = !empty($am['hidden']);   // hidden from map, still listed in sidebar
 		if ($am['sharing_mode'] !== '') $t['sharing_mode'] = $am['sharing_mode'];
 		if ($am['carrier'] !== null) $t['carrier'] = $am['carrier'];
 		if ($am['ham_callsign'] !== null) {
@@ -196,7 +198,8 @@ if (isset($_GET['json'])) {
 			$entry = ['callsign' => $cs, 'id' => $ms['id'], 'name' => $ms['name'],
 			          'lastUpdate' => $lu, 'timeSinceLastUpdate' => $age, 'time' => $tf,
 			          'color' => ($age > 0 && $age <= 120) ? 'green' : (($age > 0 && $age <= 300) ? 'blue' : 'red'),
-			          'lat' => $ms['lat'], 'lon' => $ms['lon'], 'path' => '', 'mobile' => true];
+			          'lat' => $ms['lat'], 'lon' => $ms['lon'], 'path' => '', 'mobile' => true,
+			          'hidden' => !empty($ms['hidden'])];
 			if ($ms['sharing_mode'] !== '') $entry['sharing_mode'] = $ms['sharing_mode'];
 			if ($ms['ham_callsign'] !== null) $entry['ham_callsign'] = $ms['ham_callsign'];
 			if ($ms['carrier'] !== null) $entry['carrier'] = $ms['carrier'];
@@ -491,7 +494,13 @@ if (isset($_GET['messaging'])) {
 		'mobileFile'  => __DIR__ . '/mobile_trackers.json',
 		'authPerm'    => 'msgHasAuthPermission',
 	];
-	$body = json_decode(file_get_contents('php://input'), true) ?: [];
+	// Photo uploads (send with attachment) arrive as multipart/form-data — its
+	// fields land in $_POST and the file in $_FILES, not php://input. Everything
+	// else is a JSON body.
+	$_ct = $_SERVER['CONTENT_TYPE'] ?? '';
+	$body = (stripos($_ct, 'multipart/form-data') !== false)
+		? $_POST
+		: (json_decode(file_get_contents('php://input'), true) ?: []);
 	messaging_handle($_GET['messaging'], $body, $ctx);
 	exit;
 }
@@ -1056,8 +1065,13 @@ button:hover{background:#2471a3}
     <div class="err"><?= $_pwError ? 'Incorrect password — please try again.' : '' ?></div>
     <button type="submit">Enter</button>
   </form>
-  <a class="cancel" onclick="history.back()">Cancel</a>
+  <a class="cancel" id="gate-cancel" href="javascript:void(0)">Cancel <span style="opacity:.65">(or press ESC)</span></a>
 </div>
+<script>
+  function gateCancel() { history.back(); }
+  document.getElementById('gate-cancel').addEventListener('click', gateCancel);
+  document.addEventListener('keydown', function(e) { if (e.key === 'Escape') gateCancel(); });
+</script>
 </body>
 </html><?php
         exit;
@@ -2000,6 +2014,9 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 .msg-bubble-time { font-size: 10px; color: #aaa; font-variant-numeric: tabular-nums; }
 .msg-bubble-row.me .msg-bubble-time { color: #d6e6f2; }
 .msg-bubble-ack { font-size: 10px; color: #cfe0ec; margin-left: auto; }
+.msg-bubble-img { display: block; max-width: 220px; max-height: 260px; width: auto; height: auto; border-radius: 8px; margin-bottom: 4px; cursor: zoom-in; object-fit: cover; }
+.msg-photo-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; z-index: 12000; cursor: zoom-out; }
+.msg-photo-overlay img { max-width: 94vw; max-height: 94vh; border-radius: 4px; box-shadow: 0 4px 30px rgba(0,0,0,0.5); }
 .msg-bubble-locbtn { background: none; border: none; padding: 0; cursor: pointer; color: #b0b6bb; line-height: 0; }
 .msg-bubble-locbtn:hover { color: #c0392b; }
 .msg-bubble-row.me .msg-bubble-locbtn { color: #cfe0ec; }
@@ -2673,7 +2690,15 @@ new (L.Control.extend({
 			if (!isMobile) {
 				const exitBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
 				exitBtn2.textContent = 'Exit';
-				L.DomEvent.on(exitBtn2, 'click', () => { window.location.href = 'http://localhost:8080/exit'; });
+				L.DomEvent.on(exitBtn2, 'click', () => {
+					// Display-Pi kiosk exit: kill-server on localhost:8080 runs
+					// `pkill chromium` for GET /exit. Use fetch, not a navigation —
+					// only fetch/XHR completes the Private-Network-Access + CORS
+					// handshake kill-server advertises, and a normal browser with no
+					// kill-server listening fails quietly here instead of navigating
+					// off to an unreachable-URL error page.
+					fetch('http://localhost:8080/exit', { mode: 'cors', cache: 'no-store' }).catch(() => {});
+				});
 				L.DomEvent.disableClickPropagation(exitBtn2);
 				const connBtn2 = L.DomUtil.create('button', 'kiosk-footer-btn', d);
 				connBtn2.textContent = 'IP';
@@ -3670,6 +3695,9 @@ function updateDesktopLegend(trackers, merge = false) {
 		item.querySelector('.legend-name').textContent      = t.name;
 		item.querySelector('.legend-mode').innerHTML        = _modeIcon(t.sharing_mode || '', t.mobile);
 		item.querySelector('.legend-time').textContent      = t.lat === null ? '—' : color === 'red' ? 'stale' : t.time;
+		// Hidden-from-map trackers stay listed here but dimmed, with a tooltip.
+		item.style.opacity = t.hidden ? '0.5' : '';
+		item.title = t.hidden ? 'Hidden from map — listed here only' : '';
 		// Update onclick every poll so beacon-status transitions take effect immediately.
 		item.onclick = hasBeacon
 			? () => onLegendClick(t.callsign)
@@ -3756,6 +3784,7 @@ function updateMobileLegend(trackers, merge = false) {
 		item.querySelector('.m-name').textContent      = t.name;
 		item.querySelector('.m-mode').innerHTML        = _modeIcon(t.sharing_mode || '', t.mobile);
 		item.querySelector('.m-time').textContent      = t.lat === null ? '—' : color === 'red' ? 'stale' : t.time;
+		item.style.opacity = t.hidden ? '0.5' : '';   // hidden from map, still listed
 		if (_orderChanged) legend.appendChild(item);  // re-order only when the sequence changed
 	});
 
@@ -3805,11 +3834,14 @@ function updateMap() {
 				lastBeacons[t.callsign] = t.lastUpdate;
 			});
 
-			const located = trackers.filter(t => t.lat !== null && t.lon !== null);
+			// Hidden trackers (admin "Hide" toggle) stay in the sidebar but get no map
+			// marker — exclude them from the located set, and drop any marker they had.
+			const located = trackers.filter(t => t.lat !== null && t.lon !== null && !t.hidden);
 			const current = new Set(trackers.map(t => t.callsign));
+			const hiddenNow = new Set(trackers.filter(t => t.hidden).map(t => t.callsign));
 
 			Object.keys(markers).forEach(cs => {
-				if (!current.has(cs)) {
+				if (!current.has(cs) || hiddenNow.has(cs)) {
 					markers[cs].remove();
 					delete markers[cs];
 					if (trackerPopups[cs]) { trackerPopups[cs].remove(); delete trackerPopups[cs]; }
@@ -4506,14 +4538,14 @@ if (!isMobile) {
 }
 
 // ── Map interactions ───────────────────────────────────────────────────────
-map.on('contextmenu', function(e) {
+function setOriginAt(latlng, oe) {
 	if (Date.now() < suppressOriginUntil) return;
-	if (e.originalEvent?.target?.closest('.tracker-marker, .tracker-label')) return;
-	origin = e.latlng;
+	if (oe?.target?.closest('.tracker-marker, .tracker-label')) return;
+	origin = latlng;
 	if (originMarker) {
-		originMarker.setLatLng(e.latlng);
+		originMarker.setLatLng(latlng);
 	} else {
-		originMarker = L.circleMarker(e.latlng, {
+		originMarker = L.circleMarker(latlng, {
 			radius: isMobile ? 8 : 7, color: '#c0392b', weight: 2.5,
 			fillColor: '#e74c3c', fillOpacity: 0.25
 		}).addTo(map);
@@ -4528,9 +4560,18 @@ map.on('contextmenu', function(e) {
 		}
 	}
 	if (isMobile && navigator.vibrate) navigator.vibrate(40);
+}
+map.on('contextmenu', function(e) {
+	setOriginAt(e.latlng, e.originalEvent);
 });
 
 map.on('click', function(e) {
+	// Ctrl/Cmd+click sets the Origin — a laptop-friendly alternative to
+	// right-click / long-press, since many trackpads can't easily right-click.
+	if (e.originalEvent && (e.originalEvent.ctrlKey || e.originalEvent.metaKey)) {
+		setOriginAt(e.latlng, e.originalEvent);
+		return;
+	}
 	if (!origin) return;
 	const dist = haversineDistance(origin.lat, origin.lng, e.latlng.lat, e.latlng.lng);
 	const brng = bearingTo(origin.lat, origin.lng, e.latlng.lat, e.latlng.lng);
@@ -5683,7 +5724,7 @@ function _renderAllView() {
 			? '<button class="msg-all-loc2" data-mid="' + m.id + '" title="Show where this message was sent from">' + MSG_PIN_SVG + '</button>' : '';
 		return '<div class="msg-all-item" data-mid="' + m.id + '" title="Open this conversation to reply"><div class="who"><span class="nm">' + _esc(_msgSenderName(m)) +
 			' <span class="to">→ ' + _esc(to) + '</span></span><span class="tm">' + _esc(_msgFmtStamp(m.ts)) + '</span>' + loc + '</div>' +
-			'<div class="tx">' + _hlText(_esc(m.text || ''), q) + '</div></div>';
+			'<div class="tx">' + (m.photo ? '📷 ' : '') + _hlText(_esc(m.text || (m.photo ? 'Photo' : '')), q) + '</div></div>';
 	}).join('');
 	// Clicking a message opens its conversation so the operator can reply.
 	scroll.querySelectorAll('.msg-all-item').forEach(el => el.addEventListener('click', () => {
@@ -5794,14 +5835,28 @@ async function _openConversation(cid) {
 function _bubbleHtml(m, c) {
 	const me = (m.from_id === _msgMeId);
 	const sender = me ? '' : '<div class="msg-bubble-sender">' + _senderLabelHtml(m) + '</div>';
+	const photo = m.photo
+		? '<img class="msg-bubble-img" data-mid="' + m.id + '" src="index.php?messaging=photo&id=' + m.id + '&token=' + encodeURIComponent(_msgToken || '') + '" alt="Attached photo" loading="lazy">'
+		: '';
+	const textHtml = m.text ? '<div class="msg-bubble-text">' + _esc(m.text) + '</div>' : '';
 	const loc = (typeof m.lat === 'number' && typeof m.lon === 'number')
 		? '<button class="msg-bubble-locbtn" data-mid="' + m.id + '" title="Show where this was sent from">' + MSG_PIN_SVG + '</button>' : '';
 	const ack = me ? '<span class="msg-bubble-ack">' + _ackLabel(_msgReceipts.get(m.id)) + '</span>' : '';
 	return '<div class="msg-bubble-row ' + (me ? 'me' : 'them') + '">' +
-		'<div class="msg-bubble">' + sender +
-		'<div class="msg-bubble-text">' + _esc(m.text) + '</div>' +
+		'<div class="msg-bubble">' + sender + photo + textHtml +
 		'<div class="msg-bubble-foot">' + loc + '<span class="msg-bubble-time">' + _msgClockTime(m.ts) + '</span>' + ack + '</div>' +
 		'</div></div>';
+}
+// Full-size photo lightbox (tap the thumbnail; tap anywhere to close).
+function _openMsgPhoto(url) {
+	const ov = document.createElement('div');
+	ov.className = 'msg-photo-overlay';
+	const img = document.createElement('img');
+	img.src = url; img.alt = 'Attached photo';
+	ov.appendChild(img);
+	ov.addEventListener('click', () => ov.remove());
+	document.addEventListener('keydown', function esc(e) { if (e.key === 'Escape') { ov.remove(); document.removeEventListener('keydown', esc); } });
+	document.body.appendChild(ov);
 }
 function _renderThread(c) {
 	const scroll = document.getElementById('msg-thread-scroll');
@@ -5823,6 +5878,10 @@ function _wireLocButtons(root) {
 	root.querySelectorAll('.msg-bubble-locbtn').forEach(b => {
 		if (b._wired) return; b._wired = true;
 		b.addEventListener('click', e => { e.stopPropagation(); _showMsgLocation(_msgFindById(+b.dataset.mid)); });
+	});
+	root.querySelectorAll('.msg-bubble-img').forEach(img => {
+		if (img._wired) return; img._wired = true;
+		img.addEventListener('click', e => { e.stopPropagation(); _openMsgPhoto(img.src); });
 	});
 }
 function _msgFindById(id) {

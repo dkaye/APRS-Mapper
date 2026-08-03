@@ -98,6 +98,32 @@ function _msg_resolve_recipients(MessagingDb $db, array $ctx, array $keys): arra
 }
 
 // ── main dispatcher ───────────────────────────────────────────────────────────
+/**
+ * Validate + store an uploaded photo for message $mid. GD isn't available on the
+ * server, so we don't re-encode — the client downscales/compresses before upload.
+ * We validate it's a real image (getimagesize reads headers only), cap the size,
+ * and store it under the event's private photo dir. Returns metadata or null.
+ */
+function _msg_store_photo(string $event, int $mid, array $file): ?array
+{
+    if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) return null;
+    $size = (int)($file['size'] ?? 0);
+    if ($size <= 0 || $size > 12 * 1024 * 1024) return null;   // 12 MB ceiling
+    $tmp = $file['tmp_name'] ?? '';
+    if ($tmp === '' || !is_readable($tmp)) return null;
+    $info = @getimagesize($tmp);
+    if ($info === false) return null;                          // not a real image
+    $ext = ['image/jpeg'=>'jpg', 'image/png'=>'png', 'image/webp'=>'webp', 'image/gif'=>'gif'][$info['mime'] ?? ''] ?? null;
+    if ($ext === null) return null;                            // unsupported type
+    $dir = MessagingDb::photoDir($event);
+    if (!is_dir($dir) && !@mkdir($dir, 0770, true)) return null;
+    $fn   = $mid . '-' . bin2hex(random_bytes(6)) . '.' . $ext;
+    $dest = $dir . '/' . $fn;
+    if (!@move_uploaded_file($tmp, $dest) && !@copy($tmp, $dest)) return null;
+    @chmod($dest, 0660);
+    return ['filename'=>$fn, 'w'=>(int)($info[0] ?? 0), 'h'=>(int)($info[1] ?? 0)];
+}
+
 function messaging_handle(string $action, array $body, array $ctx): void
 {
     header('Content-Type: application/json');
@@ -146,10 +172,17 @@ function messaging_handle(string $action, array $body, array $ctx): void
     }
 
     case 'send': {
+        $hasPhoto  = !empty($_FILES['photo']) && ($_FILES['photo']['error'] ?? 1) === UPLOAD_ERR_OK;
+        // Text is required unless a photo is attached (a photo-only message is fine).
         $text = substr(trim($body['text'] ?? ''), 0, 280);
-        if ($text === '') _msg_fail(400, 'Message text required');
+        if ($text === '' && !$hasPhoto) _msg_fail(400, 'Message text required');
         $convId    = isset($body['conversation_id']) ? (int)$body['conversation_id'] : null;
         $recipients= $body['recipients'] ?? [];
+        // In a multipart upload `recipients` arrives as a JSON string — decode it.
+        if (is_string($recipients) && isset($recipients[0]) && $recipients[0] === '[') {
+            $dec = json_decode($recipients, true);
+            if (is_array($dec)) $recipients = $dec;
+        }
         $broadcast = ($recipients === 'all' || (is_array($recipients) && in_array('all', $recipients, true)));
         $title     = isset($body['title']) ? substr(trim($body['title']), 0, 40) : null;
         $rIds      = $broadcast ? [] : _msg_resolve_recipients($db, $ctx, is_array($recipients) ? $recipients : [$recipients]);
@@ -161,7 +194,31 @@ function messaging_handle(string $action, array $body, array $ctx): void
         $pos = ($me['kind'] === 'mobile' && isset($me['lat'], $me['lon']))
              ? ['lat'=>(float)$me['lat'], 'lon'=>(float)$me['lon'], 'ts'=>$me['pos_ts'] ? (int)$me['pos_ts'] : null] : null;
         $mid = $db->insertMessage($event, $conv, (int)$me['id'], $text, $deliverTo, $kind === 'broadcast', $pos);
-        echo json_encode(['ok'=>true, 'id'=>$mid, 'conversation_id'=>$conv, 'kind'=>$kind, 'recipients'=>count($deliverTo)]);
+        $photo = false;
+        if ($hasPhoto) {
+            $stored = _msg_store_photo($event, $mid, $_FILES['photo']);
+            if ($stored) { $db->setAttachment($mid, $stored['filename'], $stored['w'], $stored['h']); $photo = true; }
+        }
+        echo json_encode(['ok'=>true, 'id'=>$mid, 'conversation_id'=>$conv, 'kind'=>$kind, 'recipients'=>count($deliverTo), 'photo'=>$photo]);
+        exit;
+    }
+
+    case 'photo': {   // stream a message's attached photo (auth-gated: operator or member)
+        $mid = (int)($_GET['id'] ?? $body['id'] ?? 0);
+        $m   = $mid ? $db->messageById($mid) : null;
+        if (!$m || empty($m['attachment'])) _msg_fail(404, 'No such photo');
+        if (($me['kind'] ?? '') !== 'operator' && !$db->isConversationMember((int)$m['conversation_id'], (int)$me['id']))
+            _msg_fail(403, 'Not a member of this conversation');
+        $path = MessagingDb::photoDir($m['event']) . '/' . basename($m['attachment']);
+        if (!is_file($path)) _msg_fail(404, 'Photo missing');
+        $ext  = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        $mime = ['jpg'=>'image/jpeg', 'jpeg'=>'image/jpeg', 'png'=>'image/png', 'webp'=>'image/webp', 'gif'=>'image/gif'][$ext] ?? 'application/octet-stream';
+        header('Content-Type: ' . $mime);            // overrides the JSON header set above
+        header('X-Content-Type-Options: nosniff');
+        header('Content-Length: ' . filesize($path));
+        header('Cache-Control: private, max-age=86400');
+        header('Content-Disposition: inline; filename="' . basename($path) . '"');
+        readfile($path);
         exit;
     }
 

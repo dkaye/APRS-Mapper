@@ -6,6 +6,7 @@ const KNOWN_PERMISSIONS = [
     'users.manage'       => 'Manage users &amp; permissions',
     'admin.view'         => 'Map admin — view only',
     'admin.edit'         => 'Map admin — edit (requires admin.view)',
+    'admin.edit_trackers' => 'Map admin — edit Trackers only (requires admin.view)',
     'admin.set_default'  => 'Save as Default Event',
     'admin.delete_event' => 'Delete events',
     'analyzer.view'      => 'View analyzer',

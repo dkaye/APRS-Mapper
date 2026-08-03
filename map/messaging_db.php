@@ -96,6 +96,49 @@ class MessagingDb
         );
         CREATE INDEX IF NOT EXISTS idx_deliv_recip ON deliveries(recipient_id, message_id);
         SQL);
+
+        // Migration: photo attachment columns on messages (one photo per message).
+        // CREATE TABLE IF NOT EXISTS won't add columns to an existing DB, so add
+        // them here if missing.
+        $cols = [];
+        $r = $this->db->query('PRAGMA table_info(messages)');
+        while ($row = $r->fetchArray(SQLITE3_ASSOC)) $cols[$row['name']] = true;
+        if (!isset($cols['attachment'])) $this->db->exec('ALTER TABLE messages ADD COLUMN attachment TEXT');
+        if (!isset($cols['attach_w']))   $this->db->exec('ALTER TABLE messages ADD COLUMN attach_w INTEGER');
+        if (!isset($cols['attach_h']))   $this->db->exec('ALTER TABLE messages ADD COLUMN attach_h INTEGER');
+    }
+
+    // ── Photo attachments ──────────────────────────────────────────────────────
+    // Photos are stored as files (GD isn't available server-side), per event,
+    // beside messages.db and served only through the auth-gated ?messaging=photo
+    // endpoint. flushEvent() and the admin event-export reach them via photoDir().
+    public static function photoBaseDir(): string
+    {
+        return dirname(MARSAPRS_MESSAGES_DB) . '/photos';
+    }
+    public static function photoDir(string $event): string
+    {
+        $safe = preg_replace('/[^A-Za-z0-9_\-]/', '_', $event);
+        if ($safe === '' || $safe === null) $safe = 'default';
+        return self::photoBaseDir() . '/' . $safe;
+    }
+    public function setAttachment(int $mid, string $filename, ?int $w, ?int $h): void
+    {
+        $this->run('UPDATE messages SET attachment=:a, attach_w=:w, attach_h=:h WHERE id=:id',
+                   [':a'=>$filename, ':w'=>$w, ':h'=>$h, ':id'=>$mid]);
+    }
+    public function messageById(int $mid): ?array
+    {
+        return $this->one('SELECT * FROM messages WHERE id=:id', [':id'=>$mid]);
+    }
+    /** [id => attachment filename] for every message in the event that has a photo. */
+    public function attachmentsForEvent(string $event): array
+    {
+        $out = [];
+        foreach ($this->all("SELECT id, attachment FROM messages WHERE event=:e AND attachment IS NOT NULL AND attachment<>''", [':e'=>$event]) as $r) {
+            $out[(int)$r['id']] = $r['attachment'];
+        }
+        return $out;
     }
 
     // ── small helpers ─────────────────────────────────────────────────────────
@@ -284,6 +327,9 @@ class MessagingDb
                 'lat'             => isset($m['lat']) ? (float)$m['lat'] : null,
                 'lon'             => isset($m['lon']) ? (float)$m['lon'] : null,
                 'pos_ts'          => isset($m['pos_ts']) ? (int)$m['pos_ts'] : null,
+                'photo'           => !empty($m['attachment']),
+                'photo_w'         => isset($m['attach_w']) ? (int)$m['attach_w'] : null,
+                'photo_h'         => isset($m['attach_h']) ? (int)$m['attach_h'] : null,
             ];
         }
         return $out;
@@ -488,6 +534,12 @@ class MessagingDb
         $this->run('DELETE FROM messages WHERE event=:e', [':e'=>$event]);
         $this->run('DELETE FROM conversations WHERE event=:e', [':e'=>$event]);
         $this->db->exec('COMMIT');
+        // Delete the event's stored photos too — they live outside the DB.
+        $dir = self::photoDir($event);
+        if (is_dir($dir)) {
+            foreach (glob($dir . '/*') ?: [] as $f) { if (is_file($f)) @unlink($f); }
+            @rmdir($dir);
+        }
         return $n;
     }
 }

@@ -84,10 +84,11 @@ button:hover{background:#1d4ed8}
     <a class="forgot" href="/auth/forgot_password.php">Forgot password?</a>
     <button type="submit">Sign In</button>
   </form>
-  <p class="register">New here? <a href="/auth/register.php">Create an account</a> &nbsp;&middot;&nbsp; <a href="/">Cancel</a></p>
+  <p class="register">New here? <a href="/auth/register.php">Create an account</a> &nbsp;&middot;&nbsp; <a id="signin-cancel" href="/">Cancel</a> <span style="opacity:.65">(or ESC)</span></p>
 </div>
 <script>
 function togglePw(btn){var i=btn.closest('.pw-wrap').querySelector('input'),s=i.type==='password';i.type=s?'text':'password';btn.querySelector('.eye-show').style.display=s?'none':'';btn.querySelector('.eye-hide').style.display=s?'':'none';}
+document.addEventListener('keydown',function(e){if(e.key==='Escape'){var c=document.getElementById('signin-cancel');window.location.href=c?c.getAttribute('href'):'/';}});
 </script>
 </body>
 </html>

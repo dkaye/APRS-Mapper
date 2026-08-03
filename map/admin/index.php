@@ -93,10 +93,19 @@ if (isset($_GET['logout'])) {
 
 require_permission('admin.view');
 $canEdit = has_permission('admin.edit');
+// admin.edit_trackers grants editing of ONLY the Trackers section (tracker list +
+// mobile-tracker management), even without full admin.edit.
+$canEditTrackers = $canEdit || has_permission('admin.edit_trackers');
 
-// Block all mutating POST requests for view-only users
+// Block mutating POST requests for view-only users — except that a Trackers-only
+// editor (admin.edit_trackers) may reach the Trackers-section endpoints.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$canEdit) {
-    respondError('Missing permission: admin.edit', 403);
+    $trackerPostEndpoints = ['savetrackers', 'removemobile', 'removemobilebulk', 'blockmobile', 'hidemobile', 'renamemobile', 'setmode'];
+    $isTrackerPost = false;
+    foreach ($trackerPostEndpoints as $ep) { if (isset($_GET[$ep])) { $isTrackerPost = true; break; } }
+    if (!($isTrackerPost && has_permission('admin.edit_trackers'))) {
+        respondError('Missing permission: admin.edit', 403);
+    }
 }
 
 // $storedPass kept for event-lock operations (togglelock, seteventpassword, etc.)
@@ -887,10 +896,34 @@ if (isset($_GET['backup'])) {
         }
     }
 
+    // Messaging: include this event's messages (SQLite store) and any attached
+    // photos, so a backup captures the full conversation record alongside the
+    // course/config files. The messaging "event key" is the event.yaml `event:`
+    // field (same key messages are stored under), falling back to 'default'.
+    $msgCount = 0; $photoCount = 0;
+    require_once __DIR__ . '/../messaging_db.php';
+    $evCfg = null;
+    if (file_exists($yamlPath)) {
+        require_once __DIR__ . '/../config_parse.php';
+        $evCfg = $cfg ?? parseConfigYaml($yamlPath);
+    }
+    $evKey = trim($evCfg['event'] ?? '') ?: 'default';
+    try {
+        $mdb  = new MessagingDb();
+        $msgs = $mdb->history($evKey);
+        $zip->addFromString('messages/messages.json',
+            json_encode($msgs, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        $msgCount = count($msgs);
+        foreach ($mdb->attachmentsForEvent($evKey) as $mid => $fn) {
+            $abs = MessagingDb::photoDir($evKey) . '/' . basename($fn);
+            if (is_file($abs)) { $zip->addFile($abs, 'messages/photos/' . basename($fn)); $photoCount++; }
+        }
+    } catch (\Throwable $e) { /* messaging store unavailable — back up the rest */ }
+
     $zip->close();
 
     $safeName = preg_replace('/[^a-zA-Z0-9_\-]/', '_', $name);
-    aprs_admin_log('backup_event', ['event' => $name, 'files' => count($added)]);
+    aprs_admin_log('backup_event', ['event' => $name, 'files' => count($added), 'messages' => $msgCount, 'photos' => $photoCount]);
     header('Content-Type: application/zip');
     header('Content-Disposition: attachment; filename="' . $safeName . '-' . date('Y-m-d') . '.zip"');
     header('Content-Length: ' . filesize($tmpFile));
@@ -1041,6 +1074,7 @@ if (isset($_GET['mobiletrackers'])) {
                 'joined_at'    => isset($t['created']) ? $now - (int)$t['created'] : null,
                 'active'       => !empty($t['token']),
                 'blocked'      => !empty($t['blocked']),
+                'hidden'       => !empty($t['hidden']),
                 'delta'        => $delta,
                 'mobile_delta' => $ham !== null ? ($mobileDeltas[$cs] ?? null) : null,
                 'device_info'  => $t['device_info'] ?? null,
@@ -1049,7 +1083,7 @@ if (isset($_GET['mobiletrackers'])) {
                 'ham_callsign' => $ham,
                 'display_id'   => $t['display_id'] ?? null,
                 'radio'        => $radio];
-    }, array_filter($all, fn($t) => !empty($t['blocked']) || (!empty($t['token']) && ($now - $t['lastUpdate']) < 86400))));
+    }, array_filter($all, fn($t) => !empty($t['blocked']) || !empty($t['hidden']) || (!empty($t['token']) && ($now - $t['lastUpdate']) < 86400))));
     respondJson($out);
 }
 
@@ -1097,6 +1131,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['blockmobile'])) {
     $mfdata = parseMobileFile(stream_get_contents($fh));
     $data = &$mfdata['trackers'];
     foreach ($data as &$t) { if ($t['id'] === $id) { $t['blocked'] = $block; break; } }
+    unset($t);
+    ftruncate($fh, 0); rewind($fh);
+    fwrite($fh, encodeMobileFile($mfdata));
+    flock($fh, LOCK_UN); fclose($fh);
+    respondJson(['ok' => true]);
+}
+
+// Hide a mobile tracker from the map (it stays listed in the sidebar). Distinct
+// from "blocked", which excludes the tracker entirely and rejects its beacons.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['hidemobile'])) {
+    $input = json_decode(file_get_contents('php://input'), true) ?: [];
+    $id    = trim($input['id'] ?? '');
+    $hide  = !empty($input['hide']);
+    if (!$id) { respondJson(['error' => 'Missing id'], 400); exit; }
+    $mf = __DIR__ . '/../mobile_trackers.json';
+    $fh = fopen($mf, 'c+');
+    if (!$fh) { respondJson(['error' => 'Cannot open file'], 500); exit; }
+    flock($fh, LOCK_EX);
+    $mfdata = parseMobileFile(stream_get_contents($fh));
+    $data = &$mfdata['trackers'];
+    foreach ($data as &$t) { if ($t['id'] === $id) { $t['hidden'] = $hide; break; } }
     unset($t);
     ftruncate($fh, 0); rewind($fh);
     fwrite($fh, encodeMobileFile($mfdata));
@@ -1736,7 +1791,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 
     <!-- ── Trackers ── -->
     <div class="section">
-        <?php if ($canEdit): ?>
+        <?php if ($canEditTrackers): ?>
         <div class="sec-title"><span>Trackers</span><span id="delta-refresh-time" style="font-size:0.75rem;font-weight:400;color:#888;margin-left:10px"></span><div class="sec-io-btns"><input type="checkbox" id="mt-sel-all" title="Select all mobile trackers" style="display:none;margin-right:2px;cursor:pointer"><button type="button" id="mt-bulk-remove" class="io-btn" style="display:none" title="Remove selected mobile trackers">Remove (0)</button><button type="button" class="io-btn" title="Export trackers" onclick="showExportMenu(this,'trackers')">↓</button><button type="button" class="io-btn" title="Import trackers from YAML or CSV" onclick="importSection('trackers')">↑</button><button type="button" class="io-btn" title="Refresh mobile tracker list" onclick="loadMobileTrackers()" style="margin-left:4px">↻</button><button type="button" id="update-trackers-btn" class="sec-btn" style="margin-left:6px;background:#1565c0;color:#fff;border-color:#0d47a1" onclick="doUpdateTrackers()" title="Save tracker list — works even when event is locked">Update Tracker Data</button></div></div>
         <?php else: ?>
         <div class="sec-title"><span>Trackers</span><span id="delta-refresh-time" style="font-size:0.75rem;font-weight:400;color:#888;margin-left:10px"></span><div class="sec-io-btns"><button type="button" class="io-btn" title="Refresh mobile tracker list" onclick="loadMobileTrackers()" style="margin-left:4px">↻</button></div></div>
@@ -1744,10 +1799,10 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
         <div class="sec-body">
             <!-- APRS trackers -->
             <div id="trackers-list"></div>
-            <?php if ($canEdit): ?>
+            <?php if ($canEditTrackers): ?>
             <button class="add-btn" onclick="addTracker()">+ Add Tracker</button>
 
-            <?php endif; // canEdit ?>
+            <?php endif; // canEditTrackers ?>
             <?php if ($canEdit): ?>
             <!-- Mobile tracking settings -->
             <div style="margin-top:14px;padding-top:12px;border-top:1px solid #e8e8e8">
@@ -1953,6 +2008,9 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 'use strict';
 
 const canEdit = <?= $canEdit ? 'true' : 'false' ?>;
+// Trackers-only editors (admin.edit_trackers) can edit the tracker list + mobile
+// trackers even without full admin.edit; other sections stay read-only for them.
+const canEditTrackers = <?= $canEditTrackers ? 'true' : 'false' ?>;
 
 // ── Dirty tracking ────────────────────────────────────────────────────────────
 
@@ -2403,7 +2461,7 @@ function buildTrackerRow(t, readOnly = false) {
 
 
 function appendTracker(t, attach) {
-    const row = buildTrackerRow(t, !canEdit);
+    const row = buildTrackerRow(t, !canEditTrackers);
     document.getElementById('trackers-list').appendChild(row);
     if (attach) attach(row);
 }
@@ -3166,11 +3224,11 @@ async function loadMobileTrackers() {
         trackers = await r.json();
     } catch (e) { console.error('[mobiletrackers]', e); return; }
 
-    const GCOLS = canEdit ? '20px 52px 90px 110px 50px 1fr 54px 66px 148px' : '52px 90px 110px 50px 1fr 54px 66px 80px';
+    const GCOLS = canEditTrackers ? '20px 52px 90px 110px 50px 1fr 54px 66px 148px' : '52px 90px 110px 50px 1fr 54px 66px 80px';
 
     // ── Wire bulk controls in sec-title ────────────────────────────────────
-    const selAll  = canEdit ? document.getElementById('mt-sel-all')  : null;
-    const bulkBtn = canEdit ? document.getElementById('mt-bulk-remove') : null;
+    const selAll  = canEditTrackers ? document.getElementById('mt-sel-all')  : null;
+    const bulkBtn = canEditTrackers ? document.getElementById('mt-bulk-remove') : null;
 
     if (!trackers.length) {
         if (selAll)  selAll.style.display  = 'none';
@@ -3193,7 +3251,7 @@ async function loadMobileTrackers() {
         selAllEl.indeterminate = n > 0 && n < trackers.length;
         selAllEl.checked = (n === trackers.length && n > 0);
     };
-    if (canEdit && selAll) {
+    if (canEditTrackers && selAll) {
         selAll.style.display = '';
         // Reset handlers each reload to avoid stacking listeners
         const newSelAll  = selAll.cloneNode(true);
@@ -3223,7 +3281,7 @@ async function loadMobileTrackers() {
     const hdr = document.createElement('div');
     hdr.dataset.mobile = '1';
     hdr.style.cssText = `display:grid;grid-template-columns:${GCOLS};align-items:center;gap:6px;padding:2px 4px 4px;border-bottom:1px solid #ddd;margin-bottom:2px`;
-    (canEdit ? ['', 'ID', 'Callsign', 'Name', 'Δ', 'Client', 'Joined', 'Heard', ''] : ['ID', 'Callsign', 'Name', 'Δ', 'Client', 'Joined', 'Heard', '']).forEach(label => {
+    (canEditTrackers ? ['', 'ID', 'Callsign', 'Name', 'Δ', 'Client', 'Joined', 'Heard', ''] : ['ID', 'Callsign', 'Name', 'Δ', 'Client', 'Joined', 'Heard', '']).forEach(label => {
         const th = document.createElement('span');
         th.textContent = label;
         th.style.cssText = 'font-size:10px;font-weight:600;color:#999;text-transform:uppercase;letter-spacing:.04em';
@@ -3271,7 +3329,7 @@ async function loadMobileTrackers() {
             rRow.style.cssText = ROW_STYLE.replace('border-bottom:1px solid #f0f0f0', 'border-bottom:none');
 
             // [checkbox — linked to mobile row's cb; edit mode only]
-            if (canEdit) {
+            if (canEditTrackers) {
                 rCb = document.createElement('input');
                 rCb.type = 'checkbox'; rCb.className = 'mt-cb'; rCb.dataset.id = t.id;
                 rCb.addEventListener('change', () => { if (cb) cb.checked = rCb.checked; updateBulkBtn(); });
@@ -3279,7 +3337,7 @@ async function loadMobileTrackers() {
             }
 
             // [display ID]
-            if (canEdit) {
+            if (canEditTrackers) {
                 const dispInp = document.createElement('input');
                 dispInp.type = 'text'; dispInp.value = t.display_id || t.id; dispInp.maxLength = 16;
                 dispInp.title = 'Display label (overrides ' + t.id + ' in sidebar and map)';
@@ -3302,7 +3360,7 @@ async function loadMobileTrackers() {
             }
 
             // [ham callsign]
-            if (canEdit) {
+            if (canEditTrackers) {
                 const hamInp = document.createElement('input');
                 hamInp.type = 'text'; hamInp.value = t.ham_callsign || ''; hamInp.maxLength = 9;
                 hamInp.placeholder = 'e.g. W6SG-4';
@@ -3326,7 +3384,7 @@ async function loadMobileTrackers() {
             }
 
             // [name — on the radio row for hybrid trackers]
-            rRow.appendChild(canEdit ? makeNameInp() : makeNameSpan());
+            rRow.appendChild(canEditTrackers ? makeNameInp() : makeNameSpan());
 
             // [radio delta]
             const rDeltaSpan = document.createElement('span');
@@ -3354,7 +3412,7 @@ async function loadMobileTrackers() {
 
             // [Info + Remove]
             const rInfoBtn = makeBtn('Info', () => showRadioInfoModal(t, rd));
-            if (canEdit) {
+            if (canEditTrackers) {
                 const rRemoveBtn = makeBtn('Remove', async () => {
                     if (!confirm('Remove ham callsign ' + (t.ham_callsign || '') + ' from this tracker?')) return;
                     const r2 = await fetch('?sethamcallsign', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id:t.id, ham_callsign:''}) });
@@ -3376,7 +3434,7 @@ async function loadMobileTrackers() {
         row.style.cssText = ROW_STYLE;
 
         // [checkbox — linked to radio row's rCb for hybrid trackers; edit mode only]
-        if (canEdit) {
+        if (canEditTrackers) {
             cb = document.createElement('input');
             cb.type = 'checkbox'; cb.className = 'mt-cb'; cb.dataset.id = t.id;
             cb.addEventListener('change', () => { if (rCb) rCb.checked = cb.checked; updateBulkBtn(); });
@@ -3385,7 +3443,7 @@ async function loadMobileTrackers() {
 
         // [display ID — editable for non-hybrid cellular; hybrid has this on the radio row above]
         if (!isHybrid) {
-            if (canEdit) {
+            if (canEditTrackers) {
                 const dispInp = document.createElement('input');
                 dispInp.type = 'text'; dispInp.value = t.display_id || t.id; dispInp.maxLength = 16;
                 dispInp.title = 'Display label (overrides ' + t.id + ' in sidebar and map)';
@@ -3418,7 +3476,7 @@ async function loadMobileTrackers() {
         row.appendChild(csLabel);
 
         // [name — non-hybrid only; hybrid name is on the radio row above]
-        row.appendChild(isHybrid ? document.createElement('span') : (canEdit ? makeNameInp() : makeNameSpan()));
+        row.appendChild(isHybrid ? document.createElement('span') : (canEditTrackers ? makeNameInp() : makeNameSpan()));
 
         // [delta — mobile delta; clickable to reset]
         const deltaVal = isHybrid ? t.mobile_delta : t.delta;
@@ -3426,7 +3484,7 @@ async function loadMobileTrackers() {
         deltaSpan.style.cssText = 'font-size:12px;white-space:nowrap';
         const setDelta = v => { deltaSpan.textContent = fmtDelta(v); deltaSpan.style.color = v != null ? '#555' : '#bbb'; };
         setDelta(deltaVal);
-        if (canEdit) {
+        if (canEditTrackers) {
             deltaSpan.title = 'Min beacon interval · Click to reset';
             deltaSpan.style.cursor = 'pointer';
             deltaSpan.addEventListener('click', async () => {
@@ -3460,13 +3518,13 @@ async function loadMobileTrackers() {
             const isPending = !!t.pending_mode;
             modeEl.innerHTML = displayMode ? (modeIcons[displayMode] || '?') : '○';
             if (isPending) {
-                modeEl.style.cssText = 'font-size:12px;flex-shrink:0;padding:1px 3px;border-radius:3px;outline:1px dashed #e67e22' + (canEdit ? ';cursor:pointer' : '');
-                modeEl.title = 'Pending: ' + (modeLabels[t.pending_mode] || t.pending_mode) + (canEdit ? ' · Click to change' : '');
+                modeEl.style.cssText = 'font-size:12px;flex-shrink:0;padding:1px 3px;border-radius:3px;outline:1px dashed #e67e22' + (canEditTrackers ? ';cursor:pointer' : '');
+                modeEl.title = 'Pending: ' + (modeLabels[t.pending_mode] || t.pending_mode) + (canEditTrackers ? ' · Click to change' : '');
             } else {
-                modeEl.style.cssText = 'font-size:12px;filter:grayscale(1) brightness(0.5);flex-shrink:0;padding:1px 3px;border-radius:3px' + (canEdit ? ';cursor:pointer' : '');
-                modeEl.title = canEdit ? (displayMode ? ((modeLabels[displayMode] || '') + ' · Click to change') : 'Set activity mode · Click to change') : (modeLabels[displayMode] || '');
+                modeEl.style.cssText = 'font-size:12px;filter:grayscale(1) brightness(0.5);flex-shrink:0;padding:1px 3px;border-radius:3px' + (canEditTrackers ? ';cursor:pointer' : '');
+                modeEl.title = canEditTrackers ? (displayMode ? ((modeLabels[displayMode] || '') + ' · Click to change') : 'Set activity mode · Click to change') : (modeLabels[displayMode] || '');
             }
-            if (canEdit) {
+            if (canEditTrackers) {
                 modeEl.addEventListener('mouseenter', () => modeEl.style.background = '#e8f0fe');
                 modeEl.addEventListener('mouseleave', () => modeEl.style.background = '');
                 modeEl.addEventListener('click', e => { e.stopPropagation(); showSetModeModal(t, modeEl); });
@@ -3476,6 +3534,11 @@ async function loadMobileTrackers() {
         if (t.blocked) {
             const bl = document.createElement('span'); bl.textContent = 'blocked';
             bl.style.cssText = 'color:#c0392b;font-size:11px;white-space:nowrap;flex-shrink:0'; infoDiv.appendChild(bl);
+        }
+        if (t.hidden) {
+            const hd = document.createElement('span'); hd.textContent = 'hidden';
+            hd.title = 'Hidden from the map — still shown in the sidebar';
+            hd.style.cssText = 'color:#888;font-size:11px;white-space:nowrap;flex-shrink:0'; infoDiv.appendChild(hd);
         }
         row.appendChild(infoDiv);
 
@@ -3495,8 +3558,8 @@ async function loadMobileTrackers() {
         // [buttons]
         const actEls = [];
         if (t.device_info && Object.keys(t.device_info).length) actEls.push(makeBtn('Info', () => showDeviceInfoModal(t)));
-        if (canEdit) {
-            actEls.push(makeBtn(t.blocked ? 'Unblock' : 'Block', () => toggleBlockMobileTracker(t.id, !t.blocked)));
+        if (canEditTrackers) {
+            actEls.push(makeBtn(t.hidden ? 'Unhide' : 'Hide', () => toggleHideMobileTracker(t.id, !t.hidden)));
             actEls.push(makeBtn('Remove', () => removeMobileTracker(t.id, row, listEl)));
         }
         row.appendChild(makeActDiv(...actEls));
@@ -3504,9 +3567,9 @@ async function loadMobileTrackers() {
     });
 }
 
-async function toggleBlockMobileTracker(id, block) {
+async function toggleHideMobileTracker(id, hide) {
     try {
-        const r = await fetch('?blockmobile', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id, block}) });
+        const r = await fetch('?hidemobile', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({id, hide}) });
         if (r.ok) { loadMobileTrackers(); }
         else { alert('Error updating tracker.'); }
     } catch { alert('Network error.'); }
