@@ -4608,6 +4608,34 @@ map.on('click', function(e) {
 		.setLatLng(e.latlng).setContent(content).openOn(map);
 });
 
+// Reset the map to its default view — the same as the corner "Reset Map" icon.
+function _resetMapView() {
+	clearAllSelections();
+	map.setView([defaultView.lat, defaultView.lon], defaultView.zoom);
+}
+// Clicking the map background, or pressing the spacebar, closes the messaging
+// window (if open) and resets the map.
+function _dismissToMap() {
+	if (typeof _closePanel === 'function') _closePanel();
+	_resetMapView();
+}
+map.on('click', _dismissToMap);
+// Escape closes the top-most messaging surface first (a sub-modal or the
+// settings menu); once nothing is left to close, it closes the panel and
+// resets the map.
+document.addEventListener('keydown', function(e) {
+	if (e.key !== 'Escape') return;
+	const allM = document.getElementById('msg-all-modal');
+	const pickM = document.getElementById('msg-pick-modal');
+	const subM = document.getElementById('msg-sub-modal');
+	const setMenu = document.getElementById('msg-settings-menu');
+	if (allM && allM.style.display === 'flex')   { allM.style.display = 'none'; return; }
+	if (pickM && pickM.style.display === 'flex')  { pickM.style.display = 'none'; return; }
+	if (subM && subM.style.display === 'flex')    { subM.style.display = 'none'; return; }
+	if (setMenu && setMenu.classList.contains('open')) { if (typeof _closeSettings === 'function') _closeSettings(); return; }
+	_dismissToMap();
+});
+
 // ── Save Map button ────────────────────────────────────────────────────────
 document.getElementById('save-map-btn').addEventListener('click', function() {
 	const c = map.getCenter();
@@ -4620,13 +4648,6 @@ document.getElementById('save-map-btn').addEventListener('click', function() {
 });
 
 // ── Reset buttons ──────────────────────────────────────────────────────────
-
-document.addEventListener('keydown', function(e) {
-	if (e.key !== 'Escape') return;
-	if (e.target.matches('input, textarea, select')) return;
-	clearAllSelections();
-	map.setView([defaultView.lat, defaultView.lon], defaultView.zoom);
-});
 
 if (isMobile) {
 	document.getElementById('m-reset-btn').addEventListener('click', () => {
@@ -6152,16 +6173,8 @@ function _wireMsgUI() {
 		slider.addEventListener('input', () => render(parseInt(slider.value, 10)));
 		slider.addEventListener('change', () => { const pct = parseInt(slider.value, 10); _setMsgVolume(pct / 100); _warmMsgAudio(); if (pct > 0) _playMsgTone(); });
 	})();
-
-	// Esc closes the top-most messaging surface.
-	document.addEventListener('keydown', e => {
-		if (e.key !== 'Escape') return;
-		if (document.getElementById('msg-all-modal').style.display === 'flex') { document.getElementById('msg-all-modal').style.display = 'none'; return; }
-		if (document.getElementById('msg-pick-modal').style.display === 'flex') { document.getElementById('msg-pick-modal').style.display = 'none'; return; }
-		if (document.getElementById('msg-sub-modal').style.display === 'flex') { document.getElementById('msg-sub-modal').style.display = 'none'; return; }
-		if (document.getElementById('msg-settings-menu').classList.contains('open')) { _closeSettings(); return; }
-		if (_msgPanelOpen) _closePanel();
-	});
+	// (Escape handling — close the top messaging surface, then panel + map reset —
+	// is a single global handler defined near the map setup.)
 }
 
 // ── Voice input (Web Speech API, on-device) ──────────────────────────────────
@@ -6385,10 +6398,9 @@ function _toggleSpeak() {
 	} catch {}
 }
 function _speakMessage(m) {
-	if (!_msgSpeak || !window.speechSynthesis) return;
+	if (!_msgSpeak || !window.speechSynthesis || !(m.text || '').trim()) return;
 	try {
-		const who = _msgSenderName(m);
-		const u = new SpeechSynthesisUtterance((who && who !== '—' ? who + ' says. ' : '') + (m.text || ''));
+		const u = new SpeechSynthesisUtterance(m.text);   // message text only — no sender name/id
 		u.rate = 1.0; u.volume = 1.0;
 		speechSynthesis.speak(u);
 	} catch {}
