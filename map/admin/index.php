@@ -1244,28 +1244,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['setmobilecallsign'])) 
 
 // ── AJAX: message thread for current event ────────────────────────────────────
 if (isset($_GET['messages'])) {
-    $real = realpath($configPath);
-    if (!$real) { respondJson([]); }
-    $msgFile = dirname($real) . '/messages.json';
-    if (!file_exists($msgFile)) { respondJson([]); }
-    $fh = fopen($msgFile, 'r');
-    if (!$fh) { respondJson([]); }
-    flock($fh, LOCK_SH);
-    $msgs = json_decode(stream_get_contents($fh), true) ?: [];
-    flock($fh, LOCK_UN);
-    fclose($fh);
-    respondJson($msgs);
+    // Read from the SQLite messaging store (the old per-event messages.json was
+    // retired in the messaging redesign). Map to the shape the modal expects.
+    require_once __DIR__ . '/../messaging_db.php';
+    $ev  = trim($currentEventName) !== '' ? trim($currentEventName) : 'default';
+    $rows = (new MessagingDb())->history($ev);
+    $out = array_map(fn($m) => [
+        'ts'         => $m['ts'],
+        'from'       => $m['from_key'],
+        'from_label' => ($m['from_kind'] === 'mobile' && !empty($m['from_short']))
+                        ? trim($m['from_short'] . ' ' . $m['from_name']) : $m['from_name'],
+        'to'         => '',
+        'to_label'   => $m['to_label'],
+        'text'       => $m['text'],
+        'broadcast'  => $m['broadcast'],
+    ], $rows);
+    respondJson($out);
 }
 
 // ── AJAX: delete message thread for current event ─────────────────────────────
 if (isset($_GET['delete_messages'])) {
+    if (!has_permission('messages.delete_all')) respondError('Missing permission: messages.delete_all', 403);
+    require_once __DIR__ . '/../messaging_db.php';
+    $ev = trim($currentEventName) !== '' ? trim($currentEventName) : 'default';
+    $deleted = (new MessagingDb())->flushEvent($ev);
+    // Also drop the retired per-event messages.json if it's still lying around.
     $real = realpath($configPath);
-    if (!$real) { respondJson(['error' => 'Event not found'], 404); }
-    $msgFile = dirname($real) . '/messages.json';
-    if (file_exists($msgFile) && !unlink($msgFile)) {
-        respondJson(['error' => 'Could not delete message thread'], 500);
-    }
-    respondJson(['ok' => true]);
+    if ($real) { $old = dirname($real) . '/messages.json'; if (file_exists($old)) @unlink($old); }
+    aprs_admin_log('delete_all_messages', ['deleted' => $deleted, 'event' => $ev]);
+    respondJson(['ok' => true, 'deleted' => $deleted]);
 }
 
 // ── YAML serialiser (functions live in config_yaml.php, loaded at top) ───────
@@ -5720,7 +5727,7 @@ async function openMsgThread() {
             `<th class="lf-th lf-th-noclick">Message</th>` +
             `</tr></thead><tbody>` +
             msgs.map(m => {
-                const toLabel = m.broadcast ? '📢 All' : (m.to_label ? esc(m.to_label) + ' <span style="color:#aaa">(' + esc(m.to) + ')</span>' : esc(m.to));
+                const toLabel = m.broadcast ? '📢 All' : (m.to ? esc(m.to_label) + ' <span style="color:#aaa">(' + esc(m.to) + ')</span>' : esc(m.to_label || m.to));
                 const fromLabel = esc(m.from_label || m.from);
                 return `<tr class="lf-tr">` +
                     `<td class="lf-td lf-td-date" style="white-space:nowrap">${fmtTs(m.ts)}</td>` +
@@ -5742,15 +5749,18 @@ async function openMsgThread() {
     exportBtn.textContent = 'Export .txt';
     exportBtn.onclick = () => exportMsgThread(msgs);
 
+    const _msgBtns = [exportBtn];
+<?php if (has_permission('messages.delete_all')): ?>
+    // "Delete All Messages" — only rendered for users with messages.delete_all.
     const clearBtn = document.createElement('button');
     clearBtn.className = 'del-btn';
     clearBtn.style.cssText = 'padding:7px 14px;font-size:13px;margin-top:0;background:#fff0f0;border-color:#d9534f;color:#c0392b';
-    clearBtn.textContent = 'Clear Thread';
+    clearBtn.textContent = 'Delete All Messages';
     clearBtn.onclick = async () => {
         if (clearBtn.dataset.confirm !== '1') {
             clearBtn.textContent = 'Confirm Delete?';
             clearBtn.dataset.confirm = '1';
-            setTimeout(() => { clearBtn.textContent = 'Clear Thread'; delete clearBtn.dataset.confirm; }, 4000);
+            setTimeout(() => { clearBtn.textContent = 'Delete All Messages'; delete clearBtn.dataset.confirm; }, 4000);
             return;
         }
         try {
@@ -5758,18 +5768,20 @@ async function openMsgThread() {
             if (!r.ok) throw new Error();
             clearBtn.closest('.modal-backdrop').remove();
         } catch {
-            alert('Failed to delete message thread.');
+            alert('Failed to delete messages.');
         }
     };
+    _msgBtns.push(clearBtn);
+<?php endif; ?>
 
     const closeBtn = document.createElement('button');
     closeBtn.className = 'sec-btn';
     closeBtn.style.cssText = 'padding:7px 14px;font-size:13px';
     closeBtn.textContent = 'Close';
+    _msgBtns.push(closeBtn);
 
     const eventName = document.getElementById('f-event')?.value || 'event';
-    openModal('💬 Message Thread — ' + eventName, wrap, [exportBtn, clearBtn, closeBtn]);
-    closeBtn.closest('.modal-backdrop')?.querySelector('.modal-footer');
+    openModal('💬 Message Thread — ' + eventName, wrap, _msgBtns);
     closeBtn.onclick = () => closeBtn.closest('.modal-backdrop').remove();
 }
 
@@ -5786,7 +5798,7 @@ function exportMsgThread(msgs) {
         ''
     ];
     msgs.forEach(m => {
-        const to = m.broadcast ? 'ALL' : ((m.to_label || '') ? m.to_label + ' (' + m.to + ')' : m.to);
+        const to = m.broadcast ? 'ALL' : (m.to ? m.to_label + ' (' + m.to + ')' : (m.to_label || m.to));
         lines.push('[' + fmtTs(m.ts) + ']');
         lines.push('  From: ' + (m.from_label || m.from));
         lines.push('  To:   ' + to);
