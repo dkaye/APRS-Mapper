@@ -1756,6 +1756,14 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     final showTrackers = _sectionVisible['trackers'] ?? true;
     final showAid = _sectionVisible['aidstations'] ?? true;
     final showIgates = _sectionVisible['igates'] ?? true;
+    // When a section's eyeball is off, still reveal the single object the user
+    // tapped in the drawer, so selecting it shows it on the map as if visible.
+    final revealIgate = (!showIgates && _selectedId != null)
+        ? _config.igates.where((g) => g.name == _selectedId).firstOrNull
+        : null;
+    final revealAid = (!showAid && _selectedId != null)
+        ? _config.aidStations.where((g) => g.name == _selectedId).firstOrNull
+        : null;
 
     return Builder(
       builder: (context) => Stack(
@@ -1828,10 +1836,29 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                     blinkOn: _blinkOn,
                     onTap: _onFixedTap,
                     onLongPress: _onFixedLongPress,
+                  )
+                else if (revealIgate != null)
+                  FixedMarkerLayer(
+                    markers: [revealIgate],
+                    isIgate: true,
+                    selectedId: _selectedId,
+                    blinkingIds: _blinkingIds,
+                    blinkOn: _blinkOn,
+                    onTap: _onFixedTap,
+                    onLongPress: _onFixedLongPress,
                   ),
                 if (showAid && _config.aidStations.isNotEmpty)
                   FixedMarkerLayer(
                     markers: _config.aidStations,
+                    selectedId: _selectedId,
+                    blinkingIds: _blinkingIds,
+                    blinkOn: _blinkOn,
+                    onTap: _onFixedTap,
+                    onLongPress: _onFixedLongPress,
+                  )
+                else if (revealAid != null)
+                  FixedMarkerLayer(
+                    markers: [revealAid],
                     selectedId: _selectedId,
                     blinkingIds: _blinkingIds,
                     blinkOn: _blinkOn,
