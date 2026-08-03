@@ -157,30 +157,21 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         _recheckLocationPermission();
       }
     } else if (state == AppLifecycleState.paused) {
-      _maybeShowKeepOpenReminder();
+      _persistSharingFlag();
     }
   }
 
-  DateTime? _lastKeepOpenReminder;
-  // Tesla-style nudge: iOS suspends a backgrounded app, which pauses beacon
-  // uploads and message polling (Android keeps them alive via the foreground
-  // service, so this doesn't apply there). When the user leaves the app while
-  // actively sharing, remind them to keep it open. Throttled so quick
-  // app-switches don't stack notifications.
-  void _maybeShowKeepOpenReminder() {
-    if (!Platform.isIOS || !_isSharing) return;
-    final now = DateTime.now();
-    if (_lastKeepOpenReminder != null &&
-        now.difference(_lastKeepOpenReminder!) < const Duration(minutes: 3)) return;
-    _lastKeepOpenReminder = now;
-    unawaited(_notifPlugin.show(
-      id: 990101,
-      title: 'APRS Map',
-      body: 'Keep the app open if you want to be tracked or receive messages.',
-      notificationDetails: const NotificationDetails(
-        iOS: DarwinNotificationDetails(presentAlert: true, presentSound: false, presentBadge: false),
-      ),
-    ));
+  // Persist whether we're actively sharing so the native side (iOS
+  // applicationWillTerminate in AppDelegate.swift) can decide whether to show the
+  // "keep the app open" reminder if the user CLOSES the app. Written on every
+  // background transition, which always precedes a swipe-to-quit, so it reflects
+  // the state at the moment the user left.
+  Future<void> _persistSharingFlag() async {
+    if (!Platform.isIOS) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('aprs_is_sharing', _isSharing);
+    } catch (_) {}
   }
 
   // Called on app resume to pick up permission changes made in Settings.
