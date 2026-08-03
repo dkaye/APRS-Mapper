@@ -156,22 +156,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           _locationState == _LocationState.notRequested) {
         _recheckLocationPermission();
       }
-    } else if (state == AppLifecycleState.paused) {
-      _persistSharingFlag();
     }
-  }
-
-  // Persist whether we're actively sharing so the native side (iOS
-  // applicationWillTerminate in AppDelegate.swift) can decide whether to show the
-  // "keep the app open" reminder if the user CLOSES the app. Written on every
-  // background transition, which always precedes a swipe-to-quit, so it reflects
-  // the state at the moment the user left.
-  Future<void> _persistSharingFlag() async {
-    if (!Platform.isIOS) return;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('aprs_is_sharing', _isSharing);
-    } catch (_) {}
   }
 
   // Called on app resume to pick up permission changes made in Settings.
