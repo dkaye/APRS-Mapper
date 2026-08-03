@@ -108,6 +108,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
   // Selection / blink
   String? _selectedId;
+  // A fixed marker (iGate/aid) temporarily shown on the map even though its
+  // section eyeball is off — set when tapped in the drawer, cleared on any
+  // "return to normal view" action (map tap, reset, recenter, new selection).
+  String? _revealedFixed;
   int _selectionClickCount = 0;
   Set<String> _blinkingIds = {};
   bool _blinkOn = true;
@@ -1190,6 +1194,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   // ── Map controls ──────────────────────────────────────────────────────────
 
   Future<void> _handleRecenter() async {
+    if (_revealedFixed != null) setState(() => _revealedFixed = null);
     if (_locationState == _LocationState.permanentlyDenied ||
         _locationState == _LocationState.denied) {
       if (!mounted) return;
@@ -1230,6 +1235,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
   void _handleReset() {
+    if (_revealedFixed != null) setState(() => _revealedFixed = null);
     if (_savedCenter != null) {
       _mapController.move(_savedCenter!, _savedZoom ?? _config.mapZoom);
       _mapController.rotate(_savedRotation ?? 0);
@@ -1380,6 +1386,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     }
     setState(() {
       _selectedId = t.id;
+      _revealedFixed = null;   // selecting a tracker returns to normal view
       _trailEntries = [];
       _cellTrailPts  = [];
       _radioTrailPts = [];
@@ -1396,6 +1403,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   void _selectFixed(FixedMarker m, {bool zoom = false}) {
     setState(() {
       _selectedId = m.name;
+      _revealedFixed = m.name;   // reveal it if its section eyeball is off
       _trailEntries  = [];
       _cellTrailPts  = [];
       _radioTrailPts = [];
@@ -1757,12 +1765,12 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     final showAid = _sectionVisible['aidstations'] ?? true;
     final showIgates = _sectionVisible['igates'] ?? true;
     // When a section's eyeball is off, still reveal the single object the user
-    // tapped in the drawer, so selecting it shows it on the map as if visible.
-    final revealIgate = (!showIgates && _selectedId != null)
-        ? _config.igates.where((g) => g.name == _selectedId).firstOrNull
+    // tapped in the drawer, until they return to normal view.
+    final revealIgate = (!showIgates && _revealedFixed != null)
+        ? _config.igates.where((g) => g.name == _revealedFixed).firstOrNull
         : null;
-    final revealAid = (!showAid && _selectedId != null)
-        ? _config.aidStations.where((g) => g.name == _selectedId).firstOrNull
+    final revealAid = (!showAid && _revealedFixed != null)
+        ? _config.aidStations.where((g) => g.name == _revealedFixed).firstOrNull
         : null;
 
     return Builder(
@@ -1781,6 +1789,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 interactionOptions: const InteractionOptions(
                   flags: InteractiveFlag.all & ~InteractiveFlag.pinchMove,
                 ),
+                // Tapping the empty map returns to normal view: a revealed
+                // (eyeball-off) iGate/aid marker is hidden again.
+                onTap: (_, __) {
+                  if (_revealedFixed != null) setState(() => _revealedFixed = null);
+                },
                 onMapEvent: (event) {
                   final z = _mapController.camera.zoom;
                   if ((z - _scaleZoom).abs() > 0.05) {
