@@ -180,6 +180,10 @@ function messaging_handle(string $action, array $body, array $ctx): void
         $conv    = (int)($_GET['conversation_id'] ?? $body['conversation_id'] ?? 0);
         $sinceId = (int)($_GET['since_id'] ?? $body['since_id'] ?? 0);
         if (!$conv) _msg_fail(400, 'conversation_id required');
+        // Only a member (or an operator) may read a thread — otherwise a mobile
+        // could pull any conversation by guessing its id.
+        if (($me['kind'] ?? '') !== 'operator' && !$db->isConversationMember($conv, (int)$me['id']))
+            _msg_fail(403, 'Not a member of this conversation');
         echo json_encode(['messages'=>$db->thread($conv, $sinceId), 'conversation_id'=>$conv]);
         exit;
     }
@@ -197,6 +201,8 @@ function messaging_handle(string $action, array $body, array $ctx): void
     }
 
     case 'history': {
+        // The all-messages log is an operator/admin view — never exposed to mobiles.
+        if (($me['kind'] ?? '') !== 'operator') _msg_fail(403, 'Operators only');
         echo json_encode([
             'messages'       => $db->history($event),
             'participants'   => $db->listParticipants($event),
