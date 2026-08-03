@@ -117,7 +117,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   // Resting tracker label content — toggled by the ID / Name eyes in the sidebar.
   bool _showTrackerIds   = true;
   bool _showTrackerNames = true;
-  String? _lastRecipient; // sticky default for Send Message
 
   // Set when the server reports it no longer supports this app's API contract.
   bool _updateRequired      = false;
@@ -144,24 +143,12 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   bool _isSharing = false;
   final _audioPlayer = AudioPlayer();
   final _notifPlugin = FlutterLocalNotificationsPlugin();
-  final _msgLog = <({String label, String text, bool isMe, DateTime time})>[];
-  final _pendingMessages = <InboundMessage>[];
   AppLifecycleState _appLifecycleState = AppLifecycleState.resumed;
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _appLifecycleState = state;
     if (state == AppLifecycleState.resumed) {
-      if (_pendingMessages.isNotEmpty) {
-        final queued = List<InboundMessage>.of(_pendingMessages);
-        _pendingMessages.clear();
-        WidgetsBinding.instance.addPostFrameCallback((_) async {
-          for (final msg in queued) {
-            if (!mounted) return;
-            await _showInboundDialog(msg);
-          }
-        });
-      }
       // Re-check location permission — user may have changed it in Settings.
       if (_locationState == _LocationState.permanentlyDenied ||
           _locationState == _LocationState.denied ||
@@ -246,7 +233,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _initCourseVisibility();
     _initSectionVisibility();
     _loadLabelPrefs();
-    _loadLastRecipient();
     _checkExistingPermission();
     _poller = OnlinePoller(
       onData: (data) {
@@ -337,20 +323,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       );
     };
 
-    _bgLocation.onHistoryLoaded = (msgs) {
-      if (!mounted) return;
-      setState(() {
-        for (final m in msgs) {
-          _msgLog.add((
-            label: m.fromLabel.isNotEmpty ? m.fromLabel : 'Unknown',
-            text: m.text,
-            isMe: false,
-            time: DateTime.fromMillisecondsSinceEpoch(m.ts * 1000),
-          ));
-        }
-        if (_msgLog.length > 50) _msgLog.removeRange(0, _msgLog.length - 50);
-      });
-    };
     _bgLocation.onMessageReceived = (msg) {
       if (!mounted) return;
       _handleInboundMessage(msg);
@@ -379,224 +351,14 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => MessagingScreen(client: _msgClient)));
   }
 
-  void _showSendMessageDialog({String? prefill}) {
-    if (!_isSharing) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Start sharing your location to send messages'),
-        duration: Duration(seconds: 3),
-      ));
-      return;
-    }
-    final controller = TextEditingController(text: prefill ?? '');
-    final scrollController = ScrollController();
-    bool didScroll = false;
-    // Destination picker: web operators currently monitoring. Fetched once when
-    // the sheet opens. 0/1 → no picker; >1 → dropdown to choose the recipient.
-    List<String> recipients = [];
-    String? selectedRecipient;
-    bool recipientsRequested = false;
-    bool recipientError = false; // true after a send attempt with no recipient chosen
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-      ),
-      builder: (ctx) => StatefulBuilder(builder: (ctx, setDlgState) {
-        if (!recipientsRequested) {
-          recipientsRequested = true;
-          _bgLocation.session.fetchWebRecipients().then((list) {
-            if (!ctx.mounted) return;
-            setDlgState(() {
-              recipients = list;
-              // One operator → pick it. Otherwise fall back to whoever was chosen
-              // last time, provided they're still monitoring, so repeat messages
-              // don't need a trip through the dropdown. Only when there's no usable
-              // previous choice is the user made to pick one.
-              selectedRecipient = list.length == 1
-                  ? list.first
-                  : (list.contains(_lastRecipient) ? _lastRecipient : null);
-            });
-          });
-        }
-        final recent = _msgLog.length > 10 ? _msgLog.sublist(_msgLog.length - 10) : List.of(_msgLog);
-        if (!didScroll && recent.isNotEmpty) {
-          didScroll = true;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (scrollController.hasClients) {
-              scrollController.jumpTo(scrollController.position.maxScrollExtent);
-            }
-          });
-        }
-        return Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 4, 0),
-              child: Row(children: [
-                const Expanded(child: Text('Send Message',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
-                IconButton(
-                  icon: const Icon(Icons.close, size: 20),
-                  onPressed: () => Navigator.pop(ctx),
-                  padding: EdgeInsets.zero,
-                  visualDensity: VisualDensity.compact,
-                ),
-              ]),
-            ),
-            if (recent.isNotEmpty) ...[
-              Container(
-                constraints: const BoxConstraints(maxHeight: 130),
-                margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF5F5F5),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: const Color(0xFFE0E0E0)),
-                ),
-                child: ListView(
-                  controller: scrollController,
-                  shrinkWrap: true,
-                  padding: const EdgeInsets.all(8),
-                  children: recent.map((m) {
-                    final t = '${m.time.hour.toString().padLeft(2,'0')}:${m.time.minute.toString().padLeft(2,'0')}';
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: RichText(text: TextSpan(style: const TextStyle(fontSize: 12, color: Colors.black87), children: [
-                        TextSpan(text: m.label, style: TextStyle(fontWeight: FontWeight.bold, color: m.isMe ? const Color(0xFF1A5276) : Colors.black87)),
-                        TextSpan(text: '  $t\n', style: const TextStyle(fontSize: 10, color: Colors.grey)),
-                        TextSpan(text: m.text),
-                      ])),
-                    );
-                  }).toList(),
-                ),
-              ),
-              const Divider(height: 1, thickness: 1, color: Color(0xFFBDBDBD), indent: 16, endIndent: 16),
-            ],
-            if (recipients.length > 1)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Row(children: [
-                    const Text('To: ', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-                    Expanded(
-                      child: DropdownButton<String>(
-                        isExpanded: true,
-                        value: selectedRecipient,
-                        hint: const Text('Select recipient…',
-                            style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-                        items: recipients
-                            .map((r) => DropdownMenuItem(value: r, child: Text(r)))
-                            .toList(),
-                        onChanged: (v) {
-                          _rememberRecipient(v);
-                          setDlgState(() {
-                            selectedRecipient = v;
-                            recipientError = false;
-                          });
-                        },
-                      ),
-                    ),
-                  ]),
-                  if (recipientError)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 2),
-                      child: Text('Choose who will receive this message',
-                          style: TextStyle(color: Colors.red, fontSize: 12)),
-                    ),
-                ]),
-              ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 8, 12),
-              child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                Expanded(
-                  child: TextField(
-                    controller: controller,
-                    maxLength: 280,
-                    maxLines: 5,
-                    minLines: 1,
-                    decoration: const InputDecoration(hintText: 'Type your message…', border: OutlineInputBorder()),
-                    autofocus: true,
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.send),
-                  color: const Color(0xFF1565C0),
-                  onPressed: () async {
-                    final text = controller.text.trim();
-                    if (text.isEmpty) return;
-                    if (recipients.length > 1 && selectedRecipient == null) {
-                      setDlgState(() => recipientError = true);
-                      return;
-                    }
-                    Navigator.pop(ctx);
-                    _rememberRecipient(selectedRecipient);
-                    final error = await _bgLocation.session.sendMessage(text, to: selectedRecipient);
-                    if (error == null) {
-                      setState(() {
-                        _msgLog.add((label: 'Me', text: text, isMe: true, time: DateTime.now()));
-                        if (_msgLog.length > 30) _msgLog.removeAt(0);
-                      });
-                      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text('Message Sent'),
-                        duration: Duration(seconds: 3),
-                      ));
-                    } else {
-                      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                        content: Text(error),
-                        backgroundColor: Colors.red[700],
-                        duration: const Duration(seconds: 5),
-                      ));
-                    }
-                  },
-                ),
-              ]),
-            ),
-          ]),
-        );
-      }),
-    );
-  }
-
-  Widget _buildMsgThread() {
-    final recent = _msgLog.length > 10 ? _msgLog.sublist(_msgLog.length - 10) : _msgLog;
-    return Container(
-      constraints: const BoxConstraints(maxHeight: 160),
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF5F5F5),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: const Color(0xFFE0E0E0)),
-      ),
-      child: ListView(
-        shrinkWrap: true,
-        padding: const EdgeInsets.all(8),
-        children: recent.map((m) {
-          final t = '${m.time.hour.toString().padLeft(2,'0')}:${m.time.minute.toString().padLeft(2,'0')}';
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: RichText(text: TextSpan(style: const TextStyle(fontSize: 12, color: Colors.black87), children: [
-              TextSpan(text: m.label, style: TextStyle(fontWeight: FontWeight.bold, color: m.isMe ? const Color(0xFF1A5276) : Colors.black87)),
-              TextSpan(text: '  $t\n', style: const TextStyle(fontSize: 10, color: Colors.grey)),
-              TextSpan(text: m.text),
-            ])),
-          );
-        }).toList(),
-      ),
-    );
-  }
-
   Future<void> _handleInboundMessage(InboundMessage msg) async {
     // The chat screen is open and shows arriving messages live via its own poll,
-    // so don't also raise the legacy dialog/notification. (background_location
-    // still acks it so it isn't re-delivered.)
+    // so don't also raise a notification/banner. (background_location still acks
+    // it so it isn't re-delivered.)
     if (MessagingScreen.isOpen) return;
-    setState(() {
-      _msgLog.add((label: msg.fromLabel, text: msg.text, isMe: false, time: DateTime.fromMillisecondsSinceEpoch(msg.ts * 1000)));
-      if (_msgLog.length > 30) _msgLog.removeAt(0);
-    });
     if (_appLifecycleState != AppLifecycleState.resumed) {
-      _pendingMessages.add(msg);
+      // Backgrounded: raise a native notification the user can tap to return to
+      // the app and open Messages.
       if (Platform.isAndroid) {
         if (await FlutterForegroundTask.canDrawOverlays) {
           FlutterForegroundTask.launchApp();
@@ -640,153 +402,24 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       }
       return;
     }
+    // Foreground: play the alert tone and offer a tap-to-open banner. The full
+    // conversation lives in the chat screen, reachable from the Messages button.
     try {
       await _audioPlayer.setAudioSource(AudioSource.asset('assets/sounds/message.wav'));
       unawaited(_audioPlayer.play());
     } catch (_) {}
-    await _showInboundDialog(msg);
-  }
-
-  Future<void> _showInboundDialog(InboundMessage msg) async {
     if (!mounted) return;
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) {
-        bool showReply = false;
-        final replyController = TextEditingController();
-        final scrollController = ScrollController();
-        bool didScroll = false;
-        return StatefulBuilder(builder: (ctx, setDlgState) {
-          // Prior messages = everything except the just-arrived one (last in _msgLog)
-          final prior = _msgLog.length > 1
-              ? _msgLog.sublist(0, _msgLog.length - 1)
-              : <({String label, String text, bool isMe, DateTime time})>[];
-          final recentPrior = prior.length > 10 ? prior.sublist(prior.length - 10) : prior;
-          final newTime = DateTime.fromMillisecondsSinceEpoch(msg.ts * 1000);
-          final newT = '${newTime.hour.toString().padLeft(2,'0')}:${newTime.minute.toString().padLeft(2,'0')}';
-          // Scroll to bottom (new message) on first render
-          if (!didScroll) {
-            didScroll = true;
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (scrollController.hasClients) {
-                scrollController.jumpTo(scrollController.position.maxScrollExtent);
-              }
-            });
-          }
-          // In landscape (esp. iPad) the on-screen keyboard eats ~half the
-          // screen, so go wide-and-short: a wider dialog with a shorter
-          // history pane and a shorter reply field.
-          final mq = MediaQuery.of(ctx);
-          final landscape = mq.size.width > mq.size.height;
-          final historyMax = landscape ? 200.0 : 300.0;
-          final contentWidth = landscape
-              ? math.min(mq.size.width * 0.8, 720.0)
-              : math.min(mq.size.width * 0.9, 400.0);
-          return AlertDialog(
-            insetPadding: EdgeInsets.symmetric(horizontal: 24, vertical: landscape ? 12 : 24),
-            titlePadding: EdgeInsets.fromLTRB(24, landscape ? 12 : 24, 24, 0),
-            contentPadding: EdgeInsets.fromLTRB(24, landscape ? 12 : 20, 24, landscape ? 8 : 24),
-            title: Row(children: [
-              const Icon(Icons.message, size: 20),
-              const SizedBox(width: 8),
-              Text(msg.fromLabel),
-            ]),
-            content: SizedBox(
-              width: contentWidth,
-              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              // Flexible so the history pane gives up height to the on-screen
-              // keyboard instead of overflowing the dialog.
-              Flexible(child: Container(
-                constraints: BoxConstraints(maxHeight: historyMax),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF5F5F5),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: const Color(0xFFE0E0E0)),
-                ),
-                child: ListView(
-                  controller: scrollController,
-                  shrinkWrap: true,
-                  padding: const EdgeInsets.all(8),
-                  children: [
-                    ...recentPrior.map((m) {
-                      final t = '${m.time.hour.toString().padLeft(2,'0')}:${m.time.minute.toString().padLeft(2,'0')}';
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 6),
-                        child: RichText(text: TextSpan(style: const TextStyle(fontSize: 12, color: Colors.black87), children: [
-                          TextSpan(text: m.label, style: TextStyle(fontWeight: FontWeight.bold, color: m.isMe ? const Color(0xFF1A5276) : Colors.black87)),
-                          TextSpan(text: '  $t\n', style: const TextStyle(fontSize: 10, color: Colors.grey)),
-                          TextSpan(text: m.text),
-                        ])),
-                      );
-                    }),
-                    if (recentPrior.isNotEmpty)
-                      const Divider(height: 16, thickness: 1, color: Color(0xFFBDBDBD)),
-                    RichText(text: TextSpan(style: const TextStyle(fontSize: 13, color: Colors.black87), children: [
-                      TextSpan(text: msg.fromLabel, style: const TextStyle(fontWeight: FontWeight.bold)),
-                      TextSpan(text: '  $newT\n', style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                      TextSpan(text: msg.text, style: const TextStyle(fontSize: 15)),
-                    ])),
-                  ],
-                ),
-              )),
-              if (showReply) ...[
-                SizedBox(height: landscape ? 8 : 12),
-                TextField(
-                  controller: replyController,
-                  maxLength: 280,
-                  maxLines: landscape ? 2 : 4,
-                  // Hide the 0/280 counter in landscape — every pixel counts.
-                  buildCounter: landscape
-                      ? (_, {required currentLength, required isFocused, maxLength}) => null
-                      : null,
-                  decoration: InputDecoration(
-                    hintText: 'Type your reply…',
-                    border: const OutlineInputBorder(),
-                    isDense: landscape,
-                    contentPadding: landscape ? const EdgeInsets.symmetric(horizontal: 12, vertical: 10) : null,
-                  ),
-                  autofocus: true,
-                ),
-              ],
-            ])),
-            actions: [
-              if (!showReply) TextButton(
-                onPressed: () => setDlgState(() => showReply = true),
-                child: const Text('Reply'),
-              ),
-              if (showReply) TextButton(
-                onPressed: () async {
-                  final text = replyController.text.trim();
-                  if (text.isEmpty) return;
-                  Navigator.pop(ctx);
-                  // Reply goes back to the operator who sent the incoming message.
-                  final error = await _bgLocation.session.sendMessage(text, to: msg.fromLabel);
-                  if (error == null) {
-                    setState(() {
-                      _msgLog.add((label: 'Me', text: text, isMe: true, time: DateTime.now()));
-                      if (_msgLog.length > 30) _msgLog.removeAt(0);
-                    });
-                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      content: Text('Message Sent'),
-                      duration: Duration(seconds: 3),
-                    ));
-                  } else {
-                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text(error),
-                      backgroundColor: Colors.red[700],
-                      duration: const Duration(seconds: 5),
-                    ));
-                  }
-                },
-                child: const Text('Send'),
-              ),
-              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
-            ],
-          );
-        });
-      },
-    );
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+    messenger.showSnackBar(SnackBar(
+      content: Text(
+        '📨 ${msg.fromLabel}: ${msg.text}',
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
+      duration: const Duration(seconds: 6),
+      action: SnackBarAction(label: 'Open', onPressed: _openMessaging),
+    ));
   }
 
   void _initCourseVisibility() {
@@ -1623,22 +1256,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Map position saved'), duration: Duration(seconds: 2)),
     );
-  }
-
-  // Last operator the user picked in Send Message. Reused as the default so a
-  // repeat message doesn't need a trip through the dropdown; only honoured when
-  // that operator is still monitoring (i.e. still in the fetched recipient list).
-  Future<void> _loadLastRecipient() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (!mounted) return;
-    setState(() => _lastRecipient = prefs.getString('last_msg_recipient'));
-  }
-
-  Future<void> _rememberRecipient(String? name) async {
-    if (name == null || name == _lastRecipient) return;
-    _lastRecipient = name;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('last_msg_recipient', name);
   }
 
   Future<void> _loadLabelPrefs() async {
