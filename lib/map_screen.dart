@@ -1248,6 +1248,20 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
   void _handleReset() {
     _clearTransientMapHighlights();
+    // A map reset also drops the selected tracker's breadcrumb trail. Panning,
+    // zooming and tapping the map do NOT — breadcrumbs stay visible through those.
+    if (_selectedId != null ||
+        _trailEntries.isNotEmpty ||
+        _cellTrailPts.isNotEmpty ||
+        _radioTrailPts.isNotEmpty) {
+      setState(() {
+        _selectedId = null;
+        _selectionClickCount = 0;
+        _trailEntries = [];
+        _cellTrailPts = [];
+        _radioTrailPts = [];
+      });
+    }
     if (_savedCenter != null) {
       _mapController.move(_savedCenter!, _savedZoom ?? _config.mapZoom);
       _mapController.rotate(_savedRotation ?? 0);

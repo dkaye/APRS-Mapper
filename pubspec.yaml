@@ -1,7 +1,7 @@
 name: aprs_map
 description: APRS event tracker map for Marin County — online and offline.
 publish_to: 'none'
-version: 1.21.0+22
+version: 1.21.1+13
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

@@ -10,7 +10,7 @@ import 'map_config.dart';
 /// Release date shown under the Quick Start title. The version number itself
 /// comes from PackageInfo (i.e. pubspec.yaml), but the date has no such source —
 /// bump it by hand alongside the version.
-const kGuideDate = 'July 31, 2026';
+const kGuideDate = 'August 4, 2026';
 
 const _tipStyle = TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4);
 const _tipStyleBold = TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4, fontWeight: FontWeight.w600);
@@ -128,6 +128,8 @@ class HelpScreen extends StatelessWidget {
               const TextSpan(text: '. Turn both off and the tracker labels disappear while the markers stay on the map — useful when a crowded course turns into a wall of text.', style: _tipStyle),
             ]))),
             _tip('All of these choices are remembered the next time you open the app.'),
+            _tip('Tapping a tracker in the sidebar briefly forces its full ID and name label onto the map — even if you\'ve turned those labels off — reverting on your next action.'),
+            _tip('Tapping an iGate or Aid/Rest Stop whose section you\'ve hidden (its eye is off) still shows it on the map for that selection, reverting on your next action.'),
 		    _tipWidget(Text.rich(TextSpan(children: [
 		      const TextSpan(text: 'Tap ', style: TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4)),
 		      WidgetSpan(child: Icon(Icons.push_pin, size: 16, color: Color(0xFF333333)), alignment: PlaceholderAlignment.middle),
@@ -157,19 +159,20 @@ class HelpScreen extends StatelessWidget {
           ]),
 
           _section('Messaging  (while sharing)', Icons.chat_bubble_outline, [
-            _tip('While sharing your location, net control can send you text messages.'),
-            _tip('An incoming message plays a three-repeat tone and shows a pop-up dialog with the sender\'s name and text.'),
-            _tip('If the app is in the background, a notification appears. Tap it to open the app — the message dialog opens automatically.'),
             _tipWidget(Text.rich(TextSpan(children: [
-              const TextSpan(text: 'Tap ', style: TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4)),
-              const TextSpan(text: 'Reply', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF333333), height: 1.4)),
-              const TextSpan(text: ' to respond, or tap ', style: TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4)),
+              const TextSpan(text: 'While sharing, tap ', style: _tipStyle),
               WidgetSpan(child: Icon(Icons.chat_bubble_outline, size: 16, color: Color(0xFF333333)), alignment: PlaceholderAlignment.middle),
-              const TextSpan(text: ' Message in the drawer footer to send a new message.', style: TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4)),
+              const TextSpan(text: ' Message in the drawer footer to open the chat screen.', style: _tipStyle),
             ]))),
-            _tip('If more than one operator is monitoring messages, pick one from the To: dropdown. '
-                 'Whoever you choose becomes the default for your next message, so you don\'t have to '
-                 'choose again each time. If that operator stops monitoring, you\'ll be asked to pick again.'),
+            _tip('Chat with net control and other participants. Your Conversations list shows each thread with an unread count; tap New message to start a conversation or a group.'),
+            _tip('Attach a photo — take one or choose from your library — and send it with or without text. Tap any photo to view it full-screen.'),
+            _tip('Your sent messages show Delivered ✓ and Read ✓✓ (or “Read by 2 of 3” in a group).'),
+            _tip('Tap the speaker icon to have arriving messages read aloud; tap again to mute.'),
+            _tip('If a message arrives while the app is in the background or the screen is locked, a notification with a distinct alert sound appears — tap it to open the conversation.'),
+          ]),
+
+          _section('App Updates', Icons.system_update_alt, [
+            _tip('When a newer version is available, a dismissable “Update available” prompt appears on launch. Tap Update to get it (App Store on iOS, latest APK on Android), or Later to postpone. Updates are never forced.'),
           ]),
 
           _section('Offline Use', Icons.download_for_offline_outlined, [
