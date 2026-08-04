@@ -15,7 +15,7 @@
  *   ?config  Map/background/course/tracker config from config.yaml (ETag-cached)
  */
 
-define('WEB_VERSION', '1.21.0+12');
+define('WEB_VERSION', '1.21.1+13');
 
 // ── Client/server API contract version ────────────────────────────────────────
 // Advertised in the ?json and ?config responses so mobile apps can detect an
@@ -2247,7 +2247,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 			<button id="qs-close">&times;</button>
 		</div>
 		<div id="qs-body">
-			<div class="qs-ver">Version <?= WEB_VERSION ?> &middot; July 31, 2026</div>
+			<div class="qs-ver">Version <?= WEB_VERSION ?> &middot; August 4, 2026</div>
 			<div class="qs-note">You can reopen this guide anytime from <strong>Help &rarr; Quick Start</strong>.</div>
 
 			<div class="qs-sec">

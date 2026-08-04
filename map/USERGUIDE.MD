@@ -1,6 +1,6 @@
 # APRS Tracker Map — User Guide
 
-**Version 1.21.0 · July 31, 2026**
+**Version 1.21.1 · August 4, 2026**
 
 ---
 
@@ -351,6 +351,8 @@ On phones and tablets the tracker list uses touch gestures instead of a click cy
 
 The same tap / long-press behavior applies to **Aid Stations** and **iGates** in the drawer.
 
+**Native app:** tapping a tracker in the sidebar also forces its full **ID and name** to show as a label on the map — even if that label is normally hidden — reverting to your configured label settings on the next action.
+
 To open **Google Maps** centered on any tracker, igate, or aid station, **long-press its marker on the map** (not in the drawer).
 
 Tapping a different tracker switches focus to that tracker.
@@ -378,6 +380,8 @@ Aid stations and iGates appear as black dots on the map.
 - **Hover over a dot** to see its name (and APRS callsign, if configured) in a white label.
 - **Click an entry in the sidebar** to make the label permanent and zoom the map to that location.
 - **Click it again** to dismiss the label and reset the map.
+
+**Hidden layers (eyeball off):** Selecting an aid station or iGate reveals it even when its layer is hidden. On the web map, a second click on a sidebar entry shows the object's full label, zooms to it, and blinks it — even if the eyeball is off — reverting on your next action. In the native app, tapping a hidden iGate or aid station displays it on the map as though its eyeball were on, again reverting on your next action.
 
 When an aid station or iGate has a callsign configured, its sidebar entry **blinks green for 5 seconds** each time a listed tracker's beacon is received through it (i.e., the station's callsign appears in the APRS-IS q-construct path of the packet). An iGate and an aid station may share the same callsign; both entries will blink independently.
 
@@ -439,11 +443,13 @@ Tap **Sharing** in the drawer footer, then tap **Stop Sharing**.
 - **Android:** When you first tap Share Location, the app may ask for permission to show notifications and to run without battery restrictions. Grant both — they are required for the app to keep running in the background when the screen is off. A notification ("APRS Map — Sharing your location") will appear in the notification bar while sharing is active; this confirms the background service is running. To confirm the notification is visible, wake the screen and swipe down from the top.
 - **iOS:** When you first tap Share Location, iOS may ask to upgrade your location permission from "While Using" to "Always". Tap **Change to Always Allow** — this is required for the app to send your location while the screen is locked.
 
+**App updates:** When a newer version of the native app is available, it shows a dismissable **Update available** prompt on launch. Tap **Update** to get it from the App Store (iOS) or download the latest APK (Android), or **Later** to postpone — updates are never forced.
+
 ---
 
 ### Messaging (L, S)
 
-When the event administrator has enabled messaging, net control operators can exchange real-time text messages with active mobile tracker participants.
+When the event administrator has enabled messaging, net control operators and mobile tracker participants can exchange real-time text messages — one-to-one, in named **groups**, or broadcast to everyone. Messaging now works like a familiar chat app: persistent conversations, delivery and read receipts, optional photo attachments, and text that can be read aloud.
 
 #### For Operators (web map)
 
@@ -451,51 +457,39 @@ An **Operator** is any web user who has subscribed to the messaging channel for 
 
 **Subscribing:**
 
-1. Click the **Messaging** button in the sidebar (it appears when messaging is enabled for the current event and you are not yet subscribed).
-2. Enter your **name** (shown to mobile participants when you send a message) and the **messaging password** (provided by the event administrator).
-3. Click **Subscribe**. You will start receiving messages immediately.
+1. Click the **Messaging** button in the sidebar (it appears when messaging is enabled and you are not yet subscribed).
+2. Enter your **name** (shown to everyone you message) and the **messaging password** (provided by the event administrator).
+3. Click **Subscribe**. Your subscription is remembered in the browser, so on future visits you are re-subscribed automatically without re-entering the password.
 
-Your subscription is remembered in the browser. On future visits you will be re-subscribed automatically without re-entering the password.
+**The chat panel:**
 
-**Sending a message:**
+Messaging opens as a **chat panel docked to the right of the map**, in two parts:
 
-Click the **Messaging** button to open the compose window. At the top is a **To:** dropdown listing **All Trackers** (the default) followed by every mobile tracker currently on the map, shown as ID and name — for example `M083 James`. Choose a recipient, type up to 280 characters and click **Send**.
+- **Conversations list** — every conversation you are part of, each with the other party's ID and name and an unread badge. Click one to open its thread.
+- **Thread + composer** — the selected conversation's messages, newest at the bottom, with an **always-visible message box** that is never covered by an incoming message. New messages appear live as they arrive — nothing to reload. Only your own conversations are shown; traffic between other operators and trackers is not.
 
-Only mobile trackers appear in the list — they are the participants running the app, and radio-only trackers cannot receive messages. If you had selected a tracker that has since stopped reporting, it stays in the list marked *(offline)* rather than silently switching your message to someone else.
+**Starting a conversation or group:**
 
-You can also right-click (or Ctrl+click) a tracker entry in the sidebar to open the compose window already addressed to that participant.
+Click **New message**, then filter the list of **mobile trackers and other operators** with the **Search** box. Pick one recipient for a direct chat, several for a **group**, or choose **All Trackers** to broadcast to every mobile participant. You can also click a tracker in the sidebar to open a conversation already addressed to that participant. Radio-only trackers are not listed — they cannot receive messages.
 
-Your conversation with the selected recipient appears above the text field, and changing the recipient switches the thread. Messages that arrive while the window is open are added to the thread as they come in — you do not need to close and reopen it. Only your own conversations are shown; traffic between other operators and trackers is not.
+**Sending:**
 
-A slider in the compose window sets the volume of the alert tone played when a message arrives; set it to 0 to mute.
+Type up to 280 characters and press **Send**. To attach a **photo**, click the **Attach** (📷) button, choose an image, and send it with or without text; recipients see a thumbnail they can click to view full-size.
 
-The compose window footer has three options:
+**Voice:** Click the **microphone** button to dictate a message instead of typing (uses your browser's speech recognition; best in Chrome/Edge).
 
-- **View all messages** — open the full message log (see below).
-- **Change my name** — update the name shown to mobile participants for future messages.
-- **Disable messaging** — unsubscribe and clear your session. The Messaging button reappears so you can re-subscribe later.
+**Delivery & read receipts:** Each message you send shows its status — **Delivered ✓** when it reaches the recipient's device and **Read ✓✓** once opened. In a group the status reads **Delivered to 2 of 3** / **Read by 1 of 3**.
 
-**Receiving messages:**
+**Read aloud:** Toggle the **Read aloud** (speaker) button to have arriving messages spoken by the browser — handy for a hands-free net control station. When it is off, a short alert **tone** plays instead; a volume slider sets its level (0 mutes).
 
-When a mobile tracker sends a message, a notification window appears showing the sender's name and message text. The recent conversation thread is shown in smaller text above the new message (which appears slightly larger for easy spotting). Click **Reply** to compose a response, or **Close** to dismiss. If another message arrives from the same person while the window is open, it appears straight away.
+**Settings** (in the panel): **Change my name**, adjust the alert volume, open **View all** messages, or **Sign out** of messaging.
 
-**All Messages:**
+**View all messages:**
 
-Click **View all messages** in the compose window footer to open the complete message log for the event — every message, in both directions, including other operators' conversations — in a scrollable table:
+Click **View all** to see the complete message log for the event — every message, in both directions, including other operators' conversations — as a scrollable, **searchable** feed. Type in the search box to filter by text, name, or ID, and click any message to jump into that conversation's thread and reply. Messages sent from a mobile tracker show a **location pin** — click it to centre the map on where the sender last reported (with a popup showing the sender, time, and message; if their position predates the message, the popup says so). Operators signed in with the **Delete All Messages** permission also see:
 
-| Column | Contents |
-|---|---|
-| Time | Month-day and time, e.g. `07-21 13:22:05` |
-| (pin) | Appears on messages sent from a mobile tracker — click to see where the sender was |
-| From | Tracker ID and name, or the operator's name |
-| To | Tracker ID and name, `All Trackers` for a broadcast, or `Operator` |
-| Message | The message text |
-
-Broadcasts are tinted so they stand out. Three actions are available:
-
-- **Location pin** — clicking a pin closes the log, centres the map on the position the sender last reported and drops a marker there, with a popup showing the sender, the time and the message. Dismissing the popup removes the marker. If the sender's position was recorded noticeably earlier than the message — for example if they were briefly out of coverage — the popup says so. The pin marks where they last reported, which is not necessarily where they were standing when they typed.
-- **Export CSV** — download the whole log as a spreadsheet file, with full timestamps (local and UTC), callsigns, and the sender's latitude and longitude where recorded.
-- **Delete All Messages** — permanently erase the message log for everyone. This button is only visible to users signed in with the **Delete All Messages** permission (see [Signing In](#signing-in)). It asks for confirmation first and cannot be undone, so export the log if you need a record.
+- **Export CSV** — download the whole log with full timestamps (local and UTC), callsigns, and the sender's coordinates where recorded.
+- **Delete All Messages** — permanently erase the log for everyone. It asks for confirmation and cannot be undone, so export first if you need a record.
 
 **Operator auto-login (Display Pis without keyboards):**
 
@@ -505,23 +499,22 @@ Operators using a Display Pi such as NetControl can be subscribed automatically 
 
 #### For Mobile Tracker Participants (native app)
 
-While sharing your location, messaging is available from the drawer.
+The app includes a full **chat screen** that mirrors the operators' panel. Open it with the **Message** (💬) button in the drawer footer (visible while sharing).
 
-**Receiving messages:**
+**Conversations:** The screen opens on your **Conversations** list, each entry showing the other party and an unread count. Tap one to open its thread, or tap **New message** to **Start a conversation** with an operator — or **Start a group** with several people (search by name). Each participant shows **Online** / **Offline** presence.
 
-Incoming messages play a three-repeat tone and show a pop-up dialog with the sender's name and text. Tap **Reply** to respond directly from the notification, or **Close** to dismiss.
+**Sending:** Type up to 280 characters in the message box and tap **Send**. Tap **Attach photo** to **Take a photo** or **Choose from library**; the image sends with or without text, and either party can tap a photo to view it full-screen.
 
-**When the app is in the background:**
-- **Android** — the app is brought to the foreground automatically (if "Draw over other apps" permission has been granted), and the message dialog opens. A notification also appears in case the app cannot surface immediately.
-- **iOS** — a notification banner appears. Tap it to open the app; the message dialog opens automatically when the app comes to the foreground.
+**Receipts:** Your sent messages show **Delivered ✓** and **Read ✓✓** (or **Delivered to N of M** / **Read by N of M** in a group).
 
-In both cases, if multiple messages arrived while backgrounded, the dialogs open in sequence when you return to the app.
+**Read aloud:** Tap the **speaker** icon (**Read arriving messages aloud**) to have new messages spoken; tap again to mute.
 
-**Sending messages:**
+**When the app is in the background:** A message **notification** appears with a distinct, insistent **alert sound** so you don't miss it while the app is backgrounded or the screen is locked.
 
-Tap the **Message** (💬) button in the drawer footer (visible while sharing). A compose window opens showing the recent conversation thread, scrolled to the most recent message. Type up to 280 characters and tap **Send**.
+- **Android** — tap the notification (or the app is brought forward automatically if "Draw over other apps" is granted) to open the conversation.
+- **iOS** — tap the notification banner to open the app on that conversation.
 
-If more than one operator is monitoring messages, a **To:** dropdown lets you choose who receives it. Once you pick someone, they become the default for your future messages, so you do not have to choose again each time. If that operator later stops monitoring, the field is cleared and you are asked to pick again rather than sending to someone who is no longer listening. When only one operator is monitoring, they are selected automatically and no dropdown appears.
+If several messages arrived while you were away, they are waiting in their conversations when you return.
 
 ---
 
@@ -529,7 +522,7 @@ If more than one operator is monitoring messages, a **To:** dropdown lets you ch
 
 Use this to measure distance and direction between two locations.
 
-**Right-click** anywhere on the map to place a red **Origin** marker. (Use a long click on mobile devices.)
+**Right-click** anywhere on the map to place a red **Origin** marker. On a laptop trackpad with no right button, **Ctrl-click** (Windows/Linux) or **⌘-click** (Mac) does the same. (Use a long click on mobile devices.)
 
 - Hover over the Origin to see its latitude and longitude. Click the copy button in the
   tooltip to copy the coordinates to your clipboard.
@@ -810,7 +803,7 @@ Below the settings is the **active participant list**, which refreshes automatic
 | Button | Action |
 |--------|--------|
 | **Rename** | Change the participant's displayed name on the map. |
-| **Block** | Prevent the participant from sending further position updates. They remain in the list until removed. |
+| **Hide** | Toggle a mobile tracker's map visibility. When on, the tracker is hidden from the map but still appears in the sidebar and tracker list; default is off (visible). |
 | **Remove** | End the session immediately and remove the participant from the list and the map. |
 
 #### Beacon Settings
