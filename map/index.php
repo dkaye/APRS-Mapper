@@ -3689,7 +3689,7 @@ function updateDesktopLegend(trackers, merge = false) {
 			item.innerHTML = `<span class="legend-dot"></span>`
 			               + `<span class="legend-text"><span class="legend-id">${t.id}</span> <span class="legend-name">${t.name}</span></span>`
 			               + `<span class="legend-mode" style="font-size:11px;filter:grayscale(1) brightness(0.5)"></span>`
-			               + `<span class="legend-time">${t.lat===null?'—':(t.color||'red')==='red'?'stale':t.time}</span>`;
+			               + `<span class="legend-time">${t.lat===null?'—':(t.timeSinceLastUpdate>=3600?'stale':t.time)}</span>`;
 		}
 		const color = t.color || 'red';
 		item.querySelector('.legend-dot').style.background    = color;
@@ -3699,7 +3699,7 @@ function updateDesktopLegend(trackers, merge = false) {
 		item.querySelector('.legend-id').textContent        = t.id;
 		item.querySelector('.legend-name').textContent      = t.name;
 		item.querySelector('.legend-mode').innerHTML        = _modeIcon(t.sharing_mode || '', t.mobile);
-		item.querySelector('.legend-time').textContent      = t.lat === null ? '—' : color === 'red' ? 'stale' : t.time;
+		item.querySelector('.legend-time').textContent      = t.lat === null ? '—' : t.timeSinceLastUpdate >= 3600 ? 'stale' : t.time;
 		// Hidden-from-map trackers stay listed here but dimmed, with a tooltip.
 		item.style.opacity = t.hidden ? '0.5' : '';
 		item.title = t.hidden ? 'Hidden from map — listed here only' : '';
@@ -3760,7 +3760,7 @@ function updateMobileLegend(trackers, merge = false) {
 			item.innerHTML = `<span class="m-dot"></span><span class="m-id">${t.id}</span>`
 			               + `<span class="m-name">${t.name}</span>`
 			               + `<span class="m-mode" style="filter:grayscale(1) brightness(0.5)"></span>`
-			               + `<span class="m-time">${t.lat===null?'—':(t.color||'red')==='red'?'stale':t.time}</span>`;
+			               + `<span class="m-time">${t.lat===null?'—':(t.timeSinceLastUpdate>=3600?'stale':t.time)}</span>`;
 			let pressTimer = null, didLongPress = false, _lpX = 0, _lpY = 0;
 			item.addEventListener('touchstart', e => {
 				didLongPress = false;
@@ -3788,7 +3788,7 @@ function updateMobileLegend(trackers, merge = false) {
 		item.querySelector('.m-id').textContent        = t.id;
 		item.querySelector('.m-name').textContent      = t.name;
 		item.querySelector('.m-mode').innerHTML        = _modeIcon(t.sharing_mode || '', t.mobile);
-		item.querySelector('.m-time').textContent      = t.lat === null ? '—' : color === 'red' ? 'stale' : t.time;
+		item.querySelector('.m-time').textContent      = t.lat === null ? '—' : t.timeSinceLastUpdate >= 3600 ? 'stale' : t.time;
 		item.style.opacity = t.hidden ? '0.5' : '';   // hidden from map, still listed
 		if (_orderChanged) legend.appendChild(item);  // re-order only when the sequence changed
 	});
@@ -4319,7 +4319,7 @@ function refreshIgateStaleness() {
 			return;
 		}
 		const age = now - ts;
-		const color = age <= 120 ? 'green' : (age <= 300 ? 'blue' : 'red');
+		const color = age < 300 ? 'green' : (age < 900 ? 'blue' : 'red');
 		dot.style.background = color;
 		if (tm) {
 			const s = age % 60, m = (age - s) / 60;

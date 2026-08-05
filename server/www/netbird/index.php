@@ -440,13 +440,12 @@ function esc(s) {
 }
 
 // iGate internet reachability from the map's APRS daemon (passive, zero cellular
-// cost). Tracker-style dot colors: green <=2min, blue <=5min, red >5min. Elapsed
-// time shown as M:SS like trackers; "stale" only once >=60min; grey "—" if never
-// heard.
+// cost). Dot colors: green <5min, blue <15min, red >=15min. Elapsed time shown as
+// M:SS; "stale" only once >=60min; grey "—" if never heard.
 function igateStatus(ts) {
   if (!ts) return '<span style="color:#9ca3af">—</span>';
   const age = Math.floor(Date.now() / 1000) - ts;
-  const color = age <= 120 ? '#16a34a' : (age <= 300 ? '#2563eb' : '#dc2626');
+  const color = age < 300 ? '#16a34a' : (age < 900 ? '#2563eb' : '#dc2626');
   const s = age % 60, m = (age - s) / 60;
   const label = age >= 3600 ? 'stale' : m + ':' + String(s).padStart(2, '0');
   return `<span style="color:${color};font-weight:500">${label}</span>`;
