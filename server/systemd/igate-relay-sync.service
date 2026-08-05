@@ -1,0 +1,16 @@
+# igate-relay-sync — pull igate_relay.json from the VPS relay to aprs-pi for the map
+[Unit]
+Description=Pull igate_relay.json from the VPS aggregation relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+ExecStart=/home/pi/igate-relay-sync.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
