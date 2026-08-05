@@ -97,6 +97,20 @@ class Proxy:
         peer = writer.get_extra_info("peername")
         log(f"direwolf connected from {peer}")
         self.dw_writer = writer
+        # An APRS-IS server greets the client with a "# ..." banner line BEFORE the
+        # client sends its login, and direwolf waits for that greeting first. Send a
+        # synthetic banner immediately — otherwise direwolf blocks waiting for it
+        # while we block reading its login (deadlock), so it times out, sends the
+        # login late, gets no timely logresp and disconnects, churning forever. The
+        # real upstream banner/logresp still flow through afterward (extra "#"
+        # comment lines are harmless to direwolf).
+        try:
+            writer.write(b"# igate-isproxy 5.2\r\n")
+            await writer.drain()
+        except Exception as e:
+            log(f"direwolf banner write failed: {e}")
+            writer.close()
+            return
         # First line from direwolf is its APRS-IS login; cache it for replay.
         try:
             self.login = await reader.readline()
