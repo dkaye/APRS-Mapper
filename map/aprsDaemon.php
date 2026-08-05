@@ -319,7 +319,7 @@ function syncMobilePositionHistory() {
 
 // Close any open socket, rebuild the filter command from current $trackers, and reconnect
 function connectToAprsServer() {
-	global $socket,$trackers,$aprsLoginCommand,$aprsServer,$aprsPort,$mobileRoot,$mobileEnabled;
+	global $socket,$trackers,$igates,$aprsLoginCommand,$aprsServer,$aprsPort,$mobileRoot,$mobileEnabled;
 	if ($socket) {
 		socket_close($socket);
 		$socket=null;
@@ -330,6 +330,15 @@ function connectToAprsServer() {
 		$cmd .= "/" . $tracker["callsign"];
 	}
 	// mobileRoot prefix omitted — mobile tracker positions come directly from mobile_trackers.json
+	// Passively monitor our iGates' internet reachability: e/ = all traffic they gate
+	// into APRS-IS (any source), b/ = their own direct position beacons (idle heartbeat).
+	// Costs the iGates nothing — only our inbound feed grows.
+	$igateCalls = array();
+	foreach ($igates as $g) {
+		$cs = $g['callsign'] ?? '';
+		if ($cs !== '' && !in_array($cs, $igateCalls, true)) $igateCalls[] = $cs;
+	}
+	if ($igateCalls) $cmd .= " e/" . implode("/", $igateCalls) . " b/" . implode("/", $igateCalls);
 	$cmd .= "\r\n";
 	debug("Command=$cmd");
 	$socket=socket_create(AF_INET,SOCK_STREAM,SOL_TCP);
@@ -481,6 +490,17 @@ function loadMobileSessions() {
 	}
 	$mobileSessions = $newSessions;
 	return true;
+}
+
+// True when this packet shows the station is on the internet: either the packet is
+// its own beacon (source callsign) or it gated the packet in (its callsign follows a
+// q-construct in the path, e.g. qAR,K6DRK-6).
+function aprsStationHeard($cs, $srcCallsign, $pathParts) {
+	if ($srcCallsign === $cs) return true;
+	for ($pi = 0; $pi < count($pathParts) - 1; $pi++) {
+		if (preg_match('/^q[A-Z]+$/', $pathParts[$pi]) && rtrim($pathParts[$pi+1], '*') === $cs) return true;
+	}
+	return false;
 }
 
 // Write last-beacon timestamps to a JSON file (callsign → unix timestamp map)
@@ -701,40 +721,20 @@ while (TRUE) {
 					}
 				}
 
-				// Detect iGate/aid-station activity: only when a listed tracker's packet was gated
+				// Detect iGate/aid-station activity on the APRS-IS feed — any packet an iGate gated
 				// through one of our stations (q-construct in path, e.g. qAR,K6DRK-6).
 				if (!empty($igates) || !empty($aidstations)) {
-					$isOurTracker = false;
-					foreach ($trackers as $tracker) {
-						if ($tracker["callsign"] === $callsign) { $isOurTracker = true; break; }
+					$pathParts = explode(',', $aprsPath);
+					$igateUpdated = false;
+					foreach ($igates as $gkey => $igate) {
+						if (aprsStationHeard($igate["callsign"], $callsign, $pathParts)) { $igates[$gkey]["lastBeacon"] = time(); $igateUpdated = true; }
 					}
-					if ($isOurTracker) {
-						$pathParts = explode(',', $aprsPath);
-						$igateUpdated = false;
-						foreach ($igates as $gkey => $igate) {
-							$gcs = $igate["callsign"];
-							for ($pi = 0; $pi < count($pathParts) - 1; $pi++) {
-								if (preg_match('/^q[A-Z]+$/', $pathParts[$pi]) && rtrim($pathParts[$pi+1], '*') === $gcs) {
-									$igates[$gkey]["lastBeacon"] = time();
-									$igateUpdated = true;
-									break;
-								}
-							}
-						}
-						if ($igateUpdated) writeBeaconFile($igatesStatusFilename, $igates);
-						$aidUpdated = false;
-						foreach ($aidstations as $akey => $aid) {
-							$gcs = $aid["callsign"];
-							for ($pi = 0; $pi < count($pathParts) - 1; $pi++) {
-								if (preg_match('/^q[A-Z]+$/', $pathParts[$pi]) && rtrim($pathParts[$pi+1], '*') === $gcs) {
-									$aidstations[$akey]["lastBeacon"] = time();
-									$aidUpdated = true;
-									break;
-								}
-							}
-						}
-						if ($aidUpdated) writeBeaconFile($aidstationsStatusFilename, $aidstations);
+					if ($igateUpdated) writeBeaconFile($igatesStatusFilename, $igates);
+					$aidUpdated = false;
+					foreach ($aidstations as $akey => $aid) {
+						if (aprsStationHeard($aid["callsign"], $callsign, $pathParts)) { $aidstations[$akey]["lastBeacon"] = time(); $aidUpdated = true; }
 					}
+					if ($aidUpdated) writeBeaconFile($aidstationsStatusFilename, $aidstations);
 				}
 			}
 		}

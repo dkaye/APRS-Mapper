@@ -3928,6 +3928,7 @@ function updateMap() {
 					lastIgateBeacons[cs] = ts;
 				});
 			}
+			refreshIgateStaleness();
 			if (data.aid_beacons) {
 				Object.entries(data.aid_beacons).forEach(([cs, ts]) => {
 					if (ts && lastAidBeacons[cs] !== undefined && ts !== lastAidBeacons[cs]) flashAidBeacon(cs);
@@ -4305,6 +4306,29 @@ function applyCourses(courses) {
 	if (!wasInitialized) saveActiveFiles();
 }
 
+function refreshIgateStaleness() {
+	const now = Math.floor(Date.now() / 1000);
+	igateMarkers.forEach(d => {
+		const dot = d.el.querySelector('.igate-dot');
+		const tm  = d.el.querySelector('.igate-time');
+		if (!dot) return;
+		const ts = d.callsign ? lastIgateBeacons[d.callsign] : null;
+		if (!ts) {
+			dot.style.background = '#bbb';
+			if (tm) { tm.textContent = d.callsign ? '\u2014' : ''; tm.style.color = '#bbb'; }
+			return;
+		}
+		const age = now - ts;
+		const color = age <= 120 ? 'green' : (age <= 300 ? 'blue' : 'red');
+		dot.style.background = color;
+		if (tm) {
+			const s = age % 60, m = (age - s) / 60;
+			tm.textContent = age >= 3600 ? 'stale' : m + ':' + String(s).padStart(2, '0');
+			tm.style.color = color;
+		}
+	});
+}
+
 function applyIgates(igates) {
 	const secId = isMobile ? 'm-igates-section' : 'igates-section';
 	const conId = isMobile ? 'm-igates-list'    : 'igates';
@@ -4336,13 +4360,15 @@ function applyIgates(igates) {
 		let item;
 		if (isMobile) {
 			item = document.createElement('div'); item.className = 'm-layer-row';
-			const dot  = document.createElement('span'); dot.style.cssText = 'width:10px;height:10px;border-radius:50%;background:#111;border:1px solid #555;flex-shrink:0';
+			const dot  = document.createElement('span'); dot.className = 'igate-dot'; dot.style.cssText = 'width:10px;height:10px;border-radius:50%;background:#bbb;border:1px solid #555;flex-shrink:0';
 			const name = document.createElement('span'); name.className = 'm-layer-name'; name.textContent = g.name;
-			item.appendChild(dot); item.appendChild(name);
+			const tm = document.createElement('span'); tm.className = 'igate-time'; tm.style.cssText = 'margin-left:auto;font-size:11px;color:#bbb;flex-shrink:0';
+			item.appendChild(dot); item.appendChild(name); item.appendChild(tm);
 		} else {
 			item = document.createElement('div'); item.className = 'legend-item clickable';
-			item.innerHTML = `<span class="legend-dot" style="background:#111;border-color:#333"></span>`
-			               + `<span class="legend-text"><span class="legend-name">${esc(g.name)}</span></span>`;
+			item.innerHTML = `<span class="legend-dot igate-dot" style="background:#bbb;border-color:#666"></span>`
+			               + `<span class="legend-text"><span class="legend-name">${esc(g.name)}</span></span>`
+				+ `<span class="legend-time igate-time"></span>`;
 		}
 		const idx = igateMarkers.length;
 		igateMarkers.push({ m, name: g.name, callsign: g.callsign || '', latlng, el: item });
@@ -4366,6 +4392,7 @@ function applyIgates(igates) {
 
 	section.style.display = igateMarkers.length ? '' : 'none';
 	updatePlaceLabels('igates');
+	refreshIgateStaleness();
 }
 
 function applyAidStations(stations) {
@@ -5390,20 +5417,27 @@ function clearMobileState() {
 	setShareLocBtnState('idle');
 }
 
-function applySectionVisibility(sv) {
+function applySectionVisibility(adminDefault) {
 	if (kiosk) return;
+	// Admin's Default Section Visibility is only a starting default. Once a user has
+	// toggled any section, their saved choice (localStorage) overrides the default.
+	let saved = null;
+	try { saved = JSON.parse(localStorage.getItem('aprs_section_vis') || 'null'); } catch {}
+	const sv = saved || adminDefault || {};
 	['trackers','courses','aidstations','igates','backgrounds'].forEach(section => {
-		if (sv[section] === false) {
-			document.querySelectorAll(`.sec-vis-cb[data-section="${section}"]`).forEach(cb => { cb.checked = false; });
-			setSectionVisible(section, false);
-		}
+		const visible = sv[section] !== false;
+		document.querySelectorAll(`.sec-vis-cb[data-section="${section}"]`).forEach(cb => { cb.checked = visible; });
+		setSectionVisible(section, visible);
 	});
+}
+function _saveSectionVis() {
+	try { localStorage.setItem('aprs_section_vis', JSON.stringify(sectionVisible)); } catch {}
 }
 
 // Visibility checkboxes — desktop and mobile; stopPropagation keeps header-click from toggling collapse
 document.querySelectorAll('.sec-vis-cb').forEach(cb => {
 	cb.addEventListener('click', e => e.stopPropagation());
-	if (!kiosk) cb.addEventListener('change', () => setSectionVisible(cb.dataset.section, cb.checked));
+	if (!kiosk) cb.addEventListener('change', () => { setSectionVisible(cb.dataset.section, cb.checked); _saveSectionVis(); });
 });
 
 // Desktop section collapse (localStorage-persisted)
@@ -5963,13 +5997,15 @@ async function _poll() {
 		}
 	} catch {}
 }
-// Delivery acknowledgement for one of MY sent messages. "Sent" = queued; it is
-// delivered automatically when the recipient next comes online.
+// Delivery acknowledgement for one of MY sent messages. For a 1:1, "Pending" =
+// queued because the recipient is offline; "Sent" = queued while they're online
+// (delivers within seconds). Either way it delivers automatically when they next
+// poll. Groups/broadcasts keep the "N of M" wording.
 function _ackLabel(r) {
 	if (!r || !r.total) return 'Sent';
 	if (r.read > 0) return r.total > 1 ? 'Read by ' + r.read + ' of ' + r.total : 'Read ✓✓';
 	if (r.delivered > 0) return r.total > 1 ? 'Delivered to ' + r.delivered + ' of ' + r.total : 'Delivered ✓';
-	return 'Sent';
+	return r.pending ? 'Pending' : 'Sent';
 }
 function _ingestIncoming(m) {
 	const cid = m.conversation_id;

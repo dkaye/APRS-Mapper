@@ -445,13 +445,27 @@ class MessagingDb
      *  accepted for call-site compatibility but no longer bounds the result. */
     public function receiptsForSender(int $senderId, int $sinceId): array
     {
-        return $this->all(
+        $rows = $this->all(
             'SELECT d.message_id, COUNT(*) AS total,
                     SUM(CASE WHEN d.delivered_ts IS NOT NULL THEN 1 ELSE 0 END) AS delivered,
-                    SUM(CASE WHEN d.read_ts IS NOT NULL THEN 1 ELSE 0 END) AS read
+                    SUM(CASE WHEN d.read_ts IS NOT NULL THEN 1 ELSE 0 END) AS read,
+                    MAX(p.last_seen) AS recipient_last_seen
              FROM deliveries d
+             LEFT JOIN participants p ON p.id = d.recipient_id
              WHERE d.message_id IN (SELECT id FROM messages WHERE sender_id=:s ORDER BY id DESC LIMIT 50)
              GROUP BY d.message_id', [':s'=>$senderId]);
+        // Flag a 1:1 message that is still queued because its sole recipient is
+        // offline (last_seen older than the 90s online window). The web UI shows
+        // "Pending" instead of "Sent" for these; groups keep the "N of M" wording.
+        $now = time();
+        foreach ($rows as &$r) {
+            $ls = $r['recipient_last_seen'];
+            $r['pending'] = ((int)$r['total'] === 1 && (int)$r['delivered'] === 0
+                             && ($ls === null || ($now - (int)$ls) >= 90)) ? 1 : 0;
+            unset($r['recipient_last_seen']);
+        }
+        unset($r);
+        return $rows;
     }
 
     // ── legacy mobile-app compat (old ?mobile=… protocol over the new core) ─────

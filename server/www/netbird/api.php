@@ -55,6 +55,15 @@ foreach (($stats['devices'] ?? []) as $sd) {
 $togglesRaw = @file_get_contents(__DIR__ . '/toggle_state.json');
 $toggleMap  = $togglesRaw ? (json_decode($togglesRaw, true) ?? []) : [];
 
+// iGate last-beacon timestamps from the map's APRS daemon (callsign → unix ts).
+// netbird/ is a subdir of the map web root, so igates.json is one level up. This is
+// a passive, zero-cellular-cost connectivity signal (the daemon hears the iGate on
+// APRS-IS). Match is case-insensitive against each device's host callsign.
+$igateBeaconsRaw = @file_get_contents(dirname(__DIR__) . '/igates.json');
+$igateBeacons    = $igateBeaconsRaw ? (json_decode($igateBeaconsRaw, true) ?? []) : [];
+$igateBeaconsLc  = [];
+foreach ($igateBeacons as $k => $v) $igateBeaconsLc[strtolower($k)] = $v;
+
 // Merge static device list with live status
 $devices = loadDevices(__DIR__ . '/addresses.yaml');
 $out = [];
@@ -84,6 +93,7 @@ foreach ($devices as $d) {
         'last_request'  => $lastRequestMap[$ip]  ?? null,
         'last_response' => $lastResponseMap[$ip] ?? null,
         'response_data' => $responseDataMap[$ip] ?? null,
+        'igate_last_beacon' => $igateBeaconsLc[strtolower($d['host'] ?? '')] ?? null,
     ];
 }
 

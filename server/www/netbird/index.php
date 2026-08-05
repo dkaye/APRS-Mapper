@@ -439,6 +439,19 @@ function esc(s) {
                   .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// iGate internet reachability from the map's APRS daemon (passive, zero cellular
+// cost). Tracker-style dot colors: green <=2min, blue <=5min, red >5min. Elapsed
+// time shown as M:SS like trackers; "stale" only once >=60min; grey "—" if never
+// heard.
+function igateStatus(ts) {
+  if (!ts) return '<span style="color:#9ca3af">—</span>';
+  const age = Math.floor(Date.now() / 1000) - ts;
+  const color = age <= 120 ? '#16a34a' : (age <= 300 ? '#2563eb' : '#dc2626');
+  const s = age % 60, m = (age - s) / 60;
+  const label = age >= 3600 ? 'stale' : m + ':' + String(s).padStart(2, '0');
+  return `<span style="color:${color};font-weight:500">${label}</span>`;
+}
+
 function timeAgo(ts) {
   if (!ts) return '—';
   const s = Math.floor(Date.now() / 1000) - ts;
@@ -595,6 +608,7 @@ function processData(data, wasInit) {
             d.last_response = ad.last_response; d.response_data = ad.response_data;
             d.enabled = ad.enabled; d.hostname = ad.hostname;
             d.pending_until = ad.pending_until ?? null;
+            d.igate_last_beacon = ad.igate_last_beacon ?? null;
         }
     });
     if (needsFull) devices = incoming;
@@ -622,6 +636,7 @@ function fullRender() {
       <th data-col="status">Status</th>
       <th data-col="ip">IP Address</th>
       <th data-col="age">Last</th>
+      <th data-col="igate">iGate</th>
       ${dynHeads}
     </tr>`;
     applyColWidths();
@@ -633,7 +648,7 @@ function fullRender() {
         groupMap.get(g).push(d);
     });
 
-    const totalCols = 5 + dynKeys.length;
+    const totalCols = 6 + dynKeys.length;
     let rows = '';
     groupOrder.forEach(group => {
         if (group) rows += `<tr class="group-row"><td colspan="${totalCols}">${esc(group)}</td></tr>`;
@@ -656,6 +671,7 @@ function fullRender() {
                 <button class="copy-btn" onclick="copyIP('${esc(d.ip)}')" title="Copy">${COPY_SVG}</button>
               </div></td>
               <td class="age-cell">${ago}</td>
+              <td class="igate-cell">${igateStatus(d.igate_last_beacon)}</td>
               ${dynCells}
             </tr>`;
         });
@@ -688,6 +704,8 @@ function updateAgeCells() {
         if (!row) return;
         const cell = row.querySelector('.age-cell');
         if (cell) cell.textContent = timeAgo(d.last_response);
+        const ig = row.querySelector('.igate-cell');
+        if (ig) ig.innerHTML = igateStatus(d.igate_last_beacon);
     });
 }
 
