@@ -518,6 +518,28 @@ function writeBeaconFile($filename, $entries) {
 	rename($tmp, $filename);
 }
 
+// Seed lastBeacon from a persisted beacon file (callsign → unix ts map) into the
+// given entries array, in place. Without this a daemon restart resets every iGate/
+// aid station to lastBeacon=0 and the map goes all-grey until each station is
+// re-heard — which for a quiet, self-beacon-only station can take 10–30 min. These
+// timestamps are already durable on disk (igates.json / aidstations.json); reloading
+// them at startup makes a restart non-destructive to the status display.
+function seedBeaconsFromFile($filename, &$entries) {
+	if (!file_exists($filename)) return;
+	$fh = fopen($filename, 'r');
+	if (!$fh) return;
+	if (!flock($fh, LOCK_SH)) { fclose($fh); return; }
+	$contents = stream_get_contents($fh);
+	flock($fh, LOCK_UN); fclose($fh);
+	$map = json_decode($contents, true);
+	if (!is_array($map)) return;
+	foreach ($entries as &$e) {
+		$cs = $e["callsign"] ?? '';
+		if ($cs !== '' && !empty($map[$cs])) $e["lastBeacon"] = (int)$map[$cs];
+	}
+	unset($e);
+}
+
 // Read trackers.json and update $trackers with the most recent lastUpdate and last known lat/lon for each callsign
 function readTrackerstatusFile($filename) {
 	global $trackers;
@@ -601,6 +623,11 @@ if (!defined('APRS_DAEMON_INCLUDE_ONLY')) {
 $trackers=array();
 loadTrackers();
 if (empty($trackers) && !$mobileEnabled) fatal("No trackers loaded from $configFilename");
+
+// Restore iGate/aid last-beacon history from disk so a restart doesn't blank the
+// map's connectivity display (loadTrackers() builds these with lastBeacon=0).
+seedBeaconsFromFile($igatesStatusFilename, $igates);
+seedBeaconsFromFile($aidstationsStatusFilename, $aidstations);
 
 if (!is_writable($trackerStatusFilename)) fatal("Can't write to trackerstatus file");
 

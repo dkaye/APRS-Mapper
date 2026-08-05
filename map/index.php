@@ -6510,6 +6510,13 @@ function _esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').r
 // Always poll for live tracker data; skip config polling only when previewing a non-default event
 updateMap();
 setInterval(updateMap, 5000);
+// The iGate "time since last beacon" is computed client-side from a fixed
+// timestamp, so it must advance on its own clock. The 5s poll can't drive it:
+// index.php?json is ETag-cached on an md5 of the body, so an idle period with
+// no tracker/iGate change returns 304 and updateMap() bails before ever calling
+// refreshIgateStaleness() — freezing the elapsed time until the next beacon.
+// This ticker keeps the counter live regardless of the poll/304.
+setInterval(refreshIgateStaleness, 1000);
 if (!isNonDefaultEvent) {
 	loadConfig();
 	setInterval(loadConfig, 5000);
