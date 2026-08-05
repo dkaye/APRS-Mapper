@@ -80,6 +80,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     'aidstations': true,
     'igates': true,
   };
+  // The user's own section-visibility toggles, persisted. Once set, these override
+  // the admin's Default Section Visibility (which is only a starting default).
+  Map<String, bool>? _savedSectionVis;
   Map<String, bool> _courseVisible = {};
 
   // Beacon settings (updated live from ?json poll)
@@ -241,6 +244,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _beaconDistancesMi  = List.of(_config.beaconDistancesMi);
     _initCourseVisibility();
     _initSectionVisibility();
+    _loadSectionVisPrefs();
     _loadLabelPrefs();
     _checkExistingPermission();
     _poller = OnlinePoller(
@@ -442,7 +446,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   // config (admin page). Only overrides known sections that the config
   // specifies; absent keys keep their default (visible).
   void _initSectionVisibility() {
-    _config.sectionVisibility.forEach((key, visible) {
+    // Admin's Default Section Visibility is only a starting default; the user's own
+    // saved toggles (_savedSectionVis) override it once they've changed anything.
+    final src = _savedSectionVis ?? _config.sectionVisibility;
+    src.forEach((key, visible) {
       if (_sectionVisible.containsKey(key)) _sectionVisible[key] = visible;
     });
   }
@@ -1648,8 +1655,27 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     });
   }
 
-  void _setSectionVisible(String key, bool visible) =>
-      setState(() => _sectionVisible[key] = visible);
+  void _setSectionVisible(String key, bool visible) {
+    setState(() => _sectionVisible[key] = visible);
+    _savedSectionVis = Map<String, bool>.from(_sectionVisible);
+    _persistSectionVis();
+  }
+
+  Future<void> _persistSectionVis() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('section_visibility', jsonEncode(_sectionVisible));
+  }
+
+  Future<void> _loadSectionVisPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('section_visibility');
+    if (raw == null) return;
+    try {
+      _savedSectionVis = (jsonDecode(raw) as Map)
+          .map((k, v) => MapEntry(k.toString(), v as bool));
+      if (mounted) setState(_initSectionVisibility);
+    } catch (_) {}
+  }
 
   void _setCourseVisible(String file, bool visible) =>
       setState(() => _courseVisible[file] = visible);
