@@ -59,6 +59,42 @@ sudo rsync -a "$TMP/systemd/" /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl restart stats-listener 2>/dev/null || true
 
+# ── Relay proxy activation (opt-in, sentinel-guarded) ────────────────────────
+# Route this gate's gating through our aggregation relay so the server sees its
+# RF->IS traffic BEFORE APRS-IS dedup. The isproxy.py/.json and its service unit
+# ship on every gate (via the rsyncs above) but stay INERT: this block does
+# nothing unless /home/pi/.isproxy-enabled exists, and it cleanly REVERTS when
+# that sentinel is removed. isproxy always fails over to public APRS-IS if the
+# relay is unreachable, so gating never depends on our server. v5-only: it drives
+# direwolf via systemd (a v4 gate runs direwolf in screen, so we guard on the unit).
+IGCFG=/home/pi/direwolf.conf
+ISP_SENTINEL=/home/pi/.isproxy-enabled
+ISP_ORIGSAVE=/home/pi/.isproxy-orig-igserver
+if systemctl cat direwolf.service >/dev/null 2>&1 && [ -f "$IGCFG" ]; then
+    if [ -f "$ISP_SENTINEL" ]; then
+        if ! grep -qE '^[[:space:]]*IGSERVER[[:space:]]+127\.0\.0\.1\b' "$IGCFG"; then
+            # Save the pre-proxy IGSERVER line once (for clean rollback) + a dated backup
+            [ -f "$ISP_ORIGSAVE" ] || grep -E '^[[:space:]]*IGSERVER\b' "$IGCFG" | head -1 > "$ISP_ORIGSAVE" || true
+            cp -a "$IGCFG" "$IGCFG.bak-preproxy-$(date +%Y%m%d%H%M%S)"
+            sed -i -E 's/^[[:space:]]*IGSERVER[[:space:]]+.*/IGSERVER 127.0.0.1/' "$IGCFG"
+            log "isproxy: IGSERVER -> 127.0.0.1 (relay proxy activated)"
+        fi
+        sudo systemctl enable --now igate-isproxy 2>/dev/null \
+            && sudo systemctl restart igate-isproxy 2>/dev/null || log "isproxy: enable/start failed (non-fatal)"
+        sudo systemctl restart direwolf 2>/dev/null || true
+    elif systemctl is-enabled igate-isproxy >/dev/null 2>&1 \
+         || grep -qE '^[[:space:]]*IGSERVER[[:space:]]+127\.0\.0\.1\b' "$IGCFG"; then
+        # Sentinel removed → roll back to the public APRS-IS path we saved
+        ISP_ORIG="IGSERVER noam.aprs2.net"
+        [ -s "$ISP_ORIGSAVE" ] && ISP_ORIG=$(sed -E 's/^[[:space:]]+//' "$ISP_ORIGSAVE")
+        sed -i -E "s#^[[:space:]]*IGSERVER[[:space:]]+.*#${ISP_ORIG}#" "$IGCFG"
+        sudo systemctl disable --now igate-isproxy 2>/dev/null || true
+        sudo systemctl restart direwolf 2>/dev/null || true
+        rm -f "$ISP_ORIGSAVE"
+        log "isproxy: deactivated, IGSERVER restored to '${ISP_ORIG#IGSERVER }'"
+    fi
+fi
+
 # ── Headless: drop the unused desktop ────────────────────────────────────────
 # The TFT is driven by direwatch over GPIO, not X, so lightdm has nothing to do
 # but fail at every boot. Beyond the wasted RAM and boot time, a permanently
