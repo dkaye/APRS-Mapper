@@ -39,9 +39,13 @@ import asyncio
 import json
 import os
 import re
+import socket
 import time
 
-LISTEN_HOST  = os.environ.get("ISRELAY_HOST", "0.0.0.0")
+# Default to the IPv6 wildcard so remote iGates behind carrier-grade NAT (DS-Lite:
+# no inbound IPv4) can reach us over IPv6, which has no NAT. On Linux this socket
+# is made dual-stack below (V6ONLY off), so LAN iGates still connect over IPv4.
+LISTEN_HOST  = os.environ.get("ISRELAY_HOST", "::")
 LISTEN_PORT  = int(os.environ.get("ISRELAY_PORT", "14590"))
 UPSTREAM     = (os.environ.get("ISRELAY_UP_HOST", "noam.aprs2.net"),
                 int(os.environ.get("ISRELAY_UP_PORT", "14580")))
@@ -168,7 +172,18 @@ async def handle_igate(reader, writer):
 async def main():
     os.makedirs(os.path.dirname(CAPTURE_FILE), exist_ok=True)
     _write_signal(force=True)
-    server = await asyncio.start_server(handle_igate, LISTEN_HOST, LISTEN_PORT)
+    # Build the listen socket by hand so we can force a dual-stack IPv6 socket
+    # (IPV6_V6ONLY off) — a plain "::" bind is v6-only if the kernel default is
+    # bindv6only=1, which would lock out LAN iGates that connect over IPv4.
+    if ":" in LISTEN_HOST:
+        lsock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        lsock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+    else:
+        lsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    lsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    lsock.bind((LISTEN_HOST, LISTEN_PORT))
+    lsock.setblocking(False)
+    server = await asyncio.start_server(handle_igate, sock=lsock)
     log(f"isrelay listening on {LISTEN_HOST}:{LISTEN_PORT} upstream={UPSTREAM} "
         f"signal={SIGNAL_FILE} allow={sorted(ALLOW) or 'ALL'}")
     async with server:

@@ -20,7 +20,9 @@ StartLimitBurst=10
 Type=simple
 User=pi
 Group=pi
-Environment=ISRELAY_HOST=0.0.0.0
+# IPv6 wildcard: the relay makes this a dual-stack socket (see igate-isrelay.py),
+# so remote iGates reach us over IPv6 (no NAT) and LAN iGates over IPv4.
+Environment=ISRELAY_HOST=::
 Environment=ISRELAY_PORT=14590
 Environment=ISRELAY_UP_HOST=noam.aprs2.net
 Environment=ISRELAY_UP_PORT=14580
