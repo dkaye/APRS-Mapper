@@ -11,29 +11,31 @@
 1. [Overview](#overview)
 2. [System Architecture](#system-architecture)
 3. [NetBird VPN](#netbird-vpn)
-4. [iGates (v5.1)](#igates-v51)
+4. [iGates (v5.2)](#igates-v52)
    - [iGate Diagnostics](#igate-diagnostics)
-5. [APRS Server (v1.21.1)](#aprs-server-v1211)
+5. [iGate Aggregation Relay](#igate-aggregation-relay)
+   - [The problem it solves](#the-problem-it-solves) · [How it works](#how-it-works-the-data-path) · [Why it runs on a VPS](#why-it-runs-on-a-vps-not-at-home) · [Cloudflare DNS](#cloudflare-dns-for-the-relay) · [Unique per-gate logins](#unique-per-gate-logins-required) · [Turning it on/off](#turning-it-on-or-off-for-a-gate) · [Components](#components-and-where-they-live)
+6. [APRS Server (v1.21.1)](#aprs-server-v1211)
    - [Cloudflare Tunnel](#cloudflare-tunnel)
-6. [Display Pis (v1.21.1)](#display-pis-v1211)
-7. [Mobile Apps (v1.21.1)](#mobile-apps-v1211)
+7. [Display Pis (v1.21.1)](#display-pis-v1211)
+8. [Mobile Apps (v1.21.1)](#mobile-apps-v1211)
    - [Architecture](#app-architecture) · [Location Sharing Flow](#location-sharing-flow) · [Smart Track](#smart-track) · [Building & Distributing](#building-distributing) · [Background Location](#background-location)
-8. [User Interfaces](#user-interfaces)
-9. [Authentication](#authentication)
-10. [Analyzer](#analyzer)
+9. [User Interfaces](#user-interfaces)
+10. [Authentication](#authentication)
+11. [Analyzer](#analyzer)
    - [Architecture](#analyzer-architecture) · [Authentication](#analyzer-authentication) · [Beacon Recording](#beacon-recording) · [Map & Controls](#map-controls) · [Key Files](#analyzer-key-files) · [Services](#analyzer-services) · [API Endpoints](#analyzer-api-endpoints)
-11. [Backup, Recovery and Updates](#backup-recovery-and-updates)
+12. [Backup, Recovery and Updates](#backup-recovery-and-updates)
    - [Server Pi](#server-pi) · [Display Pis](#display-pis) · [iGates](#igates)
-12. [Log Rotation](#log-rotation)
-13. [Building & Deploying Devices](#building-deploying-devices)
+13. [Log Rotation](#log-rotation)
+14. [Building & Deploying Devices](#building-deploying-devices)
     - [NetBird Setup Keys](#netbird-setup-keys) · [APRS Server](#aprs-server) · [Display Pis & iGates](#display-pis-igates)
-14. [Creating New Master Images](#creating-new-master-images)
+15. [Creating New Master Images](#creating-new-master-images)
     - [APRS Server](#aprs-server_1) · [Display Pis](#display-pis_1) · [iGates](#igates_1)
-15. [Supporting Systems](#supporting-systems)
+16. [Supporting Systems](#supporting-systems)
     - [NetBird Status Monitor](#netbird-status-monitor) · [WiFi Manager](#wifi-manager)
-16. [Appendix](#appendix)
+17. [Appendix](#appendix)
     - [File Formats](#file-formats) · [Server](#server) · [Display Pi](#display-pi) · [iGate](#igate) · [Pi-Tools](#pi-tools)
-17. [Testing](#testing)
+18. [Testing](#testing)
 
 ---
 
@@ -133,7 +135,7 @@ We have therefore implemented a system that allows us to turn NetBird on and off
 
 ---
 
-## iGates (v5.1)
+## iGates (v5.2)
 
 An iGate receives APRS radio packets and forwards them to the APRS-IS network. Each iGate
 is a Raspberry Pi Zero 2 W with a USB RTL-SDR dongle listening on 144.39 MHz. An optional
@@ -151,6 +153,9 @@ RTL-SDR USB dongle
 direwolf  (TNC + iGate daemon)
       │
       ├──▶ APRS-IS  (noam.aprs2.net:14580)
+      │      (or, if the aggregation relay is enabled on this gate, direwolf
+      │       points at the local isproxy on 127.0.0.1 instead — see
+      │       "iGate Aggregation Relay" below)
       │
       └──▶ direwatch.service  (display manager)
                  │
@@ -226,8 +231,218 @@ from anywhere. Log: `~/sdr-usb-test.log`.
 | `StatsRequestListener.php` | `/home/pi/` | UDP responder for NetBird monitor |
 | `igate-selftest.sh` | `/home/pi/` | Nightly SDR self-noise test → fleet dashboard |
 | `sdr-usb-test.sh` | `/home/pi/` (→ `/usr/local/bin/sdr-usb-test`) | Flaky-USB dongle test (run over SSH) |
+| `isproxy.py` / `isproxy.json` | `/home/pi/` | Local APRS-IS failover proxy for the aggregation relay (ships inert; active only when enabled — see [iGate Aggregation Relay](#igate-aggregation-relay)) |
+| `.isproxy-enabled` | `/home/pi/` | Sentinel file that opts this gate into the aggregation relay |
 
 **SSH:** `ssh pi@<ip>` · Password: `guacamole`
+
+---
+
+## iGate Aggregation Relay
+
+This is an **optional, opt-in** subsystem that lets us see our own iGates' received
+traffic *before* the public APRS-IS network throws most of it away. It is off by default;
+a gate only participates when we explicitly enable it. Everything below was designed and
+first deployed in August 2026.
+
+### The problem it solves
+
+The public APRS-IS network **de-duplicates** packets. When several iGates all hear the same
+station and forward the same packet, APRS-IS keeps only the *first* copy and credits only
+the *first* iGate (via the packet's "q-construct"). Every other iGate that heard that packet
+gets no credit for it.
+
+The practical consequence: an iGate that is **usually the second** to hear traffic — or a
+receive-only gate in an area already well covered by others — looks *idle* on the public
+feed even when it is fully online and doing its job. We could not tell "this gate is dead"
+apart from "this gate is healthy but always beaten to the punch." For fleet monitoring, that
+distinction matters.
+
+The aggregation relay fixes this by capturing our controlled gates' radio→internet stream
+**before** it reaches the public de-duplicator, so we see *every* packet *every* one of our
+gates gates, undeduped, and can prove each gate is alive.
+
+### How it works (the data path)
+
+```
+   RF 144.39 → direwolf → isproxy (127.0.0.1)  ── on each ENABLED iGate
+                              │
+                              │  primary: relay.marsaprs.org:14590   (our relay)
+                              │  fallback: noam.aprs2.net:14580       (public APRS-IS)
+                              ▼
+              igate-isrelay  (DigitalOcean VPS, public IP)
+                              │
+                              ├──▶ APRS-IS (noam.aprs2.net:14580)   ← still really gates
+                              │
+                              ├──▶ igate_relay.json   {callsign: last_gated_unix_ts}
+                              └──▶ capture.jsonl       every gated packet, undeduped
+                                        │
+              aprs-pi: igate-relay-sync.service  ── pulls igate_relay.json every 20 s
+                                        │
+                                        ▼
+                          /var/www/html/igate_relay.json
+                                        │
+                          map/index.php merges it into ?json  →  web sidebar
+```
+
+In plain English:
+
+1. On an **enabled** gate, direwolf no longer talks to APRS-IS directly. Instead it connects
+   to a tiny local proxy, **`isproxy.py`**, listening on `127.0.0.1`. This is invisible to
+   direwolf — it thinks it is talking to a normal APRS-IS server.
+2. `isproxy` forwards that stream to **our relay** on the VPS (its *primary* upstream). If the
+   relay is ever unreachable, `isproxy` automatically falls back to the real public APRS-IS,
+   so **gating never depends on our server** — the worst case is we lose the undeduped
+   capture for that gate, not its ability to gate.
+3. The relay, **`igate-isrelay.py`**, does two things with each gate's stream: it **records**
+   every gated packet (attributing it to the gating station via the q-construct), and it
+   **forwards** the stream on to the real public APRS-IS so the gate keeps doing its normal
+   job. Recording happens before that forward, so it is undeduped.
+4. The relay writes `igate_relay.json` (a simple `{callsign: last-gated-timestamp}` map, the
+   same shape as the server's `igates.json`) and appends every packet to `capture.jsonl`.
+5. On the server Pi, **`igate-relay-sync.service`** copies `igate_relay.json` over every 20 s,
+   and `map/index.php` merges it into the map feed so the sidebar shows the gate as active
+   from *relay* data even when the public feed would show it idle.
+
+> **Does the sidebar update for every beacon a gate hears? No.** The timestamp only advances
+> when the gate actually *gates a packet to APRS-IS* — not for packets it merely receives and
+> then drops (non-position, heard via a digipeater, filtered out, or a direwolf duplicate).
+> The relay also throttles its file write to at most once every 3 s, and the sync runs every
+> 20 s, so the sidebar is a **liveness indicator** ("this gate is gating"), not a per-packet
+> feed. The full per-packet, undeduped record is in `capture.jsonl` on the VPS.
+
+### Why it runs on a VPS (not at home)
+
+The natural place for the relay would be the server Pi (`aprs-pi`) at home. **It can't live
+there**, and understanding why is the key to this whole design:
+
+- The home internet is **Comcast with an IPv6-only WAN (DS-Lite)**. There is no usable
+  inbound IPv4 — IPv4 is carried over the carrier's network and NAT'd on *their* side, so we
+  cannot port-forward IPv4 to anything at home. (This is also why `marsaprs.org` itself uses a
+  Cloudflare Tunnel: an *outbound* connection, because inbound doesn't work.)
+- IPv6 *does* work end-to-end and has no NAT, but the home router is an **eero**, and eero's
+  app provides **no way to open an inbound IPv6 firewall pinhole**. So even over IPv6 we
+  cannot let outside gates connect in to a service at home.
+- The Cloudflare Tunnel only carries **HTTP**. It cannot expose the relay's raw TCP port
+  (14590) to the gates.
+
+So the gates — which live on cellular connections all over the county — have **no way to
+reach a relay hosted at home**. The fix is to put the relay somewhere with a real, public,
+inbound-reachable IP: a small cloud server.
+
+**The VPS:** a **DigitalOcean** droplet named `aprs-relay`, region **SFO3**, Ubuntu 24.04,
+the smallest tier (the relay is a trivial Python program). It has a public IPv4 and IPv6,
+which gates can reach directly with no NAT in the way.
+
+| | |
+|--|--|
+| Public IPv4 | `64.23.166.192` |
+| Public IPv6 | `2604:a880:4:1d0:0:3:3d0f:6000` |
+| Relay service | `igate-isrelay.service`, runs as user `isrelay` from `/opt/igate-isrelay/` |
+| Listens | `:14590`, dual-stack (accepts gates over both IPv4 and IPv6) |
+| Firewall | `ufw` allows `22` (SSH) and `14590` (relay) only |
+| SSH | `ssh root@64.23.166.192` using the Mac's `~/.ssh/id_ed25519` key |
+
+### Cloudflare DNS for the relay
+
+Gates connect to the relay by the name **`relay.marsaprs.org`**, which points at the VPS:
+
+- an **A** record → `64.23.166.192`
+- an **AAAA** record → `2604:a880:4:1d0:0:3:3d0f:6000`
+
+Both are **DNS-only (grey cloud), *not* proxied.** This is important: Cloudflare's orange-cloud
+proxy only understands HTTP, so a proxied record would break the relay's raw TCP. The records
+live in the `marsaprs.org` zone and are edited from the Cloudflare dashboard, or via the API
+with a token scoped to *Zone → DNS → Edit* on that zone. Using a name (not the bare IP) means
+if the VPS is ever rebuilt, only these two records change and no gate needs reconfiguring.
+
+### Unique per-gate logins (required)
+
+APRS-IS allows **only one connection per callsign-SSID** at a time; a second login with the
+same identity kicks the first. Historically our gates logged in with the **bare base call**
+(every MARS gate as `MARS`, each personal gate as its own base call). That was fine when each
+gate held a single direct connection, but the relay opens *its own* upstream per gate — so
+with a shared login those upstreams fight each other, flapping every second and even knocking
+field gates off their servers.
+
+The fix is to give every gate a **unique login = its full callsign with SSID** (`MARS-5`,
+`MARS-13`, `KI6RGP-10`, …). The APRS-IS **passcode is derived from the base call only** and
+ignores the SSID, so *the same passcode still works* — `MARS`, `MARS-5` and `MARS-13` all use
+passcode `27888`. A bonus: the public q-construct now shows the real gate (`qAO,MARS-13`)
+instead of a uniform `MARS`.
+
+This is applied automatically:
+
+- **`auto-update.sh`** contains an idempotent block that promotes `IGLOGIN` from the base call
+  to the full `MYCALL`, keeping the passcode. It only acts when the two share a base call, so
+  it can never create a passcode mismatch. It runs on every gate at the nightly update.
+- **`configure.sh`** (the setup wizard) now defaults `IGLOGIN` to the full callsign for new
+  installs, and its passcode calculator strips the SSID before hashing.
+
+### The local proxy (`isproxy`) and failover
+
+`isproxy.py` is a small stdlib-only asyncio program. direwolf connects to it on
+`127.0.0.1:14580` (set by `IGSERVER 127.0.0.1` in `direwolf.conf`). It keeps **one** upstream
+connection at a time and pipes bytes transparently in both directions:
+
+- **Primary** = the relay (`relay.marsaprs.org:14590`); **fallback** = public APRS-IS
+  (`noam.aprs2.net:14580`).
+- It fails over to the fallback on connect failure or staleness (no data for 60 s), and
+  switches back to the primary once it is healthy again, with hysteresis so it can't flap.
+- It replays direwolf's login line on each new upstream, so switches are invisible to direwolf.
+- **It greets direwolf with a synthetic `# igate-isproxy` banner the instant direwolf
+  connects.** A real APRS-IS server sends a `# …` banner *before* the client logs in, and
+  direwolf waits for it; without this, direwolf and the proxy would each wait on the other,
+  direwolf would time out, and the connection would churn. (This was a real bug — the symptom
+  was direwolf reconnecting every ~12 s and gating only sporadically.)
+
+Configuration is `isproxy.json`; a live status file `isproxy.status.json` records which
+upstream is currently in use (`primary`/`fallback`).
+
+### Turning it on or off for a gate
+
+Activation is **sentinel-guarded** so nothing changes on a gate unless we ask. The proxy
+files ship to every gate but stay **inert** until the sentinel exists:
+
+```bash
+# Enable the relay on a gate:
+ssh pi@<gate>  touch /home/pi/.isproxy-enabled
+# then run the updater (or wait for the nightly run):
+ssh pi@<gate>  sudo /home/pi/auto-update.sh
+
+# Disable / roll back:
+ssh pi@<gate>  rm /home/pi/.isproxy-enabled
+ssh pi@<gate>  sudo /home/pi/auto-update.sh
+```
+
+When the sentinel is present, the `auto-update.sh` block: (1) promotes `IGLOGIN` to the unique
+login (above); (2) backs up `direwolf.conf`, rewrites `IGSERVER` to `127.0.0.1`, saving the
+original for rollback; (3) enables and starts `igate-isproxy`; (4) restarts direwolf. When the
+sentinel is removed, the same block cleanly reverses all of that — restores the original
+`IGSERVER`, disables the proxy, and direwolf goes back to talking to APRS-IS directly. Because
+`isproxy` always falls back to public APRS-IS, **enabling a gate before DNS/relay are reachable
+is harmless** — it just gates the normal way until the relay is up.
+
+### Components and where they live
+
+| Component | Host | Path / unit | Role |
+|-----------|------|-------------|------|
+| `igate-isrelay.py` | VPS `aprs-relay` | `/opt/igate-isrelay/` · `igate-isrelay.service` | Aggregation relay: forwards each gate to APRS-IS under its own login, records undeduped |
+| `igate_relay.json` | VPS | `/opt/igate-isrelay/` | `{callsign: last-gated-ts}`, pulled to the server |
+| `capture.jsonl` | VPS | `/opt/igate-isrelay/` | Every gated packet, undeduped (for the analyzer, future) |
+| `isproxy.py` / `.json` | each iGate | `/home/pi/` · `igate-isproxy.service` | Local failover proxy; ships inert, active only when enabled |
+| `.isproxy-enabled` | each iGate | `/home/pi/` | Sentinel opting the gate in |
+| `igate-relay-sync.sh` | server `aprs-pi` | `/home/pi/` · `igate-relay-sync.service` | Pulls `igate_relay.json` from the VPS every 20 s |
+| `relaypull` key | server → VPS | `~/.ssh/relaypull` → `relaypull@VPS` | Least-privilege SSH key; a forced command lets it *only* read `igate_relay.json` |
+| `relay.marsaprs.org` | Cloudflare DNS | A + AAAA, DNS-only | Name the gates connect to |
+
+Repo sources: relay + its unit and the sync service are under `server/bin/` and
+`server/systemd/`; the proxy, its unit, and the activation logic are under `igate/home/`,
+`igate/systemd/`, and `igate/auto-update.sh`.
+
+**Rollback of the whole feature:** remove `~/.isproxy-enabled` from every enabled gate and run
+their updater (returns them to direct gating); the relay and sync can then simply be stopped.
+No gate's ability to gate ever depended on any of this.
 
 ---
 
