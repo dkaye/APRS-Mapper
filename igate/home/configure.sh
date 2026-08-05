@@ -166,7 +166,7 @@ PYEOF
 # ── APRS passcode calculator ──────────────────────────────────────────────────
 calc_passcode() {
     python3 -c "
-c = '$1'.upper()
+c = '$1'.upper().split('-')[0]   # passcode is derived from the BASE call (SSID-independent)
 h = 0x73e2
 for i in range(0, len(c), 2):
     h ^= ord(c[i]) << 8
@@ -217,9 +217,18 @@ ok "  Callsign / Hostname: $CALLSIGN"
 # ── Prompt: IGLOGIN callsign ──────────────────────────────────────────────────
 header "IGLOGIN"
 echo "  Callsign used to authenticate with the APRS-IS server."
-echo "  Typically your callsign without the -N suffix (e.g. K6DRK)."
+echo "  Use your FULL callsign including the -N suffix (e.g. MARS-5), so each"
+echo "  iGate has a unique APRS-IS login. The passcode is the same regardless of"
+echo "  the suffix, and a unique login is required by the aggregation relay."
 echo ""
-DEFAULT_IGLOGIN="${cur_iglogin_call:-${CALLSIGN%-*}}"
+# Default to the full SSID'd callsign (unique per gate). Fall back to the current
+# IGLOGIN, but promote a bare base call to the full callsign so re-running this on
+# an old gate upgrades it (e.g. cur "MARS" with CALLSIGN "MARS-5" -> "MARS-5").
+if [ -n "$cur_iglogin_call" ] && [ "${cur_iglogin_call%-*}" != "$cur_iglogin_call" ]; then
+    DEFAULT_IGLOGIN="$cur_iglogin_call"          # already SSID'd — keep it
+else
+    DEFAULT_IGLOGIN="$CALLSIGN"                   # promote base/empty to full callsign
+fi
 while true; do
     prompt "  IGLOGIN callsign [${DEFAULT_IGLOGIN}]: "
     read -r INPUT

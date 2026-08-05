@@ -59,6 +59,27 @@ sudo rsync -a "$TMP/systemd/" /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl restart stats-listener 2>/dev/null || true
 
+# ── Unique per-gate IGLOGIN (promote the base call to the full MYCALL) ───────
+# APRS-IS enforces one connection per callsign-SSID. Historically these gates
+# logged in with the BARE base call (e.g. every MARS gate as "MARS"), which makes
+# the aggregation relay's per-gate upstreams collide and kick each other. The
+# APRS-IS passcode is derived from the base call (SSID-independent), so promoting
+# IGLOGIN to the full MYCALL keeps the SAME passcode valid while giving each gate a
+# unique login. Idempotent; only acts when the current IGLOGIN base matches
+# MYCALL's base, so it can never introduce a passcode mismatch. Config edit only —
+# takes effect at the 04:10 reboot (or the isproxy block's direwolf restart below).
+IGLOG_DWC=/home/pi/direwolf.conf
+if [ -f "$IGLOG_DWC" ]; then
+    IGLOG_MYCALL=$(awk '$1=="MYCALL"{print $2; exit}' "$IGLOG_DWC")
+    IGLOG_IGCALL=$(awk '$1=="IGLOGIN"{print $2; exit}' "$IGLOG_DWC")
+    if [ -n "$IGLOG_MYCALL" ] && [ -n "$IGLOG_IGCALL" ] \
+       && [ "$IGLOG_IGCALL" != "$IGLOG_MYCALL" ] \
+       && [ "${IGLOG_MYCALL%%-*}" = "${IGLOG_IGCALL%%-*}" ]; then
+        sed -i -E "s|^([[:space:]]*IGLOGIN[[:space:]]+)[A-Za-z0-9]+(-[0-9]+)?([[:space:]]+[0-9]+)|\1${IGLOG_MYCALL}\3|" "$IGLOG_DWC"
+        log "IGLOGIN callsign -> $IGLOG_MYCALL (was $IGLOG_IGCALL; unique per-gate APRS-IS login)"
+    fi
+fi
+
 # ── Relay proxy activation (opt-in, sentinel-guarded) ────────────────────────
 # Route this gate's gating through our aggregation relay so the server sees its
 # RF->IS traffic BEFORE APRS-IS dedup. The isproxy.py/.json and its service unit
