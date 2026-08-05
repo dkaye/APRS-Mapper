@@ -6515,8 +6515,11 @@ setInterval(updateMap, 5000);
 // index.php?json is ETag-cached on an md5 of the body, so an idle period with
 // no tracker/iGate change returns 304 and updateMap() bails before ever calling
 // refreshIgateStaleness() — freezing the elapsed time until the next beacon.
-// This ticker keeps the counter live regardless of the poll/304.
-setInterval(refreshIgateStaleness, 1000);
+// This ticker keeps the counter live regardless of the poll/304. It is purely
+// client-side (recomputes now−lastBeacon from cached data — no server request)
+// and runs on the same 5s cadence as the poll and the tracker clock, so the
+// iGate times advance in step with everything else rather than every second.
+setInterval(refreshIgateStaleness, 5000);
 if (!isNonDefaultEvent) {
 	loadConfig();
 	setInterval(loadConfig, 5000);
