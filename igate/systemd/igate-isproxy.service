@@ -1,0 +1,30 @@
+# igate-isproxy — local APRS-IS failover proxy (K6DRK iGate)
+#
+# direwolf connects to this proxy (IGSERVER 127.0.0.1); it streams to our
+# aggregation relay (primary) so the server sees this iGate's traffic undeduped,
+# and falls back to the public APRS-IS automatically if the relay is unreachable
+# — so gating never depends on our server. See /home/pi/isproxy.py.
+#
+# Installed and enabled by auto-update.sh; config in /home/pi/isproxy.json.
+
+[Unit]
+Description=iGate local APRS-IS failover proxy
+Documentation=file:///var/www/html/README.MD
+After=network-online.target
+Wants=network-online.target
+# Must be up before direwolf connects; direwolf.service is ordered after this.
+Before=direwolf.service
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+ExecStart=/usr/bin/python3 /home/pi/isproxy.py
+Restart=always
+RestartSec=5
+UMask=0022
+
+[Install]
+WantedBy=multi-user.target

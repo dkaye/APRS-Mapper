@@ -43,7 +43,7 @@ DONGLE=$(sudo journalctl -u direwolf -b -o cat --no-pager 2>/dev/null \
 IGVER=$(grep -oE 'dashboardversion *= *"[^"]*"' /var/www/html/config.php 2>/dev/null | grep -oE '[0-9.]+' | head -1)
 # Callsign (MYCALL) and a friendly location name for the dashboard. The name is
 # the location tail of the PBEACON comment, e.g.
-#   comment="iGate 5.1 by MARS, Marconi Center, California" → "Marconi Center, California".
+#   comment="iGate 5.2 by MARS, Marconi Center, California" → "Marconi Center, California".
 MYCALL=$(grep -iE '^MYCALL[[:space:]]' /home/pi/direwolf.conf 2>/dev/null | awk '{print $2}' | head -1)
 NAME=$(grep -iE '^PBEACON' /home/pi/direwolf.conf 2>/dev/null | grep -oE 'comment="[^"]*"' | head -1 \
     | sed -E 's/^comment="//; s/"$//; s/^iGate[^,]*,[[:space:]]*//')

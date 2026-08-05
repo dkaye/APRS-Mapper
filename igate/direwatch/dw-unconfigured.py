@@ -1,5 +1,5 @@
 """
-dw-unconfigured.py — K6DRK iGate v5.1
+dw-unconfigured.py — K6DRK iGate v5.2
 
 Displayed on the TFT screen when the iGate has not yet been configured.
 Loops forever, refreshing the IP address every 5 seconds.

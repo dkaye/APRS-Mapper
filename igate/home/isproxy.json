@@ -1,0 +1,11 @@
+{
+  "listen_host": "127.0.0.1",
+  "listen_port": 14580,
+  "primary":  ["relay.marsaprs.org", 14590],
+  "fallback": ["noam.aprs2.net", 14580],
+  "connect_timeout": 10,
+  "stale_secs": 60,
+  "fallback_min_secs": 30,
+  "probe_secs": 30,
+  "buffer_max": 65536
+}

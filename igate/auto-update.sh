@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# iGate nightly update — K6DRK iGate v5.1
+# iGate nightly update — K6DRK iGate v5.2
 #
 # Downloads files.tar.gz from marsaprs.org and applies it.
 # Run daily at 4:01am via cron. Safe to run manually at any time.
@@ -24,6 +24,11 @@ save_logs() {
     # Prune saved log directories older than 14 days
     find /var/log-saved -maxdepth 1 -mindepth 1 -type d -mtime +14 \
         -exec sudo rm -rf {} \; 2>/dev/null || true
+
+    # Prune direwolf APRS-traffic logs (LOGDIR ~/aprslogs) older than 14 days.
+    # Direwolf creates a new dated file per day but never deletes the old ones,
+    # and no logrotate stanza covers this dir — so they accrue on the SD forever.
+    find /home/pi/aprslogs -maxdepth 1 -name '*.log' -mtime +14 -delete 2>/dev/null || true
 }
 
 log "=== iGate auto-update starting ==="
@@ -77,7 +82,7 @@ fi
 # this a gate reports and beacons its install-time version forever. These
 # rewrite only the version substring and leave callsign/location untouched.
 # The beacon text takes effect at the 04:10 reboot that follows this run.
-IGATE_VERSION="5.1"
+IGATE_VERSION="5.2"
 
 CFG=/var/www/html/config.php
 if [ -f "$CFG" ] && ! grep -q "dashboardversion = \"$IGATE_VERSION\"" "$CFG"; then

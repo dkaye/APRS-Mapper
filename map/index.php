@@ -228,6 +228,19 @@ if (isset($_GET['json'])) {
 		'stat_interval'  => (int)(  $_mob['beacon_stat_interval']  ?? 120),
 		'stat_distance'  => (float)($_mob['beacon_stat_distance']  ?? 1.0),
 	];
+	// iGate "last heard" comes from two sources, merged newest-wins:
+	//   igates.json      — what the aprs-daemon sees on the PUBLIC APRS-IS feed,
+	//                      which is deduped (only the first iGate to gate each
+	//                      packet is credited), so a busy-but-second iGate looks
+	//                      stale here.
+	//   igate_relay.json — what our aggregation relay sees from iGates streaming
+	//                      through it (via their local isproxy): the raw RF->IS
+	//                      stream BEFORE dedup, so it reflects real activity.
+	// The relay signal is authoritative when present/newer.
+	$igateBeacons = $readBeaconFile($igatesStatusFilename);
+	foreach ($readBeaconFile('igate_relay.json') as $cs => $ts) {
+		if (!isset($igateBeacons[$cs]) || $ts > $igateBeacons[$cs]) $igateBeacons[$cs] = $ts;
+	}
 	$body = json_encode([
 		'api'                => ['version' => API_VERSION, 'min_client' => API_MIN_CLIENT],
 		'default_event'      => $defaultEvent,
@@ -236,7 +249,7 @@ if (isset($_GET['json'])) {
 		'breadcrumb_count'   => (int)($cfg['breadcrumb_count'] ?? 100),
 		'mobile_beacons'     => $_bc,
 		'trackers'           => $trackers,
-		'igate_beacons'      => $readBeaconFile($igatesStatusFilename),
+		'igate_beacons'      => $igateBeacons,
 		'aid_beacons'        => $readBeaconFile($aidstationsStatusFilename),
 	]);
 	// Hash the actual response body: the ETag changes only when the payload does,
