@@ -59,6 +59,25 @@ sudo rsync -a "$TMP/systemd/" /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl restart stats-listener 2>/dev/null || true
 
+# ── Fleet relay enrollment (central control) ─────────────────────────────────
+# A single server-side file decides which gates opt into the aggregation relay, so
+# the fleet can be enrolled or withdrawn centrally without SSHing to each gate.
+# isproxy-enroll.txt holds one token per line: "ALL" (whole fleet) and/or specific
+# MYCALLs; "#" lines are comments. This just creates/removes the sentinel; the
+# v5-guarded activation block below does the real work (and no-ops on v4 gates).
+# Fail-safe: if the file can't be fetched (or is empty), the current sentinel is
+# left untouched, so a network blip never mass-disables the fleet.
+ENROLL=$(wget -qO- --timeout=15 --header="Cache-Control: no-cache" "$BASE/isproxy-enroll.txt" 2>/dev/null || true)
+if [ -n "$ENROLL" ]; then
+    ENROLL_MYCALL=$(awk '$1=="MYCALL"{print $2; exit}' /home/pi/direwolf.conf 2>/dev/null)
+    if [ -n "$ENROLL_MYCALL" ] && echo "$ENROLL" | grep -vE '^[[:space:]]*#' \
+         | grep -qxE "[[:space:]]*(ALL|${ENROLL_MYCALL})[[:space:]]*"; then
+        [ -f /home/pi/.isproxy-enabled ] || { touch /home/pi/.isproxy-enabled; log "relay: enrolled ($ENROLL_MYCALL) via fleet flag"; }
+    else
+        [ -f /home/pi/.isproxy-enabled ] && { rm -f /home/pi/.isproxy-enabled; log "relay: withdrawn ($ENROLL_MYCALL) via fleet flag"; }
+    fi
+fi
+
 # ── Unique per-gate IGLOGIN (promote the base call to the full MYCALL) ───────
 # APRS-IS enforces one connection per callsign-SSID. Historically these gates
 # logged in with the BARE base call (e.g. every MARS gate as "MARS"), which makes

@@ -390,11 +390,17 @@ connection at a time and pipes bytes transparently in both directions:
 - It fails over to the fallback on connect failure or staleness (no data for 60 s), and
   switches back to the primary once it is healthy again, with hysteresis so it can't flap.
 - It replays direwolf's login line on each new upstream, so switches are invisible to direwolf.
-- **It greets direwolf with a synthetic `# igate-isproxy` banner the instant direwolf
-  connects.** A real APRS-IS server sends a `# …` banner *before* the client logs in, and
-  direwolf waits for it; without this, direwolf and the proxy would each wait on the other,
-  direwolf would time out, and the connection would churn. (This was a real bug — the symptom
-  was direwolf reconnecting every ~12 s and gating only sporadically.)
+- **It speaks the APRS-IS server side of the handshake locally**, so direwolf stays
+  connected regardless of upstream latency. Two pieces, both learned the hard way:
+  (a) a synthetic `# igate-isproxy` **banner** the instant direwolf connects — a real
+  server greets with a `# …` banner *before* the client logs in, and direwolf waits for
+  it; and (b) a synthetic `# logresp <call> verified` **the instant direwolf sends its
+  login** — otherwise direwolf disconnects immediately after logging in, before the real
+  upstream can connect and relay the real logresp. Without (a), direwolf and the proxy
+  deadlocked; without (b), only low-latency (LAN) gates won the race while cellular gates
+  churned (connect → login → disconnect every ~15 s, never gating). Our logins are all
+  verified, so the local `verified` is accurate; the real upstream banner/logresp still
+  flow through afterward.
 
 Configuration is `isproxy.json`; a live status file `isproxy.status.json` records which
 upstream is currently in use (`primary`/`fallback`).
@@ -422,6 +428,26 @@ sentinel is removed, the same block cleanly reverses all of that — restores th
 `IGSERVER`, disables the proxy, and direwolf goes back to talking to APRS-IS directly. Because
 `isproxy` always falls back to public APRS-IS, **enabling a gate before DNS/relay are reachable
 is harmless** — it just gates the normal way until the relay is up.
+
+**Fleet-wide enrollment (central control).** SSHing to each gate doesn't scale (and most of
+the fleet is only intermittently reachable over NetBird), so `auto-update.sh` also reads a
+single server-side flag, **`https://marsaprs.org/igate/isproxy-enroll.txt`**, and creates or
+removes the sentinel to match it — so the whole fleet enrolls or withdraws from one file, and
+each gate applies it on its next nightly run. The file holds one token per line:
+
+```
+ALL          # enroll the entire fleet
+# MARS-3     # …or list specific MYCALLs, one per line, to stage a rollout
+# MARS-5
+```
+
+`ALL` enrolls every gate; a list enrolls just those `MYCALL`s; commenting out everything
+(or an empty/unreachable file) is **fail-safe** — gates leave their current state untouched,
+so a network blip never mass-disables the fleet. **To pause a rollout,** comment out `ALL`.
+**To roll the whole feature back,** set the file to withdraw (no active tokens) and the gates
+disable themselves on their next update. Only **v5** gates activate (the block is v5-guarded);
+on a v4 gate the sentinel is harmless. Because of the self-updating two-run pattern, a gate
+running an `auto-update.sh` that predates this flag picks the flag up the *following* night.
 
 ### Components and where they live
 
