@@ -1145,6 +1145,25 @@ no password modal is shown.
 
 **Data persistence:** Beacon data is never deleted automatically. It persists across daemon restarts, page reloads, and server reboots until an operator explicitly uses **Erase All Data** (admin password + two-step confirmation). The SQLite database is excluded from the deploy rsync so a new deployment never wipes event data.
 
+**Per-iGate recording (undeduped, from the aggregation relay).** `aprs_daemon.py`
+above reads the *public* APRS-IS feed, which is **de-duplicated** — so each beacon
+carries only one `receiver` (the first iGate to gate it), and you can't see which of
+*our* gates actually heard a tracker or how their coverage overlaps. A second recorder,
+**`relay_daemon.py`** (service `analyzer-relay-daemon`), fills that gap: it streams the
+[aggregation relay's](#igate-aggregation-relay) undeduped `capture.jsonl` from the VPS
+over SSH (a www-data-readable forced-command key that only `tail -F`s the file) and,
+for the active event, inserts a beacon **per (tracker, iGate)** with `receiver` set to
+the gating gate (`MARS-13`, `MARS-5`, …). It writes the same `beacons` table and reuses
+the same event/watch-list logic; the Analyzer UI already draws a line from each beacon
+to its receiving iGate, so it renders the full "who heard whom" picture with no display
+change. Insertion is de-duped per **(callsign, receiver, position)** — a stationary
+tracker heard 30× by one gate is a single tracker→gate link, while a *different* gate or
+a *new* position is a new link. The Analyzer's **Record** control starts and stops both
+recorders together (`flask_app.py` → `/api/daemon`), so the public-feed and per-iGate
+records are always captured for the same window. This only sees gates that have the
+relay enabled (see [iGate Aggregation Relay](#igate-aggregation-relay)); coverage grows
+as more gates are opted in.
+
 ### Map & Controls
 
 The Analyzer map is a Leaflet map using the same tile backgrounds configured in the event. All recorded beacons for the current event are loaded on page load and re-fetched on every auto-refresh cycle.
@@ -1197,7 +1216,8 @@ All files live under `/home/pi/analyzer/` on the server Pi.
 | File | Purpose |
 |------|---------|
 | `src/flask_app.py` | Flask application: routes, auth, config loading, beacon enrichment, template rendering |
-| `src/aprs_daemon.py` | APRS-IS listener; inserts beacons into SQLite; reads tracker list from `config.yaml` and `mobile_trackers.json` |
+| `src/aprs_daemon.py` | APRS-IS listener (public, deduped feed); inserts beacons into SQLite; reads tracker list from `config.yaml` and `mobile_trackers.json` |
+| `src/relay_daemon.py` | Per-iGate recorder; streams the aggregation relay's undeduped `capture.jsonl` from the VPS and inserts a beacon per (tracker, iGate). Uses `relaycap_key` (www-data-readable, forced-command SSH) |
 | `src/aprs_db.py` | SQLite wrapper: event management, beacon insert, deduplicated + globally time-sorted beacon fetch, recording time range queries |
 | `src/aprs.db` | SQLite database; excluded from deploys |
 | `src/templates/event_map.html` | Main live map page (Leaflet + controls modal); loads the shared player engine |
@@ -1214,14 +1234,15 @@ sudo systemctl status analyzer
 sudo systemctl restart analyzer
 sudo journalctl -u analyzer -f
 
-# Beacon recording daemon (started/stopped from the UI)
-sudo systemctl status analyzer-daemon
-sudo systemctl start analyzer-daemon
-sudo systemctl stop analyzer-daemon
-sudo journalctl -u analyzer-daemon -f
+# Beacon recording daemons (both started/stopped together from the UI Record control)
+sudo systemctl status analyzer-daemon        # public deduped APRS-IS feed
+sudo systemctl status analyzer-relay-daemon  # per-iGate undeduped relay capture
+sudo systemctl start analyzer-daemon analyzer-relay-daemon
+sudo systemctl stop  analyzer-daemon analyzer-relay-daemon
+sudo journalctl -u analyzer-daemon -u analyzer-relay-daemon -f
 ```
 
-Logs: `/var/log/analyzer/analyzer.log` and `/var/log/analyzer/daemon.log`
+Logs: `/var/log/analyzer/analyzer.log`, `/var/log/analyzer/daemon.log`, and `/var/log/analyzer/relay-daemon.log`
 
 The daemon restarts automatically on failure (30 s delay, 5 retries per 5 minutes). The web app restarts automatically on failure (10 s delay).
 

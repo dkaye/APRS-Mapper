@@ -1666,6 +1666,24 @@ no password modal is shown.</p>
 <p><strong>Deduplication:</strong> Consecutive beacons for the same callsign at the same position within a short interval are collapsed during the <code>get_ordered_deduplicated_beacons()</code> query so they don't clutter the playback trail. The query dedupes per callsign and then returns the list <strong>sorted globally by time</strong>, so the playback range maps its list-index sliders directly to a chronological window (see Map &amp; Controls).</p>
 <p><strong>Aid stations as iGates:</strong> Aid stations and rest stops that have an APRS callsign configured in the Admin UI are treated as iGates on the Analyzer map — their coordinates are loaded from <code>config.yaml</code>, their received packets are displayed with red receiver lines, and they appear as map markers alongside regular iGates.</p>
 <p><strong>Data persistence:</strong> Beacon data is never deleted automatically. It persists across daemon restarts, page reloads, and server reboots until an operator explicitly uses <strong>Erase All Data</strong> (admin password + two-step confirmation). The SQLite database is excluded from the deploy rsync so a new deployment never wipes event data.</p>
+<p><strong>Per-iGate recording (undeduped, from the aggregation relay).</strong> <code>aprs_daemon.py</code>
+above reads the <em>public</em> APRS-IS feed, which is <strong>de-duplicated</strong> — so each beacon
+carries only one <code>receiver</code> (the first iGate to gate it), and you can't see which of
+<em>our</em> gates actually heard a tracker or how their coverage overlaps. A second recorder,
+<strong><code>relay_daemon.py</code></strong> (service <code>analyzer-relay-daemon</code>), fills that gap: it streams the
+<a href="#igate-aggregation-relay">aggregation relay's</a> undeduped <code>capture.jsonl</code> from the VPS
+over SSH (a www-data-readable forced-command key that only <code>tail -F</code>s the file) and,
+for the active event, inserts a beacon <strong>per (tracker, iGate)</strong> with <code>receiver</code> set to
+the gating gate (<code>MARS-13</code>, <code>MARS-5</code>, …). It writes the same <code>beacons</code> table and reuses
+the same event/watch-list logic; the Analyzer UI already draws a line from each beacon
+to its receiving iGate, so it renders the full "who heard whom" picture with no display
+change. Insertion is de-duped per <strong>(callsign, receiver, position)</strong> — a stationary
+tracker heard 30× by one gate is a single tracker→gate link, while a <em>different</em> gate or
+a <em>new</em> position is a new link. The Analyzer's <strong>Record</strong> control starts and stops both
+recorders together (<code>flask_app.py</code> → <code>/api/daemon</code>), so the public-feed and per-iGate
+records are always captured for the same window. This only sees gates that have the
+relay enabled (see <a href="#igate-aggregation-relay">iGate Aggregation Relay</a>); coverage grows
+as more gates are opted in.</p>
 <h3 id="map-controls">Map &amp; Controls</h3>
 <p>The Analyzer map is a Leaflet map using the same tile backgrounds configured in the event. All recorded beacons for the current event are loaded on page load and re-fetched on every auto-refresh cycle.</p>
 <p><strong>Beacon rendering:</strong></p>
@@ -1794,7 +1812,11 @@ no password modal is shown.</p>
 </tr>
 <tr>
 <td><code>src/aprs_daemon.py</code></td>
-<td>APRS-IS listener; inserts beacons into SQLite; reads tracker list from <code>config.yaml</code> and <code>mobile_trackers.json</code></td>
+<td>APRS-IS listener (public, deduped feed); inserts beacons into SQLite; reads tracker list from <code>config.yaml</code> and <code>mobile_trackers.json</code></td>
+</tr>
+<tr>
+<td><code>src/relay_daemon.py</code></td>
+<td>Per-iGate recorder; streams the aggregation relay's undeduped <code>capture.jsonl</code> from the VPS and inserts a beacon per (tracker, iGate). Uses <code>relaycap_key</code> (www-data-readable, forced-command SSH)</td>
 </tr>
 <tr>
 <td><code>src/aprs_db.py</code></td>
@@ -1825,13 +1847,14 @@ sudo systemctl status analyzer
 sudo systemctl restart analyzer
 sudo journalctl -u analyzer -f
 
-# Beacon recording daemon (started/stopped from the UI)
-sudo systemctl status analyzer-daemon
-sudo systemctl start analyzer-daemon
-sudo systemctl stop analyzer-daemon
-sudo journalctl -u analyzer-daemon -f
+# Beacon recording daemons (both started/stopped together from the UI Record control)
+sudo systemctl status analyzer-daemon        # public deduped APRS-IS feed
+sudo systemctl status analyzer-relay-daemon  # per-iGate undeduped relay capture
+sudo systemctl start analyzer-daemon analyzer-relay-daemon
+sudo systemctl stop  analyzer-daemon analyzer-relay-daemon
+sudo journalctl -u analyzer-daemon -u analyzer-relay-daemon -f
 </code></pre>
-<p>Logs: <code>/var/log/analyzer/analyzer.log</code> and <code>/var/log/analyzer/daemon.log</code></p>
+<p>Logs: <code>/var/log/analyzer/analyzer.log</code>, <code>/var/log/analyzer/daemon.log</code>, and <code>/var/log/analyzer/relay-daemon.log</code></p>
 <p>The daemon restarts automatically on failure (30 s delay, 5 retries per 5 minutes). The web app restarts automatically on failure (10 s delay).</p>
 <h3 id="analyzer-api-endpoints">Analyzer API Endpoints</h3>
 <p>All endpoints require a valid <code>marsaprs_session</code> cookie with at least <code>analyzer.view</code>.
