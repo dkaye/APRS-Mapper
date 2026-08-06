@@ -1,0 +1,162 @@
+<h1 id="submitting_to_testflight_external_testing">Submitting to TestFlight (External Testing)</h1>
+
+<table>
+<thead>
+<tr>
+<th>Goal</th>
+<th>Best approach</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Install on your own device for testing</td>
+<td><code>flutter build ios --release</code> + <code>xcrun devicectl</code></td>
+</tr>
+<tr>
+<td>Submit to TestFlight for beta testers</td>
+<td><code>flutter build ios --release</code> &#8594; Xcode Archive &#8594; Organizer Distribute</td>
+</tr>
+<tr>
+<td>Automated/CI builds</td>
+<td><code>flutter build ipa</code> + Transporter (or <code>xcrun altool</code>)</td>
+</tr>
+</tbody>
+</table>
+
+<h2 id="prerequisites_one_time_setup">Prerequisites (one-time setup)</h2>
+
+<ol>
+<li><p><strong>Apple Distribution certificate with private key</strong></p>
+
+<ul>
+<li>Open Keychain Access → menu bar → Keychain Access → Certificate Assistant → Request a Certificate from a Certificate Authority</li>
+<li>Enter your Apple ID email, leave CA email blank, select <strong>Saved to disk</strong> → save the <code>.certSigningRequest</code> file</li>
+<li>Go to <a href="https://developer.apple.com">developer.apple.com</a> → Certificates → <strong>+</strong> → choose <strong>Apple Distribution</strong> → upload the <code>.certSigningRequest</code> → Download the <code>.cer</code></li>
+<li>Double-click the <code>.cer</code> to install it in Keychain</li>
+<li>Verify: <code>security find-identity -v -p codesigning</code> &#8212; you should see &#8220;Apple Distribution: &#8230;&#8221; listed as valid</li>
+</ul></li>
+
+<li><p><strong>Homebrew rsync must NOT be installed</strong></p>
+
+<ul>
+<li>Run: <code>brew uninstall rsync</code></li>
+<li>Xcode uses Apple&#8217;s <code>/usr/bin/rsync</code> which supports <code>--extended-attributes</code>; Homebrew&#8217;s rsync does not, causing &#8220;Copy failed&#8221;</li>
+</ul></li>
+</ol>
+
+<hr />
+
+<h2 id="every_release_step_by_step">Every release: step-by-step</h2>
+
+<h3 id="1_bump_the_version_number">1. Bump the version number</h3>
+
+<p>In <code>pubspec.yaml</code>, update <code>version</code>:</p>
+<pre><code>version: 1.16.1+2
+</code></pre>
+<p>The part before <code>+</code> is the display version; the part after is the build number.
+<strong>The build number must be higher than any previous upload</strong> &#8212; increment it each time.</p>
+
+<h3 id="2_build">2. Build</h3>
+
+<pre><code class="language-bash">cd /Users/doug/aprs-map
+flutter build ios --release
+</code></pre>
+
+<p>This produces <code>build/ios/iphoneos/Runner.app</code>. The same build can be installed directly on your device for testing (see <a href="#installing_on_device">Installing on device</a> below) before uploading to TestFlight.</p>
+
+<h3 id="3_archive_in_xcode">3. Archive in Xcode</h3>
+
+<ul>
+<li>Open Xcode: <code>open ios/Runner.xcworkspace</code></li>
+<li>Make sure the scheme target is <strong>Any iOS Device (arm64)</strong>, not a simulator</li>
+<li>Menu: <strong>Product &#8594; Archive</strong></li>
+<li>The Organizer window opens automatically when archiving completes</li>
+</ul>
+
+<h3 id="4_distribute_to_testflight">4. Distribute to TestFlight</h3>
+
+<p>In the Organizer:</p>
+<ul>
+<li>Select the new archive &#8594; click <strong>Distribute App</strong></li>
+<li>Choose <strong>TestFlight &amp; App Store</strong> &#8594; <strong>Next</strong></li>
+<li>Leave defaults (automatic signing) &#8594; <strong>Next</strong> &#8594; <strong>Upload</strong></li>
+<li>Xcode uploads and confirms delivery &#8212; no separate Transporter step needed</li>
+</ul>
+
+<h3 id="5_add_to_testflight_external_group">5. Add to TestFlight external group</h3>
+
+<ul>
+<li>Go to <a href="https://appstoreconnect.apple.com">appstoreconnect.apple.com</a> &#8594; your app &#8594; <strong>TestFlight</strong></li>
+<li>Wait for the build status to change from &#8220;Processing&#8221; to &#8220;Ready to Submit&#8221; (5&#8211;30 min)</li>
+<li>Under <strong>External Testing</strong>, select your group &#8594; <strong>+</strong> &#8594; add the new build</li>
+<li>Apple runs a brief <strong>Beta Review</strong> (usually same day); testers get an email when it&#8217;s approved</li>
+</ul>
+
+<hr />
+
+<h2 id="installing_on_device">Installing on device (without TestFlight)</h2>
+
+<p>To install directly on your own device during development:</p>
+
+<pre><code class="language-bash">flutter build ios --release
+xcrun devicectl device install app --device 00008130-000639093883401C build/ios/iphoneos/Runner.app
+</code></pre>
+
+<p>This is the same build from step 2 &#8212; no separate build needed.</p>
+
+<hr />
+
+<h2 id="alternative_command_line_ipa_build">Alternative: command-line IPA build</h2>
+
+<p>If you prefer a fully command-line workflow (e.g. for CI), use <code>flutter build ipa</code> instead of steps 3&#8211;4 above:</p>
+
+<pre><code class="language-bash">flutter build ipa --release --export-options-plist=ios/ExportOptions.plist
+</code></pre>
+
+<p>The IPA lands at <code>build/ios/ipa/*.ipa</code>. Upload it via <strong>Transporter</strong> (Mac App Store, free):</p>
+<ul>
+<li>Drag the <code>.ipa</code> onto the Transporter window &#8594; click <strong>Deliver</strong></li>
+</ul>
+
+<p><code>ios/ExportOptions.plist</code> is committed to the repo and configured for <code>app-store-connect</code> with team ID <code>KT84339238</code>.</p>
+
+<hr />
+
+<h2 id="troubleshooting">Troubleshooting</h2>
+
+<table>
+<thead>
+<tr>
+<th>Error</th>
+<th>Cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Copy failed</code></td>
+<td>Homebrew rsync installed</td>
+<td><code>brew uninstall rsync</code></td>
+</tr>
+<tr>
+<td><code>Missing code-signing certificate</code></td>
+<td>No Distribution cert in Keychain</td>
+<td>Check <code>security find-identity -v -p codesigning</code>; ensure Distribution cert has private key</td>
+</tr>
+<tr>
+<td><code>Signing requires a development team</code></td>
+<td>Team not set in Xcode</td>
+<td>Xcode &#8594; Runner target &#8594; Signing &amp; Capabilities &#8594; set Team</td>
+</tr>
+<tr>
+<td>Build number rejected</td>
+<td>Build number already used</td>
+<td>Increment the number after <code>+</code> in <code>pubspec.yaml</code></td>
+</tr>
+<tr>
+<td>Organizer shows no devices</td>
+<td>Simulator selected as target</td>
+<td>Switch scheme to <strong>Any iOS Device (arm64)</strong> before archiving</td>
+</tr>
+</tbody>
+</table>

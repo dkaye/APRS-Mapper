@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>APRS Map — Privacy Policy</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #222;
+    background: #f5f5f5;
+  }
+
+  header {
+    background: #2c3e50;
+    color: #fff;
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  header h1 { font-size: 1.1rem; font-weight: 600; }
+
+  header a {
+    color: #ccc;
+    text-decoration: none;
+    font-size: 0.9rem;
+    margin-left: auto;
+    white-space: nowrap;
+  }
+
+  header a:hover { color: #fff; }
+
+  #content {
+    max-width: 820px;
+    margin: 24px auto 48px;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 28px 40px;
+  }
+
+  h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 4px; }
+
+  .subtitle {
+    color: #666;
+    font-size: 0.88rem;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 2px solid #ddd;
+  }
+
+  h2 {
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin-top: 28px;
+    margin-bottom: 8px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid #e8e8e8;
+    color: #2c3e50;
+  }
+
+  h3 {
+    font-size: 0.95rem;
+    font-weight: 700;
+    margin-top: 14px;
+    margin-bottom: 5px;
+  }
+
+  p { margin-bottom: 10px; }
+
+  ul { margin: 8px 0 10px 20px; }
+  ul li { margin-bottom: 4px; }
+
+  .callout {
+    background: #fef9e7;
+    border-left: 4px solid #f39c12;
+    padding: 12px 16px;
+    margin: 16px 0;
+    border-radius: 0 4px 4px 0;
+    font-size: 0.93rem;
+  }
+
+  code {
+    font-family: 'SFMono-Regular', Consolas, monospace;
+    font-size: 0.88em;
+    background: #f4f4f4;
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+
+  a { color: #2980b9; }
+  a:hover { text-decoration: underline; }
+
+  footer {
+    text-align: center;
+    color: #999;
+    font-size: 0.82rem;
+    margin-top: 32px;
+    padding-top: 16px;
+    border-top: 1px solid #eee;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>APRS Map</h1>
+  <a href="https://marsaprs.org/">&#8592; Return to Map</a>
+</header>
+
+<div id="content">
+
+  <h1>Privacy Policy</h1>
+  <p class="subtitle">Effective June 20, 2026 &nbsp;&middot;&nbsp; APRS Map v1.13 &nbsp;&middot;&nbsp; Marin Amateur Radio Society</p>
+
+  <p>This Privacy Policy describes how the APRS Map application and website
+  (<strong>marsaprs.org</strong>) handle information when you use them. The app and
+  website are operated by the Marin Amateur Radio Society (MARS) and maintained by
+  Doug Kaye, K6DRK.</p>
+
+  <p>We collect the minimum information necessary to operate a real-time APRS tracker
+  display. We do not sell data, serve advertising, or track you across other websites
+  or apps.</p>
+
+
+  <h2>1. Viewing the Map</h2>
+
+  <p>When you open the map at marsaprs.org or in the APRS Map app, no account is
+  required and no personal information is collected. Standard web server logs record
+  your IP address and browser type as part of normal Apache operation. These logs are
+  rotated and deleted after 7 days and are used only for diagnosing server problems.</p>
+
+  <p>The map loads tile images from <strong>OpenStreetMap</strong> tile servers. Your
+  IP address is visible to those servers when tiles are fetched. See the
+  <a href="https://wiki.osmfoundation.org/wiki/Privacy_Policy" target="_blank" rel="noopener">OpenStreetMap Privacy Policy</a>
+  for details. All web traffic passes through <strong>Cloudflare</strong>, which
+  provides DDoS protection and TLS termination; Cloudflare may log request metadata
+  per their
+  <a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noopener">Privacy Policy</a>.</p>
+
+
+  <h2>2. Location Sharing</h2>
+
+  <p>Location sharing is an <strong>optional</strong> feature available when enabled
+  by the event administrator. You must actively choose to use it by tapping
+  <strong>Share Location</strong> and entering an event PIN. It is never enabled
+  automatically.</p>
+
+  <h3>What we collect</h3>
+  <ul>
+    <li><strong>Your name</strong> &mdash; entered by you when joining. Shown to other
+    map viewers alongside your position marker.</li>
+    <li><strong>Your GPS position</strong> &mdash; latitude and longitude, read from
+    your device approximately once per minute while sharing is active.</li>
+    <li><strong>A session token</strong> &mdash; a random value stored on the server
+    to authenticate your updates. Not linked to any account or persistent identity.</li>
+  </ul>
+
+  <div class="callout">
+    <strong>APRS is a public protocol.</strong> When you share your location, your
+    position is transmitted as a packet to the global
+    <a href="https://www.aprs-is.net/" target="_blank" rel="noopener">APRS-IS network</a>
+    under an assigned amateur radio callsign (e.g., <code>K6DRK-01</code>). This data
+    is <strong>publicly visible</strong> on external sites including
+    <a href="https://aprs.fi" target="_blank" rel="noopener">aprs.fi</a> and CalTopo,
+    and may be retained by those services independently of MARS. Do not use Share
+    Location if you do not want your position to be publicly visible.
+  </div>
+
+  <h3>How it is used</h3>
+  <ul>
+    <li>Your position is displayed on the MARS APRS event map so other participants
+    and net control can see where you are.</li>
+    <li>Your name is shown in the tracker list and on your map marker.</li>
+    <li>No other use is made of this data.</li>
+  </ul>
+
+  <h3>Retention</h3>
+  <ul>
+    <li>Your session entry (name, token, last-update time) is automatically removed
+    from the server after 24 hours of inactivity, or immediately when you tap
+    <strong>Stop Sharing</strong>.</li>
+    <li>Your last 10 position fixes are kept in a history file for breadcrumb display.
+    This history is cleared when you start a new session and is not retained after the
+    event.</li>
+    <li>APRS-IS and third-party sites (aprs.fi, CalTopo) receive your position
+    independently and retain it per their own policies, which are outside our
+    control.</li>
+  </ul>
+
+  <h3>Stopping</h3>
+  <p>Tap <strong>Stop Sharing</strong> at any time. Your session ends immediately,
+  your position stops updating, and your entry is removed from the server. APRS-IS
+  packets already transmitted are outside our control.</p>
+
+
+  <h2>3. Device Permissions</h2>
+
+  <p>The APRS Map app requests location permissions only when you use Share Location:</p>
+
+  <ul>
+    <li><strong>Location (While Using the App)</strong> &mdash; to read your GPS
+    position for display on the map and to power the Share Location feature.</li>
+    <li><strong>Location (Always / Background)</strong> &mdash; requested when you
+    start sharing, so your position continues to be uploaded when the app is in the
+    background. You can revoke this at any time in your device Settings; doing so
+    stops all position collection immediately.</li>
+  </ul>
+
+  <p>Location permission is never requested if you only view the map without using
+  Share Location.</p>
+
+
+  <h2>4. Event Administration</h2>
+
+  <p>Authorized MARS personnel with admin access can view the names and callsigns of
+  active sharing participants and can rename, block, or end participant sessions.
+  Admin access is password-protected.</p>
+
+
+  <h2>5. Children's Privacy</h2>
+
+  <p>The APRS Map app and website are not directed at children under 13. We do not
+  knowingly collect personal information from children under 13. If you believe a
+  child under 13 has submitted information through this app, contact us at the address
+  below and we will remove it promptly.</p>
+
+
+  <h2>6. No Analytics or Advertising</h2>
+
+  <p>We do not use analytics services, crash reporters, or advertising networks. No
+  tracking cookies or persistent identifiers are set beyond the short-lived admin
+  session cookie used for the password-protected admin pages.</p>
+
+
+  <h2>7. Changes to This Policy</h2>
+
+  <p>We may update this policy as the app evolves. The effective date at the top of
+  this page reflects the most recent revision. Continued use of the app after a
+  policy change constitutes acceptance of the updated terms.</p>
+
+
+  <h2>8. Contact</h2>
+
+  <p>Questions or concerns about this privacy policy or your data:</p>
+  <ul>
+    <li><strong>Email:</strong> <a href="mailto:doug@rds.com">doug@rds.com</a></li>
+    <li><strong>Callsign:</strong> K6DRK</li>
+    <li><strong>Organization:</strong> Marin Amateur Radio Society</li>
+  </ul>
+
+  <footer>
+    &copy; 2026 Doug Kaye (K6DRK) &nbsp;&middot;&nbsp; Marin Amateur Radio Society
+    &nbsp;&middot;&nbsp; <a href="https://marsaprs.org/">marsaprs.org</a>
+  </footer>
+
+</div>
+</body>
+</html>

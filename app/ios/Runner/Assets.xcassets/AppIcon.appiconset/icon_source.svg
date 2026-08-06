@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  v6: no clouds, brighter/more cheerful — richer deep-blue night sky,
+  brighter mountain greens, stars, warm city-light horizon glow.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+
+    <!-- Sky: rich deep blue (not black) — beautiful night not ominous night -->
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"
+                    gradientUnits="objectBoundingBox">
+      <stop offset="0%"   stop-color="#081640"/>
+      <stop offset="55%"  stop-color="#0D1E50"/>
+      <stop offset="100%" stop-color="#182A5C"/>
+    </linearGradient>
+
+    <!-- Warm city-light glow just above the mountain horizon -->
+    <radialGradient id="cityglow" cx="0.50" cy="0.58" r="0.55"
+                    gradientUnits="objectBoundingBox">
+      <stop offset="0%"   stop-color="#FF8820" stop-opacity="0.16"/>
+      <stop offset="60%"  stop-color="#FF6600" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#FF6600" stop-opacity="0.00"/>
+    </radialGradient>
+
+    <!-- Mountain: brighter sage/olive ridge, vivid forest base -->
+    <linearGradient id="mtn" x1="512" y1="555" x2="512" y2="1024"
+                    gradientUnits="userSpaceOnUse">
+      <stop offset="0%"   stop-color="#7A9660"/>
+      <stop offset="22%"  stop-color="#627A46"/>
+      <stop offset="100%" stop-color="#2A3E12"/>
+    </linearGradient>
+
+    <!-- Ridge highlight -->
+    <linearGradient id="rhl" x1="0" y1="0" x2="1" y2="0"
+                    gradientUnits="objectBoundingBox">
+      <stop offset="0%"   stop-color="#A0CC76" stop-opacity="0.00"/>
+      <stop offset="14%"  stop-color="#A0CC76" stop-opacity="0.70"/>
+      <stop offset="83%"  stop-color="#A0CC76" stop-opacity="0.70"/>
+      <stop offset="100%" stop-color="#A0CC76" stop-opacity="0.00"/>
+    </linearGradient>
+
+    <!-- Amber arc halo — slightly stronger for cheerful warmth -->
+    <radialGradient id="halo" cx="0.50" cy="0.49" r="0.50"
+                    gradientUnits="objectBoundingBox">
+      <stop offset="0%"   stop-color="#FF8000" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#FF8000" stop-opacity="0.00"/>
+    </radialGradient>
+
+    <!-- Signal arc glow -->
+    <filter id="glow" x="-24%" y="-24%" width="148%" height="148%">
+      <feGaussianBlur stdDeviation="12" result="b"/>
+      <feBlend in="SourceGraphic" in2="b" mode="screen"/>
+    </filter>
+
+    <clipPath id="clip"><rect width="1024" height="1024"/></clipPath>
+
+  </defs>
+
+  <g clip-path="url(#clip)">
+
+    <!-- Rich deep-blue night sky -->
+    <rect width="1024" height="1024" fill="url(#sky)"/>
+
+    <!-- Faint stars — adds life to the sky -->
+    <circle cx="102"  cy="64"  r="1.6" fill="white" opacity="0.70"/>
+    <circle cx="228"  cy="38"  r="1.4" fill="white" opacity="0.60"/>
+    <circle cx="312"  cy="92"  r="1.2" fill="white" opacity="0.50"/>
+    <circle cx="420"  cy="48"  r="1.5" fill="white" opacity="0.65"/>
+    <circle cx="574"  cy="70"  r="1.0" fill="white" opacity="0.45"/>
+    <circle cx="664"  cy="34"  r="1.6" fill="white" opacity="0.68"/>
+    <circle cx="768"  cy="80"  r="1.3" fill="white" opacity="0.55"/>
+    <circle cx="870"  cy="46"  r="1.5" fill="white" opacity="0.63"/>
+    <circle cx="940"  cy="96"  r="1.2" fill="white" opacity="0.50"/>
+    <circle cx="148"  cy="148" r="1.0" fill="white" opacity="0.40"/>
+    <circle cx="490"  cy="110" r="1.1" fill="white" opacity="0.42"/>
+    <circle cx="800"  cy="130" r="1.0" fill="white" opacity="0.38"/>
+    <circle cx="62"   cy="200" r="1.0" fill="white" opacity="0.35"/>
+    <circle cx="960"  cy="180" r="1.1" fill="white" opacity="0.38"/>
+
+    <!-- Warm city-light glow at horizon (Bay Area below Mt. Tam) -->
+    <rect width="1024" height="1024" fill="url(#cityglow)"/>
+
+    <!-- Amber arc-zone halo -->
+    <rect width="1024" height="1024" fill="url(#halo)"/>
+
+    <!--
+      MT. TAMALPAIS — "SLEEPING LADY" SILHOUETTE (same profile as v5)
+      West Peak (512, 558) — rounded dome, antenna here, icon centre.
+      Saddle (~568, 636) — 78 px below W Peak.
+      East Peak (~624, 570) — angular, 12 px lower than W Peak.
+      Steep stepped eastern cliff face (L + C alternation).
+    -->
+    <path d="
+      M 0 944
+
+      C  54 938  118 920  176 896
+      C 200 884  216 892  228 896
+      L 234 888
+      C 242 884  258 872  274 862
+      C 306 844  338 818  364 788
+      C 386 766  408 740  426 714
+      C 438 696  448 676  456 654
+      L 460 646
+      C 464 634  472 612  482 590
+      C 492 572  502 560  512 558
+
+      C 518 556  524 562  530 570
+      L 534 574
+      C 540 582  548 598  556 614
+      C 560 626  564 634  568 636
+
+      C 572 634  578 624  586 612
+      C 596 598  608 582  616 574
+      L 620 570
+      L 626 566
+      L 632 574
+      C 640 584  650 602  662 620
+      L 668 630
+      C 674 640  688 664  708 690
+      L 716 704
+      C 726 718  748 752  778 790
+      L 786 802
+      C 798 818  840 858  898 900
+      C 940 922  984 942  1024 958
+
+      L 1024 1024  L 0 1024  Z"
+      fill="url(#mtn)"/>
+
+    <!-- Ridge highlight -->
+    <path d="
+      M 276 860
+      C 308 842  340 816  366 786
+      C 388 764  410 738  428 712
+      C 440 694  450 674  458 652
+      L 462 644
+      C 466 632  474 610  484 588
+      C 494 570  504 558  514 556
+      C 520 554  526 560  532 568
+      L 536 572
+      C 542 580  550 596  558 612
+      C 562 624  566 632  570 634
+      C 574 632  580 622  588 610
+      C 598 596  610 580  618 572
+      L 622 568
+      L 628 564
+      L 634 572
+      C 642 582  652 600  664 618
+      L 670 628
+      C 676 638  690 662  710 688"
+      fill="none" stroke="url(#rhl)" stroke-width="2.2"
+      stroke-linecap="round" opacity="0.65"/>
+
+    <!--
+      Antenna — dead vertical, no crossbar, ball tip only.
+    -->
+    <line x1="512" y1="558" x2="512" y2="506"
+          stroke="rgba(255,255,255,0.70)" stroke-width="5"
+          stroke-linecap="round"/>
+    <circle cx="512" cy="500" r="7" fill="rgba(255,255,255,0.92)"/>
+
+    <!--
+      Signal arcs — centred at (512, 500). Slightly more opaque for pop.
+    -->
+    <!-- r=66 -->
+    <path d="M 446 500 A 66 66 0 0 1 578 500"
+          fill="none" stroke="#FF5800" stroke-width="26"
+          stroke-linecap="round" filter="url(#glow)" opacity="1.00"/>
+    <!-- r=138 -->
+    <path d="M 374 500 A 138 138 0 0 1 650 500"
+          fill="none" stroke="#FF6D00" stroke-width="20"
+          stroke-linecap="round" filter="url(#glow)" opacity="0.93"/>
+    <!-- r=214 -->
+    <path d="M 298 500 A 214 214 0 0 1 726 500"
+          fill="none" stroke="#FF8300" stroke-width="15"
+          stroke-linecap="round" filter="url(#glow)" opacity="0.83"/>
+    <!-- r=293 -->
+    <path d="M 219 500 A 293 293 0 0 1 805 500"
+          fill="none" stroke="#FF9900" stroke-width="10"
+          stroke-linecap="round" filter="url(#glow)" opacity="0.70"/>
+    <!-- r=374 -->
+    <path d="M 138 500 A 374 374 0 0 1 886 500"
+          fill="none" stroke="#FFAF00" stroke-width="7"
+          stroke-linecap="round" filter="url(#glow)" opacity="0.56"/>
+
+  </g>
+</svg>

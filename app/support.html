@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>APRS Map — Support</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #222;
+    background: #f5f5f5;
+  }
+
+  header {
+    background: #2c3e50;
+    color: #fff;
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  header h1 { font-size: 1.1rem; font-weight: 600; }
+
+  header a {
+    color: #ccc;
+    text-decoration: none;
+    font-size: 0.9rem;
+    margin-left: auto;
+    white-space: nowrap;
+  }
+
+  header a:hover { color: #fff; }
+
+  #content {
+    max-width: 820px;
+    margin: 24px auto 48px;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 28px 40px;
+  }
+
+  h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 4px; }
+
+  .subtitle {
+    color: #666;
+    font-size: 0.88rem;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 2px solid #ddd;
+  }
+
+  h2 {
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin-top: 28px;
+    margin-bottom: 8px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid #e8e8e8;
+    color: #2c3e50;
+  }
+
+  h3 {
+    font-size: 0.95rem;
+    font-weight: 700;
+    margin-top: 16px;
+    margin-bottom: 5px;
+  }
+
+  p { margin-bottom: 10px; }
+
+  ul { margin: 8px 0 10px 20px; }
+  ul li { margin-bottom: 4px; }
+
+  .contact-box {
+    background: #f0f7ff;
+    border: 1px solid #b8d4f0;
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin: 20px 0;
+  }
+
+  .contact-box p { margin-bottom: 6px; }
+  .contact-box p:last-child { margin-bottom: 0; }
+
+  .links {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 20px;
+  }
+
+  .links a {
+    display: inline-block;
+    padding: 8px 16px;
+    background: #2c3e50;
+    color: #fff;
+    border-radius: 5px;
+    text-decoration: none;
+    font-size: 0.88rem;
+  }
+
+  .links a:hover { background: #3d5166; }
+
+  a { color: #2980b9; }
+  a:hover { text-decoration: underline; }
+
+  code {
+    font-family: 'SFMono-Regular', Consolas, monospace;
+    font-size: 0.88em;
+    background: #f4f4f4;
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+
+  footer {
+    text-align: center;
+    color: #999;
+    font-size: 0.82rem;
+    margin-top: 32px;
+    padding-top: 16px;
+    border-top: 1px solid #eee;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>APRS Map</h1>
+  <a href="https://marsaprs.org/">&#8592; Return to Map</a>
+</header>
+
+<div id="content">
+
+  <h1>Support</h1>
+  <p class="subtitle">APRS Map v1.13 &nbsp;&middot;&nbsp; Marin Amateur Radio Society</p>
+
+  <p>APRS Map is a real-time position tracking application for Marin Amateur Radio
+  Society (MARS) public-service events. It displays APRS tracker positions on a live
+  map and allows participants to optionally share their own GPS location.</p>
+
+  <div class="contact-box">
+    <p><strong>Need help?</strong> Contact the app developer directly:</p>
+    <p>&#128231; <a href="mailto:doug@rds.com">doug@rds.com</a></p>
+    <p>&#128397; Doug Kaye &nbsp;&middot;&nbsp; K6DRK &nbsp;&middot;&nbsp; Marin Amateur Radio Society</p>
+  </div>
+
+  <div class="links">
+    <a href="https://marsaprs.org/userguide.html">User Guide</a>
+    <a href="https://marsaprs.org/privacy.html">Privacy Policy</a>
+    <a href="https://marsaprs.org/">Open Map</a>
+  </div>
+
+
+  <h2>Frequently Asked Questions</h2>
+
+  <h3>The map is blank or not loading.</h3>
+  <p>Check your internet connection. The app requires network access to fetch live
+  tracker data and map tiles. If you are on a slow or intermittent connection, try
+  switching to a stronger WiFi network or cellular signal and pull down to refresh.</p>
+
+  <h3>I don't see any trackers on the map.</h3>
+  <p>Trackers only appear when they are actively beaconing. Outside of an active event,
+  or if no trackers have been heard in the past several minutes, the map may be empty.
+  Contact your event coordinator to confirm an event is in progress and that trackers
+  are configured and transmitting.</p>
+
+  <h3>The Share Location button is not visible.</h3>
+  <p>Mobile location sharing must be enabled by the event administrator for the current
+  event. If you expect to see it and don't, ask your event coordinator to enable it in
+  the admin settings.</p>
+
+  <h3>I tapped Share Location but got a PIN error.</h3>
+  <p>The PIN is set by the event administrator. Ask your event coordinator for the
+  correct PIN for the current event.</p>
+
+  <h3>My position isn't appearing on the map after I start sharing.</h3>
+  <p>After joining, your first position update is sent within 60 seconds. Make sure
+  location permission is granted for the app in your device Settings. On iOS, go to
+  <strong>Settings &rarr; Privacy &amp; Security &rarr; Location Services &rarr; APRS Map</strong>
+  and set it to <strong>Always</strong> or <strong>While Using the App</strong>.
+  If you are indoors or in a poor GPS environment, the app may not have a fix yet.</p>
+
+  <h3>The app is draining my battery while sharing.</h3>
+  <p>Background GPS use does consume battery. The app uses the Wake Lock to keep the
+  screen available and uploads your position approximately once per minute &mdash; both
+  are intentional when sharing is active. Tap <strong>Stop Sharing</strong> when you
+  no longer need to broadcast your position.</p>
+
+  <h3>How do I stop sharing my location?</h3>
+  <p>Open the drawer by tapping the gear icon (&#9881;), then tap
+  <strong>Stop Sharing</strong> at the bottom of the drawer. Your session ends
+  immediately and your position stops updating on the map.</p>
+
+  <h3>Where does my shared location data go?</h3>
+  <p>Your position is transmitted to the global APRS-IS network under an assigned
+  amateur radio callsign. This makes it publicly visible on APRS network sites such as
+  <a href="https://aprs.fi" target="_blank" rel="noopener">aprs.fi</a>. See the
+  <a href="https://marsaprs.org/privacy.html">Privacy Policy</a> for full details.</p>
+
+  <h3>Can I use the app without an amateur radio license?</h3>
+  <p>Yes. Viewing the map requires no license. The Share Location feature transmits
+  under a callsign assigned and licensed to MARS; participants using it are operating
+  under the club's third-party authorization for official public-service events.</p>
+
+  <h3>I found a bug or have a feature request.</h3>
+  <p>Email <a href="mailto:doug@rds.com">doug@rds.com</a> with a description of the
+  issue and, if applicable, the device model and iOS/Android version you are using.</p>
+
+
+  <h2>Resources</h2>
+
+  <ul>
+    <li><a href="https://marsaprs.org/userguide.html">Full User Guide</a> &mdash;
+    detailed instructions for the map, admin page, and all features</li>
+    <li><a href="https://marsaprs.org/privacy.html">Privacy Policy</a></li>
+    <li><a href="https://marsaprs.org/">Live Map</a> &mdash; marsaprs.org</li>
+    <li><a href="https://www.w6sg.net/" target="_blank" rel="noopener">Marin Amateur Radio Society</a></li>
+  </ul>
+
+  <footer>
+    &copy; 2026 Doug Kaye (K6DRK) &nbsp;&middot;&nbsp; Marin Amateur Radio Society
+    &nbsp;&middot;&nbsp; <a href="https://marsaprs.org/">marsaprs.org</a>
+  </footer>
+
+</div>
+</body>
+</html>

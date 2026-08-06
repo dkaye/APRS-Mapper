@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- message.wav is referenced only by name at runtime (notification sound),
+     so the resource shrinker can't see the reference. Keep it explicitly. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@raw/message" />
