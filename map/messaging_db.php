@@ -217,14 +217,16 @@ class MessagingDb
         return $this->all($sql . ' ORDER BY kind, display_name', $p);
     }
 
-    /** Operators for the admin "Manage operators" view: id, name, last_seen, and whether
-     *  they currently hold a live session token (used to show connected vs stale). */
+    /** Operators for the admin "Manage operators" view. Only those still HOLDING a name
+     *  (a live session token) are returned — a signed-out operator holds nothing and has
+     *  nothing to disconnect, so it's omitted. The client uses last_seen to show
+     *  connected (recent) vs idle (stale-but-still-holding). */
     public function listOperators(string $event): array
     {
         return $this->all(
-            "SELECT id, display_name, last_seen,
-                    CASE WHEN token IS NOT NULL AND token != '' THEN 1 ELSE 0 END AS has_token
-             FROM participants WHERE event=:e AND kind='operator'
+            "SELECT id, display_name, last_seen, 1 AS has_token
+             FROM participants
+             WHERE event=:e AND kind='operator' AND token IS NOT NULL AND token != ''
              ORDER BY last_seen DESC",
             [':e'=>$event]);
     }
