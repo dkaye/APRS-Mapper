@@ -35,7 +35,7 @@ The part before `+` is the display version; the part after is the build number.
 ### 2. Build
 
 ```bash
-cd /Users/doug/aprs-map
+cd ~/marsaprs/app
 flutter build ios --release
 ```
 

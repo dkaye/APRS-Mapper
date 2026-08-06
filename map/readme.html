@@ -927,7 +927,7 @@ keeps journal entries in RAM. Both configured via <code>files.tar.gz</code> and 
 <hr />
 <h2 id="mobile-apps-v1211">Mobile Apps (v1.21.1)</h2>
 <p>Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.</p>
-<p><strong>Repository:</strong> <code>/Users/doug/aprs-map</code> (separate from this marsaprs repo)</p>
+<p><strong>Location:</strong> the <code>app/</code> subdirectory of this repo (<code>app/lib</code>, <code>app/ios</code>, <code>app/android</code>, <code>app/pubspec.yaml</code>). It was merged in from the former standalone <code>aprs-map</code> repo, with history preserved.</p>
 <h3 id="app-architecture">App Architecture</h3>
 <p>The app is a Flutter application with a hybrid architecture:</p>
 <pre><code>┌────────────────────────────────────────────────┐
@@ -1116,7 +1116,7 @@ App restart while sharing was active:
 <p>The algorithm runs identically in <code>lib/map_screen.dart</code> (Flutter iOS/Android), <code>Sources/BeaconService.swift</code> (Apple Watch), and <code>index.php</code> (web JS). Key functions: <code>_processSpeedSample</code> / <code>processSpeedSample</code> / <code>_autoDetectFromSpeed</code> for sample-based detection; <code>_checkStationaryByTime</code> / <code>checkStationaryByTime</code> for the timer-based fallback.</p>
 <h3 id="building-distributing">Building &amp; Distributing</h3>
 <h4 id="ios">iOS</h4>
-<pre><code class="language-bash">cd /Users/doug/aprs-map
+<pre><code class="language-bash">cd ~/marsaprs/app
 flutter pub get
 flutter build ios --release --no-codesign
 </code></pre>
@@ -1129,7 +1129,7 @@ flutter build ios --release --no-codesign
 </ol>
 <p>Testers must have TestFlight installed (free, from the App Store). They install the app by opening the invitation email and tapping <strong>View in TestFlight</strong>. New testers may be prompted for a redeem code from the invitation. For updates, testers open TestFlight and tap <strong>Update</strong>.</p>
 <h4 id="android">Android</h4>
-<pre><code class="language-bash">cd /Users/doug/aprs-map
+<pre><code class="language-bash">cd ~/marsaprs/app
 flutter pub get
 flutter build apk --release
 </code></pre>

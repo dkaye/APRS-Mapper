@@ -29,3 +29,7 @@ display/home/wifi.conf
 # Runtime / event-specific data — lives on the server, never in the repo
 /map/events/
 /map/config.yaml
+
+# stray artifacts (untracked 2026-08-06 monorepo cleanup)
+staged.patch
+.claude-trace/

@@ -171,4 +171,4 @@ storeFile=<path to .jks or .p12>
 
 ## Server
 
-The companion server is at `/Users/doug/marsaprs/map/`. See `marsaprs/map/README.MD` for full technical documentation.
+The companion server is at `../map/`. See `../map/README.MD` for full technical documentation.

@@ -609,7 +609,7 @@ For details on using the map, see [USERGUIDE.MD](https://marsaprs.org/userguide.
 
 Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.
 
-**Repository:** `/Users/doug/aprs-map` (separate from this marsaprs repo)
+**Location:** the `app/` subdirectory of this repo (`app/lib`, `app/ios`, `app/android`, `app/pubspec.yaml`). It was merged in from the former standalone `aprs-map` repo, with history preserved.
 
 ### App Architecture
 
@@ -757,7 +757,7 @@ The algorithm runs identically in `lib/map_screen.dart` (Flutter iOS/Android), `
 #### iOS
 
 ```bash
-cd /Users/doug/aprs-map
+cd ~/marsaprs/app
 flutter pub get
 flutter build ios --release --no-codesign
 ```
@@ -774,7 +774,7 @@ Testers must have TestFlight installed (free, from the App Store). They install 
 #### Android
 
 ```bash
-cd /Users/doug/aprs-map
+cd ~/marsaprs/app
 flutter pub get
 flutter build apk --release
 ```
