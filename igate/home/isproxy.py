@@ -91,11 +91,23 @@ class Proxy:
         self.retry_primary_at = 0.0   # wall-clock; before this, prefer fallback
         self.switch_back = asyncio.Event()  # set by prober to end a fallback run
         self.stop = False
+        self.session = 0              # bumped per direwolf connection (see below)
 
     # ---- direwolf side -------------------------------------------------------
     async def handle_direwolf(self, reader, writer):
         peer = writer.get_extra_info("peername")
         log(f"direwolf connected from {peer}")
+        # self.stop is the shutdown flag for THIS direwolf session's upstream tasks,
+        # and the previous session left it set. Clear it, or every reconnect after the
+        # first is a no-op: the supervisor's `while not self.stop` exits immediately,
+        # no upstream is ever opened, and direwolf churns (connect, login, drop) every
+        # ~15s forever — which is exactly what a nightly direwolf restart triggers.
+        # The session counter keeps a session that is closing down from clearing the
+        # flag out from under a newer one that has already taken over.
+        self.session += 1
+        sid = self.session
+        self.stop = False
+        self.up_buf.clear()           # uplink from the dead session is stale; drop it
         self.dw_writer = writer
         # An APRS-IS server greets the client with a "# ..." banner line BEFORE the
         # client sends its login, and direwolf waits for that greeting first. Send a
@@ -154,9 +166,10 @@ class Proxy:
             log(f"direwolf read error: {e}")
         finally:
             log("direwolf disconnected")
-            self.stop = True
             sup.cancel()
-            self._close_upstream()
+            if sid == self.session:   # not already superseded by a newer session
+                self.stop = True
+                self._close_upstream()
             writer.close()
 
     def _buffer(self, data):
