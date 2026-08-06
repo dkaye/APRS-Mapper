@@ -380,8 +380,11 @@ def daemon_api():
         data   = request.get_json(silent=True) or {}
         action = data.get('action', '')
         if action in ('start', 'stop'):
-            subprocess.run(['sudo', 'systemctl', action, 'analyzer-daemon'],
-                           capture_output=True)
+            # analyzer-daemon records the public (deduped) APRS-IS feed;
+            # analyzer-relay-daemon records our iGates' undeduped per-gate capture.
+            # Start/stop them together so one "Record" control drives both.
+            for svc in ('analyzer-daemon', 'analyzer-relay-daemon'):
+                subprocess.run(['sudo', 'systemctl', action, svc], capture_output=True)
     result = subprocess.run(['sudo', 'systemctl', 'is-active', 'analyzer-daemon'],
                             capture_output=True, text=True)
     running = result.stdout.strip() == 'active'

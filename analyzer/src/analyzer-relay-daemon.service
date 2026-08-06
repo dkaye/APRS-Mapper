@@ -1,0 +1,23 @@
+[Unit]
+Description=APRS Analyzer Relay Recorder (per-iGate undeduped beacons)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/home/pi/analyzer/src
+
+ExecStart=/home/pi/analyzer/venv/bin/python3 -u relay_daemon.py
+
+Restart=on-failure
+RestartSec=30
+
+StandardOutput=append:/var/log/analyzer/relay-daemon.log
+StandardError=append:/var/log/analyzer/relay-daemon.log
+
+[Install]
+WantedBy=multi-user.target
