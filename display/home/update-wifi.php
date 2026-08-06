@@ -79,6 +79,21 @@ function setPriority(string $name, int $priority): void {
          ' connection.autoconnect-priority ' . $priority);
 }
 
+/**
+ * Disable WiFi power save (2 = disable; NetworkManager's default leaves it on).
+ *
+ * These displays are mains-powered and must stay reachable. With power save on,
+ * the radio sleeps between beacons and *inbound* packets are delayed or dropped —
+ * on a marginal signal that means hundreds of ms of latency and packet loss, which
+ * is enough to stop NetBird's ICE sessions from holding (seen on BigTV, 2026-08-06:
+ * 20% loss and ~720ms to its own gateway). Outbound traffic still worked, so the
+ * device looked online while being unreachable.
+ */
+function disablePowerSave(string $name): void {
+    exec('sudo nmcli connection modify ' . escapeshellarg($name) .
+         ' 802-11-wireless.powersave 2');
+}
+
 function addConnection(array $entry, int $priority): void {
     $name      = $entry['name'];
     $ssid      = $entry['ssid'];
@@ -103,6 +118,7 @@ function addConnection(array $entry, int $priority): void {
     }
 
     setPriority($name, $priority);
+    disablePowerSave($name);
 }
 
 function deleteOldConnections(): void {
