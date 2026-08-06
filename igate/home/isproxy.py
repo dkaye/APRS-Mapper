@@ -119,6 +119,21 @@ class Proxy:
             writer.close()
             return
         log(f"cached login: {self.login.decode('ascii','replace').strip()}")
+        # Acknowledge the login LOCALLY with a synthetic "# logresp … verified" so
+        # direwolf considers itself connected and stays, independent of how long the
+        # real upstream takes to come up. Without this, a higher-latency gate (cellular)
+        # disconnects the instant after it sends its login — before isproxy can connect
+        # the upstream and relay the real logresp — and churns forever; only low-latency
+        # (LAN) gates won the race. Our logins are all verified, so asserting "verified"
+        # is accurate; the real upstream logresp still flows through afterward (a second
+        # "#" line is harmless to direwolf).
+        try:
+            _p = self.login.decode('ascii', 'replace').split()
+            _call = _p[1] if len(_p) >= 2 and _p[0].lower() == 'user' else 'UNKNOWN'
+            writer.write(f"# logresp {_call} verified, server IGATE-PROXY\r\n".encode())
+            await writer.drain()
+        except Exception as e:
+            log(f"synthetic logresp failed: {e}")
         # Supervise the upstream for the life of this direwolf session.
         sup = asyncio.ensure_future(self.upstream_supervisor())
         try:
