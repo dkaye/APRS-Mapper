@@ -1448,8 +1448,8 @@ permissions they need; there are no implicit roles or inheritance.</p>
 <td><code>/tickets/admin.php</code> — ticket list and management</td>
 </tr>
 <tr>
-<td><code>messages.delete_all</code></td>
-<td><strong>Delete All Messages</strong> button in the map's All Messages window</td>
+<td><code>messages.manage</code></td>
+<td>Messaging admin: <strong>Delete All Messages</strong>, and <strong>Manage operators</strong> (disconnect a stuck/idle operator to free their name). <em>(Renamed from <code>messages.delete_all</code>.)</em></td>
 </tr>
 <tr>
 <td><code>users.manage</code></td>
@@ -1608,13 +1608,13 @@ admin actions are gated by the user-account permission system.</p>
 </tr>
 <tr>
 <td><code>flush</code></td>
-<td>Per-event wipe, gated by <code>messages.delete_all</code>.</td>
+<td>Per-event wipe, gated by <code>messages.manage</code>.</td>
 </tr>
 </tbody>
 </table>
 <p><strong>Backward compatibility.</strong> The legacy mobile endpoints (<code>?mobile=message</code>, mobile <code>poll</code>, <code>web_recipients</code>) are a thin shim over the same <code>messages.db</code>, so an older app keeps working unchanged alongside the new chat clients — old and new interoperate through one database.</p>
 <h3 id="web-operator-ui-chat-panel">Web Operator UI (chat panel)</h3>
-<p>The <strong>Messaging</strong> button subscribes (name + password → token, remembered in <code>localStorage</code>). Messaging then lives in a persistent <strong>chat panel docked right of the map</strong>: a conversation list with unread badges, the selected thread, and an always-visible composer that incoming messages never cover. The 5-second poll drives live updates into the open thread, the list, and the unread counts without a reload. <strong>New message</strong> searches mobiles + operators (multi-select → a group; <strong>All Trackers</strong> → broadcast). Sent messages show <strong>Delivered ✓</strong> / <strong>Read ✓✓</strong> (or <em>N of M</em> in a group). A <strong>Read aloud</strong> toggle speaks arriving messages (Web Speech API); when off, a volume-controlled tone plays. A <strong>microphone</strong> dictates into the composer. <strong>View all</strong> opens the whole-event feed — searchable, and clicking a message opens its thread; operators holding <code>messages.delete_all</code> also get <strong>Export CSV</strong> and <strong>Delete All Messages</strong> (both re-checked server-side).</p>
+<p>The <strong>Messaging</strong> button subscribes (name + password → token, remembered in <code>localStorage</code>). Messaging then lives in a persistent <strong>chat panel docked right of the map</strong>: a conversation list with unread badges, the selected thread, and an always-visible composer that incoming messages never cover. The 5-second poll drives live updates into the open thread, the list, and the unread counts without a reload. <strong>New message</strong> searches mobiles + operators (multi-select → a group; <strong>All Trackers</strong> → broadcast). Sent messages show <strong>Delivered ✓</strong> / <strong>Read ✓✓</strong> (or <em>N of M</em> in a group). A <strong>Read aloud</strong> toggle speaks arriving messages (Web Speech API); when off, a volume-controlled tone plays. A <strong>microphone</strong> dictates into the composer. <strong>View all</strong> opens the whole-event feed — searchable, and clicking a message opens its thread; operators holding <code>messages.manage</code> also get <strong>Export CSV</strong> and <strong>Delete All Messages</strong> (both re-checked server-side). The panel's settings menu also offers <strong>Manage operators</strong> (same permission) — a list of every operator with their connected/idle state and a <strong>Disconnect</strong> button that frees a stuck name and signs that session out. A name is only "in use" while an operator was seen within the last <strong>90 s</strong> with a live token; both <code>subscribe</code> and <code>rename</code> use that same test, so a departed operator's name auto-frees.</p>
 <p><strong>Auto-subscribe for Display Pi operators:</strong> when <code>?autologin&amp;operator=&lt;name&gt;</code> embeds the messaging password into the page (via PHP session → in-page script), the panel subscribes silently on load. The token is held only in memory, so removing line 1 of <code>~/autologin.txt</code> and rebooting cleanly unsubscribes.</p>
 <h3 id="mobile-participant-ui-chat-screen">Mobile Participant UI (chat screen)</h3>
 <p>The app's <strong>Message</strong> (💬) button opens a <strong>chat screen</strong> mirroring the web panel: a <strong>Conversations</strong> list, threads, and a composer, with <strong>New message → Start conversation / Start group</strong> over the participant list (with Online/Offline presence). It sends text and <strong>photos</strong> (Take a photo / Choose from library), shows <strong>Delivered ✓</strong> / <strong>Read ✓✓</strong> receipts, and can <strong>Read arriving messages aloud</strong>. Background arrivals raise a notification with a distinct, insistent alert sound; tapping it opens the conversation. The app continues to satisfy the older <code>?mobile=</code> contract, so mixed-version fleets interoperate.</p>
@@ -2809,7 +2809,7 @@ are updated; all other config sections are left unchanged by polls.</p>
 <code>admin.edit</code> (see <a href="#authentication">Authentication</a>). Session lasts 24 hours.</p>
 <p><strong>Editable sections:</strong> Trackers (callsign, ID, name), Tracker Style (icon, color), Map
 Default View, Default Section Visibility, Backgrounds, Courses, Aid Stations, iGates, Legend, Mobile Tracking (enabled, PIN, root callsign; messaging password; participant list with rename/block/remove), Beacon Settings (upload interval and distance threshold per activity mode).</p>
-<p><strong>Messages modal:</strong> The 💬 Messages button opens a modal showing the full message log for the current event (read from <code>messages.db</code>), with <strong>Export</strong> and <strong>Delete All Messages</strong> buttons. Delete All Messages wipes the event's messages and photos from the SQLite store after a two-step confirmation and is gated by the <code>messages.delete_all</code> permission.</p>
+<p><strong>Messages modal:</strong> The 💬 Messages button opens a modal showing the full message log for the current event (read from <code>messages.db</code>), with <strong>Export</strong> and <strong>Delete All Messages</strong> buttons. Delete All Messages wipes the event's messages and photos from the SQLite store after a two-step confirmation and is gated by the <code>messages.manage</code> permission.</p>
 <p><strong>Tracker Δ column:</strong> Each tracker row shows a read-only Δ field — the minimum interval
 between consecutive beacons in the last 10 received, displayed as M:SS. Shows <code>—</code> until at
 least 2 beacons have been received. The column refreshes automatically every 30 seconds;
@@ -3008,7 +3008,7 @@ for <code>?json</code>, <code>?config</code>, and <code>?history</code>.</p>
 <tr>
 <td><code>?messaging=delete_all</code></td>
 <td>POST</td>
-<td>Erase the message log. Body: <code>{web_token}</code>. Requires a valid subscription <strong>and</strong> a signed-in account with <code>messages.delete_all</code>; otherwise 403. Preserves the ID counter and clears all <code>pending_msgs</code>. Returns <code>{ok, deleted}</code>.</td>
+<td>Erase the message log. Body: <code>{web_token}</code>. Requires a valid subscription <strong>and</strong> a signed-in account with <code>messages.manage</code>; otherwise 403. Preserves the ID counter and clears all <code>pending_msgs</code>. Returns <code>{ok, deleted}</code>.</td>
 </tr>
 <tr>
 <td><code>?autologin</code></td>
@@ -3121,7 +3121,7 @@ for <code>?json</code>, <code>?config</code>, and <code>?history</code>.</p>
 <tr>
 <td><code>?delete_messages</code></td>
 <td>GET</td>
-<td>Delete all messages (and photos) for the current event from <code>messages.db</code>. Gated by <code>messages.delete_all</code>; used by the <strong>Delete All Messages</strong> button in the admin Messages modal.</td>
+<td>Delete all messages (and photos) for the current event from <code>messages.db</code>. Gated by <code>messages.manage</code>; used by the <strong>Delete All Messages</strong> button in the admin Messages modal.</td>
 </tr>
 </tbody>
 </table>

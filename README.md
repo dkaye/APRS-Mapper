@@ -1017,7 +1017,7 @@ permissions they need; there are no implicit roles or inheritance.
 | `netbird.admin` | `/netbird/admin.php`; poll/refresh sliders; full WiFi edit |
 | `wifi.admin` | `/wifi/` — edit WiFi credentials |
 | `tickets.manage` | `/tickets/admin.php` — ticket list and management |
-| `messages.delete_all` | **Delete All Messages** button in the map's All Messages window |
+| `messages.manage` | Messaging admin: **Delete All Messages**, and **Manage operators** (disconnect a stuck/idle operator to free their name). *(Renamed from `messages.delete_all`.)* |
 | `users.manage` | `/auth/users.php` — create/edit/delete accounts and permissions |
 
 The authoritative list is `KNOWN_PERMISSIONS` in `server/www/auth/users.php`; a permission
@@ -1098,13 +1098,13 @@ All messaging state lives in one SQLite database, `/var/lib/marsaprs/messages.db
 | `history` | The full event log (View All / admin) — operators only. |
 | `read` | Mark delivered messages read (read receipts). |
 | `photo` | Stream an attachment (conversation members or operators only). |
-| `flush` | Per-event wipe, gated by `messages.delete_all`. |
+| `flush` | Per-event wipe, gated by `messages.manage`. |
 
 **Backward compatibility.** The legacy mobile endpoints (`?mobile=message`, mobile `poll`, `web_recipients`) are a thin shim over the same `messages.db`, so an older app keeps working unchanged alongside the new chat clients — old and new interoperate through one database.
 
 ### Web Operator UI (chat panel)
 
-The **Messaging** button subscribes (name + password → token, remembered in `localStorage`). Messaging then lives in a persistent **chat panel docked right of the map**: a conversation list with unread badges, the selected thread, and an always-visible composer that incoming messages never cover. The 5-second poll drives live updates into the open thread, the list, and the unread counts without a reload. **New message** searches mobiles + operators (multi-select → a group; **All Trackers** → broadcast). Sent messages show **Delivered ✓** / **Read ✓✓** (or *N of M* in a group). A **Read aloud** toggle speaks arriving messages (Web Speech API); when off, a volume-controlled tone plays. A **microphone** dictates into the composer. **View all** opens the whole-event feed — searchable, and clicking a message opens its thread; operators holding `messages.delete_all` also get **Export CSV** and **Delete All Messages** (both re-checked server-side).
+The **Messaging** button subscribes (name + password → token, remembered in `localStorage`). Messaging then lives in a persistent **chat panel docked right of the map**: a conversation list with unread badges, the selected thread, and an always-visible composer that incoming messages never cover. The 5-second poll drives live updates into the open thread, the list, and the unread counts without a reload. **New message** searches mobiles + operators (multi-select → a group; **All Trackers** → broadcast). Sent messages show **Delivered ✓** / **Read ✓✓** (or *N of M* in a group). A **Read aloud** toggle speaks arriving messages (Web Speech API); when off, a volume-controlled tone plays. A **microphone** dictates into the composer. **View all** opens the whole-event feed — searchable, and clicking a message opens its thread; operators holding `messages.manage` also get **Export CSV** and **Delete All Messages** (both re-checked server-side). The panel's settings menu also offers **Manage operators** (same permission) — a list of every operator with their connected/idle state and a **Disconnect** button that frees a stuck name and signs that session out. A name is only "in use" while an operator was seen within the last **90 s** with a live token; both `subscribe` and `rename` use that same test, so a departed operator's name auto-frees.
 
 **Auto-subscribe for Display Pi operators:** when `?autologin&operator=<name>` embeds the messaging password into the page (via PHP session → in-page script), the panel subscribes silently on load. The token is held only in memory, so removing line 1 of `~/autologin.txt` and rebooting cleanly unsubscribes.
 
@@ -2018,7 +2018,7 @@ Open `https://marsaprs.org/admin/`. Requires a user account with `admin.view` or
 **Editable sections:** Trackers (callsign, ID, name), Tracker Style (icon, color), Map
 Default View, Default Section Visibility, Backgrounds, Courses, Aid Stations, iGates, Legend, Mobile Tracking (enabled, PIN, root callsign; messaging password; participant list with rename/block/remove), Beacon Settings (upload interval and distance threshold per activity mode).
 
-**Messages modal:** The 💬 Messages button opens a modal showing the full message log for the current event (read from `messages.db`), with **Export** and **Delete All Messages** buttons. Delete All Messages wipes the event's messages and photos from the SQLite store after a two-step confirmation and is gated by the `messages.delete_all` permission.
+**Messages modal:** The 💬 Messages button opens a modal showing the full message log for the current event (read from `messages.db`), with **Export** and **Delete All Messages** buttons. Delete All Messages wipes the event's messages and photos from the SQLite store after a two-step confirmation and is gated by the `messages.manage` permission.
 
 **Tracker Δ column:** Each tracker row shows a read-only Δ field — the minimum interval
 between consecutive beacons in the last 10 received, displayed as M:SS. Shows `—` until at
@@ -2091,7 +2091,7 @@ for `?json`, `?config`, and `?history`.
 | `?messaging=poll` | GET | Poll for new messages directed to web operators. Params: `web_token`, `since_id`. Returns `{messages, last_id}`. |
 | `?messaging=rename` | POST | Update operator's display name. Body: `{web_token, name}`. Updates `web_sessions.json` and returns `{ok}`. |
 | `?messaging=history` | GET/POST | Full message log for the current event from `messages.db` (unfiltered — includes other operators' traffic). Param/body: `web_token`. Returns `{messages, last_id, can_delete_all}`. |
-| `?messaging=delete_all` | POST | Erase the message log. Body: `{web_token}`. Requires a valid subscription **and** a signed-in account with `messages.delete_all`; otherwise 403. Preserves the ID counter and clears all `pending_msgs`. Returns `{ok, deleted}`. |
+| `?messaging=delete_all` | POST | Erase the message log. Body: `{web_token}`. Requires a valid subscription **and** a signed-in account with `messages.manage`; otherwise 403. Preserves the ID counter and clears all `pending_msgs`. Returns `{ok, deleted}`. |
 | `?autologin` | GET | Set a PHP session for the current event (no password required); if `operator` param is set, also sets the operator name in session. Redirects to clean URL. |
 
 #### API Endpoints — `admin/index.php`
@@ -2118,7 +2118,7 @@ All endpoints require an active session (HTTP 401 if not authenticated).
 | `?beacondeltas` | GET | Min inter-beacon gap per tracker callsign (from `tracker_history.yaml`) |
 | `?togglelock` | POST | Lock or unlock an event (requires password) |
 | `?messages` | GET | Return the full message log for the current event from `messages.db` as JSON. |
-| `?delete_messages` | GET | Delete all messages (and photos) for the current event from `messages.db`. Gated by `messages.delete_all`; used by the **Delete All Messages** button in the admin Messages modal. |
+| `?delete_messages` | GET | Delete all messages (and photos) for the current event from `messages.db`. Gated by `messages.manage`; used by the **Delete All Messages** button in the admin Messages modal. |
 
 #### File Permissions
 

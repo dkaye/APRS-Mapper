@@ -146,7 +146,8 @@ function messaging_handle(string $action, array $body, array $ctx): void
         }
         $token = bin2hex(random_bytes(16));
         $db->upsertParticipant($event, 'operator', $name, $name, null, $token);
-        echo json_encode(['token'=>$token, 'name'=>$name]);
+        echo json_encode(['token'=>$token, 'name'=>$name,
+                          'can_manage'=>(bool)($ctx['authPerm']('messages.manage'))]);
         exit;
     }
 
@@ -246,7 +247,10 @@ function messaging_handle(string $action, array $body, array $ctx): void
     }
 
     case 'conversations': {   // the caller's conversation list (unread + last msg)
-        echo json_encode(['conversations'=>$db->conversationsFor($event, (int)$me['id'])]);
+        echo json_encode([
+            'conversations' => $db->conversationsFor($event, (int)$me['id']),
+            'can_manage'    => (bool)($ctx['authPerm']('messages.manage')),
+        ]);
         exit;
     }
 
@@ -263,7 +267,7 @@ function messaging_handle(string $action, array $body, array $ctx): void
         echo json_encode([
             'messages'       => $db->history($event),
             'participants'   => $db->listParticipants($event),
-            'can_delete_all' => (bool)($ctx['authPerm']('messages.delete_all')),
+            'can_manage'     => (bool)($ctx['authPerm']('messages.manage')),
         ]);
         exit;
     }
@@ -272,15 +276,36 @@ function messaging_handle(string $action, array $body, array $ctx): void
         if (($me['kind'] ?? '') !== 'operator') _msg_fail(403, 'Only operators can rename');
         $newName = substr(trim(preg_replace('/[^A-Za-z0-9 \-]/', '', $body['name'] ?? '')), 0, 30);
         if ($newName === '') _msg_fail(400, 'Name required');
+        // Only a name held by ANOTHER live operator session blocks the rename — same
+        // 90s-stale + token test as `subscribe`, so a departed operator's name auto-frees.
         $clash = $db->participantByKey($event, $newName);
-        if ($clash && (int)$clash['id'] !== (int)$me['id']) _msg_fail(409, 'That name is in use — choose another.');
+        if ($clash && (int)$clash['id'] !== (int)$me['id']
+            && ($clash['kind'] ?? '') === 'operator'
+            && !empty($clash['last_seen']) && (time() - (int)$clash['last_seen']) < 90
+            && !empty($clash['token'])) {
+            _msg_fail(409, 'That name is in use — choose another.');
+        }
         $db->renameParticipant((int)$me['id'], $newName);
         echo json_encode(['ok'=>true, 'name'=>$newName]);
         exit;
     }
 
+    case 'operators': {   // admin: list operators for the "Manage operators" view
+        if (!$ctx['authPerm']('messages.manage')) _msg_fail(403, 'Missing permission: messages.manage');
+        echo json_encode(['operators'=>$db->listOperators($event), 'me'=>(int)$me['id']]);
+        exit;
+    }
+
+    case 'disconnect': {  // admin: disconnect an operator, freeing their name
+        if (!$ctx['authPerm']('messages.manage')) _msg_fail(403, 'Missing permission: messages.manage');
+        $id = (int)($body['id'] ?? 0);
+        if ($id <= 0) _msg_fail(400, 'id required');
+        echo json_encode(['ok'=>$db->disconnectParticipant($id)]);
+        exit;
+    }
+
     case 'flush': {
-        if (!$ctx['authPerm']('messages.delete_all')) _msg_fail(403, 'Missing permission: messages.delete_all');
+        if (!$ctx['authPerm']('messages.manage')) _msg_fail(403, 'Missing permission: messages.manage');
         echo json_encode(['ok'=>true, 'deleted'=>$db->flushEvent($event)]);
         exit;
     }

@@ -1320,7 +1320,7 @@ if (isset($_GET['messages'])) {
 
 // ── AJAX: delete message thread for current event ─────────────────────────────
 if (isset($_GET['delete_messages'])) {
-    if (!has_permission('messages.delete_all')) respondError('Missing permission: messages.delete_all', 403);
+    if (!has_permission('messages.manage')) respondError('Missing permission: messages.manage', 403);
     require_once __DIR__ . '/../messaging_db.php';
     $ev = trim($currentEventName) !== '' ? trim($currentEventName) : 'default';
     $deleted = (new MessagingDb())->flushEvent($ev);
@@ -5811,8 +5811,8 @@ async function openMsgThread() {
     exportBtn.onclick = () => exportMsgThread(msgs);
 
     const _msgBtns = [exportBtn];
-<?php if (has_permission('messages.delete_all')): ?>
-    // "Delete All Messages" — only rendered for users with messages.delete_all.
+<?php if (has_permission('messages.manage')): ?>
+    // "Delete All Messages" — only rendered for users with messages.manage.
     const clearBtn = document.createElement('button');
     clearBtn.className = 'del-btn';
     clearBtn.style.cssText = 'padding:7px 14px;font-size:13px;margin-top:0;background:#fff0f0;border-color:#d9534f;color:#c0392b';

@@ -217,6 +217,29 @@ class MessagingDb
         return $this->all($sql . ' ORDER BY kind, display_name', $p);
     }
 
+    /** Operators for the admin "Manage operators" view: id, name, last_seen, and whether
+     *  they currently hold a live session token (used to show connected vs stale). */
+    public function listOperators(string $event): array
+    {
+        return $this->all(
+            "SELECT id, display_name, last_seen,
+                    CASE WHEN token IS NOT NULL AND token != '' THEN 1 ELSE 0 END AS has_token
+             FROM participants WHERE event=:e AND kind='operator'
+             ORDER BY last_seen DESC",
+            [':e'=>$event]);
+    }
+
+    /** Disconnect an operator: clear its session token and stale its last_seen. This logs
+     *  it out AND frees its name for reuse — both `subscribe` and `rename` treat a name as
+     *  in-use only while a live token was seen within the lock window. The participant row
+     *  and its message history are left intact. Returns true if an operator row matched. */
+    public function disconnectParticipant(int $id): bool
+    {
+        $this->run("UPDATE participants SET token=NULL, last_seen=0 WHERE id=:i AND kind='operator'",
+                   [':i'=>$id]);
+        return (int)($this->one('SELECT COUNT(*) AS c FROM participants WHERE id=:i', [':i'=>$id])['c'] ?? 0) > 0;
+    }
+
     // ── conversations ─────────────────────────────────────────────────────────
     private static function memberHash(array $participantIds): string
     {

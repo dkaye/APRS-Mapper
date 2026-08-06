@@ -15,7 +15,7 @@ const KNOWN_PERMISSIONS = [
     'netbird.admin'      => 'Manage NetBird devices',
     'wifi.admin'         => 'WiFi management',
     'tickets.manage'     => 'Manage tickets',
-    'messages.delete_all' => 'Delete All Messages',
+    'messages.manage'    => 'Messaging management (delete all, disconnect operators)',
 ];
 
 // Permissions shown in the "Basic access" group box

@@ -2460,7 +2460,8 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 			</div>
 			<hr>
 			<button class="mi" id="msg-mi-all">View all messages…</button>
-			<button class="mi danger" id="msg-mi-disable">Sign out of messaging</button>
+			<button class="mi" id="msg-mi-operators" style="display:none">Manage operators…</button>
+				<button class="mi danger" id="msg-mi-disable">Sign out of messaging</button>
 		</div>
 	</div>
 	<div id="msg-panel-body">
@@ -5606,7 +5607,78 @@ async function _msgApi(action, opts = {}) {
 		body: JSON.stringify(Object.assign({token: _msgToken}, opts.body || {})),
 	});
 	if (r.status === 403 && action !== 'subscribe') { _onAuthLost(); throw new Error('auth'); }
-	return r.json();
+	const j = await r.json();
+	if (j && j.can_manage !== undefined) _setCanManage(!!j.can_manage);
+	return j;
+}
+// Whether this signed-in operator may manage messaging (delete all / disconnect
+// operators) — driven by the server's `messages.manage` permission and refreshed
+// from any response that carries the flag (subscribe / conversations / history).
+let _msgCanManage = false;
+function _setCanManage(v) {
+	_msgCanManage = v;
+	const el = document.getElementById('msg-mi-operators');
+	if (el) el.style.display = v ? '' : 'none';
+}
+function _msgAgo(secs) {
+	if (secs == null) return '';
+	if (secs < 90) return secs + 's ago';
+	if (secs < 3600) return Math.round(secs / 60) + 'm ago';
+	if (secs < 86400) return Math.round(secs / 3600) + 'h ago';
+	return Math.round(secs / 86400) + 'd ago';
+}
+// ── Manage operators: disconnect a stuck/idle operator to free their name ──────
+// Requires the messages.manage permission (server-enforced; the menu item is only
+// shown when _msgCanManage). Disconnecting clears that session's token and stales
+// its last_seen, which signs it out and frees its name for subscribe or rename.
+async function _openManageOperators() {
+	_closeSettings();
+	let ov = document.getElementById('msg-ops-overlay');
+	if (!ov) {
+		ov = document.createElement('div');
+		ov.id = 'msg-ops-overlay';
+		ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center';
+		ov.innerHTML = '<div style="background:#fff;border-radius:10px;max-width:420px;width:92%;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 30px rgba(0,0,0,0.3);font-family:inherit">'
+			+ '<div style="padding:14px 16px;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between"><strong style="font-size:15px">Manage operators</strong><button id="msg-ops-close" style="border:none;background:none;font-size:22px;cursor:pointer;color:#888;line-height:1">&times;</button></div>'
+			+ '<div id="msg-ops-list" style="overflow-y:auto;padding:4px 0"></div>'
+			+ '<div style="padding:8px 16px;border-top:1px solid #eee;font-size:11px;color:#999">Disconnecting frees the operator&rsquo;s name for reuse and signs out that session.</div>'
+			+ '</div>';
+		document.body.appendChild(ov);
+		ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+		ov.querySelector('#msg-ops-close').addEventListener('click', () => ov.remove());
+	}
+	await _renderOperators();
+}
+async function _renderOperators() {
+	const list = document.getElementById('msg-ops-list');
+	if (!list) return;
+	list.innerHTML = '<div style="padding:18px;text-align:center;color:#999">Loading&hellip;</div>';
+	let d;
+	try { d = await _msgApi('operators'); }
+	catch { list.innerHTML = '<div style="padding:18px;text-align:center;color:#c0392b">Could not load operators.</div>'; return; }
+	if (!d || d.error) { list.innerHTML = '<div style="padding:18px;text-align:center;color:#c0392b">' + _esc((d && d.error) || 'Error') + '</div>'; return; }
+	const ops = d.operators || [], now = Math.floor(Date.now() / 1000);
+	if (!ops.length) { list.innerHTML = '<div style="padding:18px;text-align:center;color:#999">No operators.</div>'; return; }
+	list.innerHTML = ops.map(o => {
+		const ago = o.last_seen ? (now - o.last_seen) : null;
+		const live = o.has_token && ago !== null && ago < 90;
+		const status = live ? '<span style="color:#1a8a3a">&#9679; connected</span>'
+			: (o.has_token ? '<span style="color:#c98a00">&#9675; idle ' + _esc(_msgAgo(ago)) + '</span>'
+			              : '<span style="color:#999">&#9675; signed out</span>');
+		const isMe = o.id === d.me;
+		return '<div style="display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid #f2f2f2">'
+			+ '<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:14px">' + _esc(o.display_name) + (isMe ? ' <span style="color:#999;font-weight:400">(you)</span>' : '') + '</div>'
+			+ '<div style="font-size:11px">' + status + '</div></div>'
+			+ '<button data-id="' + o.id + '" class="msg-ops-disc" style="border:1px solid #c0392b;color:#c0392b;background:#fff;border-radius:6px;padding:5px 11px;font-size:12px;cursor:pointer">Disconnect</button>'
+			+ '</div>';
+	}).join('');
+	list.querySelectorAll('.msg-ops-disc').forEach(b => b.addEventListener('click', async () => {
+		const id = +b.dataset.id, op = ops.find(o => o.id === id);
+		if (!confirm('Disconnect “' + (op ? op.display_name : 'this operator') + '”? This frees the name and signs out that session.')) return;
+		b.disabled = true; b.textContent = '…';
+		try { await _msgApi('disconnect', {body:{id}}); } catch {}
+		await _renderOperators();
+	}));
 }
 function _onAuthLost() {
 	_msgToken = null; _msgName = null; _msgMeId = null;
@@ -6185,6 +6257,7 @@ async function _doSubscribe(name, pw, errEl) {
 		const d = await r.json();
 		if (d.error) { errEl.textContent = d.error; return; }
 		_msgToken = d.token; _msgName = d.name; _msgLastId = 0; _msgMeId = null;
+		_setCanManage(!!d.can_manage);
 		_persistSession(); _warmMsgAudio();
 		document.getElementById('msg-sub-modal').style.display = 'none';
 		await _afterSubscribe();
@@ -6252,6 +6325,7 @@ function _wireMsgUI() {
 	document.getElementById('msg-new-btn').addEventListener('click', _openPicker);
 	document.getElementById('msg-all-link').addEventListener('click', () => { _closeSettings(); if (!_msgViewAll) _toggleViewAll(); });
 	document.getElementById('msg-mi-all').addEventListener('click', () => { _closeSettings(); if (!_msgViewAll) _toggleViewAll(); });
+	document.getElementById('msg-mi-operators').addEventListener('click', _openManageOperators);
 
 	// View All toggle + in-view search
 	document.getElementById('msg-viewall-btn').addEventListener('click', _toggleViewAll);
