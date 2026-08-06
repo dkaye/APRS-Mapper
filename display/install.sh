@@ -161,6 +161,8 @@ crontab - << 'EOF'
 1 4 * * * /home/pi/auto-update.sh >> /home/pi/update.log 2>&1
 # Nightly reboot at 4:10am (after updates)
 10 4 * * * sudo reboot
+# Keep dual-band Pis on the AP's 2.4 GHz radio (see wifi-band-pin.sh)
+*/5 * * * * /home/pi/wifi-band-pin.sh
 EOF
 ok "Crontab installed"
 

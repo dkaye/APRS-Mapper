@@ -62,6 +62,20 @@ for script in aprs-monitor.sh wifi-watchdog.sh wifi-restored.sh; do
 done
 sudo systemctl restart aprs-monitor 2>/dev/null || true
 
+# Band-pin cron entry. install.sh writes it for new devices, but existing displays
+# only ever run auto-update, so add it here if missing (idempotent).
+# Always target pi's crontab explicitly: this script is normally run as pi from
+# cron, but running it by hand as `sudo ./auto-update.sh` would otherwise edit
+# root's crontab, where the entry would never fire the way the others do.
+if [ -f /home/pi/wifi-band-pin.sh ]; then
+    chmod +x /home/pi/wifi-band-pin.sh
+    if ! sudo -u pi crontab -l 2>/dev/null | grep -q wifi-band-pin.sh; then
+        log "Adding wifi-band-pin.sh to crontab..."
+        ( sudo -u pi crontab -l 2>/dev/null; echo '*/5 * * * * /home/pi/wifi-band-pin.sh' ) \
+            | sudo -u pi crontab -
+    fi
+fi
+
 # Download latest WiFi list from marsaprs.org
 log "Downloading WiFi list..."
 if [ -f /home/pi/.wifi-token ]; then
