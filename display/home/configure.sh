@@ -48,11 +48,31 @@ while true; do
     fi
 done
 
+# ── Operator name ─────────────────────────────────────────────────────────────
+# autologin.txt holds the operator the kiosk logs in as, and nothing kept it in
+# step with the hostname: a display renamed on 2026-08-07 went on announcing
+# itself to the app under its old name for the rest of the day, because the two
+# are only ever set independently. Default it to the hostname, but let it differ
+# — the operator is a messaging identity, not necessarily the machine name.
+cur_operator=$(head -1 /home/pi/autologin.txt 2>/dev/null)
+header "Operator name"
+echo "  Name this display logs into marsaprs.org as (messaging auto-subscribe)."
+echo "  Leave blank to use the hostname. Type - to disable autologin entirely."
+echo ""
+prompt "  Operator [${cur_operator:-$HOSTNAME_NEW}]: "
+read -r INPUT
+OPERATOR="${INPUT:-${cur_operator:-$HOSTNAME_NEW}}"
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${CYAN}══ Review — press Enter to apply, Ctrl-C to cancel ══${RESET}"
 echo ""
 echo "  Hostname: $HOSTNAME_NEW"
+if [[ "$OPERATOR" == "-" ]]; then
+    echo "  Operator: (autologin disabled)"
+else
+    echo "  Operator: $OPERATOR"
+fi
 echo ""
 prompt "Apply these settings? [Y/n]: "
 read -r CONFIRM
@@ -68,6 +88,15 @@ if [[ "$HOSTNAME_NEW" != "$OLD_HOSTNAME" ]]; then
     ok "Hostname changed: $OLD_HOSTNAME → $HOSTNAME_NEW"
 else
     ok "Hostname unchanged: $HOSTNAME_NEW"
+fi
+
+# ── Apply operator name ───────────────────────────────────────────────────────
+if [[ "$OPERATOR" == "-" ]]; then
+    rm -f /home/pi/autologin.txt
+    ok "Autologin disabled (autologin.txt removed)"
+else
+    printf '%s\n' "$OPERATOR" > /home/pi/autologin.txt
+    ok "Operator set: $OPERATOR  (takes effect at the next kiosk start)"
 fi
 
 # ── NetBird VPN ───────────────────────────────────────────────────────────────

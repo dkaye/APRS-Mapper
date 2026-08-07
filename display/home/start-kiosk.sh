@@ -12,7 +12,10 @@ URL="https://marsaprs.org/"
 
 if [ -f ~/autologin.txt ]; then
     mapfile -t lines < ~/autologin.txt
-    operator="${lines[0]:-}"
+    # Blank first line means "use this machine's name". Without the fallback an
+    # empty autologin.txt logged in with no operator at all, and the safe default
+    # is the hostname — the two only diverge when someone deliberately sets it.
+    operator="${lines[0]:-$(hostname)}"
     URL="https://marsaprs.org/?autologin"
     if [ -n "$operator" ]; then
         enc_op=$(python3 -c "import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$operator")
