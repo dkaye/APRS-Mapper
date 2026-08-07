@@ -39,7 +39,16 @@ fi
 echo "$NEW" > /etc/hostname
 echo "  ✓ /etc/hostname"
 
-# /etc/hosts — replace all occurrences of the old hostname
+# /etc/hosts — rewrite the 127.0.1.1 line canonically rather than substituting the
+# old name. Substitution is not idempotent: cloud-init also writes the hostname from
+# /boot/firmware/user-data, so a rename could leave "127.0.1.1 NetControl NetControl"
+# (observed 2026-08-07). Rewriting the whole line is correct however it got mangled.
+if grep -q "^127\.0\.1\.1" /etc/hosts; then
+    sed -i "s/^127\.0\.1\.1.*/127.0.1.1\t${NEW}/" /etc/hosts
+else
+    printf "127.0.1.1\t%s\n" "${NEW}" >> /etc/hosts
+fi
+# Any other stray references to the old name elsewhere in the file
 sed -i "s/\b${OLD}\b/${NEW}/g" /etc/hosts
 echo "  ✓ /etc/hosts"
 
