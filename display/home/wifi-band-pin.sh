@@ -30,7 +30,15 @@
 # ©2026 Doug Kaye, K6DRK <doug@rds.com>
 
 MIN_GAIN=12          # 2.4 GHz must beat 5 GHz by this many nmcli signal points
+WEAK_MAX=65          # ...and the 5 GHz link must itself be this weak or worse
 LOG=/home/pi/wifi-band-pin.log
+
+# Both conditions are required. MIN_GAIN alone is not enough: nmcli's signal scale
+# saturates near 100, so a perfectly good 5 GHz link can still read "12 points
+# worse" than a 2.4 GHz one and get needlessly demoted from 433 Mbit/s to 72 —
+# which is exactly what happened to BigTV on TerraceLan2 at -33 dBm (100 vs 88).
+# The failure this script exists to fix looked like 50 (-69 dBm), far below
+# WEAK_MAX, so gating on absolute weakness keeps the intervention narrow.
 
 log() { echo "$(date '+%F %T') $*" >> "$LOG"; }
 trim() { tail -n 200 "$LOG" > "$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG" 2>/dev/null; }
@@ -67,6 +75,9 @@ cur_ssid=$(echo "$cur"   | cut -d: -f4-)
 
 # Already on 2.4 GHz — nothing to steer away from.
 [ "${cur_chan:-0}" -gt 14 ] 2>/dev/null || { trim; exit 0; }
+
+# A healthy 5 GHz link is faster than anything 2.4 GHz can offer; leave it alone.
+[ "${cur_sig:-100}" -le "$WEAK_MAX" ] 2>/dev/null || { trim; exit 0; }
 
 # Strongest 2.4 GHz radio advertising this same SSID.
 best24=$(echo "$scan" | awk -F: -v s="$cur_ssid" '
