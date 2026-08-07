@@ -43,7 +43,13 @@ COOLDOWN_SECS=21600  # after a failed attempt, wait 6h before trying that AP aga
 BAD_LOSS=5           # a pinned 2.4 GHz link losing this much is "poor"...
 BAD_RTT=100          # ...as is one this slow to its OWN gateway (a LAN hop is
                      # single-digit ms; the failures seen were 720-2721 ms)
-BAD_STRIKES=2        # consecutive poor checks before releasing the pin
+BAD_STRIKES=3        # consecutive poor checks (~15min) before releasing the pin.
+                     # The rough patches measured on 2.4 GHz lasted a few minutes
+                     # and recovered on their own, so releasing after 10min mostly
+                     # traded a recovering link for a dead one.
+MIN_5G=55            # ...and only release if some same-SSID 5 GHz radio reads at
+                     # least this. The 5 GHz APs reachable here read ~40-50 and
+                     # pass no traffic, so releasing toward them is strictly worse.
 LOG=/home/pi/wifi-band-pin.log
 LOCK=/tmp/wifi-band-pin.lock
 COOLDOWN=/home/pi/.wifi-band-pin-cooldown
@@ -111,10 +117,25 @@ EOF
         strikes=$(( $(cat "$STRIKES" 2>/dev/null || echo 0) + 1 ))
         echo "$strikes" > "$STRIKES"
         if [ "$strikes" -ge "$BAD_STRIKES" ]; then
-            sudo nmcli connection modify "$con" 802-11-wireless.band ""
-            sudo nmcli connection up "$con" >/dev/null 2>&1
-            rm -f "$STRIKES" "$COOLDOWN"
-            log "'$cur_ssid': pinned 2.4 GHz is poor (loss ${loss}%, rtt ${rtt}ms), ${strikes} checks running — released pin so 5 GHz can be tried"
+            # Only release into a 5 GHz radio that could plausibly work. Releasing
+            # blindly hands the device to whatever NetworkManager prefers, and here
+            # that is a same-SSID 5 GHz AP at ~-73 dBm that passes no traffic at
+            # all: 12 of the first 136 monitored samples were exactly that, both
+            # legs dead. A rough 2.4 GHz link still carries the kiosk; a dead
+            # 5 GHz one does not, so staying pinned is the better failure mode.
+            best5=$(echo "$scan" | awk -F: -v s="$cur_ssid" '
+                { chan=$2; sig=$3; ssid=$0; sub(/^[^:]*:[^:]*:[^:]*:/, "", ssid) }
+                ssid==s && chan+0 > 14 && sig+0 > best { best=sig+0 }
+                END { print best+0 }')
+            if [ "${best5:-0}" -ge "$MIN_5G" ]; then
+                sudo nmcli connection modify "$con" 802-11-wireless.band ""
+                sudo nmcli connection up "$con" >/dev/null 2>&1
+                rm -f "$STRIKES" "$COOLDOWN"
+                log "'$cur_ssid': pinned 2.4 GHz is poor (loss ${loss}%, rtt ${rtt}ms) after ${strikes} checks, 5 GHz looks viable (signal ${best5}) — released pin"
+            else
+                rm -f "$STRIKES"
+                log "'$cur_ssid': pinned 2.4 GHz is poor (loss ${loss}%, rtt ${rtt}ms) but best 5 GHz is only ${best5} (< ${MIN_5G}) — staying pinned, a dead 5 GHz is worse"
+            fi
         else
             log "'$cur_ssid': pinned 2.4 GHz poor (loss ${loss}%, rtt ${rtt}ms) — strike ${strikes}/${BAD_STRIKES}"
         fi
