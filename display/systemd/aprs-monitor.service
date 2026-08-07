@@ -8,6 +8,12 @@ ExecStart=/usr/local/bin/aprs-monitor.sh
 Restart=always
 RestartSec=10
 User=root
+# The monitor launches Chromium, so the browser lands in this unit's control
+# group. With the default KillMode=control-group, stopping or restarting the
+# monitor kills the kiosk too — and the display then stays black, because the
+# kiosk is normally started by the desktop autostart at login, not by this
+# service. KillMode=process stops only the monitor itself.
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target
