@@ -28,7 +28,9 @@ ssh "$REMOTE" "sudo chown -R pi:www-data $REMOTE_DIR 2>/dev/null || true && mkdi
 rsync -a --delete "$DISPLAY_DIR/home/"    "$REMOTE:$STAGING/home/"
 rsync -a --delete "$DISPLAY_DIR/systemd/" "$REMOTE:$STAGING/systemd/"
 rsync -a --delete "$DISPLAY_DIR/etc/"     "$REMOTE:$STAGING/etc/"
-# auto-update.sh goes in the archive so displays can update it nightly
+# auto-update.sh goes in the archive so displays can update it nightly. It lives at
+# display/auto-update.sh, NOT display/home/ — keep this scp after the home/ rsync
+# above, which uses --delete and would otherwise strip it from the staging dir.
 scp "$DISPLAY_DIR/auto-update.sh" "$REMOTE:$STAGING/home/auto-update.sh"
 
 echo "Building files.tar.gz on aprs-pi..."
