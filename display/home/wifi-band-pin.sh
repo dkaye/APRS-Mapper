@@ -1,22 +1,21 @@
 #!/usr/bin/env bash
 # wifi-band-pin.sh — MARS APRS Display Pi
 #
-# Keeps a dual-band display Pi off a weak 5 GHz radio when the same access point
-# offers a much stronger 2.4 GHz one.
+# Moves a dual-band display Pi off a weak 5 GHz radio onto the same AP's 2.4 GHz
+# radio — but only if that actually measures better.
 #
 # Why: at a Starlink site the AP's band steering parked BigTV on its 5 GHz radio at
-# -69 dBm, where the rate collapsed to 6-13 Mbit/s and ~20% of packets were lost —
-# enough that NetBird's ICE sessions died after ~70s and the device was unreachable,
-# while outbound traffic kept working so it still looked online. The same AP's
-# 2.4 GHz radio was ~12 dB stronger. (Diagnosed 2026-08-06.)
+# -69 dBm, where the rate collapsed to 6-13 Mbit/s and ~20% of packets were lost.
+# That is far outside what WireGuard tolerates, so NetBird ICE sessions died after
+# ~70s and the device was unreachable — while outbound traffic kept working, so it
+# still looked online and the fault looked like a VPN problem. (Diagnosed 2026-08-06.)
 #
-# The rule is measured, not hardcoded to any SSID: only when we are actually
-# associated on 5 GHz AND the same SSID is visible on 2.4 GHz at least MIN_GAIN
-# signal points stronger do we pin the profile to the 2.4 GHz band and reconnect.
-# A good 5 GHz link is left alone.
-#
-# Safety: if wlan0 cannot associate at all, any band pin we previously applied is
-# cleared, so a device moved to a 5 GHz-only network can never be stranded offline.
+# Why it measures instead of trusting signal: signal strength cannot see co-channel
+# interference. On the same day, BigTV's 2.4 GHz radio read *stronger* than its
+# 5 GHz one, but sat on a channel shared with three APs at full signal — switching
+# to it produced 16% loss to the gateway and 100% loss to the internet. So a switch
+# is now treated as a proposal: measure, switch, measure again, and revert unless it
+# genuinely improved.
 #
 # Only matters on dual-band hardware (Pi 4 / Pi 5). A Pi Zero 2 W is 2.4 GHz only
 # and can never be steered, so this is a no-op there.
@@ -30,18 +29,34 @@
 # ©2026 Doug Kaye, K6DRK <doug@rds.com>
 
 MIN_GAIN=12          # 2.4 GHz must beat 5 GHz by this many nmcli signal points
-WEAK_MAX=65          # ...and the 5 GHz link must itself be this weak or worse
+WEAK_MAX=65          # ...and the 5 GHz link must itself be this weak or worse.
+                     # nmcli's scale saturates near 100, so relative gain alone
+                     # would demote a healthy 5 GHz link (BigTV: 100 vs 88 at
+                     # -34 dBm). The failure this exists to fix read 50 (-69 dBm).
+COOLDOWN_SECS=21600  # after a failed attempt, wait 6h before trying that AP again
 LOG=/home/pi/wifi-band-pin.log
+LOCK=/tmp/wifi-band-pin.lock
+COOLDOWN=/home/pi/.wifi-band-pin-cooldown
 
-# Both conditions are required. MIN_GAIN alone is not enough: nmcli's signal scale
-# saturates near 100, so a perfectly good 5 GHz link can still read "12 points
-# worse" than a 2.4 GHz one and get needlessly demoted from 433 Mbit/s to 72 —
-# which is exactly what happened to BigTV on TerraceLan2 at -33 dBm (100 vs 88).
-# The failure this script exists to fix looked like 50 (-69 dBm), far below
-# WEAK_MAX, so gating on absolute weakness keeps the intervention narrow.
-
-log() { echo "$(date '+%F %T') $*" >> "$LOG"; }
+log()  { echo "$(date '+%F %T') $*" >> "$LOG"; }
 trim() { tail -n 200 "$LOG" > "$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG" 2>/dev/null; }
+done_() { trim; rm -rf "$LOCK"; exit 0; }
+
+# A run can take ~45s (two link bounces); never let cron overlap them.
+mkdir "$LOCK" 2>/dev/null || exit 0
+trap 'rm -rf "$LOCK"' EXIT
+
+# Loss% and average RTT to the default gateway. Prints "<loss> <avg_ms>";
+# 100 9999 when nothing comes back.
+measure() {
+    local gw out loss avg
+    gw=$(ip route 2>/dev/null | awk '/^default/{print $3; exit}')
+    [ -n "$gw" ] || { echo "100 9999"; return; }
+    out=$(ping -c 10 -i 0.3 -W 2 "$gw" 2>/dev/null)
+    loss=$(echo "$out" | grep -o '[0-9]*% packet loss' | grep -o '^[0-9]*')
+    avg=$(echo "$out" | awk -F'/' '/rtt|round-trip/{printf "%d", $5}')
+    echo "${loss:-100} ${avg:-9999}"
+}
 
 con=$(nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null | awk -F: '$2=="wlan0"{print $1; exit}')
 
@@ -52,12 +67,11 @@ if [ -z "$con" ]; then
         sudo nmcli connection modify "$c" 802-11-wireless.band ""
         log "wlan0 down — cleared 2.4 GHz pin on '$c' so it can try 5 GHz"
     done
-    trim; exit 0
+    done_
 fi
 
 # Power save off costs nothing and is what actually delayed inbound packets.
-save=$(nmcli -g 802-11-wireless.powersave connection show "$con" 2>/dev/null)
-case "$save" in
+case "$(nmcli -g 802-11-wireless.powersave connection show "$con" 2>/dev/null)" in
     2|disable) ;;
     *) sudo nmcli connection modify "$con" 802-11-wireless.powersave 2 ;;
 esac
@@ -65,36 +79,50 @@ esac
 # SSID last: nmcli -t escapes ':' inside values, which would break field splitting
 # on any earlier column. Fields 1-3 are safe; everything after is the SSID.
 scan=$(nmcli -t -f IN-USE,CHAN,SIGNAL,SSID dev wifi list 2>/dev/null)
-[ -n "$scan" ] || { trim; exit 0; }
-
 cur=$(echo "$scan" | awk -F: '$1=="*"{print; exit}')
-[ -n "$cur" ] || { trim; exit 0; }
-cur_chan=$(echo "$cur"   | cut -d: -f2)
-cur_sig=$(echo "$cur"    | cut -d: -f3)
-cur_ssid=$(echo "$cur"   | cut -d: -f4-)
+[ -n "$cur" ] || done_
+cur_chan=$(echo "$cur" | cut -d: -f2)
+cur_sig=$(echo "$cur"  | cut -d: -f3)
+cur_ssid=$(echo "$cur" | cut -d: -f4-)
 
-# Already on 2.4 GHz — nothing to steer away from.
-[ "${cur_chan:-0}" -gt 14 ] 2>/dev/null || { trim; exit 0; }
+[ "${cur_chan:-0}" -gt 14 ]   2>/dev/null || done_   # already on 2.4 GHz
+[ "${cur_sig:-100}" -le "$WEAK_MAX" ] 2>/dev/null || done_   # 5 GHz is fine, leave it
 
-# A healthy 5 GHz link is faster than anything 2.4 GHz can offer; leave it alone.
-[ "${cur_sig:-100}" -le "$WEAK_MAX" ] 2>/dev/null || { trim; exit 0; }
+# Don't retry an AP that already failed this test recently.
+if [ -f "$COOLDOWN" ]; then
+    read -r until_ts failed_ssid < "$COOLDOWN"
+    if [ "$failed_ssid" = "$cur_ssid" ] && [ "$(date +%s)" -lt "${until_ts:-0}" ]; then
+        done_
+    fi
+fi
 
-# Strongest 2.4 GHz radio advertising this same SSID.
 best24=$(echo "$scan" | awk -F: -v s="$cur_ssid" '
     { chan=$2; sig=$3; ssid=$0; sub(/^[^:]*:[^:]*:[^:]*:/, "", ssid) }
     ssid==s && chan+0 >= 1 && chan+0 <= 14 && sig+0 > best { best=sig+0 }
     END { print best+0 }')
+[ "$best24" -ge $(( cur_sig + MIN_GAIN )) ] 2>/dev/null || done_
 
-if [ "$best24" -eq 0 ]; then
-    trim; exit 0   # this SSID has no 2.4 GHz radio in range — leave 5 GHz alone
-fi
+# ── Propose the switch, then prove it ─────────────────────────────────────────
+read -r loss_before avg_before <<EOF
+$(measure)
+EOF
 
-gain=$(( best24 - cur_sig ))
-if [ "$gain" -ge "$MIN_GAIN" ]; then
-    log "'$cur_ssid' 2.4 GHz is ${gain} pts stronger (${best24} vs ${cur_sig} on ch ${cur_chan}) — pinning '$con' to 2.4 GHz"
-    sudo nmcli connection modify "$con" 802-11-wireless.band bg
+sudo nmcli connection modify "$con" 802-11-wireless.band bg
+sudo nmcli connection up "$con" >/dev/null 2>&1
+sleep 10
+
+read -r loss_after avg_after <<EOF
+$(measure)
+EOF
+
+if [ "$loss_after" -lt "$loss_before" ] || \
+   { [ "$loss_after" -eq "$loss_before" ] && [ "$avg_after" -le "$avg_before" ]; }; then
+    log "'$cur_ssid': 2.4 GHz verified better (loss ${loss_before}%->${loss_after}%, rtt ${avg_before}->${avg_after}ms) — keeping pin on '$con'"
+else
+    sudo nmcli connection modify "$con" 802-11-wireless.band ""
     sudo nmcli connection up "$con" >/dev/null 2>&1
+    echo "$(( $(date +%s) + COOLDOWN_SECS )) $cur_ssid" > "$COOLDOWN"
+    log "'$cur_ssid': 2.4 GHz was NOT better (loss ${loss_before}%->${loss_after}%, rtt ${avg_before}->${avg_after}ms) — reverted, cooling down $(( COOLDOWN_SECS / 3600 ))h"
 fi
 
-trim
-exit 0
+done_
