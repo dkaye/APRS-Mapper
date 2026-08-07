@@ -17,6 +17,12 @@
 # is now treated as a proposal: measure, switch, measure again, and revert unless it
 # genuinely improved.
 #
+# A pin is also not permanent. While pinned, the link is re-measured and released if
+# it turns poor — otherwise the pin is a one-way ratchet, since the forward test only
+# runs while on 5 GHz. This matters because the AP chooses its own 2.4 GHz channel:
+# the Starlink unit here has used channel 11 (jammed, unusable) and channel 1 (clear,
+# and measurably better than its own 5 GHz) on different boots.
+#
 # Only matters on dual-band hardware (Pi 4 / Pi 5). A Pi Zero 2 W is 2.4 GHz only
 # and can never be steered, so this is a no-op there.
 #
@@ -34,9 +40,14 @@ WEAK_MAX=65          # ...and the 5 GHz link must itself be this weak or worse.
                      # would demote a healthy 5 GHz link (BigTV: 100 vs 88 at
                      # -34 dBm). The failure this exists to fix read 50 (-69 dBm).
 COOLDOWN_SECS=21600  # after a failed attempt, wait 6h before trying that AP again
+BAD_LOSS=5           # a pinned 2.4 GHz link losing this much is "poor"...
+BAD_RTT=100          # ...as is one this slow to its OWN gateway (a LAN hop is
+                     # single-digit ms; the failures seen were 720-2721 ms)
+BAD_STRIKES=2        # consecutive poor checks before releasing the pin
 LOG=/home/pi/wifi-band-pin.log
 LOCK=/tmp/wifi-band-pin.lock
 COOLDOWN=/home/pi/.wifi-band-pin-cooldown
+STRIKES=/home/pi/.wifi-band-pin-strikes
 
 log()  { echo "$(date '+%F %T') $*" >> "$LOG"; }
 trim() { tail -n 200 "$LOG" > "$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG" 2>/dev/null; }
@@ -85,7 +96,35 @@ cur_chan=$(echo "$cur" | cut -d: -f2)
 cur_sig=$(echo "$cur"  | cut -d: -f3)
 cur_ssid=$(echo "$cur" | cut -d: -f4-)
 
-[ "${cur_chan:-0}" -gt 14 ]   2>/dev/null || done_   # already on 2.4 GHz
+# ── Reverse check: a pin is not forever ───────────────────────────────────────
+# Once pinned to 2.4 GHz the forward test can never run again (it only evaluates
+# while on 5 GHz), so without this the pin is a one-way ratchet. If the AP later
+# moves its 2.4 GHz radio onto a congested channel — Starlink picks its channel
+# automatically, and has used both 1 and 11 here — the device would be stuck on a
+# bad link with no way back. Measure the pinned link and release it if it is poor.
+if [ "${cur_chan:-0}" -le 14 ] 2>/dev/null && \
+   [ "$(nmcli -g 802-11-wireless.band connection show "$con" 2>/dev/null)" = "bg" ]; then
+    read -r loss rtt <<EOF
+$(measure)
+EOF
+    if [ "$loss" -ge "$BAD_LOSS" ] || [ "$rtt" -ge "$BAD_RTT" ]; then
+        strikes=$(( $(cat "$STRIKES" 2>/dev/null || echo 0) + 1 ))
+        echo "$strikes" > "$STRIKES"
+        if [ "$strikes" -ge "$BAD_STRIKES" ]; then
+            sudo nmcli connection modify "$con" 802-11-wireless.band ""
+            sudo nmcli connection up "$con" >/dev/null 2>&1
+            rm -f "$STRIKES" "$COOLDOWN"
+            log "'$cur_ssid': pinned 2.4 GHz is poor (loss ${loss}%, rtt ${rtt}ms), ${strikes} checks running — released pin so 5 GHz can be tried"
+        else
+            log "'$cur_ssid': pinned 2.4 GHz poor (loss ${loss}%, rtt ${rtt}ms) — strike ${strikes}/${BAD_STRIKES}"
+        fi
+    else
+        rm -f "$STRIKES"   # healthy: forget any earlier strike
+    fi
+    done_
+fi
+
+[ "${cur_chan:-0}" -gt 14 ]   2>/dev/null || done_   # on 2.4 GHz, unpinned — leave it
 [ "${cur_sig:-100}" -le "$WEAK_MAX" ] 2>/dev/null || done_   # 5 GHz is fine, leave it
 
 # Don't retry an AP that already failed this test recently.
@@ -117,11 +156,13 @@ EOF
 
 if [ "$loss_after" -lt "$loss_before" ] || \
    { [ "$loss_after" -eq "$loss_before" ] && [ "$avg_after" -le "$avg_before" ]; }; then
+    rm -f "$STRIKES"
     log "'$cur_ssid': 2.4 GHz verified better (loss ${loss_before}%->${loss_after}%, rtt ${avg_before}->${avg_after}ms) — keeping pin on '$con'"
 else
     sudo nmcli connection modify "$con" 802-11-wireless.band ""
     sudo nmcli connection up "$con" >/dev/null 2>&1
     echo "$(( $(date +%s) + COOLDOWN_SECS )) $cur_ssid" > "$COOLDOWN"
+    rm -f "$STRIKES"
     log "'$cur_ssid': 2.4 GHz was NOT better (loss ${loss_before}%->${loss_after}%, rtt ${avg_before}->${avg_after}ms) — reverted, cooling down $(( COOLDOWN_SECS / 3600 ))h"
 fi
 
