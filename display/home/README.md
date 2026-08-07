@@ -101,6 +101,44 @@ Script:   /home/pi/aprs-monitor.sh (installed to /usr/local/bin/)
 Polls marsaprs.org every 30 seconds. If unreachable, kills Chromium and relaunches it
 pointing to `localhost:8080`. When reachable again, the connecting page auto-redirects.
 
+**It takes three consecutive failures**, not one, and allows 10 s per check. A single slow
+fetch used to tear the browser down: over Starlink the fetch routinely takes 3–8 s while the
+link is perfectly healthy. Of three "failures" measured on 2026-08-07, two returned HTTP 200
+(in 8.0 s and 3.4 s) and the third coincided with successful pings to 1.1.1.1 — nothing was
+ever down. Switching pages is disruptive and visible, so it must not hinge on one sample.
+
+**It also starts the kiosk if none is running** (after two empty checks, delayed so it does
+not race the LXDE autostart at boot). Previously the loop saw no browser, set a flag and
+continued — it never started one, because that is normally the autostart's job at login. So
+anything that killed the browser left the display black until somebody rebooted the Pi.
+
+**The unit sets `KillMode=process`.** The monitor launches Chromium, so the browser lands in
+this unit's control group; with systemd's default `KillMode=control-group`, restarting the
+monitor killed the kiosk too — and nothing restarted it.
+
+After `pkill`, it waits for the process to actually exit rather than sleeping a fixed 2 s.
+That guess became harmful once `start-kiosk.sh` enforced a single instance: a slow-dying
+browser would make the replacement correctly refuse to start, leaving no display at all.
+
+### wifi-band-pin.sh  (2.4 GHz band pin, dual-band Pis only)
+```
+Script:   /home/pi/wifi-band-pin.sh   (cron, every 5 min)
+Log:      /home/pi/wifi-band-pin.log
+```
+Keeps a Pi 4 / Pi 5 off a weak 5 GHz radio when the same AP's 2.4 GHz radio is better — and
+off 2.4 GHz when it is not. A Pi Zero 2 W is 2.4 GHz-only and cannot be steered, so this is a
+no-op on iGates.
+
+Every decision is **measured**, because signal strength cannot see co-channel interference.
+On 2026-08-07 a display's 2.4 GHz radio read *stronger* than its 5 GHz one but sat on a
+channel shared with three APs at full signal: switching to it produced 16% loss to the gateway
+and 100% loss to the internet. So a switch is a proposal — measure, switch, measure again,
+revert unless it genuinely improved — and a pin is released only if some same-SSID 5 GHz radio
+looks viable, because a degraded link still carries the kiosk while a dead one does not.
+
+If wlan0 cannot associate at all, any pin is cleared, so a device moved to a 5 GHz-only
+network can never be stranded offline.
+
 ### wifi-watchdog  (WiFi reconnect watchdog)
 ```
 Service:  /etc/systemd/system/wifi-watchdog.service
@@ -122,7 +160,13 @@ Manages the graphical desktop session (rpd-x / LXDE). Required for Chromium and 
 @reboot      /home/pi/netbird-up.sh
 1 4 * * *    /home/pi/auto-update.sh >> /home/pi/update.log 2>&1
 10 4 * * *   sudo reboot
+*/5 * * * *  /home/pi/wifi-band-pin.sh
 ```
+
+`install.sh` writes this crontab wholesale, so a re-install replaces anything added by hand.
+`auto-update.sh` adds the `wifi-band-pin.sh` line idempotently for devices that only ever run
+the updater — targeting **pi's** crontab explicitly, since running `auto-update.sh` by hand
+under `sudo` would otherwise edit root's.
 
 View with: `crontab -l`   Edit with: `crontab -e`
 
@@ -173,16 +217,31 @@ cat /tmp/chromium.log
 cat /tmp/checknetbird.log
 
 # Restart Chromium manually (kiosk mode)
-sudo -u pi DISPLAY=:0 XAUTHORITY=/home/pi/.Xauthority \
-  chromium --password-store=basic --kiosk --noerrdialogs \
-  --disable-infobars --disable-dev-shm-usage --incognito \
-  --disable-features=BlockInsecurePrivateNetworkRequests \
-  'https://marsaprs.org/' &
+# Use the wrapper, not chromium directly: it enforces a single instance and
+# builds the ?autologin&operator= URL from ~/autologin.txt.
+pkill chromium; sleep 3
+sudo -u pi DISPLAY=:0 XAUTHORITY=/home/pi/.Xauthority setsid \
+  /home/pi/start-kiosk.sh >/tmp/chromium.log 2>&1 &
 
-# Restart Chromium via connecting page (graceful)
-sudo -u pi DISPLAY=:0 XAUTHORITY=/home/pi/.Xauthority \
-  chromium --password-store=basic --kiosk --noerrdialogs \
-  --disable-infobars --disable-dev-shm-usage --incognito \
-  --disable-features=BlockInsecurePrivateNetworkRequests \
-  'http://localhost:8080/' &
+# How many kiosks are really running? (renderers, the zygote and the flock
+# wrapper all carry --kiosk, so a plain pgrep over-counts)
+for p in $(pgrep -f -- '--kiosk'); do
+  [ "$(cat /proc/$p/comm)" = chromium ] &&
+    { grep -qz -- '--type=' /proc/$p/cmdline || echo "$p"; }
+done | wc -l
+
+# Power health — check this FIRST on any reboot loop or flakiness
+vcgencmd get_throttled          # 0x0 = healthy; bit 16 = undervoltage since boot
+dmesg | grep -i undervoltage
+
+# Is it the WiFi, the WAN, or the server? Ping the gateway FROM the device:
+# a LAN hop must be <5 ms at 0% loss.
+ping -c 20 "$(ip route | awk '/^default/{print $3; exit}')"
+
+# WiFi link quality (signal alone is misleading — see tx failed / bitrate)
+sudo iw dev wlan0 link
+sudo iw dev wlan0 station dump | grep -E 'signal|tx bitrate|tx failed'
+
+# Band-pin decisions
+tail /home/pi/wifi-band-pin.log
 ```

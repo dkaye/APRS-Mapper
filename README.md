@@ -18,6 +18,7 @@
 6. [APRS Server (v1.21.1)](#aprs-server-v1211)
    - [Cloudflare Tunnel](#cloudflare-tunnel)
 7. [Display Pis (v1.21.1)](#display-pis-v1211)
+   - [Running a display Pi on Starlink](#running-a-display-pi-on-starlink)
 8. [Mobile Apps (v1.21.1)](#mobile-apps-v1211)
    - [Architecture](#app-architecture) · [Location Sharing Flow](#location-sharing-flow) · [Smart Track](#smart-track) · [Building & Distributing](#building-distributing) · [Background Location](#background-location)
 9. [User Interfaces](#user-interfaces)
@@ -405,6 +406,25 @@ connection at a time and pipes bytes transparently in both directions:
 Configuration is `isproxy.json`; a live status file `isproxy.status.json` records which
 upstream is currently in use (`primary`/`fallback`).
 
+**Reconnect (fixed 2026-08-07, commit `e77e8cc`).** The shutdown flag for a direwolf session
+was never cleared when that session ended, so every reconnect after the first was a no-op:
+`handle_direwolf` still ran — banner, cached login, synthetic logresp, which is why the logs
+looked half-alive — but the upstream supervisor's `while not self.stop` exited immediately and
+no upstream was ever opened. The gate then churned (connect, login, drop) every ~15 s without
+gating anything.
+
+`auto-update.sh` restarts `igate-isproxy` **before** direwolf, so the proxy's first session is
+the *outgoing* direwolf, killed seconds later by that restart — meaning **every nightly update
+wedged every relay-enrolled gate** until someone restarted the service by hand. The fix clears
+the flag per session, with a session counter so a session that is closing down cannot clear it
+out from under a newer one that has already taken over.
+
+`igate/tests/test_isproxy.py` drives two sequential direwolf sessions against a fake APRS-IS
+and asserts both reach the upstream; it fails on the old code and passes on the new. This
+matters most for the cellular gates, whose NetBird is disabled by policy most of the time — a
+wedged proxy there stops gating *and* leaves no way in until NetBird is toggled on from the
+server and the next 5-minute `check-netbird.sh` poll runs.
+
 ### Turning it on or off for a gate
 
 Activation is **sentinel-guarded** so nothing changes on a gate unless we ask. The proxy
@@ -589,9 +609,30 @@ Chromium cache/state in RAM (tmpfs).
 
 **Operator auto-login:** If `~/autologin.txt` exists, `start-kiosk.sh` appends `?autologin`
 to the URL; if line 1 contains an operator name, it also appends `&operator=<name>` for
-automatic messaging subscription. The server handles `?autologin` by setting a PHP session
-for the current event and redirecting to the clean URL, with messaging credentials embedded
-as JS globals for auto-subscribe.
+automatic messaging subscription. A **blank** first line means "use this machine's hostname",
+so a fresh install is correct without anyone editing the file. The server handles
+`?autologin` by setting a PHP session for the current event and redirecting to the clean
+URL, with messaging credentials embedded as JS globals for auto-subscribe.
+
+`configure.sh` prompts for the operator name alongside the hostname and writes this file.
+That pairing exists because the two used to be set independently: a display renamed to
+NetControl on 2026-08-07 carried on announcing itself to the app as `BigTV` for the rest of
+the day, because nothing updated `autologin.txt` when the hostname changed. With two
+displays in the fleet, both claiming one operator name breaks messaging auto-subscribe.
+
+**Single kiosk instance:** several things launch the kiosk — the LXDE autostart at login,
+`aprs-monitor` when it switches pages or finds no browser, and hands at the keyboard — and
+nothing used to stop them stacking up. Two browsers loading the same map means double the
+tile requests and double the CPU, which presents as a slow display on a perfectly healthy
+network. `start-kiosk.sh` now refuses to start a second instance (a pre-flight check plus
+`flock` to close the race). Chromium's own protection had been disabled by an `rm` of its
+Singleton files, which was itself aimed at `~/.config/chromium` while the browser runs with
+`--user-data-dir=/tmp/chromium` — so it had been guarding nothing.
+
+> Counting kiosk instances is subtler than it looks. Matching `--kiosk` on the command line
+> also matches Chromium's renderers and zygote, and the `flock` wrapper, since all of them
+> carry the flag. A correct count requires the executable itself to be `chromium` **and** the
+> process not to be a child (no `--type=`).
 
 **Cursor size:** 48 px via `XCURSOR_SIZE=48` in `start-kiosk.sh` (applied before Chromium),
 reinforced by `~/.Xresources` (`Xcursor.size: 48`) loaded via `@xrdb` in the LXDE autostart.
@@ -600,6 +641,57 @@ reinforced by `~/.Xresources` (`Xcursor.size: 48`) loaded via `@xrdb` in the LXD
 keeps journal entries in RAM. Both configured via `files.tar.gz` and `install.sh`.
 
 **SSH:** `ssh pi@<ip>` · Password: `guacamole` · VNC: `vnc://<ip>:5901`
+
+### Running a display Pi on Starlink
+
+Both display Pis share one Starlink terminal. A day of measurement (2026-08-07, ~300 samples
+at 1/min plus 20 instrumented reboots) produced the following, and the reasoning matters more
+than the settings because the symptoms are all misleading.
+
+**Diagnose power before anything else.** A Pi 4 that reboots in a loop, reaching "Welcome to
+Desktop" and then resetting silently — no panic, no log, the journal simply stops — is
+browning out, not crashing. It fails at desktop start because that is peak draw: GPU,
+compositor, Chromium and WiFi all at once. Confirm from the hardware, not the symptoms:
+
+```bash
+vcgencmd get_throttled      # 0x0 = healthy
+                            # bits 0-2 = happening now; bits 16-18 = since boot (latched)
+dmesg | grep -i undervoltage
+```
+
+Two supplies were inadequate before one worked, and the second failed *progressively*
+(undervoltage events 3 → 6 → 12 in three minutes) without looping. **Use a 61 W USB-C supply**
+with a short, thick cable directly into a wall socket. Moving the SD card to a different Pi 4
+changed nothing — the board was never at fault.
+
+**Strong signal does not mean a working link.** The most expensive wrong turn of the day was
+trusting signal strength. A display measured `-49 dBm`, 72 Mbit/s negotiated and *zero* tx
+failures while showing **2.7-second round trips to its own gateway** — every static indicator
+healthy, the link unusable. The cause was airtime contention: it sat 24 inches from another
+AP occupying the same 2.4 GHz channel. Relocating the display fixed it; no Pi-side setting
+could have.
+
+> **The single most useful check:** ping the device's *own gateway* **from the device**. A LAN
+> hop must be under ~5 ms at 0% loss. That one number separates "the WiFi is broken" from
+> "the WAN is slow" from "the server is slow", and nothing else does it as quickly.
+
+**Band selection is measured, not assumed** — see `wifi-band-pin.sh`. 5 GHz was unusable at
+this site (`-73 dBm`, 100% packet loss) despite negotiating 351–390 Mbit/s, while 2.4 GHz on a
+clear channel gave 0% loss at 3 ms. Starlink picks its own channels and moved between 1, 6, 11
+and 153 during a single day, so neither band can be trusted in advance and a good choice does
+not stay good.
+
+**Warm boot is reliable; cold power-on is where faults appear.** Twenty instrumented reboots
+produced a rendered map in **20–21 seconds every time** — zero failures, zero kiosk restarts,
+zero roams. The startup failures that prompted the investigation were all cold power-on, which
+draws far more current than `systemctl reboot`. If a display misbehaves at startup, test with
+a cold power-cycle; a warm reboot will not reproduce it.
+
+**A cloned SD card carries the source machine's identity.** It brings the NetBird enrolment
+(two peers sharing one identity flap endlessly), `/var/lib/bluetooth/<adapter>/` (a Bluetooth
+mouse paired to the *previous* Pi fails with `ConnectionAttemptFailed: Page Timeout`, and no
+amount of resetting the mouse helps — the stale bond is on the Pi), plus hostname,
+`autologin.txt`, SSH host keys and machine-id. Prefer a fresh `install.sh` per device.
 
 For details on using the map, see [USERGUIDE.MD](https://marsaprs.org/userguide.html?back=/readme.html).
 
@@ -1325,6 +1417,16 @@ To force an immediate update:
 ssh pi@<ip> /home/pi/auto-update.sh
 ```
 
+> **Run it twice when upgrading from an older build.** `auto-update.sh` downloads and
+> overwrites *itself* partway through, so a device running an older copy applies only the
+> blocks that existed in that older script. Anything newer — version stamping, IGLOGIN
+> promotion, relay enrolment, added cron entries — does not run until the **second** pass.
+>
+> The symptom is a device that looks updated (`wc -c /home/pi/auto-update.sh` matches the
+> current one) while `config.php` and `direwolf.conf` still report the old version and no
+> relay sentinel appears. Just run it again. Seen across six gates on 2026-08-07 upgrading
+> 5.1 → 5.2.
+
 There is no backup for the iGates since their data are all temporary.
 
 ---
@@ -1425,6 +1527,20 @@ needed (and none is available — the script would be served by the very Pi bein
 6. Shut down: `sudo shutdown -h now`
 7. Copy the SD card using **Apple Pi Baker** — this is the new display Pi master.
 8. Upload the image file to **`ftp.w6sg.net/APRS-SD-Masters`** for later cloning.
+
+> **Cloning a master is safe; cloning a deployed device is not.** Step 5 is what makes the
+> difference — a master has never run `configure.sh`, so it carries no NetBird enrolment, no
+> operator name and a placeholder hostname. A card taken from a *working* display brings all
+> of that with it, plus `/var/lib/bluetooth/<adapter>/`: on 2026-08-07 a Bluetooth mouse
+> paired to a previous Pi failed with `ConnectionAttemptFailed: Page Timeout` on the new one,
+> and nothing done to the mouse could fix it, because the stale bond was on the Pi. Two peers
+> sharing one NetBird identity flap endlessly. If you must clone a deployed card, scrub the
+> NetBird enrolment, `/var/lib/bluetooth/*`, hostname, `autologin.txt`, SSH host keys and
+> `machine-id` before first boot.
+>
+> Note the master will have **no fleet WiFi list**: `install.sh` skips that download unless
+> `/home/pi/.wifi-token` already exists. Either add the token before step 4, or add it at
+> deploy time and re-run `/home/pi/update-wifi.php`.
 
 ### iGates
 
