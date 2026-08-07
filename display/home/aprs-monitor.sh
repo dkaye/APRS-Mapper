@@ -37,6 +37,20 @@ start_kiosk() {
         XCURSOR_SIZE=48 /home/pi/start-kiosk.sh >/tmp/chromium.log 2>&1 &
 }
 
+# Wait for Chromium to actually be gone before starting the replacement. A fixed
+# sleep was a guess: too short and the old browser is still up, which now makes
+# start-kiosk.sh correctly refuse to start a second one — leaving no browser at
+# all until the missing-kiosk check notices a minute later.
+wait_for_exit() {
+    local i
+    for i in $(seq 1 20); do
+        pgrep -x chromium >/dev/null 2>&1 || return 0
+        sleep 0.5
+    done
+    pkill -9 chromium 2>/dev/null   # last resort; better than no display
+    sleep 1
+}
+
 while true; do
     sleep "$INTERVAL"
 
@@ -64,7 +78,7 @@ while true; do
             logger -t aprs-monitor "APRS reachable — switching back to kiosk"
             was_reachable=true
             pkill chromium 2>/dev/null
-            sleep 2
+            wait_for_exit
             start_kiosk
         fi
     else
@@ -75,7 +89,7 @@ while true; do
                 was_reachable=false
                 fails=0
                 pkill chromium 2>/dev/null
-                sleep 2
+                wait_for_exit
                 start_connecting
             else
                 logger -t aprs-monitor "APRS check failed ($fails/$FAIL_STREAK) — holding"
