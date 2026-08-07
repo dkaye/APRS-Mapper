@@ -37,7 +37,8 @@ sudo apt-get install -y \
     x11vnc \
     avahi-daemon \
     ufw \
-    curl
+    curl \
+    rsync cron
 ok "Packages installed"
 
 # ── Apache ────────────────────────────────────────────────────────────────────
@@ -220,5 +221,10 @@ else
     ok "Skipping configuration — CONFIGURE_ME placeholders are in place."
     echo ""
     echo "  To configure this display later:  /home/pi/configure.sh"
-    echo "  To build a master image: shut down cleanly, then clone the SD card."
+    echo ""
+    echo "  Cloning this card to another Pi carries its identity with it:"
+    echo "    NetBird enrolment (two peers sharing one identity flap endlessly),"
+    echo "    /var/lib/bluetooth/<adapter>/ (stale bonds fail with Page Timeout),"
+    echo "    hostname, autologin.txt, SSH host keys and machine-id."
+    echo "  Prefer a fresh install per device; if you must clone, scrub those first."
 fi
