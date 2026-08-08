@@ -129,6 +129,15 @@ Keeps a Pi 4 / Pi 5 off a weak 5 GHz radio when the same AP's 2.4 GHz radio is b
 off 2.4 GHz when it is not. A Pi Zero 2 W is 2.4 GHz-only and cannot be steered, so this is a
 no-op on iGates.
 
+**Does nothing when Ethernet carries the traffic.** Every measurement pings the *default*
+gateway; on a wired display that is `eth0`, so the numbers describe the cable rather than the
+radio. The script exits immediately unless `wlan0` holds the default route. WiFi remains
+associated as a fallback — it just is not judged while something else is carrying traffic.
+
+It also enforces `802-11-wireless.powersave 2` on the active profile, matching what
+`update-wifi.php` sets on every profile it creates. NetworkManager's default leaves power save
+on, which delays *inbound* packets — a device stays reachable outbound while inbound stalls.
+
 Every decision is **measured**, because signal strength cannot see co-channel interference.
 On 2026-08-07 a display's 2.4 GHz radio read *stronger* than its 5 GHz one but sat on a
 channel shared with three APs at full signal: switching to it produced 16% loss to the gateway

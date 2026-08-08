@@ -675,6 +675,24 @@ could have.
 > hop must be under ~5 ms at 0% loss. That one number separates "the WiFi is broken" from
 > "the WAN is slow" from "the server is slow", and nothing else does it as quickly.
 
+**Prefer Ethernet where it exists.** A display wired to the router sidesteps this entire
+section — band steering, co-channel contention, roaming to a stronger AP, and WiFi/Bluetooth
+coexistence all stop applying. Route metrics handle it automatically (`eth0` at 100 beats
+`wlan0` at 600), and WiFi stays associated as a silent fallback if the cable is pulled. The
+WiFi logic below stands down on its own: `wifi-band-pin.sh` exits immediately unless `wlan0`
+actually carries the default route, because every measurement it makes pings the default
+gateway and would otherwise be judging the radio using the cable's numbers.
+
+> Check the negotiated speed after wiring one up: `dmesg | grep 'eth0: Link is'`. A display
+> here first came up at **10 Mbps half duplex** — the signature of a damaged cable or bad
+> crimp — and would have carried map tiles well enough to look fine while being one knock
+> from dropping. A replacement cable gave 1 Gbps full duplex.
+
+**WiFi power save is disabled** on every profile `update-wifi.php` creates. NetworkManager
+leaves it on by default, which parks the radio between beacons and delays *inbound* packets
+specifically — so a device stays reachable outbound while inbound traffic stalls, which looks
+like anything but a power-save setting. On a marginal signal it costs hundreds of milliseconds.
+
 **Band selection is measured, not assumed** — see `wifi-band-pin.sh`. 5 GHz was unusable at
 this site (`-73 dBm`, 100% packet loss) despite negotiating 351–390 Mbit/s, while 2.4 GHz on a
 clear channel gave 0% loss at 3 ms. Starlink picks its own channels and moved between 1, 6, 11
