@@ -75,6 +75,17 @@ measure() {
     echo "${loss:-100} ${avg:-9999}"
 }
 
+# ── Only act when WiFi is actually carrying traffic ───────────────────────────
+# Every measurement here pings the DEFAULT gateway. On a display wired to the
+# router, that gateway is reached over eth0 (metric 100 beats wlan0's 600), so the
+# numbers describe the cable, not the radio — and pinning or releasing a band on
+# the strength of them would be nonsense. WiFi stays associated as a fallback; it
+# simply is not ours to judge while something else carries the traffic.
+route_dev=$(ip route 2>/dev/null | awk '/^default/{print $5; exit}')
+if [ -n "$route_dev" ] && [ "$route_dev" != "wlan0" ]; then
+    exit 0
+fi
+
 con=$(nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null | awk -F: '$2=="wlan0"{print $1; exit}')
 
 # ── Not associated: undo any pin so a 5 GHz-only network is still reachable ────
