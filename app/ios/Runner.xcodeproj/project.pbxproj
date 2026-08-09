@@ -32,6 +32,9 @@
 		D0C4A7000000000000000049 /* DestinationPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000048 /* DestinationPickerView.swift */; };
 		D0C4A7000000000000000051 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000050 /* AudioRecorder.swift */; };
 		D0C4A7000000000000000053 /* TalkSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000052 /* TalkSession.swift */; };
+		D0C4A7000000000000000061 /* TokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000060 /* TokenStore.swift */; };
+		D0C4A7000000000000000063 /* WatchMessagingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000062 /* WatchMessagingClient.swift */; };
+		D0C4A7000000000000000065 /* DirectPoller.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000064 /* DirectPoller.swift */; };
 		D0C4A7000000000000000021 /* WatchBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000020 /* WatchBridge.swift */; };
 		D0C4A7000000000000000031 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000030 /* Models.swift */; };
 		D0C4A7000000000000000033 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000032 /* AppState.swift */; };
@@ -125,6 +128,9 @@
 		D0C4A7000000000000000048 /* DestinationPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DestinationPickerView.swift; sourceTree = "<group>"; };
 		D0C4A7000000000000000050 /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
 		D0C4A7000000000000000052 /* TalkSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TalkSession.swift; sourceTree = "<group>"; };
+		D0C4A7000000000000000060 /* TokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStore.swift; sourceTree = "<group>"; };
+		D0C4A7000000000000000062 /* WatchMessagingClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchMessagingClient.swift; sourceTree = "<group>"; };
+		D0C4A7000000000000000064 /* DirectPoller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectPoller.swift; sourceTree = "<group>"; };
 		D0C4A7000000000000000020 /* WatchBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchBridge.swift; sourceTree = "<group>"; };
 		D0C4A7000000000000000030 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		D0C4A7000000000000000032 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
@@ -265,6 +271,9 @@
 			children = (
 				D0C4A7000000000000000012 /* WatchApp.swift */,
 				D0C4A7000000000000000032 /* AppState.swift */,
+				D0C4A7000000000000000060 /* TokenStore.swift */,
+				D0C4A7000000000000000062 /* WatchMessagingClient.swift */,
+				D0C4A7000000000000000064 /* DirectPoller.swift */,
 				D0C4A7000000000000000050 /* AudioRecorder.swift */,
 				D0C4A7000000000000000052 /* TalkSession.swift */,
 				D0C4A7000000000000000042 /* Outbox.swift */,
@@ -564,6 +573,9 @@
 				D0C4A7000000000000000039 /* MessageListView.swift in Sources */,
 				D0C4A700000000000000003B /* MessageDetailView.swift in Sources */,
 				D0C4A700000000000000003D /* SettingsView.swift in Sources */,
+				D0C4A7000000000000000061 /* TokenStore.swift in Sources */,
+				D0C4A7000000000000000063 /* WatchMessagingClient.swift in Sources */,
+				D0C4A7000000000000000065 /* DirectPoller.swift in Sources */,
 				D0C4A7000000000000000051 /* AudioRecorder.swift in Sources */,
 				D0C4A7000000000000000053 /* TalkSession.swift in Sources */,
 				D0C4A7000000000000000043 /* Outbox.swift in Sources */,

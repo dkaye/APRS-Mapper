@@ -44,6 +44,21 @@ struct WatchMessage: Identifiable, Codable, Equatable {
     return hasPhoto ? "📷 Photo" : ""
   }
 
+  /// Declared rather than synthesized: the decoder below suppresses the memberwise
+  /// initializer, and the direct-poll path needs to build one field by field from the
+  /// server's own shape.
+  init(id: Int, conversationId: Int, ts: Int, text: String, senderLabel: String,
+       broadcast: Bool, hasPhoto: Bool, isSelf: Bool) {
+    self.id = id
+    self.conversationId = conversationId
+    self.ts = ts
+    self.text = text
+    self.senderLabel = senderLabel
+    self.broadcast = broadcast
+    self.hasPhoto = hasPhoto
+    self.isSelf = isSelf
+  }
+
   init?(wire d: [String: Any]) {
     guard let id = d["id"] as? Int else { return nil }
     self.id = id

@@ -30,6 +30,14 @@ final class AppState {
   var callsign = ""
   var audioUnavailable = false
 
+  /// Where the watch talks when the phone cannot. Handed over in the context so a
+  /// server move needs no watch release.
+  var serverBase = "https://marsaprs.org"
+
+  /// The server rejected our token. Terminal until the phone issues another —
+  /// retrying a 403 only produces more 403s.
+  var authExpired = false
+
   /// When the phone last got a full state snapshot through. Surfaced in Settings
   /// because "never" and "twenty minutes ago" are the two symptoms that distinguish
   /// a broken link from a quiet net, and without it both just look like a dead app.
@@ -169,7 +177,19 @@ final class AppState {
   func apply(context: [String: Any]) {
     if let s = context["speak"] as? Bool { speakEnabled = s }
     if let c = context["callsign"] as? String { callsign = c }
+    if let b = context["serverBase"] as? String, !b.isEmpty { serverBase = b }
     sharing = context["sharing"] as? Bool ?? false
+
+    // The token is absent from the payload rather than null when there is none —
+    // WatchConnectivity cannot carry a null. Absent, or sharing stopped, means the
+    // watch should not be holding a copy at all.
+    if sharing, let token = context["token"] as? String, !token.isEmpty {
+      TokenStore.save(token)
+      authExpired = false
+    } else {
+      TokenStore.wipe()
+    }
+    DirectPoller.shared.evaluate()
 
     // Absent means none. The context is always a complete snapshot, and null values
     // cannot cross WatchConnectivity at all, so "key missing" is the only way the

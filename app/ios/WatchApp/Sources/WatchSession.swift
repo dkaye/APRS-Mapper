@@ -58,10 +58,10 @@ final class WatchSession: NSObject {
     if let r = entry.recipients { payload["recipients"] = r }
 
     guard let s = session, s.activationState == .activated, s.isReachable else {
-      // Durable queue: the phone will get it when it is next reachable, and the
-      // result comes back out of band whenever that happens.
-      session?.transferUserInfo(payload)
-      Task { @MainActor in Outbox.shared.mark(entry.id, .queued) }
+      // The phone is not there. Send it ourselves if we can — queueing to a phone
+      // that is switched off would leave the reply sitting until it comes back,
+      // which is exactly the situation the watch is meant to cover.
+      Task { @MainActor in await Self.sendDirect(entry, payload: payload) }
       return
     }
 
@@ -71,6 +71,43 @@ final class WatchSession: NSObject {
       s.transferUserInfo(payload)
       Task { @MainActor in Outbox.shared.mark(entry.id, .queued) }
     })
+  }
+
+  /// Straight to the server, with the phone's durable queue as the last resort.
+  ///
+  /// Only a connection failure falls back. `?messaging=send` carries no client id, so
+  /// a request the server accepted but never answered cannot be told apart from one
+  /// it never saw — retrying that through a second path would duplicate the message
+  /// on the net. A refusal we can read is reported as a failure instead.
+  @MainActor
+  private static func sendDirect(_ entry: PendingSend, payload: [String: Any]) async {
+    guard let token = TokenStore.load(), !AppState.shared.authExpired else {
+      WCSession.default.transferUserInfo(payload)
+      Outbox.shared.mark(entry.id, .queued)
+      return
+    }
+    let client = WatchMessagingClient(base: AppState.shared.serverBase, token: token)
+    do {
+      let id = try await client.send(text: entry.text,
+                                     conversationId: entry.conversationId,
+                                     recipients: entry.recipients)
+      Outbox.shared.remove(entry.id)
+      WKInterfaceDevice.current().play(.success)
+      // No receipt following on this path: the phone owns that poll, and it is not
+      // here. The send is confirmed; delivery is not narrated.
+      _ = id
+    } catch MessagingError.authExpired {
+      AppState.shared.authExpired = true
+      TokenStore.wipe()
+      Outbox.shared.mark(entry.id, .failed)
+      WKInterfaceDevice.current().play(.failure)
+    } catch MessagingError.network {
+      WCSession.default.transferUserInfo(payload)
+      Outbox.shared.mark(entry.id, .queued)
+    } catch {
+      Outbox.shared.mark(entry.id, .failed)
+      WKInterfaceDevice.current().play(.failure)
+    }
   }
 
   /// Ship a recorded clip to the phone for transcription.
@@ -159,6 +196,11 @@ final class WatchSession: NSObject {
   @MainActor
   private func refreshReachability(_ s: WCSession) {
     AppState.shared.phoneReachable = s.isReachable
+    if s.isReachable {
+      DirectPoller.shared.noteReachable()
+    } else {
+      DirectPoller.shared.evaluate()
+    }
   }
 }
 

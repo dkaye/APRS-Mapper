@@ -75,14 +75,20 @@ struct StatusLine: View {
   @Environment(AppState.self) private var state
 
   private var text: String {
+    if state.authExpired { return "Reconnect on iPhone" }
     if !state.sharing { return "Not sharing — start on iPhone" }
-    if state.audioUnavailable { return "Phone linked · no audio route" }
-    return state.phoneReachable ? "Phone linked" : "Phone unreachable"
+    if state.phoneReachable {
+      return state.audioUnavailable ? "Phone linked · no audio route" : "Phone linked"
+    }
+    // Worth distinguishing: "on its own and working" is a very different state from
+    // "cut off", and from the wrist they otherwise look identical.
+    return DirectPoller.shared.active ? "Direct — phone away" : "Phone unreachable"
   }
 
   private var color: Color {
-    if !state.sharing { return .orange }
-    return state.phoneReachable ? .green : .secondary
+    if state.authExpired || !state.sharing { return .orange }
+    if state.phoneReachable { return .green }
+    return DirectPoller.shared.active ? .blue : .secondary
   }
 
   var body: some View {

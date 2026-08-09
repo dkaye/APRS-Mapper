@@ -28,6 +28,7 @@ struct SettingsView: View {
       Section("Status") {
         LabeledContent("Phone", value: state.phoneReachable ? "Linked" : "Unreachable")
         LabeledContent("Sharing", value: state.sharing ? "On" : "Off")
+        LabeledContent("Direct polling", value: DirectPoller.shared.active ? "On" : "Off")
         if let at = state.lastContextAt {
           LabeledContent("Updated", value: at.formatted(date: .omitted, time: .shortened))
         } else {

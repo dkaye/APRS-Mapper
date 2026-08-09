@@ -22,6 +22,10 @@ struct WatchApp: App {
     .onChange(of: scenePhase) { _, phase in
       let active = phase == .active
       AppState.shared.isActive = active
+      // Polling on our own is a foreground-only activity: watchOS would not run the
+      // timer in the background, and an app that cannot make a sound has nothing to
+      // do with the result.
+      DirectPoller.shared.evaluate()
       if active {
         // Ask the phone to re-push: while we were away its token, destination or
         // conversation list may all have moved on.
