@@ -32,15 +32,27 @@ version: 1.16.1+2
 The part before `+` is the display version; the part after is the build number.
 **The build number must be higher than any previous upload** — increment it each time.
 
-**Bump the build number on every build, not just every release.** It is what makes
-watchOS install a new watch app at all: when the iPhone app lands, iOS compares the
-embedded `WatchApp.app`'s `CFBundleVersion` against what is on the Watch and only
-transfers if it is higher. Rebuild without bumping and iOS compares 15 against 15,
-concludes the Watch is current, and does nothing — the phone updates, the watch
-silently does not, and the two disagree with no indication that anything is wrong.
-The Watch's Settings page shows the build time next to the version so a stale copy is
-visible at a glance. (The marketing version — the part before `+` — only moves at
-release, as does `WEB_VERSION` in `map/index.php` and the build in
+**Bump the build number on every build, not just every release.** It costs nothing,
+App Store Connect only requires it to increase, and it is the only thing that makes
+one development build distinguishable from another — the Watch and the phone both
+report the marketing version, so without it you cannot tell which build is running.
+
+**It does not, on its own, get a new watch app onto the Watch during development.**
+That was assumed here and does not hold: bumping from 15 to 18 and installing the
+iPhone app with `devicectl` left the Watch on 15. Automatic propagation of the
+embedded watch app appears to be part of the App Store / TestFlight install path, not
+the development one. For a dev build, use one of:
+
+- **iPhone → Watch app → My Watch → APRS Map → toggle *Show App on Apple Watch* off,
+  then on.** Reliable; ignores version entirely.
+- **Push straight to the Watch** (fast when it connects; see the watch-target build
+  command in `README.md`). Needs the Watch awake, unlocked, and on the same WiFi as
+  the Mac — otherwise the tunnel times out even though `devicectl list devices` still
+  reports it as `available`.
+
+The Watch's Settings page shows the build **time** next to the version, which is the
+reliable way to confirm a push landed. (The marketing version — the part before `+` —
+only moves at release, as does `WEB_VERSION` in `map/index.php` and the build in
 `map/app_version.php`.)
 
 This one line is the source of truth for **both** the iPhone app and the embedded
