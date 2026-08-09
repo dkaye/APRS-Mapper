@@ -573,6 +573,8 @@ class _RecipientPickerState extends State<_RecipientPicker> {
       if (a.isMultiple != b.isMultiple) return a.isMultiple ? -1 : 1;
       return byText(a.name, b.name);
     });
+    // Stations that have a "(multiple)" row — their people get indented under it.
+    final multIds = list.where((p) => p.isMultiple).map((p) => p.groupId).toSet();
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -597,6 +599,12 @@ class _RecipientPickerState extends State<_RecipientPicker> {
                     // Rule between the operators and the trackers. The list is sorted
                     // operators-first, so the boundary is wherever the kind changes.
                     final rule = i > 0 && list[i - 1].kind == 'operator' && p.kind != 'operator';
+                    // A station's rows read as one cluster: the people under a
+                    // "<ID> (multiple)" are indented beneath it, and a small gap
+                    // separates one station from the next.
+                    final child = p.kind != 'operator' && !p.isMultiple && multIds.contains(p.groupId);
+                    final newGroup = !rule && i > 0 && p.kind != 'operator'
+                        && list[i - 1].kind != 'operator' && list[i - 1].groupId != p.groupId;
                     final tile = CheckboxListTile(
                       value: sel,
                       onChanged: (_) => setState(() => sel ? _sel.remove(p.id) : _sel.add(p.id)),
@@ -614,12 +622,17 @@ class _RecipientPickerState extends State<_RecipientPicker> {
                       controlAffinity: ListTileControlAffinity.leading,
                       dense: true,
                       visualDensity: const VisualDensity(horizontal: -2, vertical: -4),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                      contentPadding: EdgeInsets.only(left: child ? 26 : 12, right: 12),
                     );
-                    return rule
-                        ? Column(mainAxisSize: MainAxisSize.min,
-                            children: [const Divider(height: 1, thickness: 1), tile])
-                        : tile;
+                    if (rule) {
+                      return Column(mainAxisSize: MainAxisSize.min,
+                          children: [const Divider(height: 1, thickness: 1), tile]);
+                    }
+                    if (newGroup) {
+                      return Column(mainAxisSize: MainAxisSize.min,
+                          children: [const SizedBox(height: 6), tile]);
+                    }
+                    return tile;
                   },
                 ),
         ),

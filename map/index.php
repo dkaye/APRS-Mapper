@@ -2068,6 +2068,10 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 .msg-pick-item:hover { background: #f2f6f9; }
 .msg-pick-item.sel { background: #eaf3fb; }
 .msg-pick-check { flex: 0 0 auto; width: 18px; color: #2980b9; font-weight: 700; }
+/* A station's rows cluster: gap before a new ID, its people indented under the
+   "(multiple)" row so the grouping is visible without headings or boxes. */
+.msg-pick-item.grp-start { margin-top: 8px; }
+.msg-pick-item.grp-child { padding-left: 24px; }
 /* Presence as a word rather than a colour-only dot. */
 .msg-pick-presence { flex: 0 0 auto; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .msg-pick-presence.on  { color: #1b8a3a; }
@@ -6220,6 +6224,8 @@ function _pickerOptions() {
 		// 90 s window the server applies to operators.
 		const freshest = Math.max(...list.map(x => x.lastUpdate || 0));
 		rows.push({key, kind:'mobile', name:_entityName(t), _id:t.id || '', _nm:t.name || '',
+			// Indented under its station's "(multiple)" row when there is one.
+			_child: (namesById.get(t.id) || {size:1}).size > 1,
 			online: (nowSec - freshest) < 90, presence: true,
 			sub: list.length > 1 ? list.length + ' devices' : ''});
 	}
@@ -6245,8 +6251,14 @@ function _renderPicker() {
 	const list = document.getElementById('msg-pick-list');
 	// Search still matches the callsign even though it isn't shown.
 	const opts = _pickerOptions().filter(o => !q || o.name.toLowerCase().includes(q) || o.key.toLowerCase().includes(q));
-	list.innerHTML = opts.map(o => {
+	let prevId = null;
+	list.innerHTML = opts.map((o, i) => {
 		const sel = _pickSel.has(o.key);
+		// A station's rows read as one cluster: a small gap before each new ID, and
+		// its people indented under the "(multiple)" row that addresses them all.
+		const newGroup = i > 0 && o._id !== undefined && o._id !== prevId;
+		prevId = o._id;
+		const cls = (sel ? ' sel' : '') + (newGroup ? ' grp-start' : '') + (o._child ? ' grp-child' : '');
 		const sub = o.sub ? '<div style="font-size:11px;color:#888">' + _esc(o.sub) + '</div>' : '';
 		// Presence as a word, not a colour-only dot: readable regardless of colour
 		// vision. Omitted on "(multiple)" and All Trackers, where one state would be
@@ -6254,7 +6266,7 @@ function _renderPicker() {
 		const pres = o.presence
 			? '<span class="msg-pick-presence ' + (o.online ? 'on' : 'off') + '">' +
 				(o.online ? 'Online' : 'Offline') + '</span>' : '';
-		return '<div class="msg-pick-item ' + (sel ? 'sel' : '') + '" data-key="' + _escAttr(o.key) + '">' +
+		return '<div class="msg-pick-item' + cls + '" data-key="' + _escAttr(o.key) + '">' +
 			'<span class="msg-pick-check">' + (sel ? '✓' : '') + '</span>' +
 			'<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">' + _esc(o.name) + '</div>' + sub + '</div>' + pres + '</div>';
 	}).join('') || '<div style="padding:16px;text-align:center;color:#999">No mobile trackers</div>';

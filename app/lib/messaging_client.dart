@@ -44,10 +44,11 @@ class MsgParticipant {
   /// for several people at once, so a single presence state would be misleading.
   bool get showsPresence => !isMultiple;
 
-  /// Sub-line under the name in the picker. Presence is NOT included — it has its
-  /// own column on the right — so an ordinary single-device tracker has no sub-line.
+  /// Sub-line under the name in the picker. Deliberately empty for most rows so they
+  /// stay single-line: presence has its own column, and operators need no "Operator"
+  /// label because they are already the first, rule-separated block in the list.
   String get subtitle {
-    if (kind == 'operator') return 'Operator';
+    if (kind == 'operator') return '';
     if (isMultiple) return '$devices people at $groupId';
     if (devices > 1) return '$devices devices';
     return '';

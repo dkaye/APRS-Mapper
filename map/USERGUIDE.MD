@@ -488,7 +488,21 @@ If you had already been messaging one of the phones on its own, **that conversat
 
 When one ID covers *different* people — say `LKL Dirck` and `LKL Jerry` are both at Lake Lagunitas — they each keep their own row, and you get one extra option: **LKL (multiple)**. Choose it to reach everyone at that location in a single message. Pick a person's own row instead when you want just them.
 
-The list is alphabetical by ID, and each **(multiple)** row sits directly above the people it covers, so you can see at a glance who is included. It also tells you how many: *5 people at CM*. A person carrying two phones shows *2 devices* on their single row.
+The list is alphabetical by ID, and each **(multiple)** row sits directly above the people it covers — who are **indented beneath it**, with a small gap before the next location, so each station reads as one cluster:
+
+```
+CM (multiple)     2 people at CM
+    CM Fred                        Online
+    CM Liz                         Offline
+
+CRD Stanton       2 devices        Online
+
+LKL (multiple)    2 people at LKL
+    LKL Dirck                      Online
+    LKL Jerry                      Offline
+```
+
+The **(multiple)** row also tells you how many people it reaches, and a person carrying two phones shows *2 devices* on their single row.
 
 The right-hand column shows **Online** (green) or **Offline** (red) for each person. Someone carrying two phones counts as Online if *either* phone has checked in recently — they are reachable, whichever one they are holding. **(multiple)** rows show no status, since they stand for several people at once. Offline is not a barrier: the message is delivered the moment that phone reconnects.
 
