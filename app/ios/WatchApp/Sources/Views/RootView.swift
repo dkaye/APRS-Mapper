@@ -66,7 +66,7 @@ struct LatestView: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding(.horizontal, 4)
     }
-    .navigationTitle("MARS APRS")
+    .navigationTitle("APRS Map")
   }
 }
 

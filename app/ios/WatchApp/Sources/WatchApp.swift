@@ -1,4 +1,4 @@
-/// Entry point for the MARS APRS watchOS companion.
+/// Entry point for the APRS Map watchOS companion.
 ///
 /// The watch is a nearly hands-free extension of the phone's microphone and speaker:
 /// it announces inbound messages (haptic, tone, spoken text), and — from Phase 2 —
