@@ -1056,8 +1056,8 @@ Pi, accessible at `https://marsaprs.org/<path>`.
 elapsed time and breadcrumb history), courses, aid stations, iGates, and map backgrounds.
 Hovering a tracker or breadcrumb dot shows its APRS path (iGates/digipeaters the packet
 traveled). Breadcrumbs are filtered: consecutive duplicate positions and positions within
-100 feet of the previous breadcrumb are suppressed. The breadcrumb trail shows up to 10
-positions as dots on a dashed line with directional arrows; the trail updates automatically
+100 feet of the previous breadcrumb are suppressed. The breadcrumb trail shows up to
+`breadcrumb_count` positions as dots on a dashed line with directional arrows; the trail updates automatically
 as the selected tracker moves. Aid station and iGate tooltips include an optional callsign.
 A scale bar in the lower-right corner toggles between miles/feet and kilometers/meters when
 clicked. Kiosk mode removes controls for unattended display use.
@@ -1188,11 +1188,37 @@ All messaging state lives in one SQLite database, `/var/lib/marsaprs/messages.db
 |-------|---------|
 | `participants` | One row per addressable party per event — mobiles (keyed by callsign) and operators (keyed by unique name). Holds `display_name`, `short_id`, `token`, `last_seen`, and last-known `lat`/`lon`/`pos_ts`. |
 | `conversations` | A `direct`, `group`, or `broadcast` thread, with a `member_hash` so a given set of participants maps to exactly one conversation. |
-| `conversation_members` | Membership join between conversations and participants. |
+| `conversation_members` | Membership join between conversations and participants. **Empty for broadcast conversations** — see below. |
 | `messages` | The messages: monotonic `id` (the wire id for `since_id` polling), `event`, `conversation_id`, `sender_id`, `ts`, `text`, sender `lat`/`lon`/`pos_ts`, `broadcast`, and photo columns (`attachment`, `attach_w`, `attach_h`). |
 | `deliveries` | Per-recipient row for each message with `delivered_ts` / `read_ts` — this is the inbox, the unread count, and the delivery/read receipts. Replaces the old `pending_msgs` queue. |
 
 **Message IDs are monotonic.** Each client polls with a `since_id` watermark, so ids must never go backwards; the DB assigns them from an always-increasing sequence and **Delete All Messages** does not reset it.
+
+**One person, several phones: entities.** A volunteer may carry two devices (a phone and a spare, iPhone and Android). Each is a separate mobile session with its own callsign, so without help they appear as two recipients and two threads. Everyone sharing **both `display_id` and name** is treated as one **entity**:
+
+| Case | Picker shows | Addressed as |
+|---|---|---|
+| CRD Stanton on two phones | one row, "2 devices" | `ent:CRD\|Stanton` → both |
+| LKL Dirck + LKL Jerry | two rows **plus** "LKL (multiple)" | `mult:LKL` → everyone at LKL |
+
+`display_id` is the grouping key **by design** — it is operator-editable in the Admin UI (`?setdisplayid`) and is routinely edited to make this merging possible. The underlying callsign never changes and remains the APRS identity.
+
+**Entity threads are keyed to the entity, not to the device set.** `resolveEntityConversation()` builds `member_hash` from `<operatorId>|ent:<display_id>\x1f<name>`, so a phone going offline, coming back, or a third being added never forks the conversation — which hashing the participant set would do. Delivery is re-resolved from the live tracker feed on every send, including replies, so a device whose `display_id` was edited away stops receiving even though it stays a historical member. Threads are per-operator: two operators messaging the same entity get their own conversations, exactly as with a direct thread.
+
+Kinds are distinct: `entity` is one person (receipts collapse — any phone acknowledging counts as delivered/read), `entity_multi` is several people sharing a station (keeps "N of M").
+
+**Merging folds prior history in, reversibly.** When an entity thread is resolved, `migrateThreadsIntoEntity()` moves the operator's earlier one-to-one messages with those devices into it — otherwise merging two phones leaves a second, stale "CRD Stanton" in the conversation list. Two safeguards:
+
+- **Guarded to true 1:1 threads** whose only non-operator member is one of the entity's devices. Group, broadcast, and mobile-to-mobile threads are never touched, so a mistyped `display_id` cannot pull in an unrelated conversation. This is not theoretical — testing against live data, the guard correctly declined to migrate a "Stanton + Rich" thread between two mobiles.
+- **Every moved row records `prev_conversation_id` and `merged_ts`**, so `undoMerge()` reverses a bad merge exactly. The log is not optional: the tempting alternative signal — one delivery row means pre-merge, several mean post-merge — collapses whenever a device was offline at send time, which is the normal case for the multi-device people this feature serves.
+
+Emptied threads are **hidden, not deleted** (`conversationsFor()` skips conversations with no messages). Deleting them orphaned the history on undo — the messages returned to a `conversation_id` whose row no longer existed.
+
+The mobile app needs no change for any of this: `?messaging=participants` returns entity-grouped rows keyed `ent:`/`mult:`, and the app already renders `short_id + name` and sends `p.key` back. That endpoint also now filters to addressable participants only (mobiles with a live session in the last 24 h, operators seen in the last 24 h); it previously returned the entire never-pruned participants table, which is what filled the app's picker with one volunteer repeated across four old sessions.
+
+**Broadcast access is decided by kind, not membership.** Direct and group conversations are keyed by `member_hash` — the member set *is* the identity, so whoever finds one is already in it. The broadcast conversation is different: its hash is the constant `'*'`, so a single row is shared by the whole event, and it therefore records **no members at all**. Access goes through `canAccessConversation()`, which admits any participant in the event; `isConversationMember()` remains a literal membership test for callers that need one (such as the mobile reply-routing path, which deliberately skips broadcasts). `conversationsFor()` likewise unions the broadcast thread in for every participant.
+>
+> This matters because membership and delivery must not disagree. `conversationRecipients()` fans a broadcast out to every participant, so everyone gets a `deliveries` row and their client rings the alert tone. If the thread were membership-gated, those recipients would be refused when they tried to open it — the message would arrive audibly and be unreadable. That was a real failure during Dirt Fondo 2026: `findOrCreateConversation()` wrote members only on the *creation* path, so the event's one broadcast conversation listed only the operator who happened to send the first announcement. Every later broadcast reused that row, mobiles got `403 Not a member of this conversation`, and on the sender's screen the thread rendered as a direct chat with that first operator instead of **All Trackers**.
 
 **Photos.** An attached image is stored as a file under `/var/lib/marsaprs/photos/<event>/` (private, owned by `www-data`), with the message row referencing it and `attach_w`/`attach_h` recording its dimensions. Photos are served only through the auth-gated `?messaging=photo&id=&token=` endpoint (never a public path), validated with `getimagesize` and capped at 12 MB. The server has no image library, so the mobile client downscales before upload. Deleting an event's messages (or **Delete All Messages**) removes the event's photo directory too, and an event backup/export bundles both the messages and the photos.
 
@@ -1226,7 +1252,7 @@ The app's **Message** (💬) button opens a **chat screen** mirroring the web pa
 
 ## Analyzer
 
-The Analyzer is a separate Flask web application served at `/analyzer/` that records APRS beacons into a local SQLite database during an event and provides an interactive playback and analysis map. It is the only interface that preserves a historical record of all positions received — the main map only retains the 10 most recent breadcrumbs per tracker. The Analyzer is intended for post-event analysis, coverage review, and real-time monitoring of beacon reception quality.
+The Analyzer is a separate Flask web application served at `/analyzer/` that records APRS beacons into a local SQLite database during an event and provides an interactive playback and analysis map. It is the only interface that preserves a historical record of all positions received — the main map only retains the most recent `breadcrumb_count` breadcrumbs per tracker (10–100). The Analyzer is intended for post-event analysis, coverage review, and real-time monitoring of beacon reception quality.
 
 ### Analyzer Architecture
 
@@ -1273,13 +1299,28 @@ no password modal is shown.
 
 `aprs_daemon.py` connects to `noam.aprs2.net:14580` with an APRS-IS filter string built from all callsigns in the current event's configuration (trackers from `config.yaml`, mobile participants from `mobile_trackers.json`). It is managed by `analyzer-daemon.service` and controlled from the Analyzer UI by users with the admin password.
 
+**Which event beacons are recorded against.** Always the current event — the one named by `event:` in `config.yaml` (the symlink to `events/<name>/event.yaml`). The event roster lives in the Admin UI, which does not write to `aprs.db`, so an event that has never been recorded has no row in the `events` table yet. Both recorders (and the Analyzer page itself) create that row on demand via `ensure_event()`, so **creating an event in the Admin UI is all the setup required** — there is no separate database step. `events.start_time` records when the event was first seen and is informational only; `end_time` is unused.
+
+**There is no recording time window.** Recording runs for exactly as long as the services run, and the **Record** control in the Analyzer UI is the only start/stop. Earlier versions gated recording on `events.start_time`/`end_time`, but nothing in `event.yaml` ever supplied those values — an event with no database row silently fell back to a ten-minute window and wrote its beacons with a `NULL` `event_id`, where no query could see them. Both recorders now refuse to start rather than record against no event.
+
 **What is recorded:** For each received packet that matches a tracked callsign: callsign, latitude, longitude, Unix timestamp, receiving station (iGate), and the full APRS path string. Stored in the `beacons` table of `aprs.db` (SQLite), keyed to the current event by `event_id`.
 
 **Deduplication:** Consecutive beacons for the same callsign at the same position within a short interval are collapsed during the `get_ordered_deduplicated_beacons()` query so they don't clutter the playback trail. The query dedupes per callsign and then returns the list **sorted globally by time**, so the playback range maps its list-index sliders directly to a chronological window (see Map & Controls).
 
+**Why `position_tolerance` is 0.0001 (~11 m).** When one of our own iGates is also the first gate to reach APRS-IS, both recorders log the same beacon, and the two feeds report its position differently. The public APRS-IS feed carries uncompressed `DDMM.mm` positions, quantized to 1/100 minute (`1.6667e-4°`), while `relay_daemon.py` reads full precision from the relay capture:
+
+```
+public APRS-IS:  37.97983333333333, -122.5775      (1/100-minute grid)
+relay capture:   37.979808,         -122.577478    (full precision)
+```
+
+Rounding to nearest bounds the disagreement at half a quantization step — **`8.333e-5°`** — and measurement across 63 real pairs found a maximum of exactly `8.33e-5`, matching the bound to every digit. A tolerance of `0.0001` therefore provably collapses every such pair (the former `0.00001` caught 2% of them, leaving the map drawing two markers a few metres apart). Widening is safe because `receiver` is part of the comparison, so beacons heard by *different* gates are never merged — which is the distinction the per-iGate recording exists to capture. Measured against real event traffic, the wider tolerance removed only cross-feed duplicates and thinned no legitimate trail: the morning's public-only rows deduped to 49 at both settings, with per-tracker counts identical.
+
+A timestamp-based dedup was considered and rejected. The two feeds do not agree on time either — `relay_daemon.py` stores `int(time.time())` from the **VPS** at gating time (truncated to whole seconds), while `aprs_daemon.py` stores `time.time()` on the **server Pi** at APRS-IS receipt (position packets carry no `timestamp` field, so the fallback always applies). The difference is always positive and small (median +0.59 s, max +1.12 s over 62 pairs — truncation loss plus propagation), but its safety margin rests on the minimum observed gap between consecutive beacons from one tracker (2.77 s), which is empirical. The position bound is structural, so it wins.
+
 **Aid stations as iGates:** Aid stations and rest stops that have an APRS callsign configured in the Admin UI are treated as iGates on the Analyzer map — their coordinates are loaded from `config.yaml`, their received packets are displayed with red receiver lines, and they appear as map markers alongside regular iGates.
 
-**Data persistence:** Beacon data is never deleted automatically. It persists across daemon restarts, page reloads, and server reboots until an operator explicitly uses **Erase All Data** (admin password + two-step confirmation). The SQLite database is excluded from the deploy rsync so a new deployment never wipes event data.
+**Data persistence:** Beacon data is never deleted automatically. It persists across daemon restarts, page reloads, and server reboots until an operator explicitly uses **Erase All Data** (admin password + two-step confirmation). **Erase All Data is scoped to the current event** — it deletes only rows carrying that event's `event_id`, so recordings from other events are never touched. The SQLite database is excluded from the deploy rsync so a new deployment never wipes event data.
 
 **Per-iGate recording (undeduped, from the aggregation relay).** `aprs_daemon.py`
 above reads the *public* APRS-IS feed, which is **de-duplicated** — so each beacon
@@ -2028,8 +2069,9 @@ events/
 config.yaml → events/Dipsea 2026/event.yaml   (symlink)
 ```
 
-`tracker_history.yaml` — auto-generated by `aprsDaemon.php`. Stores the 10 most-recent
-beacon positions per tracker. Pruned when a tracker is removed from the config. Also pruned for a mobile participant's callsign when they start a new session (`?mobile=join`), so stale breadcrumbs from a prior session never appear.
+`tracker_history.yaml` — auto-generated by `aprsDaemon.php`. Stores the most-recent beacon positions per tracker. Pruned when a tracker is removed from the config. Also pruned for a mobile participant's callsign when they start a new session (`?mobile=join`), so stale breadcrumbs from a prior session never appear.
+
+**Retention follows `breadcrumb_count`.** The daemon keeps `$breadcrumbRetain` positions per tracker — read from `breadcrumb_count` in `config.yaml` on every config reload, clamped to 10–100. **The daemon is the binding limit:** both clients ask for `breadcrumb_count` points and can only draw what the daemon stored, so retention must be at least as large as the slider. This was formerly hard-coded to 10 in four places while the Admin slider ranged to 100, which silently clipped every trail to 10 dots on the web map and the iOS app alike no matter what the slider said. Raising the slider takes effect on the next config reload without a daemon restart, but only fills going forward — discarded positions cannot be recovered.
 
 **Startup ordering note:** `loadMobileSessions()` must run before `readTrackerHistoryFile()` at daemon startup. `loadMobileSessions()` calls `unset($trackerHistory[$cs])` for any callsign not yet in `$trackers`; if history were loaded first, all mobile callsigns would be cleared (they are absent from `$trackers` until `loadMobileSessions()` adds them). Running sessions load first makes the `unset()` calls harmless (the array is still empty).
 
@@ -2489,7 +2531,12 @@ npm install                     # installs Jest into map/tests/js/node_modules/
 ```
 
 Both tools are listed as dev dependencies (`composer.json` / `map/tests/js/package.json`) and
-are excluded from the production server via `sync-to-pi.sh`.
+are excluded from the production server — `tests/` and `vendor/` are in the exclude list of
+**both** `sync-to-pi.sh` and `server/deploy.sh`. Keep the two lists in step: `deploy.sh` lacked
+these two exclusions until 2026-08-08, so a full deploy pushed ~49 MB of PHPUnit and test
+fixtures into the live web root, where individual files were served (directory listings were
+not — Apache returns 403). There are no production Composer dependencies at all; `composer.json`
+is `require-dev` only, so nothing at runtime needs `vendor/`.
 
 ### Running the PHP tests
 
@@ -2499,14 +2546,14 @@ From `map/`:
 ./vendor/bin/phpunit -c tests/phpunit.xml
 ```
 
-Expected output: `OK (88 tests, 156 assertions)`
+Expected output: `OK (90 tests, 159 assertions)`
 
 | Test class | What it covers |
 |------------|----------------|
 | `AprsParserTest` | `parseAprsPosition()` — uncompressed, Base91 compressed, and Mic-E position formats; malformed packets |
 | `ConfigParseTest` | `parseConfigYaml()` and `yamlScalar()` — all config sections, edge cases, missing files |
 | `YamlLibTest` | `yaml_lib.php` — `yamlVal`, `yamlStr`, `loadDevices`/`saveDevices` roundtrip |
-| `TrackerHistoryTest` | `readTrackerHistoryFile()` / `writeTrackerHistoryFile()` — roundtrip, 10-entry cap, missing file |
+| `TrackerHistoryTest` | `readTrackerHistoryFile()` / `writeTrackerHistoryFile()` — roundtrip, the `breadcrumb_count`-driven retention cap (including counts above 10), missing file |
 | `AdminConfigTest` | `buildConfigYaml()` → `parseConfigYaml()` roundtrip — all sections, special chars, booleans |
 
 Test files live in `map/tests/php/`. Fixtures (sample YAML files) are in `map/tests/fixtures/`.

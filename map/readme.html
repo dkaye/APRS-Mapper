@@ -207,6 +207,7 @@
 <li><a href="#aprs-server-v1211">APRS Server (v1.21.1)</a></li>
 <li><a href="#cloudflare-tunnel">Cloudflare Tunnel</a></li>
 <li><a href="#display-pis-v1211">Display Pis (v1.21.1)</a></li>
+<li><a href="#running-a-display-pi-on-starlink">Running a display Pi on Starlink</a></li>
 <li><a href="#mobile-apps-v1211">Mobile Apps (v1.21.1)</a></li>
 <li><a href="#app-architecture">Architecture</a> · <a href="#location-sharing-flow">Location Sharing Flow</a> · <a href="#smart-track">Smart Track</a> · <a href="#building-distributing">Building &amp; Distributing</a> · <a href="#background-location">Background Location</a></li>
 <li><a href="#user-interfaces">User Interfaces</a></li>
@@ -682,6 +683,22 @@ connection at a time and pipes bytes transparently in both directions:</p>
 </ul>
 <p>Configuration is <code>isproxy.json</code>; a live status file <code>isproxy.status.json</code> records which
 upstream is currently in use (<code>primary</code>/<code>fallback</code>).</p>
+<p><strong>Reconnect (fixed 2026-08-07, commit <code>e77e8cc</code>).</strong> The shutdown flag for a direwolf session
+was never cleared when that session ended, so every reconnect after the first was a no-op:
+<code>handle_direwolf</code> still ran — banner, cached login, synthetic logresp, which is why the logs
+looked half-alive — but the upstream supervisor's <code>while not self.stop</code> exited immediately and
+no upstream was ever opened. The gate then churned (connect, login, drop) every ~15 s without
+gating anything.</p>
+<p><code>auto-update.sh</code> restarts <code>igate-isproxy</code> <strong>before</strong> direwolf, so the proxy's first session is
+the <em>outgoing</em> direwolf, killed seconds later by that restart — meaning <strong>every nightly update
+wedged every relay-enrolled gate</strong> until someone restarted the service by hand. The fix clears
+the flag per session, with a session counter so a session that is closing down cannot clear it
+out from under a newer one that has already taken over.</p>
+<p><code>igate/tests/test_isproxy.py</code> drives two sequential direwolf sessions against a fake APRS-IS
+and asserts both reach the upstream; it fails on the old code and passes on the new. This
+matters most for the cellular gates, whose NetBird is disabled by policy most of the time — a
+wedged proxy there stops gating <em>and</em> leaves no way in until NetBird is toggled on from the
+server and the next 5-minute <code>check-netbird.sh</code> poll runs.</p>
 <h3 id="turning-it-on-or-off-for-a-gate">Turning it on or off for a gate</h3>
 <p>Activation is <strong>sentinel-guarded</strong> so nothing changes on a gate unless we ask. The proxy
 files ship to every gate but stay <strong>inert</strong> until the sentinel exists:</p>
@@ -915,14 +932,93 @@ sets cursor size via <code>XCURSOR_SIZE=48</code>, and passes <code>--user-data-
 Chromium cache/state in RAM (tmpfs).</p>
 <p><strong>Operator auto-login:</strong> If <code>~/autologin.txt</code> exists, <code>start-kiosk.sh</code> appends <code>?autologin</code>
 to the URL; if line 1 contains an operator name, it also appends <code>&amp;operator=&lt;name&gt;</code> for
-automatic messaging subscription. The server handles <code>?autologin</code> by setting a PHP session
-for the current event and redirecting to the clean URL, with messaging credentials embedded
-as JS globals for auto-subscribe.</p>
+automatic messaging subscription. A <strong>blank</strong> first line means "use this machine's hostname",
+so a fresh install is correct without anyone editing the file. The server handles
+<code>?autologin</code> by setting a PHP session for the current event and redirecting to the clean
+URL, with messaging credentials embedded as JS globals for auto-subscribe.</p>
+<p><code>configure.sh</code> prompts for the operator name alongside the hostname and writes this file.
+That pairing exists because the two used to be set independently: a display renamed to
+NetControl on 2026-08-07 carried on announcing itself to the app as <code>BigTV</code> for the rest of
+the day, because nothing updated <code>autologin.txt</code> when the hostname changed. With two
+displays in the fleet, both claiming one operator name breaks messaging auto-subscribe.</p>
+<p><strong>Single kiosk instance:</strong> several things launch the kiosk — the LXDE autostart at login,
+<code>aprs-monitor</code> when it switches pages or finds no browser, and hands at the keyboard — and
+nothing used to stop them stacking up. Two browsers loading the same map means double the
+tile requests and double the CPU, which presents as a slow display on a perfectly healthy
+network. <code>start-kiosk.sh</code> now refuses to start a second instance (a pre-flight check plus
+<code>flock</code> to close the race). Chromium's own protection had been disabled by an <code>rm</code> of its
+Singleton files, which was itself aimed at <code>~/.config/chromium</code> while the browser runs with
+<code>--user-data-dir=/tmp/chromium</code> — so it had been guarding nothing.</p>
+<blockquote>
+<p>Counting kiosk instances is subtler than it looks. Matching <code>--kiosk</code> on the command line
+also matches Chromium's renderers and zygote, and the <code>flock</code> wrapper, since all of them
+carry the flag. A correct count requires the executable itself to be <code>chromium</code> <strong>and</strong> the
+process not to be a child (no <code>--type=</code>).</p>
+</blockquote>
 <p><strong>Cursor size:</strong> 48 px via <code>XCURSOR_SIZE=48</code> in <code>start-kiosk.sh</code> (applied before Chromium),
 reinforced by <code>~/.Xresources</code> (<code>Xcursor.size: 48</code>) loaded via <code>@xrdb</code> in the LXDE autostart.</p>
 <p><strong>SD card I/O:</strong> Chromium profile to <code>/tmp/chromium</code> (tmpfs); journald <code>Storage=volatile</code>
 keeps journal entries in RAM. Both configured via <code>files.tar.gz</code> and <code>install.sh</code>.</p>
 <p><strong>SSH:</strong> <code>ssh pi@&lt;ip&gt;</code> · Password: <code>guacamole</code> · VNC: <code>vnc://&lt;ip&gt;:5901</code></p>
+<h3 id="running-a-display-pi-on-starlink">Running a display Pi on Starlink</h3>
+<p>Both display Pis share one Starlink terminal. A day of measurement (2026-08-07, ~300 samples
+at 1/min plus 20 instrumented reboots) produced the following, and the reasoning matters more
+than the settings because the symptoms are all misleading.</p>
+<p><strong>Diagnose power before anything else.</strong> A Pi 4 that reboots in a loop, reaching "Welcome to
+Desktop" and then resetting silently — no panic, no log, the journal simply stops — is
+browning out, not crashing. It fails at desktop start because that is peak draw: GPU,
+compositor, Chromium and WiFi all at once. Confirm from the hardware, not the symptoms:</p>
+<pre><code class="language-bash">vcgencmd get_throttled      # 0x0 = healthy
+                            # bits 0-2 = happening now; bits 16-18 = since boot (latched)
+dmesg | grep -i undervoltage
+</code></pre>
+<p>Two supplies were inadequate before one worked, and the second failed <em>progressively</em>
+(undervoltage events 3 → 6 → 12 in three minutes) without looping. <strong>Use a 61 W USB-C supply</strong>
+with a short, thick cable directly into a wall socket. Moving the SD card to a different Pi 4
+changed nothing — the board was never at fault.</p>
+<p><strong>Strong signal does not mean a working link.</strong> The most expensive wrong turn of the day was
+trusting signal strength. A display measured <code>-49 dBm</code>, 72 Mbit/s negotiated and <em>zero</em> tx
+failures while showing <strong>2.7-second round trips to its own gateway</strong> — every static indicator
+healthy, the link unusable. The cause was airtime contention: it sat 24 inches from another
+AP occupying the same 2.4 GHz channel. Relocating the display fixed it; no Pi-side setting
+could have.</p>
+<blockquote>
+<p><strong>The single most useful check:</strong> ping the device's <em>own gateway</em> <strong>from the device</strong>. A LAN
+hop must be under ~5 ms at 0% loss. That one number separates "the WiFi is broken" from
+"the WAN is slow" from "the server is slow", and nothing else does it as quickly.</p>
+</blockquote>
+<p><strong>Prefer Ethernet where it exists.</strong> A display wired to the router sidesteps this entire
+section — band steering, co-channel contention, roaming to a stronger AP, and WiFi/Bluetooth
+coexistence all stop applying. Route metrics handle it automatically (<code>eth0</code> at 100 beats
+<code>wlan0</code> at 600), and WiFi stays associated as a silent fallback if the cable is pulled. The
+WiFi logic below stands down on its own: <code>wifi-band-pin.sh</code> exits immediately unless <code>wlan0</code>
+actually carries the default route, because every measurement it makes pings the default
+gateway and would otherwise be judging the radio using the cable's numbers.</p>
+<blockquote>
+<p>Check the negotiated speed after wiring one up: <code>dmesg | grep 'eth0: Link is'</code>. A display
+here first came up at <strong>10 Mbps half duplex</strong> — the signature of a damaged cable or bad
+crimp — and would have carried map tiles well enough to look fine while being one knock
+from dropping. A replacement cable gave 1 Gbps full duplex.</p>
+</blockquote>
+<p><strong>WiFi power save is disabled</strong> on every profile <code>update-wifi.php</code> creates. NetworkManager
+leaves it on by default, which parks the radio between beacons and delays <em>inbound</em> packets
+specifically — so a device stays reachable outbound while inbound traffic stalls, which looks
+like anything but a power-save setting. On a marginal signal it costs hundreds of milliseconds.</p>
+<p><strong>Band selection is measured, not assumed</strong> — see <code>wifi-band-pin.sh</code>. 5 GHz was unusable at
+this site (<code>-73 dBm</code>, 100% packet loss) despite negotiating 351–390 Mbit/s, while 2.4 GHz on a
+clear channel gave 0% loss at 3 ms. Starlink picks its own channels and moved between 1, 6, 11
+and 153 during a single day, so neither band can be trusted in advance and a good choice does
+not stay good.</p>
+<p><strong>Warm boot is reliable; cold power-on is where faults appear.</strong> Twenty instrumented reboots
+produced a rendered map in <strong>20–21 seconds every time</strong> — zero failures, zero kiosk restarts,
+zero roams. The startup failures that prompted the investigation were all cold power-on, which
+draws far more current than <code>systemctl reboot</code>. If a display misbehaves at startup, test with
+a cold power-cycle; a warm reboot will not reproduce it.</p>
+<p><strong>A cloned SD card carries the source machine's identity.</strong> It brings the NetBird enrolment
+(two peers sharing one identity flap endlessly), <code>/var/lib/bluetooth/&lt;adapter&gt;/</code> (a Bluetooth
+mouse paired to the <em>previous</em> Pi fails with <code>ConnectionAttemptFailed: Page Timeout</code>, and no
+amount of resetting the mouse helps — the stale bond is on the Pi), plus hostname,
+<code>autologin.txt</code>, SSH host keys and machine-id. Prefer a fresh <code>install.sh</code> per device.</p>
 <p>For details on using the map, see <a href="https://marsaprs.org/userguide.html?back=/readme.html">USERGUIDE.MD</a>.</p>
 <hr />
 <h2 id="mobile-apps-v1211">Mobile Apps (v1.21.1)</h2>
@@ -1353,8 +1449,8 @@ Pi, accessible at <code>https://marsaprs.org/&lt;path&gt;</code>.</p>
 elapsed time and breadcrumb history), courses, aid stations, iGates, and map backgrounds.
 Hovering a tracker or breadcrumb dot shows its APRS path (iGates/digipeaters the packet
 traveled). Breadcrumbs are filtered: consecutive duplicate positions and positions within
-100 feet of the previous breadcrumb are suppressed. The breadcrumb trail shows up to 10
-positions as dots on a dashed line with directional arrows; the trail updates automatically
+100 feet of the previous breadcrumb are suppressed. The breadcrumb trail shows up to
+<code>breadcrumb_count</code> positions as dots on a dashed line with directional arrows; the trail updates automatically
 as the selected tracker moves. Aid station and iGate tooltips include an optional callsign.
 A scale bar in the lower-right corner toggles between miles/feet and kilometers/meters when
 clicked. Kiosk mode removes controls for unattended display use.</p>
@@ -1551,7 +1647,7 @@ admin actions are gated by the user-account permission system.</p>
 </tr>
 <tr>
 <td><code>conversation_members</code></td>
-<td>Membership join between conversations and participants.</td>
+<td>Membership join between conversations and participants. <strong>Empty for broadcast conversations</strong> — see below.</td>
 </tr>
 <tr>
 <td><code>messages</code></td>
@@ -1564,6 +1660,42 @@ admin actions are gated by the user-account permission system.</p>
 </tbody>
 </table>
 <p><strong>Message IDs are monotonic.</strong> Each client polls with a <code>since_id</code> watermark, so ids must never go backwards; the DB assigns them from an always-increasing sequence and <strong>Delete All Messages</strong> does not reset it.</p>
+<p><strong>One person, several phones: entities.</strong> A volunteer may carry two devices (a phone and a spare, iPhone and Android). Each is a separate mobile session with its own callsign, so without help they appear as two recipients and two threads. Everyone sharing <strong>both <code>display_id</code> and name</strong> is treated as one <strong>entity</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Case</th>
+<th>Picker shows</th>
+<th>Addressed as</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CRD Stanton on two phones</td>
+<td>one row, "2 devices"</td>
+<td><code>ent:CRD\|Stanton</code> → both</td>
+</tr>
+<tr>
+<td>LKL Dirck + LKL Jerry</td>
+<td>two rows <strong>plus</strong> "LKL (multiple)"</td>
+<td><code>mult:LKL</code> → everyone at LKL</td>
+</tr>
+</tbody>
+</table>
+<p><code>display_id</code> is the grouping key <strong>by design</strong> — it is operator-editable in the Admin UI (<code>?setdisplayid</code>) and is routinely edited to make this merging possible. The underlying callsign never changes and remains the APRS identity.</p>
+<p><strong>Entity threads are keyed to the entity, not to the device set.</strong> <code>resolveEntityConversation()</code> builds <code>member_hash</code> from <code>&lt;operatorId&gt;|ent:&lt;display_id&gt;\x1f&lt;name&gt;</code>, so a phone going offline, coming back, or a third being added never forks the conversation — which hashing the participant set would do. Delivery is re-resolved from the live tracker feed on every send, including replies, so a device whose <code>display_id</code> was edited away stops receiving even though it stays a historical member. Threads are per-operator: two operators messaging the same entity get their own conversations, exactly as with a direct thread.</p>
+<p>Kinds are distinct: <code>entity</code> is one person (receipts collapse — any phone acknowledging counts as delivered/read), <code>entity_multi</code> is several people sharing a station (keeps "N of M").</p>
+<p><strong>Merging folds prior history in, reversibly.</strong> When an entity thread is resolved, <code>migrateThreadsIntoEntity()</code> moves the operator's earlier one-to-one messages with those devices into it — otherwise merging two phones leaves a second, stale "CRD Stanton" in the conversation list. Two safeguards:</p>
+<ul>
+<li><strong>Guarded to true 1:1 threads</strong> whose only non-operator member is one of the entity's devices. Group, broadcast, and mobile-to-mobile threads are never touched, so a mistyped <code>display_id</code> cannot pull in an unrelated conversation. This is not theoretical — testing against live data, the guard correctly declined to migrate a "Stanton + Rich" thread between two mobiles.</li>
+<li><strong>Every moved row records <code>prev_conversation_id</code> and <code>merged_ts</code></strong>, so <code>undoMerge()</code> reverses a bad merge exactly. The log is not optional: the tempting alternative signal — one delivery row means pre-merge, several mean post-merge — collapses whenever a device was offline at send time, which is the normal case for the multi-device people this feature serves.</li>
+</ul>
+<p>Emptied threads are <strong>hidden, not deleted</strong> (<code>conversationsFor()</code> skips conversations with no messages). Deleting them orphaned the history on undo — the messages returned to a <code>conversation_id</code> whose row no longer existed.</p>
+<p>The mobile app needs no change for any of this: <code>?messaging=participants</code> returns entity-grouped rows keyed <code>ent:</code>/<code>mult:</code>, and the app already renders <code>short_id + name</code> and sends <code>p.key</code> back. That endpoint also now filters to addressable participants only (mobiles with a live session in the last 24 h, operators seen in the last 24 h); it previously returned the entire never-pruned participants table, which is what filled the app's picker with one volunteer repeated across four old sessions.</p>
+<p><strong>Broadcast access is decided by kind, not membership.</strong> Direct and group conversations are keyed by <code>member_hash</code> — the member set <em>is</em> the identity, so whoever finds one is already in it. The broadcast conversation is different: its hash is the constant <code>'*'</code>, so a single row is shared by the whole event, and it therefore records <strong>no members at all</strong>. Access goes through <code>canAccessConversation()</code>, which admits any participant in the event; <code>isConversationMember()</code> remains a literal membership test for callers that need one (such as the mobile reply-routing path, which deliberately skips broadcasts). <code>conversationsFor()</code> likewise unions the broadcast thread in for every participant.</p>
+<blockquote>
+<p>This matters because membership and delivery must not disagree. <code>conversationRecipients()</code> fans a broadcast out to every participant, so everyone gets a <code>deliveries</code> row and their client rings the alert tone. If the thread were membership-gated, those recipients would be refused when they tried to open it — the message would arrive audibly and be unreadable. That was a real failure during Dirt Fondo 2026: <code>findOrCreateConversation()</code> wrote members only on the <em>creation</em> path, so the event's one broadcast conversation listed only the operator who happened to send the first announcement. Every later broadcast reused that row, mobiles got <code>403 Not a member of this conversation</code>, and on the sender's screen the thread rendered as a direct chat with that first operator instead of <strong>All Trackers</strong>.</p>
+</blockquote>
 <p><strong>Photos.</strong> An attached image is stored as a file under <code>/var/lib/marsaprs/photos/&lt;event&gt;/</code> (private, owned by <code>www-data</code>), with the message row referencing it and <code>attach_w</code>/<code>attach_h</code> recording its dimensions. Photos are served only through the auth-gated <code>?messaging=photo&amp;id=&amp;token=</code> endpoint (never a public path), validated with <code>getimagesize</code> and capped at 12 MB. The server has no image library, so the mobile client downscales before upload. Deleting an event's messages (or <strong>Delete All Messages</strong>) removes the event's photo directory too, and an event backup/export bundles both the messages and the photos.</p>
 <h3 id="api-messaging-mapmessagingphp">API (<code>?messaging=…</code> → <code>map/messaging.php</code>)</h3>
 <table>
@@ -1620,7 +1752,7 @@ admin actions are gated by the user-account permission system.</p>
 <p>The app's <strong>Message</strong> (💬) button opens a <strong>chat screen</strong> mirroring the web panel: a <strong>Conversations</strong> list, threads, and a composer, with <strong>New message → Start conversation / Start group</strong> over the participant list (with Online/Offline presence). It sends text and <strong>photos</strong> (Take a photo / Choose from library), shows <strong>Delivered ✓</strong> / <strong>Read ✓✓</strong> receipts, and can <strong>Read arriving messages aloud</strong>. Background arrivals raise a notification with a distinct, insistent alert sound; tapping it opens the conversation. The app continues to satisfy the older <code>?mobile=</code> contract, so mixed-version fleets interoperate.</p>
 <hr />
 <h2 id="analyzer">Analyzer</h2>
-<p>The Analyzer is a separate Flask web application served at <code>/analyzer/</code> that records APRS beacons into a local SQLite database during an event and provides an interactive playback and analysis map. It is the only interface that preserves a historical record of all positions received — the main map only retains the 10 most recent breadcrumbs per tracker. The Analyzer is intended for post-event analysis, coverage review, and real-time monitoring of beacon reception quality.</p>
+<p>The Analyzer is a separate Flask web application served at <code>/analyzer/</code> that records APRS beacons into a local SQLite database during an event and provides an interactive playback and analysis map. It is the only interface that preserves a historical record of all positions received — the main map only retains the most recent <code>breadcrumb_count</code> breadcrumbs per tracker (10–100). The Analyzer is intended for post-event analysis, coverage review, and real-time monitoring of beacon reception quality.</p>
 <h3 id="analyzer-architecture">Analyzer Architecture</h3>
 <pre><code>APRS-IS (noam.aprs2.net:14580)
       │ TCP  (filtered to tracked callsigns)
@@ -1684,10 +1816,18 @@ on every request. Unauthenticated requests are redirected to <code>/auth/login.p
 no password modal is shown.</p>
 <h3 id="beacon-recording">Beacon Recording</h3>
 <p><code>aprs_daemon.py</code> connects to <code>noam.aprs2.net:14580</code> with an APRS-IS filter string built from all callsigns in the current event's configuration (trackers from <code>config.yaml</code>, mobile participants from <code>mobile_trackers.json</code>). It is managed by <code>analyzer-daemon.service</code> and controlled from the Analyzer UI by users with the admin password.</p>
+<p><strong>Which event beacons are recorded against.</strong> Always the current event — the one named by <code>event:</code> in <code>config.yaml</code> (the symlink to <code>events/&lt;name&gt;/event.yaml</code>). The event roster lives in the Admin UI, which does not write to <code>aprs.db</code>, so an event that has never been recorded has no row in the <code>events</code> table yet. Both recorders (and the Analyzer page itself) create that row on demand via <code>ensure_event()</code>, so <strong>creating an event in the Admin UI is all the setup required</strong> — there is no separate database step. <code>events.start_time</code> records when the event was first seen and is informational only; <code>end_time</code> is unused.</p>
+<p><strong>There is no recording time window.</strong> Recording runs for exactly as long as the services run, and the <strong>Record</strong> control in the Analyzer UI is the only start/stop. Earlier versions gated recording on <code>events.start_time</code>/<code>end_time</code>, but nothing in <code>event.yaml</code> ever supplied those values — an event with no database row silently fell back to a ten-minute window and wrote its beacons with a <code>NULL</code> <code>event_id</code>, where no query could see them. Both recorders now refuse to start rather than record against no event.</p>
 <p><strong>What is recorded:</strong> For each received packet that matches a tracked callsign: callsign, latitude, longitude, Unix timestamp, receiving station (iGate), and the full APRS path string. Stored in the <code>beacons</code> table of <code>aprs.db</code> (SQLite), keyed to the current event by <code>event_id</code>.</p>
 <p><strong>Deduplication:</strong> Consecutive beacons for the same callsign at the same position within a short interval are collapsed during the <code>get_ordered_deduplicated_beacons()</code> query so they don't clutter the playback trail. The query dedupes per callsign and then returns the list <strong>sorted globally by time</strong>, so the playback range maps its list-index sliders directly to a chronological window (see Map &amp; Controls).</p>
+<p><strong>Why <code>position_tolerance</code> is 0.0001 (~11 m).</strong> When one of our own iGates is also the first gate to reach APRS-IS, both recorders log the same beacon, and the two feeds report its position differently. The public APRS-IS feed carries uncompressed <code>DDMM.mm</code> positions, quantized to 1/100 minute (<code>1.6667e-4°</code>), while <code>relay_daemon.py</code> reads full precision from the relay capture:</p>
+<pre><code>public APRS-IS:  37.97983333333333, -122.5775      (1/100-minute grid)
+relay capture:   37.979808,         -122.577478    (full precision)
+</code></pre>
+<p>Rounding to nearest bounds the disagreement at half a quantization step — <strong><code>8.333e-5°</code></strong> — and measurement across 63 real pairs found a maximum of exactly <code>8.33e-5</code>, matching the bound to every digit. A tolerance of <code>0.0001</code> therefore provably collapses every such pair (the former <code>0.00001</code> caught 2% of them, leaving the map drawing two markers a few metres apart). Widening is safe because <code>receiver</code> is part of the comparison, so beacons heard by <em>different</em> gates are never merged — which is the distinction the per-iGate recording exists to capture. Measured against real event traffic, the wider tolerance removed only cross-feed duplicates and thinned no legitimate trail: the morning's public-only rows deduped to 49 at both settings, with per-tracker counts identical.</p>
+<p>A timestamp-based dedup was considered and rejected. The two feeds do not agree on time either — <code>relay_daemon.py</code> stores <code>int(time.time())</code> from the <strong>VPS</strong> at gating time (truncated to whole seconds), while <code>aprs_daemon.py</code> stores <code>time.time()</code> on the <strong>server Pi</strong> at APRS-IS receipt (position packets carry no <code>timestamp</code> field, so the fallback always applies). The difference is always positive and small (median +0.59 s, max +1.12 s over 62 pairs — truncation loss plus propagation), but its safety margin rests on the minimum observed gap between consecutive beacons from one tracker (2.77 s), which is empirical. The position bound is structural, so it wins.</p>
 <p><strong>Aid stations as iGates:</strong> Aid stations and rest stops that have an APRS callsign configured in the Admin UI are treated as iGates on the Analyzer map — their coordinates are loaded from <code>config.yaml</code>, their received packets are displayed with red receiver lines, and they appear as map markers alongside regular iGates.</p>
-<p><strong>Data persistence:</strong> Beacon data is never deleted automatically. It persists across daemon restarts, page reloads, and server reboots until an operator explicitly uses <strong>Erase All Data</strong> (admin password + two-step confirmation). The SQLite database is excluded from the deploy rsync so a new deployment never wipes event data.</p>
+<p><strong>Data persistence:</strong> Beacon data is never deleted automatically. It persists across daemon restarts, page reloads, and server reboots until an operator explicitly uses <strong>Erase All Data</strong> (admin password + two-step confirmation). <strong>Erase All Data is scoped to the current event</strong> — it deletes only rows carrying that event's <code>event_id</code>, so recordings from other events are never touched. The SQLite database is excluded from the deploy rsync so a new deployment never wipes event data.</p>
 <p><strong>Per-iGate recording (undeduped, from the aggregation relay).</strong> <code>aprs_daemon.py</code>
 above reads the <em>public</em> APRS-IS feed, which is <strong>de-duplicated</strong> — so each beacon
 carries only one <code>receiver</code> (the first iGate to gate it), and you can't see which of
@@ -1957,6 +2097,16 @@ services. If <code>direwolf.conf</code> has changed it restarts direwolf.</p>
 <p>To force an immediate update:</p>
 <pre><code class="language-bash">ssh pi@&lt;ip&gt; /home/pi/auto-update.sh
 </code></pre>
+<blockquote>
+<p><strong>Run it twice when upgrading from an older build.</strong> <code>auto-update.sh</code> downloads and
+overwrites <em>itself</em> partway through, so a device running an older copy applies only the
+blocks that existed in that older script. Anything newer — version stamping, IGLOGIN
+promotion, relay enrolment, added cron entries — does not run until the <strong>second</strong> pass.</p>
+<p>The symptom is a device that looks updated (<code>wc -c /home/pi/auto-update.sh</code> matches the
+current one) while <code>config.php</code> and <code>direwolf.conf</code> still report the old version and no
+relay sentinel appears. Just run it again. Seen across six gates on 2026-08-07 upgrading
+5.1 → 5.2.</p>
+</blockquote>
 <p>There is no backup for the iGates since their data are all temporary.</p>
 <hr />
 <h2 id="log-rotation">Log Rotation</h2>
@@ -2081,6 +2231,20 @@ needed (and none is available — the script would be served by the very Pi bein
 <li>Copy the SD card using <strong>Apple Pi Baker</strong> — this is the new display Pi master.</li>
 <li>Upload the image file to <strong><code>ftp.w6sg.net/APRS-SD-Masters</code></strong> for later cloning.</li>
 </ol>
+<blockquote>
+<p><strong>Cloning a master is safe; cloning a deployed device is not.</strong> Step 5 is what makes the
+difference — a master has never run <code>configure.sh</code>, so it carries no NetBird enrolment, no
+operator name and a placeholder hostname. A card taken from a <em>working</em> display brings all
+of that with it, plus <code>/var/lib/bluetooth/&lt;adapter&gt;/</code>: on 2026-08-07 a Bluetooth mouse
+paired to a previous Pi failed with <code>ConnectionAttemptFailed: Page Timeout</code> on the new one,
+and nothing done to the mouse could fix it, because the stale bond was on the Pi. Two peers
+sharing one NetBird identity flap endlessly. If you must clone a deployed card, scrub the
+NetBird enrolment, <code>/var/lib/bluetooth/*</code>, hostname, <code>autologin.txt</code>, SSH host keys and
+<code>machine-id</code> before first boot.</p>
+<p>Note the master will have <strong>no fleet WiFi list</strong>: <code>install.sh</code> skips that download unless
+<code>/home/pi/.wifi-token</code> already exists. Either add the token before step 4, or add it at
+deploy time and re-run <code>/home/pi/update-wifi.php</code>.</p>
+</blockquote>
 <h3 id="igates_1">iGates</h3>
 <ol>
 <li>Flash a fresh <strong>Raspberry Pi OS Desktop (64-bit, Trixie)</strong> to an SD card using
@@ -2644,8 +2808,8 @@ symlink to the active event's file. <code>aprsDaemon.php</code> and <code>index.
     └── 6_Mile.json
 config.yaml → events/Dipsea 2026/event.yaml   (symlink)
 </code></pre>
-<p><code>tracker_history.yaml</code> — auto-generated by <code>aprsDaemon.php</code>. Stores the 10 most-recent
-beacon positions per tracker. Pruned when a tracker is removed from the config. Also pruned for a mobile participant's callsign when they start a new session (<code>?mobile=join</code>), so stale breadcrumbs from a prior session never appear.</p>
+<p><code>tracker_history.yaml</code> — auto-generated by <code>aprsDaemon.php</code>. Stores the most-recent beacon positions per tracker. Pruned when a tracker is removed from the config. Also pruned for a mobile participant's callsign when they start a new session (<code>?mobile=join</code>), so stale breadcrumbs from a prior session never appear.</p>
+<p><strong>Retention follows <code>breadcrumb_count</code>.</strong> The daemon keeps <code>$breadcrumbRetain</code> positions per tracker — read from <code>breadcrumb_count</code> in <code>config.yaml</code> on every config reload, clamped to 10–100. <strong>The daemon is the binding limit:</strong> both clients ask for <code>breadcrumb_count</code> points and can only draw what the daemon stored, so retention must be at least as large as the slider. This was formerly hard-coded to 10 in four places while the Admin slider ranged to 100, which silently clipped every trail to 10 dots on the web map and the iOS app alike no matter what the slider said. Raising the slider takes effect on the next config reload without a daemon restart, but only fills going forward — discarded positions cannot be recovered.</p>
 <p><strong>Startup ordering note:</strong> <code>loadMobileSessions()</code> must run before <code>readTrackerHistoryFile()</code> at daemon startup. <code>loadMobileSessions()</code> calls <code>unset($trackerHistory[$cs])</code> for any callsign not yet in <code>$trackers</code>; if history were loaded first, all mobile callsigns would be cleared (they are absent from <code>$trackers</code> until <code>loadMobileSessions()</code> adds them). Running sessions load first makes the <code>unset()</code> calls harmless (the array is still empty).</p>
 <p><strong>Minimum-distance filter:</strong> Before appending a new breadcrumb, the daemon computes the haversine distance from the previous breadcrumb. If the new position is within 30.48 m (100 feet), it is discarded — <code>lastUpdate</code> is still updated (so the tracker doesn't appear stale), but no new breadcrumb is added and <code>trackers.json</code> position fields are not changed. This filter applies to both regular and mobile trackers and covers both web and native-app clients, since both read the same server-side files.</p>
 <p><strong>APRS-IS injection deduplication:</strong> <code>?mobile=update</code> now gates each call to <code>injectAprsPacket()</code> with a server-side dedup check. The last injected position and timestamp (<code>aprs_lat</code>, <code>aprs_lon</code>, <code>aprs_ts</code>) are stored per tracker in <code>mobile_trackers.json</code>. A new packet is injected only when the tracker has moved ≥ 30 m from the last injected position <strong>or</strong> ≥ 5 minutes have elapsed since the last injection (heartbeat). This does not affect what is stored, displayed, or returned to clients — every <code>?mobile=update</code> is still processed fully; only the outbound TCP connection to <code>noam.aprs2.net</code> is skipped when the position hasn't changed meaningfully.</p>
@@ -3393,12 +3557,17 @@ cd tests/js
 npm install                     # installs Jest into map/tests/js/node_modules/
 </code></pre>
 <p>Both tools are listed as dev dependencies (<code>composer.json</code> / <code>map/tests/js/package.json</code>) and
-are excluded from the production server via <code>sync-to-pi.sh</code>.</p>
+are excluded from the production server — <code>tests/</code> and <code>vendor/</code> are in the exclude list of
+<strong>both</strong> <code>sync-to-pi.sh</code> and <code>server/deploy.sh</code>. Keep the two lists in step: <code>deploy.sh</code> lacked
+these two exclusions until 2026-08-08, so a full deploy pushed ~49 MB of PHPUnit and test
+fixtures into the live web root, where individual files were served (directory listings were
+not — Apache returns 403). There are no production Composer dependencies at all; <code>composer.json</code>
+is <code>require-dev</code> only, so nothing at runtime needs <code>vendor/</code>.</p>
 <h3 id="running-the-php-tests">Running the PHP tests</h3>
 <p>From <code>map/</code>:</p>
 <pre><code class="language-bash">./vendor/bin/phpunit -c tests/phpunit.xml
 </code></pre>
-<p>Expected output: <code>OK (88 tests, 156 assertions)</code></p>
+<p>Expected output: <code>OK (90 tests, 159 assertions)</code></p>
 <table>
 <thead>
 <tr>
@@ -3421,7 +3590,7 @@ are excluded from the production server via <code>sync-to-pi.sh</code>.</p>
 </tr>
 <tr>
 <td><code>TrackerHistoryTest</code></td>
-<td><code>readTrackerHistoryFile()</code> / <code>writeTrackerHistoryFile()</code> — roundtrip, 10-entry cap, missing file</td>
+<td><code>readTrackerHistoryFile()</code> / <code>writeTrackerHistoryFile()</code> — roundtrip, the <code>breadcrumb_count</code>-driven retention cap (including counts above 10), missing file</td>
 </tr>
 <tr>
 <td><code>AdminConfigTest</code></td>

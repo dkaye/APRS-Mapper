@@ -470,7 +470,25 @@ Messaging opens as a **chat panel docked to the right of the map**, in two parts
 
 **Starting a conversation or group:**
 
-Click **New message**, then filter the list of **mobile trackers and other operators** with the **Search** box. Pick one recipient for a direct chat, several for a **group**, or choose **All Trackers** to broadcast to every mobile participant. You can also click a tracker in the sidebar to open a conversation already addressed to that participant. Radio-only trackers are not listed — they cannot receive messages.
+Click **New message**, then filter the list of **mobile trackers** with the **Search** box. Pick one recipient for a direct chat, several for a **group**, or choose **All Trackers** to broadcast to every mobile participant. You can also click a tracker in the sidebar to open a conversation already addressed to that participant. Radio-only trackers are not listed — they cannot receive messages.
+
+The list shows only participants you can actually reach: anyone whose app has checked in within the last 24 hours. Someone temporarily out of coverage still appears and can still be messaged — their phone receives everything the moment it reconnects — but people from a previous event drop off and no longer clutter the list. Searching still matches a callsign even though callsigns are not displayed.
+
+**One person carrying two phones:**
+
+A volunteer sometimes carries two devices — a phone and a spare, or an iPhone and an Android. Each device is a separate session, so without help they would appear twice in the list and you would never be sure which one to use.
+
+Instead, **two devices showing the same ID and the same name are treated as one person** and appear as a single row marked *2 devices*. Message them once and **both phones receive it** — so it doesn't matter which one they happen to be holding. When they reply, the message appears as coming from that one person, whichever device they used, and everything stays in a single conversation.
+
+This works because you control the **ID** — the short label like `CRD` or `LKL` that you set on the Admin page. Give a volunteer's second phone the same ID and name as the first, and from that moment they are one recipient. Their callsigns stay separate and unchanged behind the scenes, so APRS and the map are unaffected.
+
+If you had already been messaging one of the phones on its own, **that conversation is not lost** — its history moves into the merged conversation, so you keep one thread with the whole story rather than two.
+
+**Several people sharing one ID:**
+
+When one ID covers *different* people — say `LKL Dirck` and `LKL Jerry` are both at Lake Lagunitas — they each keep their own row, and you get one extra option: **LKL (multiple)**. Choose it to reach everyone at that location in a single message. Pick a person's own row instead when you want just them.
+
+Receipts reflect this. For one person with two phones, you see the ordinary **Delivered ✓** / **Read ✓✓** as soon as either phone has it — it is still one person. For an **(multiple)** conversation you see the group wording, **Delivered to 2 of 3**, because those really are separate people.
 
 **Sending:**
 
@@ -502,6 +520,8 @@ Operators using a Display Pi such as NetControl can be subscribed automatically 
 The app includes a full **chat screen** that mirrors the operators' panel. Open it with the **Message** (💬) button in the drawer footer (visible while sharing).
 
 **Conversations:** The screen opens on your **Conversations** list, each entry showing the other party and an unread count. Tap one to open its thread, or tap **New message** to **Start a conversation** with an operator — or **Start a group** with several people (search by name). Each participant shows **Online** / **Offline** presence.
+
+The people list shows only those you can reach — operators and participants active in the last 24 hours — so names left over from earlier events no longer appear. As on the operator panel, someone carrying **two phones** appears once and receives your message on both, and a location covering several people offers an **(multiple)** option that reaches all of them.
 
 **Sending:** Type up to 280 characters in the message box and tap **Send**. Tap **Attach photo** to **Take a photo** or **Choose from library**; the image sends with or without text, and either party can tap a photo to view it full-screen.
 
