@@ -119,6 +119,12 @@ class _MessagingScreenState extends State<MessagingScreen> {
     } catch (_) {}
   }
 
+  /// Speak a message, announcing the sender first — whoever is listening usually
+  /// is not looking at the screen, so the text alone leaves them without a caller.
+  /// senderLabel resolves a mobile through its display_id, giving "CRD Stanton".
+  Future<void> _speakMessage(MsgMessage m) =>
+      _speakText(m.senderLabel.trim().isEmpty ? m.text : 'Message from ${m.senderLabel}. ${m.text}');
+
   Future<void> _speakText(String text) async {
     if (!_speak || text.trim().isEmpty) return;
     try {
@@ -130,7 +136,7 @@ class _MessagingScreenState extends State<MessagingScreen> {
   void _speakDeferred(int convId) {
     if (!_speak || _deferredSpeak.isEmpty) return;
     for (final m in _messages) {
-      if (_deferredSpeak.remove(m.id)) _speakText(m.text);
+      if (_deferredSpeak.remove(m.id)) _speakMessage(m);
     }
   }
 
@@ -161,7 +167,7 @@ class _MessagingScreenState extends State<MessagingScreen> {
       _markRead([m.id]);
       _scrollToEnd();
       if (_speak) {
-        _speakText(m.text);
+        _speakMessage(m);
       } else {
         _playTone();
       }
@@ -307,6 +313,10 @@ class _MessagingScreenState extends State<MessagingScreen> {
           foregroundColor: Colors.white,
           titleSpacing: inThread ? 0 : null,
           title: Text(inThread ? _open!.label : 'Messages', overflow: TextOverflow.ellipsis),
+          // On the inbox there is nothing to go back TO — Close is the way out. Without
+          // this the AppBar auto-inserts a back arrow that calls maybePop(), which
+          // PopScope(canPop: false) swallows, leaving a visible button that does nothing.
+          automaticallyImplyLeading: false,
           leading: inThread ? IconButton(icon: const Icon(Icons.arrow_back), tooltip: 'Back to conversations', onPressed: _backToInbox) : null,
           actions: [
             IconButton(

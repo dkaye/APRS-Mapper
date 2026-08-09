@@ -466,7 +466,9 @@ An **Operator** is any web user who has subscribed to the messaging channel for 
 Messaging opens as a **chat panel docked to the right of the map**, in two parts:
 
 - **Conversations list** — every conversation you are part of, each with the other party's ID and name and an unread badge. Click one to open its thread.
-- **Thread + composer** — the selected conversation's messages, newest at the bottom, with an **always-visible message box** that is never covered by an incoming message. New messages appear live as they arrive — nothing to reload. Only your own conversations are shown; traffic between other operators and trackers is not.
+- **Resizing** — drag the **left edge** of the message window to make it wider or narrower, and drag the **divider** between the conversation list and the messages to rebalance them. Both are remembered for next time.
+
+**Thread + composer** — the selected conversation's messages, newest at the bottom, with an **always-visible message box** that is never covered by an incoming message. New messages appear live as they arrive — nothing to reload. Only your own conversations are shown; traffic between other operators and trackers is not.
 
 **Starting a conversation or group:**
 
@@ -518,7 +520,7 @@ Type up to 280 characters and press **Send**. To attach a **photo**, click the *
 
 **Delivery & read receipts:** Each message you send shows its status — **Delivered ✓** when it reaches the recipient's device and **Read ✓✓** once opened. In a group the status reads **Delivered to 2 of 3** / **Read by 1 of 3**.
 
-**Read aloud:** Toggle the **Read aloud** (speaker) button to have arriving messages spoken by the browser — handy for a hands-free net control station. When it is off, a short alert **tone** plays instead; a volume slider sets its level (0 mutes).
+**Read aloud:** Toggle the **Read aloud** (speaker) button to have arriving messages spoken by the browser. Each is announced as *“Message from CRD Stanton”* before the text, so you know who is calling without looking at the screen — handy for a hands-free net control station. When it is off, a short alert **tone** plays instead; a volume slider sets its level (0 mutes).
 
 **Settings** (in the panel): **Change my name**, adjust the alert volume, open **View all** messages, or **Sign out** of messaging.
 

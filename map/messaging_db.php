@@ -550,9 +550,34 @@ class MessagingDb
     /** All messages in a conversation (thread view). */
     public function thread(int $conversationId, int $sinceId = 0): array
     {
-        return $this->hydrate($this->all(
+        $msgs = $this->hydrate($this->all(
             'SELECT * FROM messages WHERE conversation_id=:c AND id > :s ORDER BY id',
             [':c'=>$conversationId, ':s'=>$sinceId]));
+        if (!$msgs) return $msgs;
+        // Tag each message with who it went TO, the same way history() does, so a
+        // reader can tell a note addressed to them alone from one that also went to
+        // a whole station or every tracker. All messages here share one conversation,
+        // so its kind and members are fetched once.
+        $conv = $this->one('SELECT kind,title FROM conversations WHERE id=:i', [':i'=>$conversationId]);
+        $kind = $conv['kind'] ?? '';
+        $mem  = $this->all(
+            'SELECT p.id,p.kind,p.key,p.short_id,p.display_name
+               FROM conversation_members cm JOIN participants p ON p.id=cm.participant_id
+              WHERE cm.conversation_id=:c', [':c'=>$conversationId]);
+        $label = fn($p) => $p['kind'] === 'mobile'
+            ? trim((($p['short_id'] ? $p['short_id'] . ' ' : '') . $p['display_name']))
+            : $p['display_name'];
+        foreach ($msgs as &$m) {
+            if ($kind === 'broadcast' || !empty($m['broadcast'])) { $m['to_label'] = 'All Trackers'; continue; }
+            if ($kind === 'entity' || $kind === 'entity_multi') {
+                $m['to_label'] = (string)($conv['title'] ?? '');
+                continue;
+            }
+            $others = array_filter($mem, fn($p) => (int)$p['id'] !== (int)$m['from_id']);
+            $m['to_label'] = implode(', ', array_map($label, $others));
+        }
+        unset($m);
+        return $msgs;
     }
 
     /** Every message in the event (all-messages / admin view), each tagged with a

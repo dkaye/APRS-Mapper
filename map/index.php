@@ -1901,6 +1901,19 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
     transform: translateX(100%); transition: transform 0.22s ease; visibility: hidden;
 }
 #msg-panel.open { transform: none; visibility: visible; }
+/* Drag handles. Both sit on top of their neighbours rather than taking layout
+   space, so the panel geometry is unchanged when they are not in use. */
+#msg-panel-grip {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 7px; cursor: col-resize;
+    z-index: 5; background: transparent;
+}
+#msg-panel-grip:hover, #msg-panel-grip.drag { background: rgba(41,128,185,0.35); }
+#msg-split {
+    flex: 0 0 5px; cursor: col-resize; background: #e6e6e6; align-self: stretch;
+}
+#msg-split:hover, #msg-split.drag { background: #2980b9; }
+/* While dragging, stop the pointer selecting text or the iframe/map swallowing it. */
+body.msg-resizing { user-select: none; cursor: col-resize; }
 @media (max-width: 560px) { #msg-panel { width: 100%; } }
 #msg-panel-header {
     display: flex; align-items: center; gap: 8px; padding: 11px 12px;
@@ -1928,7 +1941,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 .msg-view { display: flex; flex-direction: column; min-height: 0; }
 /* min-width:0 + overflow:hidden so a long (nowrap) preview can't blow the list
    pane past its 232px basis and crush the thread. */
-#msg-list-view { flex: 0 0 232px; min-width: 0; overflow: hidden; border-right: 1px solid #e6e6e6; }
+#msg-list-view { flex: 0 0 232px; min-width: 0; overflow: hidden; }
 #msg-thread-view { flex: 1; min-width: 0; }
 /* Thread pane's own header (the selected conversation) — the panel header stays "Messages". */
 #msg-thread-head { flex: 0 0 auto; padding: 9px 12px; border-bottom: 1px solid #eee; background: #fafafa; display: none; }
@@ -1944,6 +1957,8 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
     #msg-panel:not(.thread-active) #msg-thread-view { display: none; }
     #msg-panel.thread-active #msg-list-view { display: none; }
     #msg-panel.thread-active #msg-panel-back { display: block; }
+    /* One pane at a time here, so neither handle has anything to drag. */
+    #msg-split, #msg-panel-grip { display: none; }
 }
 
 /* ── All-messages view (View All toggle) ─────────────────────────────────── */
@@ -2022,6 +2037,9 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 }
 .msg-bubble-row.me .msg-bubble { background: #2980b9; color: #fff; }
 .msg-bubble-sender { font-size: 11px; font-weight: 700; color: #1a5276; margin-bottom: 2px; }
+/* Recipient, shown after the sender on received messages — lighter, so the sender
+   still reads first. */
+.msg-bubble-to { font-weight: 400; color: #7b8a95; }
 .msg-bubble-sender .sid { color: #888; font-weight: 600; }
 .msg-bubble-foot { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
 .msg-bubble-time { font-size: 10px; color: #aaa; font-variant-numeric: tabular-nums; }
@@ -2435,6 +2453,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 
 <!-- ── Messaging: chat panel ──────────────────────────────────────────────── -->
 <div id="msg-panel">
+	<div id="msg-panel-grip" title="Drag to resize the message window"></div>
 	<div id="msg-panel-header">
 		<button id="msg-panel-back" title="Back to conversations">&#8592;</button>
 		<div style="flex:1;min-width:0">
@@ -2483,6 +2502,7 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 				<button class="msg-link" id="msg-all-link">View all messages</button>
 			</div>
 		</div>
+		<div id="msg-split" title="Drag to resize the conversation list"></div>
 		<!-- Thread -->
 		<div id="msg-thread-view" class="msg-view">
 			<div id="msg-thread-head"><div class="tn"></div><div class="ts"></div></div>
@@ -5969,7 +5989,12 @@ async function _openConversation(cid) {
 }
 function _bubbleHtml(m, c) {
 	const me = (m.from_id === _msgMeId);
-	const sender = me ? '' : '<div class="msg-bubble-sender">' + _senderLabelHtml(m) + '</div>';
+	// On a received message show who it went TO as well as who it came from: that is
+	// what distinguishes a note addressed to you alone from one that also reached a
+	// whole station or every tracker.
+	const toTxt = me ? '' : (m.to_label || '');
+	const sender = me ? '' : '<div class="msg-bubble-sender">' + _senderLabelHtml(m) +
+		(toTxt ? '<span class="msg-bubble-to"> → ' + _esc(toTxt) + '</span>' : '') + '</div>';
 	const photo = m.photo
 		? '<img class="msg-bubble-img" data-mid="' + m.id + '" src="index.php?messaging=photo&id=' + m.id + '&token=' + encodeURIComponent(_msgToken || '') + '" alt="Attached photo" loading="lazy">'
 		: '';
@@ -6416,6 +6441,7 @@ function _wireMsgUI() {
 	document.getElementById('msg-messaging-btn').addEventListener('click', () => {
 		if (_msgIsSubscribed()) _togglePanel(); else _openSubModal();
 	});
+	_initMsgResize();
 	document.getElementById('msg-panel-close').addEventListener('click', _closePanel);
 	document.getElementById('msg-panel-back').addEventListener('click', _showListView);
 	document.getElementById('msg-speaker-btn').addEventListener('click', _toggleSpeak);
@@ -6687,10 +6713,82 @@ function _toggleSpeak() {
 		if (_msgSpeak) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); }
 	} catch {}
 }
+// Panel width and the inbox/thread split are both drag-resizable and remembered.
+// Net control runs this panel all day beside the map, and the right balance depends
+// on the screen and how much map they want left visible.
+const MSG_PANEL_MIN = 380, MSG_LIST_MIN = 150, MSG_THREAD_MIN = 260;
+function _msgApplySizes() {
+	const panel = document.getElementById('msg-panel');
+	const listv = document.getElementById('msg-list-view');
+	const w = parseInt(localStorage.getItem('aprs_msg_panel_w') || '0', 10);
+	if (w) panel.style.width = Math.min(Math.max(w, MSG_PANEL_MIN), window.innerWidth) + 'px';
+	const l = parseInt(localStorage.getItem('aprs_msg_list_w') || '0', 10);
+	if (l) listv.style.flex = '0 0 ' + Math.max(l, MSG_LIST_MIN) + 'px';
+}
+function _initMsgResize() {
+	const panel = document.getElementById('msg-panel');
+	const listv = document.getElementById('msg-list-view');
+	const grip  = document.getElementById('msg-panel-grip');
+	const split = document.getElementById('msg-split');
+	_msgApplySizes();
+	// Pointer events (not mouse) so a trackpad, touchscreen or pen all work, and
+	// setPointerCapture keeps the drag alive if the cursor outruns the handle.
+	const drag = (el, onMove) => {
+		el.addEventListener('pointerdown', e => {
+			e.preventDefault();
+			el.setPointerCapture(e.pointerId);
+			el.classList.add('drag');
+			document.body.classList.add('msg-resizing');
+			const move = ev => onMove(ev);
+			const up = ev => {
+				el.releasePointerCapture(ev.pointerId);
+				el.classList.remove('drag');
+				document.body.classList.remove('msg-resizing');
+				el.removeEventListener('pointermove', move);
+				el.removeEventListener('pointerup', up);
+				el.removeEventListener('pointercancel', up);
+			};
+			el.addEventListener('pointermove', move);
+			el.addEventListener('pointerup', up);
+			el.addEventListener('pointercancel', up);
+		});
+	};
+	// The panel is docked right, so its width is the distance from the pointer to
+	// the right edge of the window.
+	drag(grip, e => {
+		const w = Math.min(Math.max(window.innerWidth - e.clientX, MSG_PANEL_MIN), window.innerWidth);
+		panel.style.width = w + 'px';
+		localStorage.setItem('aprs_msg_panel_w', String(Math.round(w)));
+		// Keep the thread pane usable when the panel shrinks under the split.
+		const max = panel.getBoundingClientRect().width - MSG_THREAD_MIN;
+		if (listv.getBoundingClientRect().width > max) {
+			const l = Math.max(max, MSG_LIST_MIN);
+			listv.style.flex = '0 0 ' + l + 'px';
+			localStorage.setItem('aprs_msg_list_w', String(Math.round(l)));
+		}
+	});
+	drag(split, e => {
+		const left = panel.getBoundingClientRect().left;
+		const max  = panel.getBoundingClientRect().width - MSG_THREAD_MIN;
+		const l    = Math.min(Math.max(e.clientX - left, MSG_LIST_MIN), Math.max(max, MSG_LIST_MIN));
+		listv.style.flex = '0 0 ' + l + 'px';
+		localStorage.setItem('aprs_msg_list_w', String(Math.round(l)));
+	});
+	// A window that shrank below the remembered width would otherwise leave the
+	// panel wider than the viewport.
+	window.addEventListener('resize', () => {
+		if (panel.getBoundingClientRect().width > window.innerWidth) panel.style.width = window.innerWidth + 'px';
+	});
+}
 function _speakMessage(m) {
 	if (!_msgSpeak || !window.speechSynthesis || !(m.text || '').trim()) return;
 	try {
-		const u = new SpeechSynthesisUtterance(m.text);   // message text only — no sender name/id
+		// Announce the sender first. Net control is usually not looking at the screen
+		// when this fires, so the text alone leaves them with no idea who called.
+		// _msgSenderName resolves a mobile through its display_id, giving "CRD Stanton".
+		const who = _msgSenderName(m).replace(/<[^>]*>/g, '')
+			.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
+		const u = new SpeechSynthesisUtterance(who ? 'Message from ' + who + '. ' + m.text : m.text);
 		u.rate = 1.0; u.volume = 1.0;
 		speechSynthesis.speak(u);
 	} catch {}
