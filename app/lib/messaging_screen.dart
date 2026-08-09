@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'messaging_client.dart';
 
 const _kBlue = Color(0xFF2980B9);
+const _kLastRecipients = 'aprs_msg_last_recipients';
 const _kDark = Color(0xFF1A5276);
 
 class MessagingScreen extends StatefulWidget {
@@ -46,6 +47,7 @@ class _MessagingScreenState extends State<MessagingScreen> {
   final _picker = ImagePicker();
   String? _pendingPhotoPath; // photo staged in the composer, not yet sent
   bool _speak = false;
+  List<String> _lastRecipients = const [];
 
   @override
   void initState() {
@@ -69,7 +71,21 @@ class _MessagingScreenState extends State<MessagingScreen> {
 
   Future<void> _restoreSpeak() async {
     final p = await SharedPreferences.getInstance();
-    if (mounted) setState(() => _speak = p.getBool('aprs_msg_speak') ?? false);
+    if (mounted) {
+      setState(() {
+        _speak = p.getBool('aprs_msg_speak') ?? false;
+        _lastRecipients = p.getStringList(_kLastRecipients) ?? const [];
+      });
+    }
+  }
+
+  /// Recipients of the last message started from the picker, remembered so the
+  /// next one opens pre-ticked — during an event the same station is usually
+  /// addressed repeatedly. Stored as recipient KEYS rather than participant ids:
+  /// a "(multiple)" row's id is synthetic and would not survive a reload.
+  Future<void> _saveLastRecipients(List<String> keys) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setStringList(_kLastRecipients, keys);
   }
 
   Future<void> _bootstrap() async {
@@ -264,10 +280,13 @@ class _MessagingScreenState extends State<MessagingScreen> {
       isScrollControlled: true,
       useSafeArea: true,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(12))),
-      builder: (_) => _RecipientPicker(people: pr.participants),
+      builder: (_) => _RecipientPicker(people: pr.participants, initialKeys: _lastRecipients),
     );
     if (chosen == null || chosen.isEmpty) return;
-    _startNew(chosen.map((p) => p.key).toList(), chosen.map((p) => p.label).join(', '));
+    final keys = chosen.map((p) => p.key).toList();
+    setState(() => _lastRecipients = keys);
+    unawaited(_saveLastRecipients(keys));
+    _startNew(keys, chosen.map((p) => p.label).join(', '));
   }
 
   // ── UI ──────────────────────────────────────────────────────────────────────
@@ -311,9 +330,13 @@ class _MessagingScreenState extends State<MessagingScreen> {
             ? null
             : FloatingActionButton.extended(
                 backgroundColor: _kBlue,
+                // Without this the label and icon inherit a dark theme colour and
+                // came out near-black on the blue fill. White on _kBlue matches the
+                // app's other filled buttons.
+                foregroundColor: Colors.white,
                 onPressed: _openPicker,
                 icon: const Icon(Icons.edit),
-                label: const Text('New message'),
+                label: const Text('New message', style: TextStyle(fontWeight: FontWeight.w600)),
               ),
       ),
     );
@@ -549,13 +572,34 @@ class _MessagingScreenState extends State<MessagingScreen> {
 // ── Recipient picker sheet ────────────────────────────────────────────────────
 class _RecipientPicker extends StatefulWidget {
   final List<MsgParticipant> people;
-  const _RecipientPicker({required this.people});
+  /// Recipient keys from the last message sent, pre-ticked on open.
+  final List<String> initialKeys;
+  const _RecipientPicker({required this.people, this.initialKeys = const []});
   @override
   State<_RecipientPicker> createState() => _RecipientPickerState();
 }
 
 class _RecipientPickerState extends State<_RecipientPicker> {
   final Set<int> _sel = {};
+
+  @override
+  void initState() {
+    super.initState();
+    // Restore the previous selection. Keys are resolved against the CURRENT roster,
+    // so anyone who has since gone offline is simply dropped rather than selecting
+    // someone unreachable. A remembered "(multiple)" expands to its people, which is
+    // what keeps the group row ticked and individually adjustable.
+    for (final k in widget.initialKeys) {
+      if (k.startsWith('mult:')) {
+        for (final p in _members(k.substring(5), widget.people)) {
+          _sel.add(p.id);
+        }
+      } else {
+        final p = widget.people.where((x) => !x.isMultiple && x.key == k).firstOrNull;
+        if (p != null) _sel.add(p.id);
+      }
+    }
+  }
 
   /// The individual people at a station (never the "(multiple)" row itself).
   List<MsgParticipant> _members(String groupId, List<MsgParticipant> all) => all
@@ -702,14 +746,35 @@ class _RecipientPickerState extends State<_RecipientPicker> {
         ),
         Padding(
           padding: const EdgeInsets.all(12),
-          child: SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: _kBlue),
-              onPressed: _sel.isEmpty ? null : () => Navigator.pop(context, _chosen(widget.people)),
-              child: Text(_sel.length > 1 ? 'Start group (${_sel.length})' : 'Start conversation'),
+          child: Row(children: [
+            // Explicit Cancel: swiping the sheet down is the only other way out and
+            // is easy to miss. Returning null (not an empty list) leaves the last
+            // remembered selection untouched.
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.pop(context, null),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _kDark,
+                  side: BorderSide(color: Colors.grey.shade400),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: const Text('Cancel'),
+              ),
             ),
-          ),
+            const SizedBox(width: 10),
+            Expanded(
+              flex: 2,
+              child: FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: _kBlue,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                onPressed: _sel.isEmpty ? null : () => Navigator.pop(context, _chosen(widget.people)),
+                child: Text(_sel.length > 1 ? 'Start group (${_sel.length})' : 'Start conversation'),
+              ),
+            ),
+          ]),
         ),
       ]),
     );

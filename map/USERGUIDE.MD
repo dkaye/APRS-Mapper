@@ -539,7 +539,7 @@ Operators using a Display Pi such as NetControl can be subscribed automatically 
 
 The app includes a full **chat screen** that mirrors the operators' panel. Open it with the **Message** (💬) button in the drawer footer (visible while sharing).
 
-**Conversations:** The screen opens on your **Conversations** list, each entry showing the other party and an unread count. Tap one to open its thread, or tap **New message** to **Start a conversation** with an operator — or **Start a group** with several people. Each participant shows **Online** / **Offline** presence.
+**Conversations:** The screen opens on your **Conversations** list, each entry showing the other party and an unread count. Tap one to open its thread, or tap **New message** to **Start a conversation** with an operator — or **Start a group** with several people. Each participant shows **Online** / **Offline** presence, and the picker opens with your **previous recipients already ticked** — during an event you usually message the same station repeatedly. **Cancel** closes it without starting anything.
 
 The people list shows only those you can reach — operators and participants active in the last 24 hours — so names left over from earlier events no longer appear. **Operators are listed first**, separated by a line from the trackers below, and each group is alphabetical. As on the operator panel, someone carrying **two phones** appears once and receives your message on both, a location covering several people offers an **(multiple)** option that reaches all of them, and the right-hand column reads **Online** (green) or **Offline** (red).
 
