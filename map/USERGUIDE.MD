@@ -470,9 +470,9 @@ Messaging opens as a **chat panel docked to the right of the map**, in two parts
 
 **Starting a conversation or group:**
 
-Click **New message**, then filter the list of **mobile trackers** with the **Search** box. Pick one recipient for a direct chat, several for a **group**, or choose **All Trackers** to broadcast to every mobile participant. You can also click a tracker in the sidebar to open a conversation already addressed to that participant. Radio-only trackers are not listed — they cannot receive messages.
+Click **New message** to see the list of **mobile trackers**. Pick one recipient for a direct chat, several for a **group**, or choose **All Trackers** to broadcast to every mobile participant. You can also click a tracker in the sidebar to open a conversation already addressed to that participant. Radio-only trackers are not listed — they cannot receive messages.
 
-The list shows only participants you can actually reach: anyone whose app has checked in within the last 24 hours. Someone temporarily out of coverage still appears and can still be messaged — their phone receives everything the moment it reconnects — but people from a previous event drop off and no longer clutter the list. Searching still matches a callsign even though callsigns are not displayed.
+The list shows only participants you can actually reach: anyone whose app has checked in within the last 24 hours. Someone temporarily out of coverage still appears and can still be messaged — their phone receives everything the moment it reconnects — but people from a previous event drop off and no longer clutter the list.
 
 **One person carrying two phones:**
 
@@ -539,7 +539,7 @@ Operators using a Display Pi such as NetControl can be subscribed automatically 
 
 The app includes a full **chat screen** that mirrors the operators' panel. Open it with the **Message** (💬) button in the drawer footer (visible while sharing).
 
-**Conversations:** The screen opens on your **Conversations** list, each entry showing the other party and an unread count. Tap one to open its thread, or tap **New message** to **Start a conversation** with an operator — or **Start a group** with several people (search by name). Each participant shows **Online** / **Offline** presence.
+**Conversations:** The screen opens on your **Conversations** list, each entry showing the other party and an unread count. Tap one to open its thread, or tap **New message** to **Start a conversation** with an operator — or **Start a group** with several people. Each participant shows **Online** / **Offline** presence.
 
 The people list shows only those you can reach — operators and participants active in the last 24 hours — so names left over from earlier events no longer appear. **Operators are listed first**, separated by a line from the trackers below, and each group is alphabetical. As on the operator panel, someone carrying **two phones** appears once and receives your message on both, a location covering several people offers an **(multiple)** option that reaches all of them, and the right-hand column reads **Online** (green) or **Offline** (red).
 

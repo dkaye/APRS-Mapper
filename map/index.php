@@ -2062,7 +2062,6 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 #msg-pick-box { position: relative; background: #fff; border-radius: 8px; width: 360px; max-width: calc(100vw - 32px); max-height: calc(100vh - 80px); z-index: 1; display: flex; flex-direction: column; box-shadow: 0 4px 24px rgba(0,0,0,0.25); }
 #msg-pick-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px 8px; font-size: 15px; font-weight: 600; }
 #msg-pick-header button { background: none; border: none; font-size: 20px; cursor: pointer; color: #888; }
-#msg-pick-search { margin: 0 16px 8px; padding: 7px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; font-family: inherit; }
 #msg-pick-list { overflow-y: auto; padding: 0 8px 8px; }
 .msg-pick-item { display: flex; align-items: center; gap: 10px; padding: 3px 8px; border-radius: 6px; cursor: pointer; line-height: 1.25; }
 .msg-pick-item:hover { background: #f2f6f9; }
@@ -2073,9 +2072,11 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 .msg-pick-item.grp-start { margin-top: 6px; }
 .msg-pick-item.grp-child { padding-left: 24px; }
 /* Presence as a word rather than a colour-only dot. */
-.msg-pick-presence { flex: 0 0 auto; font-size: 12px; font-weight: 600; white-space: nowrap; }
-.msg-pick-presence.on  { color: #1b8a3a; }
-.msg-pick-presence.off { color: #c0392b; }
+.msg-pick-presence { flex: 0 0 auto; font-size: 12px; white-space: nowrap; }
+/* Online is the signal worth spotting, so it keeps full colour and weight while
+   Offline is muted and unbolded — still legibly red, just quieter. */
+.msg-pick-presence.on  { color: #1b8a3a; font-weight: 600; }
+.msg-pick-presence.off { color: #c9938c; font-weight: 400; }
 #msg-pick-footer { padding: 10px 16px; border-top: 1px solid #eee; display: flex; gap: 8px; }
 #msg-pick-go { flex: 1; padding: 9px; background: #2980b9; color: #fff; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; font-family: inherit; }
 #msg-pick-go:disabled { background: #9db8cc; cursor: default; }
@@ -2511,7 +2512,6 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 	<div id="msg-pick-backdrop"></div>
 	<div id="msg-pick-box">
 		<div id="msg-pick-header"><span>New message</span><button id="msg-pick-close">&times;</button></div>
-		<input id="msg-pick-search" placeholder="Search people…" autocomplete="off">
 		<div id="msg-pick-list"></div>
 		<div id="msg-pick-footer">
 			<button id="msg-pick-go" disabled>Start conversation</button>
@@ -6189,11 +6189,9 @@ let _pickParticipants = [];
 function _msgPickerOpen() { return document.getElementById('msg-pick-modal').style.display === 'flex'; }
 function _openPicker() {
 	_pickSel = new Set();
-	document.getElementById('msg-pick-search').value = '';
 	document.getElementById('msg-pick-modal').style.display = 'flex';
 	document.getElementById('msg-pick-go').disabled = true;
 	_renderPicker();
-	setTimeout(() => document.getElementById('msg-pick-search').focus(), 50);
 }
 function _refreshPicker() { if (_msgPickerOpen()) _renderPicker(); }
 // The picker lists the current mobile trackers only (plus the All-Trackers
@@ -6276,10 +6274,8 @@ function _pickerOptions() {
 }
 function _pickerNameFor(key) { const o = _pickerOptions().find(x => x.key === key); return o ? o.name : key; }
 function _renderPicker() {
-	const q = document.getElementById('msg-pick-search').value.trim().toLowerCase();
 	const list = document.getElementById('msg-pick-list');
-	// Search still matches the callsign even though it isn't shown.
-	const opts = _pickerOptions().filter(o => !q || o.name.toLowerCase().includes(q) || o.key.toLowerCase().includes(q));
+	const opts = _pickerOptions();
 	let prevId = null;
 	list.innerHTML = opts.map((o, i) => {
 		const sel = o._mult ? _stationAllChecked(o._id) : _pickSel.has(o.key);
@@ -6452,7 +6448,6 @@ function _wireMsgUI() {
 	// Picker
 	document.getElementById('msg-pick-close').addEventListener('click', () => document.getElementById('msg-pick-modal').style.display = 'none');
 	document.getElementById('msg-pick-backdrop').addEventListener('click', () => document.getElementById('msg-pick-modal').style.display = 'none');
-	document.getElementById('msg-pick-search').addEventListener('input', _renderPicker);
 	document.getElementById('msg-pick-go').addEventListener('click', _startFromPicker);
 
 	// Subscribe modal

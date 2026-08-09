@@ -556,7 +556,6 @@ class _RecipientPicker extends StatefulWidget {
 
 class _RecipientPickerState extends State<_RecipientPicker> {
   final Set<int> _sel = {};
-  String _query = '';
 
   /// The individual people at a station (never the "(multiple)" row itself).
   List<MsgParticipant> _members(String groupId, List<MsgParticipant> all) => all
@@ -603,7 +602,7 @@ class _RecipientPickerState extends State<_RecipientPicker> {
 
   @override
   Widget build(BuildContext context) {
-    final list = widget.people.where((p) => _query.isEmpty || p.label.toLowerCase().contains(_query.toLowerCase()) || p.key.toLowerCase().contains(_query.toLowerCase())).toList();
+    final list = widget.people.toList();
     // Operators first, then mobiles alphabetically by station ID and name. Each
     // "<ID> (multiple)" sorts to the head of its own ID group so it sits directly
     // above that station's people instead of drifting elsewhere in the list.
@@ -622,13 +621,6 @@ class _RecipientPickerState extends State<_RecipientPicker> {
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
         const Padding(padding: EdgeInsets.fromLTRB(16, 12, 16, 4), child: Align(alignment: Alignment.centerLeft, child: Text('New message', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)))),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-          child: TextField(
-            decoration: const InputDecoration(hintText: 'Search people…', prefixIcon: Icon(Icons.search), border: OutlineInputBorder(), isDense: true),
-            onChanged: (v) => setState(() => _query = v),
-          ),
-        ),
         Flexible(
           child: list.isEmpty
               ? const Padding(padding: EdgeInsets.all(24), child: Text('No one available', style: TextStyle(color: Colors.grey)))
@@ -685,12 +677,14 @@ class _RecipientPickerState extends State<_RecipientPicker> {
                           ),
                           // Presence reads better as a word than as a colour-only dot,
                           // which carries no meaning for a colour-blind operator.
+                          // Online is the signal worth spotting, so it keeps full
+                          // colour and weight while Offline is muted and unbolded.
                           if (p.showsPresence)
                             Text(p.online ? 'Online' : 'Offline',
                                 style: TextStyle(
                                     fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: p.online ? const Color(0xFF1B8A3A) : const Color(0xFFC0392B))),
+                                    fontWeight: p.online ? FontWeight.w600 : FontWeight.w400,
+                                    color: p.online ? const Color(0xFF1B8A3A) : const Color(0xFFC9938C))),
                         ]),
                       ),
                     );
