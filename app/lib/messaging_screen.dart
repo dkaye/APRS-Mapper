@@ -233,10 +233,11 @@ class _MessagingScreenState extends State<MessagingScreen> {
     final unread = msgs.where((m) => m.fromId != _myId).map((m) => m.id).toList();
     if (unread.isNotEmpty) _markRead(unread);
     _speakDeferred(c.id);
-    // Opening a thread here is what makes it the watch's reply target. There is no
-    // separate watch setting: during a net the operator is already in the thread
-    // they mean to keep talking on.
-    WatchBridge.instance.setDestination(conversationId: c.id, label: c.label);
+    // Deliberately does NOT re-aim the watch. Opening a thread is browsing, not
+    // choosing: during a net an operator reads several threads on the phone, and if
+    // each one silently became the wrist's reply target, the next thing they said
+    // would go wherever they last glanced. Only an explicit act sets it -- the
+    // recipient picker here, or the Reply to page on the watch.
     _loadConversations();
   }
 

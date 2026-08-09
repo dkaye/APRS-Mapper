@@ -93,7 +93,11 @@ class _MenuDrawerState extends State<MenuDrawer> {
   void initState() {
     super.initState();
     PackageInfo.fromPlatform().then((info) {
-      if (mounted) setState(() => _appVersion = info.version);
+      // Build number included: the marketing version stays put across many builds,
+      // so on its own it cannot tell you which one you are running -- which is the
+      // question this row exists to answer, and the one the Watch app's own version
+      // line has to be matched against.
+      if (mounted) setState(() => _appVersion = '${info.version}+${info.buildNumber}');
     });
   }
 
