@@ -36,7 +36,13 @@ ssh "$REMOTE" "sudo chown -R pi:www-data /var/www/html"
 
 # Sync source files to aprs-pi staging, then build the archive there.
 # Building on Linux avoids macOS extended-attribute noise in the tarball.
-STAGING="$REMOTE_DIR/.staging"
+# Build scratch, deliberately OUTSIDE the web root. REMOTE_DIR must stay under
+# /var/www/html because install.sh and files.tar.gz are fetched over HTTP by a
+# fresh Pi, but the staging tree is not web content: it held a full second copy
+# of everything being deployed, served with a 200 until 2026-08-08. Keeping it in
+# /home/pi also puts it out of reach of the `chown -R pi:www-data /var/www/html`
+# above, which used to churn its ownership mid-deploy.
+STAGING="/home/pi/.marsaprs-staging/server"
 echo "Syncing files to aprs-pi..."
 ssh "$REMOTE" "mkdir -p $STAGING/home $STAGING/www $STAGING/bin $STAGING/systemd $STAGING/apache $STAGING/cloudflared $STAGING/etc/logrotate.d"
 rsync -a --delete "$SERVER_DIR/home/"        "$REMOTE:$STAGING/home/"
@@ -76,6 +82,8 @@ rsync -a --delete \
     --exclude='netbird/' \
     --exclude='admin/password.txt' \
     --exclude='wifi/' \
+    --exclude='tests/' \
+    --exclude='vendor/' \
     "$MAP_DIR/" "$REMOTE:$STAGING/www/"
 rsync -a "$SERVER_DIR/www/" "$REMOTE:$STAGING/www/"
 

@@ -22,7 +22,8 @@ ssh "$REMOTE" "mkdir -p $REMOTE_DIR"
 
 # Sync source files to aprs-pi staging, then build the archive there.
 # Building on Linux avoids macOS extended-attribute noise in the tarball.
-STAGING="$REMOTE_DIR/.staging"
+# Build scratch, deliberately outside the web root — see server/deploy.sh.
+STAGING="/home/pi/.marsaprs-staging/display"
 echo "Syncing files to aprs-pi..."
 ssh "$REMOTE" "sudo chown -R pi:www-data $REMOTE_DIR 2>/dev/null || true && mkdir -p $STAGING/home $STAGING/systemd $STAGING/etc/logrotate.d"
 rsync -a --delete "$DISPLAY_DIR/home/"    "$REMOTE:$STAGING/home/"
