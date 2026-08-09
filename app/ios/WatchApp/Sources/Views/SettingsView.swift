@@ -29,10 +29,12 @@ struct SettingsView: View {
         LabeledContent("Phone", value: state.phoneReachable ? "Linked" : "Unreachable")
         LabeledContent("Sharing", value: state.sharing ? "On" : "Off")
         LabeledContent("Direct polling", value: DirectPoller.shared.active ? "On" : "Off")
+        // "Synced", not "Updated": this is when the phone last sent state, and it
+        // was read as when the app was last updated.
         if let at = state.lastContextAt {
-          LabeledContent("Updated", value: at.formatted(date: .omitted, time: .shortened))
+          LabeledContent("Synced", value: at.formatted(date: .omitted, time: .shortened))
         } else {
-          LabeledContent("Updated", value: "Never")
+          LabeledContent("Synced", value: "Never")
         }
         if !state.callsign.isEmpty {
           LabeledContent("Callsign", value: state.callsign)
@@ -60,7 +62,10 @@ struct SettingsView: View {
       }
 
       Section {
-        Text(Bundle.main.versionSummary)
+        // Build time, not just the version: both apps ship as 1.22.0 (15) until
+        // pubspec moves, so the marketing version cannot tell you whether a build you
+        // just pushed actually landed. This can.
+        Text("\(Bundle.main.versionSummary) · \(Bundle.main.buildStamp)")
           .font(.caption2)
           .foregroundStyle(.secondary)
       } footer: {
@@ -81,5 +86,18 @@ extension Bundle {
     let name = infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
     let build = infoDictionary?["CFBundleVersion"] as? String ?? "?"
     return "\(name) (\(build))"
+  }
+
+  /// When this binary was compiled, as "Aug 9 14:32".
+  ///
+  /// Taken from the executable's own modification date rather than a baked-in
+  /// constant, so it costs no build-phase script and cannot go stale.
+  var buildStamp: String {
+    guard let exec = executableURL,
+          let date = try? FileManager.default.attributesOfItem(atPath: exec.path)[.modificationDate] as? Date
+    else { return "?" }
+    let f = DateFormatter()
+    f.dateFormat = "MMM d HH:mm"
+    return f.string(from: date)
   }
 }

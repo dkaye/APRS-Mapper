@@ -160,7 +160,7 @@ struct PTTView: View {
   /// explanation.
   private var prompt: String {
     if !state.sharing { return "Start sharing on iPhone" }
-    if state.destination == nil { return "Choose a destination below" }
+    if state.destination == nil { return "Swipe to Reply to and pick one" }
     if let status = talk.statusText { return status }
     if recorder.isRecording { return "Release to send" }
     if recorder.granted == false { return "Allow Microphone in Settings" }

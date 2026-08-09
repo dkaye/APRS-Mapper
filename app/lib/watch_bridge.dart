@@ -79,6 +79,13 @@ class WatchBridge {
 
   Timer? _contextTimer;
 
+  /// The watch's list of places it can reply to used to arrive only from the chat
+  /// screen, which meant a watch was mute until the operator happened to open
+  /// Messages on the phone. The bridge fetches it itself now, so the wrist is usable
+  /// from launch.
+  Timer? _convTimer;
+  static const _convRefresh = Duration(seconds: 60);
+
   /// Messages sent from the watch whose receipts we are still following, and the
   /// furthest stage each has reached (0 sent, 1 delivered, 2 read). Only watch sends
   /// are tracked: the operator is looking at the phone for anything typed there, and
@@ -120,6 +127,29 @@ class WatchBridge {
     // anything the watch sent while Dart was still starting.
     _applyState(await _invoke('ready'));
     _scheduleContext();
+    _startConversationRefresh();
+  }
+
+  void _startConversationRefresh() {
+    _convTimer?.cancel();
+    unawaited(_refreshConversations());
+    _convTimer = Timer.periodic(_convRefresh, (_) => unawaited(_refreshConversations()));
+  }
+
+  /// Keep the wrist's reply targets current without depending on any screen being
+  /// open on the phone. Cheap: one request a minute, and only while sharing.
+  Future<void> _refreshConversations() async {
+    if (!paired || _token == null) return;
+    final list = await _client.conversations();
+    if (list.isEmpty) return;
+    pushConversations(list);
+
+    // No destination yet, but there is somewhere obvious to reply to. Adopt the most
+    // recent thread rather than leaving Talk disabled -- the server orders these by
+    // last activity, so it is the conversation the operator is already in.
+    if (_destination == null) {
+      setDestination(conversationId: list.first.id, label: list.first.label);
+    }
   }
 
   /// Called once MapScreen owns a real session, so the live token wins over the
@@ -252,6 +282,8 @@ class WatchBridge {
         break;
 
       case 'hello':
+        // The watch has just come forward and may have been away for hours.
+        unawaited(_refreshConversations());
         pushContextNow();
         break;
 

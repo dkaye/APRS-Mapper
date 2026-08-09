@@ -43,6 +43,12 @@ final class AppState {
   /// a broken link from a quiet net, and without it both just look like a dead app.
   var lastContextAt: Date?
 
+  /// Set when this watch chose a destination and cleared when the phone echoes that
+  /// choice back. See `apply(context:)`.
+  private var destinationDirty = false
+  private var destinationChosenAt = Date.distantPast
+  private static let echoTimeout: TimeInterval = 30
+
   private(set) var lastId = 0
 
   /// Ids already seen, so the same message arriving over two transports is one
@@ -194,7 +200,21 @@ final class AppState {
     // Absent means none. The context is always a complete snapshot, and null values
     // cannot cross WatchConnectivity at all, so "key missing" is the only way the
     // phone can express "no destination".
-    destination = (context["destination"] as? [String: Any]).flatMap(Destination.init(wire:))
+    let incoming = (context["destination"] as? [String: Any]).flatMap(Destination.init(wire:))
+
+    // A choice made here outranks a context that was already in flight when it was
+    // made. Without this the wrist silently re-aims itself: the operator picks Net
+    // Control, a context sent moments earlier arrives carrying the previous thread,
+    // and the next thing they say goes somewhere they never chose. The phone stays
+    // authoritative -- we simply wait for it to echo our choice back before trusting
+    // it again, and give up waiting so a lost echo cannot freeze the destination.
+    if destinationDirty {
+      if incoming == destination || Date().timeIntervalSince(destinationChosenAt) > Self.echoTimeout {
+        destinationDirty = false
+      }
+    } else {
+      destination = incoming
+    }
     lastContextAt = Date()
 
     if let raw = context["conversations"] as? [[String: Any]] {
@@ -232,6 +252,8 @@ final class AppState {
     if let c = conversationId { wire["conversationId"] = c }
     if let r = recipients { wire["recipients"] = r }
     destination = Destination(wire: wire)
+    destinationDirty = true
+    destinationChosenAt = Date()
     persist()
     WKInterfaceDevice.current().play(.click)
     WatchSession.shared.send(wire)
