@@ -429,7 +429,8 @@ class _MenuDrawerState extends State<MenuDrawer> {
   Widget _trackerTile(TrackerData t) {
     final baseColor = _trackerColor(t.color);
     final isSelected = t.id == widget.selectedId;
-    final isBlinking = widget.blinkingIds.contains(t.id);
+    // Keyed by callsign — display_id is shared across an entity's devices.
+    final isBlinking = widget.blinkingIds.contains(t.callsign);
     final opacity = (isBlinking && !widget.blinkOn) ? 0.15 : 1.0;
     final color = baseColor.withOpacity(opacity);
     return InkWell(

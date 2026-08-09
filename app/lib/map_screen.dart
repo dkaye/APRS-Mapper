@@ -251,17 +251,23 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       onData: (data) {
         if (!mounted) return;
         final prev = _trackers;
+        // Matched on CALLSIGN, which is unique. `id` is the display_id and is
+        // deliberately shared — that is how several devices are grouped into one
+        // entity — so matching on it compared each tracker against whichever other
+        // tracker at that station happened to come first in the list. Their
+        // lastUpdate values always differ, so every tracker sharing a display_id
+        // reported itself as updated on every poll and blinked continuously.
         final updated = data.trackers
             .where((t) {
-              final old = prev.where((o) => o.id == t.id).firstOrNull;
+              final old = prev.where((o) => o.callsign == t.callsign).firstOrNull;
               return old != null && old.lastUpdate != t.lastUpdate;
             })
-            .map((t) => t.id)
+            .map((t) => t.callsign)
             .toSet();
         TrackerData? refetchTracker;
         if (_selectedId != null) {
           final sel = data.trackers.where((t) => t.id == _selectedId).firstOrNull;
-          if (sel != null && updated.contains(_selectedId)) refetchTracker = sel;
+          if (sel != null && updated.contains(sel.callsign)) refetchTracker = sel;
         }
         final newIntervals  = data.beaconIntervalsSec;
         final newDistances  = data.beaconDistancesMi;
@@ -1430,7 +1436,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         ? _mapController.camera.zoom.clamp(14.0, MapConfig.maxZoom)
         : _mapController.camera.zoom;
     _mapController.move(t.latLng, newZoom);
-    _triggerBlink({t.id});
+    _triggerBlink({t.callsign});   // callsign, to blink just this device
     _fetchTrail(t);
   }
 

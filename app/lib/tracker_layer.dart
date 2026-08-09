@@ -42,7 +42,9 @@ class TrackerLayer extends StatelessWidget {
       markers: trackers.where((t) => t.hasPosition).map((t) {
         final color = _markerColor(t.color);
         final fullLabel = t.id == fullLabelId;
-        final blinking = blinkingIds.contains(t.id);
+        // Keyed by callsign: display_id is shared across an entity's devices, so
+        // keying by it made one tracker's beacon blink every marker at that station.
+        final blinking = blinkingIds.contains(t.callsign);
         final opacity = blinking ? (blinkOn ? 1.0 : 0.15) : 1.0;
 
         final dot = _TrackerMarker(color: color, mobile: t.mobile);
