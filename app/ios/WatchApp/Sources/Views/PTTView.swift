@@ -34,6 +34,7 @@ struct PTTView: View {
 
   var body: some View {
     VStack(spacing: 4) {
+      StatusLine()
       Text(state.destination?.label ?? "No destination")
         .font(.caption)
         .foregroundStyle(state.destination == nil ? .orange : .secondary)

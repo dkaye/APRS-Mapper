@@ -1,76 +1,31 @@
 /// Top level of the watch UI.
 ///
-/// Phase 1 is a receiver: the newest message, the message list, and settings. The
-/// push-to-talk page becomes the first tab in Phase 2.
+/// Four pages, swiped horizontally, with Talk first — it is what the operator wants
+/// under their thumb when the wrist comes up, and the one they must not have to
+/// navigate to.
+///
+/// Horizontal paging, not vertical: the Digital Crown scrolls whatever is on screen,
+/// so a vertically-paged TabView fights every page that has content taller than the
+/// display and the other pages become unreachable. Swiping sideways leaves the crown
+/// free to do the one thing it is good at.
 import SwiftUI
 
 struct RootView: View {
-  @Environment(AppState.self) private var state
-
   var body: some View {
-    // Talk first: it is the page the operator wants under their thumb when the wrist
-    // comes up, and the one they must not have to navigate to.
     TabView {
-      PTTView()
-      LatestView()
-      MessageListView()
-      DestinationPickerView()
-      SettingsView()
+      NavigationStack { PTTView() }
+      NavigationStack { MessageListView() }
+      NavigationStack { DestinationPickerView() }
+      NavigationStack { SettingsView() }
     }
-    .tabViewStyle(.verticalPage)
-  }
-}
-
-/// The glanceable screen: who called, what they said, and whether the watch is in
-/// a state where it can alert at all. That last part is not decoration — a silent
-/// watch during a net is indistinguishable from a quiet net unless we say so.
-struct LatestView: View {
-  @Environment(AppState.self) private var state
-
-  private var latest: WatchMessage? { state.messages.last }
-
-  var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 8) {
-        StatusLine()
-        OutboxLine()
-
-        if let m = latest {
-          Text(m.senderLabel)
-            .font(.headline)
-            .foregroundStyle(m.broadcast ? .orange : .primary)
-          if m.broadcast {
-            Text("All Trackers")
-              .font(.caption2)
-              .foregroundStyle(.orange)
-          }
-          Text(m.displayText)
-            .font(.body)
-          Text(m.date, style: .time)
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-          Button {
-            state.speakAgain(m)
-          } label: {
-            Label("Speak again", systemImage: "speaker.wave.2.fill")
-          }
-          .buttonStyle(.bordered)
-          .padding(.top, 4)
-        } else {
-          Text("No messages yet")
-            .font(.body)
-            .foregroundStyle(.secondary)
-            .padding(.top, 12)
-        }
-      }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(.horizontal, 4)
-    }
-    .navigationTitle("APRS Map")
+    .tabViewStyle(.page)
   }
 }
 
 /// One line saying whether messages can actually reach this watch right now.
+///
+/// Not decoration: a watch that has lost the phone looks exactly like a quiet net,
+/// and during an event those are very different situations.
 struct StatusLine: View {
   @Environment(AppState.self) private var state
 
@@ -78,7 +33,7 @@ struct StatusLine: View {
     if state.authExpired { return "Reconnect on iPhone" }
     if !state.sharing { return "Not sharing — start on iPhone" }
     if state.phoneReachable {
-      return state.audioUnavailable ? "Phone linked · no audio route" : "Phone linked"
+      return state.audioUnavailable ? "Linked · no audio" : "Phone linked"
     }
     // Worth distinguishing: "on its own and working" is a very different state from
     // "cut off", and from the wrist they otherwise look identical.
@@ -97,6 +52,9 @@ struct StatusLine: View {
       Text(text)
         .font(.caption2)
         .foregroundStyle(.secondary)
+        .lineLimit(1)
+      Spacer(minLength: 0)
+      OutboxBadge()
     }
   }
 }
@@ -104,19 +62,18 @@ struct StatusLine: View {
 /// Shown only when a reply has not been confirmed yet. A message spoken into the
 /// wrist and then silently lost is the worst failure this app has, so an unresolved
 /// send stays visible rather than disappearing optimistically.
-struct OutboxLine: View {
+struct OutboxBadge: View {
   private var outbox: Outbox { Outbox.shared }
 
   var body: some View {
     let pending = outbox.pending
     if !pending.isEmpty {
       let failed = pending.filter { $0.state == .failed }.count
-      HStack(spacing: 4) {
+      HStack(spacing: 2) {
         Image(systemName: failed > 0 ? "exclamationmark.triangle.fill" : "arrow.up.circle")
-          .font(.caption2)
-        Text(failed > 0 ? "\(failed) not sent" : "Sending \(pending.count)…")
-          .font(.caption2)
+        Text("\(failed > 0 ? failed : pending.count)")
       }
+      .font(.caption2)
       .foregroundStyle(failed > 0 ? .orange : .secondary)
     }
   }

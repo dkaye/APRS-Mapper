@@ -14,10 +14,10 @@ struct WatchApp: App {
 
   var body: some Scene {
     WindowGroup {
-      NavigationStack {
-        RootView()
-      }
-      .environment(AppState.shared)
+      // No NavigationStack here: each page owns its own, so their titles and pushes
+      // do not fight over one shared stack.
+      RootView()
+        .environment(AppState.shared)
     }
     .onChange(of: scenePhase) { _, phase in
       let active = phase == .active

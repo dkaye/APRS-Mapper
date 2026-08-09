@@ -15,6 +15,8 @@ struct MessageListView: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
+      // Newest first, so the message most likely to be wanted -- and the one the
+      // Latest page used to duplicate -- is under the thumb rather than a scroll away.
       ForEach(state.messages.reversed()) { m in
         NavigationLink {
           MessageDetailView(message: m)
