@@ -2068,6 +2068,10 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 .msg-pick-item:hover { background: #f2f6f9; }
 .msg-pick-item.sel { background: #eaf3fb; }
 .msg-pick-check { flex: 0 0 auto; width: 18px; color: #2980b9; font-weight: 700; }
+/* Presence as a word rather than a colour-only dot. */
+.msg-pick-presence { flex: 0 0 auto; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.msg-pick-presence.on  { color: #1b8a3a; }
+.msg-pick-presence.off { color: #c0392b; }
 #msg-pick-footer { padding: 10px 16px; border-top: 1px solid #eee; display: flex; gap: 8px; }
 #msg-pick-go { flex: 1; padding: 9px; background: #2980b9; color: #fff; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; font-family: inherit; }
 #msg-pick-go:disabled { background: #9db8cc; cursor: default; }
@@ -3639,7 +3643,8 @@ function _noteTrackerIds(trackers) {
 // entries that carry no `mobile` flag, and would wrongly empty this list.
 function _noteMobileTrackers(trackers) {
 	const mob = (trackers || []).filter(t => t && t.mobile && t.callsign)
-		.map(t => ({callsign: t.callsign, id: t.id || '', name: t.name || ''}));
+		.map(t => ({callsign: t.callsign, id: t.id || '', name: t.name || '',
+			lastUpdate: t.lastUpdate || 0}));
 	mob.sort((a, b) => naturalCompare(a.id, b.id));
 	_mobileTrackers = mob;
 	if (typeof _msgPickerOpen === 'function' && _msgPickerOpen()) _refreshPicker();
@@ -6208,9 +6213,14 @@ function _pickerOptions() {
 		namesById.get(t.id).add(t.name || '');
 	}
 	const rows = [];
+	const nowSec = Date.now() / 1000;
 	for (const [key, list] of byEntity) {
 		const t = list[0];
+		// Online if ANY of this person's phones has checked in recently — the same
+		// 90 s window the server applies to operators.
+		const freshest = Math.max(...list.map(x => x.lastUpdate || 0));
 		rows.push({key, kind:'mobile', name:_entityName(t), _id:t.id || '', _nm:t.name || '',
+			online: (nowSec - freshest) < 90, presence: true,
 			sub: list.length > 1 ? list.length + ' devices' : ''});
 	}
 	for (const [id, names] of namesById) {
@@ -6238,9 +6248,15 @@ function _renderPicker() {
 	list.innerHTML = opts.map(o => {
 		const sel = _pickSel.has(o.key);
 		const sub = o.sub ? '<div style="font-size:11px;color:#888">' + _esc(o.sub) + '</div>' : '';
+		// Presence as a word, not a colour-only dot: readable regardless of colour
+		// vision. Omitted on "(multiple)" and All Trackers, where one state would be
+		// misleading for the several people the row stands for.
+		const pres = o.presence
+			? '<span class="msg-pick-presence ' + (o.online ? 'on' : 'off') + '">' +
+				(o.online ? 'Online' : 'Offline') + '</span>' : '';
 		return '<div class="msg-pick-item ' + (sel ? 'sel' : '') + '" data-key="' + _escAttr(o.key) + '">' +
 			'<span class="msg-pick-check">' + (sel ? '✓' : '') + '</span>' +
-			'<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">' + _esc(o.name) + '</div>' + sub + '</div></div>';
+			'<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">' + _esc(o.name) + '</div>' + sub + '</div>' + pres + '</div>';
 	}).join('') || '<div style="padding:16px;text-align:center;color:#999">No mobile trackers</div>';
 	list.querySelectorAll('.msg-pick-item').forEach(el => el.addEventListener('click', () => _togglePick(el.dataset.key)));
 	document.getElementById('msg-pick-go').disabled = _pickSel.size === 0;

@@ -593,15 +593,33 @@ class _RecipientPickerState extends State<_RecipientPicker> {
                   itemBuilder: (_, i) {
                     final p = list[i];
                     final sel = _sel.contains(p.id);
-                    return CheckboxListTile(
+                    final sub = p.subtitle;
+                    // Rule between the operators and the trackers. The list is sorted
+                    // operators-first, so the boundary is wherever the kind changes.
+                    final rule = i > 0 && list[i - 1].kind == 'operator' && p.kind != 'operator';
+                    final tile = CheckboxListTile(
                       value: sel,
                       onChanged: (_) => setState(() => sel ? _sel.remove(p.id) : _sel.add(p.id)),
                       title: Text(p.label, style: const TextStyle(fontWeight: FontWeight.w600)),
-                      subtitle: Text(p.subtitle),
-                      secondary: Icon(Icons.circle, size: 10, color: p.online ? Colors.green : Colors.grey.shade400),
+                      subtitle: sub.isEmpty ? null : Text(sub, style: const TextStyle(fontSize: 12)),
+                      // Presence reads better as a word than as a colour-only dot,
+                      // which carries no meaning for a colour-blind operator.
+                      secondary: p.showsPresence
+                          ? Text(p.online ? 'Online' : 'Offline',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: p.online ? const Color(0xFF1B8A3A) : const Color(0xFFC0392B)))
+                          : null,
                       controlAffinity: ListTileControlAffinity.leading,
                       dense: true,
+                      visualDensity: const VisualDensity(horizontal: -2, vertical: -4),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12),
                     );
+                    return rule
+                        ? Column(mainAxisSize: MainAxisSize.min,
+                            children: [const Divider(height: 1, thickness: 1), tile])
+                        : tile;
                   },
                 ),
         ),

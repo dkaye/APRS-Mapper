@@ -490,6 +490,8 @@ When one ID covers *different* people — say `LKL Dirck` and `LKL Jerry` are bo
 
 The list is alphabetical by ID, and each **(multiple)** row sits directly above the people it covers, so you can see at a glance who is included. It also tells you how many: *5 people at CM*. A person carrying two phones shows *2 devices* on their single row.
 
+The right-hand column shows **Online** (green) or **Offline** (red) for each person. Someone carrying two phones counts as Online if *either* phone has checked in recently — they are reachable, whichever one they are holding. **(multiple)** rows show no status, since they stand for several people at once. Offline is not a barrier: the message is delivered the moment that phone reconnects.
+
 Receipts reflect this. For one person with two phones, you see the ordinary **Delivered ✓** / **Read ✓✓** as soon as either phone has it — it is still one person. For an **(multiple)** conversation you see the group wording, **Delivered to 2 of 3**, because those really are separate people.
 
 **Sending:**
@@ -523,7 +525,7 @@ The app includes a full **chat screen** that mirrors the operators' panel. Open 
 
 **Conversations:** The screen opens on your **Conversations** list, each entry showing the other party and an unread count. Tap one to open its thread, or tap **New message** to **Start a conversation** with an operator — or **Start a group** with several people (search by name). Each participant shows **Online** / **Offline** presence.
 
-The people list shows only those you can reach — operators and participants active in the last 24 hours — so names left over from earlier events no longer appear. As on the operator panel, someone carrying **two phones** appears once and receives your message on both, and a location covering several people offers an **(multiple)** option that reaches all of them.
+The people list shows only those you can reach — operators and participants active in the last 24 hours — so names left over from earlier events no longer appear. **Operators are listed first**, separated by a line from the trackers below, and each group is alphabetical. As on the operator panel, someone carrying **two phones** appears once and receives your message on both, a location covering several people offers an **(multiple)** option that reaches all of them, and the right-hand column reads **Online** (green) or **Offline** (red).
 
 **Sending:** Type up to 280 characters in the message box and tap **Send**. Tap **Attach photo** to **Take a photo** or **Choose from library**; the image sends with or without text, and either party can tap a photo to view it full-screen.
 
