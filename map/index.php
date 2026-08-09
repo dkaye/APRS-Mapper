@@ -6433,9 +6433,15 @@ async function _afterSubscribe() {
 	document.getElementById('msg-panel-sub').textContent = _msgName ? ('as ' + _msgName) : '';
 	try { const d = await _msgApi('participants'); if (d && d.me) _msgMeId = d.me; }
 	catch (e) { if (e.message === 'auth') return; }
-	await _refreshConversations();
-	_showListView();
+	// Start polling before anything that can fail, and guard what follows. The
+	// panel's "as <name>" label is set above, so a throw between there and here used
+	// to leave an operator looking subscribed while making no requests at all --
+	// silently deaf, with queued messages piling up server-side and nothing on
+	// screen to suggest anything was wrong. Losing the initial thread list is
+	// recoverable; losing the poll is not.
 	_startPoll();
+	try { await _refreshConversations(); } catch {}
+	_showListView();
 }
 
 let _msgUiWired = false;
