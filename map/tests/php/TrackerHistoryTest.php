@@ -10,9 +10,16 @@ class TrackerHistoryTest extends TestCase
     {
         $this->tmpFile = tempnam(sys_get_temp_dir(), 'aprs_hist_');
         // Reset globals before each test
-        global $trackerHistory, $historyFilePath;
-        $trackerHistory  = [];
-        $historyFilePath = null;
+        global $trackerHistory, $historyFilePath, $breadcrumbRetain;
+        $trackerHistory   = [];
+        $historyFilePath  = null;
+        $breadcrumbRetain = 100;   // daemon default; loadTrackers() overrides from config.yaml
+    }
+
+    private function setRetain(int $n): void
+    {
+        global $breadcrumbRetain;
+        $breadcrumbRetain = $n;
     }
 
     protected function tearDown(): void
@@ -115,13 +122,14 @@ class TrackerHistoryTest extends TestCase
         $this->assertArrayHasKey('K6DRK-9', $history);
     }
 
-    // ── 10-entry cap ──────────────────────────────────────────────────────────
+    // ── Retention cap (follows breadcrumb_count) ──────────────────────────────
 
-    public function testTenEntryCap(): void
+    /** Write $n synthetic entries for W6SG-4, round-trip through the file, return them. */
+    private function roundTrip(int $n): array
     {
         $this->setHistoryPath($this->tmpFile);
         $entries = [];
-        for ($i = 0; $i < 12; $i++) {
+        for ($i = 0; $i < $n; $i++) {
             $entries[] = ['lat' => 37.0 + $i * 0.01, 'lon' => -122.0, 'path' => '', 'ts' => 1717500000 + $i];
         }
         $this->setHistory(['W6SG-4' => $entries]);
@@ -130,27 +138,39 @@ class TrackerHistoryTest extends TestCase
         $this->setHistory([]);
         readTrackerHistoryFile();
 
-        $history = $this->getHistory();
-        $this->assertCount(10, $history['W6SG-4'], 'History should be capped at 10 entries');
+        return $this->getHistory()['W6SG-4'];
     }
 
-    public function testTenEntryCapPreservesFirst10(): void
+    public function testRetentionCapAtTen(): void
     {
-        $this->setHistoryPath($this->tmpFile);
-        $entries = [];
-        for ($i = 0; $i < 12; $i++) {
-            $entries[] = ['lat' => 37.0 + $i * 0.01, 'lon' => -122.0, 'path' => '', 'ts' => 1717500000 + $i];
-        }
-        $this->setHistory(['W6SG-4' => $entries]);
+        $this->setRetain(10);
+        $this->assertCount(10, $this->roundTrip(12), 'History should be capped at $breadcrumbRetain entries');
+    }
 
-        writeTrackerHistoryFile();
-        $this->setHistory([]);
-        readTrackerHistoryFile();
-
-        $history = $this->getHistory();
+    public function testRetentionCapPreservesFirstEntries(): void
+    {
+        $this->setRetain(10);
+        $kept = $this->roundTrip(12);
         // First entry in file is oldest since we wrote them in order
-        $this->assertSame(1717500000, $history['W6SG-4'][0]['ts']);
-        $this->assertSame(1717500009, $history['W6SG-4'][9]['ts']);
+        $this->assertSame(1717500000, $kept[0]['ts']);
+        $this->assertSame(1717500009, $kept[9]['ts']);
+    }
+
+    /** The regression this cap was changed for: a configured count above 10 must be
+     *  honoured, or every client silently draws at most 10 breadcrumbs regardless of
+     *  the Admin slider. */
+    public function testRetentionCapHonoursCountAboveTen(): void
+    {
+        $this->setRetain(50);
+        $kept = $this->roundTrip(60);
+        $this->assertCount(50, $kept, 'A breadcrumb_count above 10 must not be clipped to 10');
+        $this->assertSame(1717500049, $kept[49]['ts']);
+    }
+
+    public function testRetentionCapDefaultsToHundred(): void
+    {
+        // setUp leaves the daemon default in place; no config has been loaded.
+        $this->assertCount(100, $this->roundTrip(120));
     }
 
     // ── Missing / empty file ──────────────────────────────────────────────────

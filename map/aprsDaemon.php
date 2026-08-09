@@ -38,8 +38,15 @@ $igates=array();			// [{callsign, name, lastBeacon}] — only entries with a cal
 $igatesStatusFilename='igates.json';
 $aidstations=array();		// [{callsign, name, lastBeacon}] — only entries with a callsign
 $aidstationsStatusFilename='aidstations.json';
-$trackerHistory  = [];		// callsign → [{lat, lon, ts}, ...]  max 10 entries each
+$trackerHistory  = [];		// callsign → [{lat, lon, ts}, ...]  max $breadcrumbRetain entries each
 $historyFilePath = null;	// full path to tracker_history.yaml in current event dir
+// How many breadcrumbs to RETAIN per tracker. Follows breadcrumb_count from
+// config.yaml (the Admin slider, 0–100) so the daemon keeps as many points as the
+// map is configured to draw. This was formerly hard-coded to 10, which silently
+// capped every client: both the web map and the iOS app ask for breadcrumb_count
+// points and can only ever draw what the daemon stored. Floored at 10 so a low or
+// zero slider still leaves enough history to restore a trail when it is raised.
+$breadcrumbRetain = 100;
 $mobileRoot      = '';		// root callsign for mobile tracking (from config.yaml mobile.root)
 $mobileEnabled   = false;
 $mobileSessions  = [];		// callsign → ['id' => ..., 'name' => ...]  (active sessions)
@@ -217,7 +224,7 @@ function resolveHistoryPath() {
 
 // Read tracker_history.yaml into $trackerHistory on startup / event switch
 function readTrackerHistoryFile() {
-	global $trackerHistory, $historyFilePath;
+	global $trackerHistory, $historyFilePath, $breadcrumbRetain;
 	$trackerHistory = [];
 	if (!$historyFilePath || !file_exists($historyFilePath)) return;
 	$fh = fopen($historyFilePath, 'r');
@@ -245,7 +252,7 @@ function readTrackerHistoryFile() {
 			$entry = null;
 		}
 	}
-	foreach ($trackerHistory as &$entries) $entries = array_slice($entries, 0, 10);
+	foreach ($trackerHistory as &$entries) $entries = array_slice($entries, 0, $breadcrumbRetain);
 	unset($entries);
 }
 
@@ -288,7 +295,7 @@ function writeTrackerHistoryFile() {
 // so this is the sole source of mobile position history in tracker_history.yaml.
 // Called after readTrackerHistoryFile() at startup and whenever mobile_trackers.json changes.
 function syncMobilePositionHistory() {
-	global $trackerHistory, $trackers, $mobileTrackersFile;
+	global $trackerHistory, $trackers, $mobileTrackersFile, $breadcrumbRetain;
 	$fh = @fopen($mobileTrackersFile, 'r');
 	if (!$fh) return;
 	flock($fh, LOCK_SH); $c = stream_get_contents($fh); flock($fh, LOCK_UN); fclose($fh);
@@ -311,7 +318,7 @@ function syncMobilePositionHistory() {
 		}
 		unset($tr);
 		array_unshift($trackerHistory[$cs], ['lat' => $lat, 'lon' => $lon, 'path' => 'TCPIP*', 'ts' => $ts]);
-		if (count($trackerHistory[$cs]) > 10) array_pop($trackerHistory[$cs]);
+		if (count($trackerHistory[$cs]) > $breadcrumbRetain) array_pop($trackerHistory[$cs]);
 		$changed = true;
 	}
 	if ($changed) writeTrackerHistoryFile();
@@ -356,7 +363,7 @@ function connectToAprsServer() {
 // while preserving live state for already-known callsigns.
 // Returns true if the file was reloaded, false if it was unchanged since the last load.
 function loadTrackers() {
-	global $trackers,$igates,$aidstations,$configFilename,$configFileMtime,$mobileRoot,$mobileEnabled;
+	global $trackers,$igates,$aidstations,$configFilename,$configFileMtime,$mobileRoot,$mobileEnabled,$breadcrumbRetain;
 	// PHP caches stat results per request; a long-running CLI daemon would otherwise
 	// keep returning the mtime it first read and never notice a config change.
 	clearstatcache(true, $configFilename);
@@ -365,6 +372,9 @@ function loadTrackers() {
 	$existing = array();
 	foreach ($trackers as $t) $existing[$t["callsign"]] = $t;
 	$cfg = parseConfigYaml($configFilename);
+	// Retention follows the Admin breadcrumb slider; picked up on every config reload,
+	// so raising it starts accumulating deeper trails without restarting the daemon.
+	$breadcrumbRetain = max(10, min(100, (int)($cfg['breadcrumb_count'] ?? 100)));
 	$new = array();
 	foreach ($cfg['trackers'] ?? [] as $entry) {
 		if (!isset($entry['callsign'])) continue;
@@ -707,7 +717,7 @@ while (TRUE) {
 							if (!$moved) break;  // tracker hasn't moved — preserve existing breadcrumbs
 							$trackers[$key]["lat"]=$lat; $trackers[$key]["lon"]=$lon;
 							array_unshift($trackerHistory[$callsign], ['lat'=>$lat,'lon'=>$lon,'path'=>$aprsPath,'ts'=>time()]);
-							if (count($trackerHistory[$callsign]) > 10) array_pop($trackerHistory[$callsign]);
+							if (count($trackerHistory[$callsign]) > $breadcrumbRetain) array_pop($trackerHistory[$callsign]);
 							writeTrackerHistoryFile();
 						}
 					}
@@ -743,7 +753,7 @@ while (TRUE) {
 						$useLat = $moved ? $lat : ($lastCrumb['lat'] ?? $lat);
 						$useLon = $moved ? $lon : ($lastCrumb['lon'] ?? $lon);
 						array_unshift($trackerHistory[$callsign], ['lat'=>$useLat,'lon'=>$useLon,'path'=>$aprsPath,'ts'=>time()]);
-						if (count($trackerHistory[$callsign]) > 10) array_pop($trackerHistory[$callsign]);
+						if (count($trackerHistory[$callsign]) > $breadcrumbRetain) array_pop($trackerHistory[$callsign]);
 						writeTrackerHistoryFile();
 					}
 				}
