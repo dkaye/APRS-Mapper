@@ -2461,7 +2461,10 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
 			<div id="msg-panel-sub"></div>
 		</div>
 		<button id="msg-viewall-btn" class="msg-icon-btn" title="View all messages chronologically">
-			<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h16v2H4v-2z"/></svg>
+			<!-- Bulleted list: reads as an outline of the whole event's traffic. The
+			     plain three bars it replaced read as a hamburger menu, implying a
+			     navigation drawer rather than a list view. -->
+			<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm0-6a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm0 12a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM7 19h14v-2H7v2zm0-6h14v-2H7v2zM7 5v2h14V5H7z"/></svg>
 		</button>
 		<button id="msg-allsearch-btn" class="msg-icon-btn" title="Search messages" style="display:none">
 			<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
