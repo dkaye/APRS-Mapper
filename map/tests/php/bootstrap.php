@@ -7,6 +7,8 @@ $repoRoot = dirname(__DIR__, 3);
 // pass an explicit temp file, but the constant must exist for the class to load.
 if (!defined('MARSAPRS_MESSAGES_DB')) define('MARSAPRS_MESSAGES_DB', sys_get_temp_dir() . '/marsaprs_test_messages.db');
 require_once $repoRoot . '/map/messaging_db.php';
+// Only defines functions at load; the ?messaging= dispatch happens in index.php.
+require_once $repoRoot . '/map/messaging.php';
 require_once $repoRoot . '/map/config_parse.php';
 require_once $repoRoot . '/map/aprsDaemon.php';
 require_once $repoRoot . '/map/admin/config_yaml.php';

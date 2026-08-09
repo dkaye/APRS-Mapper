@@ -10,6 +10,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'messaging_client.dart';
+import 'watch_bridge.dart';
 
 const _kBlue = Color(0xFF2980B9);
 const _kLastRecipients = 'aprs_msg_last_recipients';
@@ -115,6 +116,9 @@ class _MessagingScreenState extends State<MessagingScreen> {
     final list = await widget.client.conversations();
     if (!mounted) return;
     setState(() => _convs = list);
+    // The watch offers these as switch targets, so it needs the same list the
+    // inbox shows rather than a separately-fetched one that could disagree.
+    WatchBridge.instance.pushConversations(list);
   }
 
   // ── Alerts (tone + speech), mirroring the web ──────────────────────────────
@@ -223,6 +227,10 @@ class _MessagingScreenState extends State<MessagingScreen> {
     final unread = msgs.where((m) => m.fromId != _myId).map((m) => m.id).toList();
     if (unread.isNotEmpty) _markRead(unread);
     _speakDeferred(c.id);
+    // Opening a thread here is what makes it the watch's reply target. There is no
+    // separate watch setting: during a net the operator is already in the thread
+    // they mean to keep talking on.
+    WatchBridge.instance.setDestination(conversationId: c.id, label: c.label);
     _loadConversations();
   }
 
@@ -292,6 +300,7 @@ class _MessagingScreenState extends State<MessagingScreen> {
     setState(() => _speak = !_speak);
     final p = await SharedPreferences.getInstance();
     await p.setBool('aprs_msg_speak', _speak);
+    WatchBridge.instance.pushSpeak(_speak);
     if (!_speak) {
       _deferredSpeak.clear();
       _tts.stop();
@@ -311,9 +320,11 @@ class _MessagingScreenState extends State<MessagingScreen> {
     );
     if (chosen == null || chosen.isEmpty) return;
     final keys = chosen.map((p) => p.key).toList();
+    final label = chosen.map((p) => p.label).join(', ');
     setState(() => _lastRecipients = keys);
     unawaited(_saveLastRecipients(keys));
-    _startNew(keys, chosen.map((p) => p.label).join(', '));
+    WatchBridge.instance.setDestination(recipients: keys, label: label);
+    _startNew(keys, label);
   }
 
   // ── UI ──────────────────────────────────────────────────────────────────────

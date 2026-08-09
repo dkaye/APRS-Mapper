@@ -476,11 +476,22 @@ function messaging_handle(string $action, array $body, array $ctx): void
 /** Current event for a parsed config (blank between events → 'default'). */
 function messaging_ctx_event(array $mcfg): string { return trim($mcfg['event'] ?? '') ?: 'default'; }
 
-/** Reduce a hydrated message row to the legacy {id,from_label,text,ts} shape. */
+/** Reduce a hydrated message row to the legacy {id,from_label,text,ts} shape.
+ *
+ *  The four extra keys are additive and older app builds ignore them. They exist
+ *  for the Apple Watch relay: the watch replies into the thread a message arrived
+ *  on, so conversation_id has to survive this shim, and it announces a broadcast
+ *  differently from a message addressed to the operator alone. from_short/from_kind
+ *  let the phone build the same "M141 Dirck" label the new API produces, so the
+ *  watch never has to re-implement the labelling rules. */
 function _msg_legacy_shape(array $m): array
 {
     return ['id'=>$m['id'], 'from_label'=>($m['from_name'] !== '' ? $m['from_name'] : ($m['from_key'] ?? '')),
-            'text'=>$m['text'], 'ts'=>$m['ts']];
+            'text'=>$m['text'], 'ts'=>$m['ts'],
+            'conversation_id'=>(int)($m['conversation_id'] ?? 0),
+            'from_short'=>$m['from_short'] ?? null,
+            'from_kind'=>$m['from_kind'] ?? null,
+            'broadcast'=>(bool)($m['broadcast'] ?? false)];
 }
 
 /** Un-acked messages for the mobile behind $token (legacy shape). Acks $ackIds

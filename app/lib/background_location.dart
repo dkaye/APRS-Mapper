@@ -17,10 +17,10 @@ class BackgroundLocationService {
   static const _kMiToM = 1609.344;
 
   // SharedPreferences keys for session persistence across app restarts.
-  static const _kPrefActive = 'sharing_active';
+  static const kPrefActive = 'sharing_active';
   static const _kPrefCallsign = 'sharing_callsign';
   static const _kPrefPasscode = 'sharing_passcode';
-  static const _kPrefToken = 'sharing_token';
+  static const kPrefToken = 'sharing_token';
   static const _kPrefTrackerId = 'sharing_tracker_id';
   static const _kPrefIntervalMs = 'sharing_interval_ms';
   static const _kPrefDistThreshold = 'sharing_dist_threshold_mi';
@@ -164,11 +164,11 @@ class BackgroundLocationService {
   /// device_id).  Returns true if sharing is successfully resumed.
   Future<bool> resumeSharing() async {
     final prefs = await SharedPreferences.getInstance();
-    if (prefs.getBool(_kPrefActive) != true) return false;
+    if (prefs.getBool(kPrefActive) != true) return false;
 
     final callsign  = prefs.getString(_kPrefCallsign) ?? '';
     final passcode  = prefs.getInt(_kPrefPasscode) ?? 0;
-    final token     = prefs.getString(_kPrefToken) ?? '';
+    final token     = prefs.getString(kPrefToken) ?? '';
     final trackerId = prefs.getString(_kPrefTrackerId);
     final intervalMs = prefs.getInt(_kPrefIntervalMs) ?? MapConfig.uploadInterval.inMilliseconds;
     final distMi = prefs.getDouble(_kPrefDistThreshold) ?? 0.2;
@@ -281,10 +281,10 @@ class BackgroundLocationService {
 
   Future<void> _saveSession(String name, String pin, {String hamRoot = '', int hamSsid = 0}) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_kPrefActive, true);
+    await prefs.setBool(kPrefActive, true);
     await prefs.setString(_kPrefCallsign, _session.callsign ?? '');
     await prefs.setInt(_kPrefPasscode, _session.passcode ?? 0);
-    await prefs.setString(_kPrefToken, _session.token ?? '');
+    await prefs.setString(kPrefToken, _session.token ?? '');
     await prefs.setString(_kPrefTrackerId, _session.trackerId ?? '');
     await prefs.setInt(_kPrefIntervalMs, _uploadInterval.inMilliseconds);
     await prefs.setDouble(_kPrefDistThreshold, _distanceThresholdM / _kMiToM);
@@ -297,7 +297,7 @@ class BackgroundLocationService {
 
   Future<void> _clearSession() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_kPrefActive, false);
+    await prefs.setBool(kPrefActive, false);
   }
 
   Future<void> _pollMessages() async {

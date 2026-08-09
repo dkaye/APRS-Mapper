@@ -37,6 +37,7 @@ import 'tracker_data.dart';
 import 'tracker_layer.dart';
 import 'messaging_client.dart';
 import 'messaging_screen.dart';
+import 'watch_bridge.dart';
 import 'widgets/mode_indicator.dart';
 import 'widgets/offline_banner.dart';
 import 'widgets/update_banner.dart';
@@ -235,6 +236,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _initNotifications();
+    // Hand the bridge the live session so it prefers the in-memory token over the
+    // persisted one it started with.
+    WatchBridge.instance.attachSession(_bgLocation);
     _config = widget.config;
     // Base layer follows the server's offline-map tile source, so it matches the
     // offline download URL (shared FMTC cache) and an event can retarget both by
@@ -330,6 +334,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     };
 
     _bgLocation.onSessionEnded = () {
+      // Immediately, not debounced: the watch is holding a copy of a token that
+      // has just died and must drop it rather than keep polling with it.
+      WatchBridge.instance.pushContextNow();
       if (!mounted) return;
       setState(() { _isSharing = false; _sharingActivityMode = -1; });
       _resetAutoModeDetection();
@@ -344,6 +351,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     };
 
     _bgLocation.onMessageReceived = (msg) {
+      // The watch is a separate output surface, so it is fed unconditionally --
+      // deliberately not inside _handleInboundMessage, which suppresses itself
+      // while the chat screen is open. Dedupe already happened upstream in
+      // BackgroundLocationService, and the watch dedupes again by message id.
+      WatchBridge.instance.pushInbound(msg);
       if (!mounted) return;
       _handleInboundMessage(msg);
     };

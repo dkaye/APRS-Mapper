@@ -17,13 +17,44 @@ class InboundMessage {
   final String fromLabel;
   final String text;
   final int ts;
-  const InboundMessage({required this.id, required this.fromLabel, required this.text, required this.ts});
+
+  /// Thread this arrived on. Added for the Watch relay, which replies into the
+  /// same thread; 0 from a server that predates the field.
+  final int conversationId;
+  final String? fromShort; // M0xx, for the "M141 Dirck" label
+  final String? fromKind; // 'mobile' | 'operator'
+  final bool broadcast; // an All Trackers call, announced differently on the watch
+
+  const InboundMessage({
+    required this.id,
+    required this.fromLabel,
+    required this.text,
+    required this.ts,
+    this.conversationId = 0,
+    this.fromShort,
+    this.fromKind,
+    this.broadcast = false,
+  });
   factory InboundMessage.fromJson(Map<String, dynamic> j) => InboundMessage(
     id: (j['id'] as num?)?.toInt() ?? 0,
     fromLabel: j['from_label'] as String? ?? '',
     text: j['text'] as String? ?? '',
     ts: (j['ts'] as num?)?.toInt() ?? 0,
+    conversationId: (j['conversation_id'] as num?)?.toInt() ?? 0,
+    fromShort: j['from_short'] as String?,
+    fromKind: j['from_kind'] as String?,
+    broadcast: j['broadcast'] as bool? ?? false,
   );
+
+  /// How the sender is shown — "M141 Dirck" for a mobile, the name for an operator.
+  /// Mirrors MsgMessage.senderLabel in messaging_client.dart so both paths agree.
+  String get senderLabel {
+    final s = fromShort;
+    if (fromKind == 'mobile' && s != null && s.isNotEmpty) {
+      return fromLabel.isNotEmpty && fromLabel != s ? '$s $fromLabel' : s;
+    }
+    return fromLabel;
+  }
 }
 
 class MobileSession {

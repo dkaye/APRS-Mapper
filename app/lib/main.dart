@@ -1,5 +1,6 @@
 /// App entry point. Initializes Flutter, requests Android foreground-service
 /// permissions, and launches MapScreen.
+import 'dart:async' show unawaited;
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
@@ -9,9 +10,14 @@ import 'download_screen.dart';
 import 'map_config.dart';
 import 'password_gate_screen.dart';
 import 'remote_config.dart';
+import 'watch_bridge.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Before the router runs: WatchConnectivity can cold-launch this app in the
+  // background to deliver a watch message, and StartupRouter may never reach
+  // MapScreen on that path. The bridge has to exist regardless of which screen wins.
+  unawaited(WatchBridge.instance.init());
   // Required for sendDataToTask / addTaskDataCallback communication channel.
   // iOS has no foreground task; calling this on iOS can enable a wake lock that
   // prevents auto-lock even when the user isn't sharing.

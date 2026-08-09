@@ -1,35 +1,95 @@
-/// Placeholder root view for the Phase 0 build-system spike.
+/// Top level of the watch UI.
 ///
-/// Phase 1 replaces this with a vertical-page TabView: push-to-talk, messages, and
-/// the sticky destination picker.
+/// Phase 1 is a receiver: the newest message, the message list, and settings. The
+/// push-to-talk page becomes the first tab in Phase 2.
 import SwiftUI
 
 struct RootView: View {
+  @Environment(AppState.self) private var state
+
   var body: some View {
-    VStack(spacing: 6) {
-      Image(systemName: "antenna.radiowaves.left.and.right")
-        .font(.largeTitle)
-        .foregroundStyle(.tint)
-      Text("MARS APRS")
-        .font(.headline)
-      Text(Bundle.main.versionSummary)
-        .font(.caption2)
-        .foregroundStyle(.secondary)
+    TabView {
+      LatestView()
+      MessageListView()
+      SettingsView()
     }
-    .padding()
+    .tabViewStyle(.verticalPage)
   }
 }
 
-extension Bundle {
-  /// "1.22.0 (15)" — shown so a tester can confirm at a glance that the watch app
-  /// and the iPhone app came out of the same pubspec.yaml version.
-  var versionSummary: String {
-    let name = infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-    let build = infoDictionary?["CFBundleVersion"] as? String ?? "?"
-    return "\(name) (\(build))"
+/// The glanceable screen: who called, what they said, and whether the watch is in
+/// a state where it can alert at all. That last part is not decoration — a silent
+/// watch during a net is indistinguishable from a quiet net unless we say so.
+struct LatestView: View {
+  @Environment(AppState.self) private var state
+
+  private var latest: WatchMessage? { state.messages.last }
+
+  var body: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 8) {
+        StatusLine()
+
+        if let m = latest {
+          Text(m.senderLabel)
+            .font(.headline)
+            .foregroundStyle(m.broadcast ? .orange : .primary)
+          if m.broadcast {
+            Text("All Trackers")
+              .font(.caption2)
+              .foregroundStyle(.orange)
+          }
+          Text(m.displayText)
+            .font(.body)
+          Text(m.date, style: .time)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+          Button {
+            state.speakAgain(m)
+          } label: {
+            Label("Speak again", systemImage: "speaker.wave.2.fill")
+          }
+          .buttonStyle(.bordered)
+          .padding(.top, 4)
+        } else {
+          Text("No messages yet")
+            .font(.body)
+            .foregroundStyle(.secondary)
+            .padding(.top, 12)
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.horizontal, 4)
+    }
+    .navigationTitle("MARS APRS")
+  }
+}
+
+/// One line saying whether messages can actually reach this watch right now.
+struct StatusLine: View {
+  @Environment(AppState.self) private var state
+
+  private var text: String {
+    if !state.sharing { return "Not sharing — start on iPhone" }
+    if state.audioUnavailable { return "Phone linked · no audio route" }
+    return state.phoneReachable ? "Phone linked" : "Phone unreachable"
+  }
+
+  private var color: Color {
+    if !state.sharing { return .orange }
+    return state.phoneReachable ? .green : .secondary
+  }
+
+  var body: some View {
+    HStack(spacing: 4) {
+      Circle().fill(color).frame(width: 6, height: 6)
+      Text(text)
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+    }
   }
 }
 
 #Preview {
-  RootView()
+  RootView().environment(AppState.shared)
 }

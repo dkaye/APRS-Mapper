@@ -26,6 +26,14 @@
 		D0C4A7000000000000000017 /* message.wav in Resources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000011 /* message.wav */; };
 		D0C4A7000000000000000018 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D0C4A700000000000000000F /* PrivacyInfo.xcprivacy */; };
 		D0C4A700000000000000001A /* WatchApp.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000001 /* WatchApp.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		D0C4A7000000000000000021 /* WatchBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000020 /* WatchBridge.swift */; };
+		D0C4A7000000000000000031 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000030 /* Models.swift */; };
+		D0C4A7000000000000000033 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000032 /* AppState.swift */; };
+		D0C4A7000000000000000035 /* WatchSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000034 /* WatchSession.swift */; };
+		D0C4A7000000000000000037 /* Announcer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000036 /* Announcer.swift */; };
+		D0C4A7000000000000000039 /* MessageListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000038 /* MessageListView.swift */; };
+		D0C4A700000000000000003B /* MessageDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A700000000000000003A /* MessageDetailView.swift */; };
+		D0C4A700000000000000003D /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A700000000000000003C /* SettingsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -105,6 +113,14 @@
 		D0C4A7000000000000000011 /* message.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; name = message.wav; path = Resources/message.wav; sourceTree = "<group>"; };
 		D0C4A7000000000000000012 /* WatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchApp.swift; sourceTree = "<group>"; };
 		D0C4A7000000000000000013 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		D0C4A7000000000000000020 /* WatchBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchBridge.swift; sourceTree = "<group>"; };
+		D0C4A7000000000000000030 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		D0C4A7000000000000000032 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		D0C4A7000000000000000034 /* WatchSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSession.swift; sourceTree = "<group>"; };
+		D0C4A7000000000000000036 /* Announcer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Announcer.swift; sourceTree = "<group>"; };
+		D0C4A7000000000000000038 /* MessageListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageListView.swift; sourceTree = "<group>"; };
+		D0C4A700000000000000003A /* MessageDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageDetailView.swift; sourceTree = "<group>"; };
+		D0C4A700000000000000003C /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -200,6 +216,7 @@
 				1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
+				D0C4A7000000000000000020 /* WatchBridge.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
 			path = Runner;
@@ -235,6 +252,10 @@
 			isa = PBXGroup;
 			children = (
 				D0C4A7000000000000000012 /* WatchApp.swift */,
+				D0C4A7000000000000000032 /* AppState.swift */,
+				D0C4A7000000000000000036 /* Announcer.swift */,
+				D0C4A7000000000000000030 /* Models.swift */,
+				D0C4A7000000000000000034 /* WatchSession.swift */,
 				D0C4A700000000000000000C /* Views */,
 			);
 			path = Sources;
@@ -243,7 +264,10 @@
 		D0C4A700000000000000000C /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				D0C4A700000000000000003A /* MessageDetailView.swift */,
+				D0C4A7000000000000000038 /* MessageListView.swift */,
 				D0C4A7000000000000000013 /* RootView.swift */,
+				D0C4A700000000000000003C /* SettingsView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -505,6 +529,7 @@
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
+				D0C4A7000000000000000021 /* WatchBridge.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -514,6 +539,13 @@
 			files = (
 				D0C4A7000000000000000014 /* WatchApp.swift in Sources */,
 				D0C4A7000000000000000015 /* RootView.swift in Sources */,
+				D0C4A7000000000000000031 /* Models.swift in Sources */,
+				D0C4A7000000000000000033 /* AppState.swift in Sources */,
+				D0C4A7000000000000000035 /* WatchSession.swift in Sources */,
+				D0C4A7000000000000000037 /* Announcer.swift in Sources */,
+				D0C4A7000000000000000039 /* MessageListView.swift in Sources */,
+				D0C4A700000000000000003B /* MessageDetailView.swift in Sources */,
+				D0C4A700000000000000003D /* SettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
