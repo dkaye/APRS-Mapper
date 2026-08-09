@@ -16,12 +16,12 @@ header('Cache-Control: no-store');   // always fresh; never let Cloudflare cache
 
 echo json_encode([
     'ios' => [
-        'latest'    => '1.21.1',
+        'latest'    => '1.22.0',
         'build'     => 14,
         'store_url' => '',   // e.g. https://apps.apple.com/app/id0000000000
     ],
     'android' => [
-        'latest'  => '1.21.1',
+        'latest'  => '1.22.0',
         'build'   => 14,
         'apk_url' => 'https://marsaprs.org/android/download.php',
     ],

@@ -2,7 +2,7 @@
 
 **Author:** Doug Kaye (K6DRK) · **Copyright:** 2026 Doug Kaye. All Rights Reserved.
 
-**Version:** 1.21.1+14 · August 4, 2026
+**Version:** 1.22.0+15 · August 8, 2026
 
 A Flutter iOS and Android application for the MARS APRS system. Displays live tracker positions from the marsaprs.org server and supports mobile location sharing over APRS-IS.
 

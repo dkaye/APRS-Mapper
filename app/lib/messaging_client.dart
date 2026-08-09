@@ -17,7 +17,12 @@ class MsgParticipant {
   final String? shortId;
   final bool online;
   final bool self;
-  const MsgParticipant({required this.id, required this.kind, required this.key, required this.name, this.shortId, this.online = false, this.self = false});
+
+  /// How many things this row covers: devices for one person (`ent:`), or people
+  /// for a whole station (`mult:`). 1 for an ordinary single-device participant.
+  final int devices;
+
+  const MsgParticipant({required this.id, required this.kind, required this.key, required this.name, this.shortId, this.online = false, this.self = false, this.devices = 1});
   factory MsgParticipant.fromJson(Map<String, dynamic> j) => MsgParticipant(
         id: (j['id'] as num).toInt(),
         kind: j['kind'] as String? ?? 'mobile',
@@ -26,7 +31,22 @@ class MsgParticipant {
         shortId: j['short_id'] as String?,
         online: j['online'] as bool? ?? false,
         self: j['self'] as bool? ?? false,
+        devices: (j['devices'] as num?)?.toInt() ?? 1,
       );
+
+  /// A "<ID> (multiple)" row addressing everyone sharing one display_id.
+  bool get isMultiple => key.startsWith('mult:');
+
+  /// The display_id this row belongs to, used to keep a station's rows together.
+  String get groupId => isMultiple ? key.substring(5) : (shortId ?? '');
+
+  /// Sub-line under the name in the picker.
+  String get subtitle {
+    if (kind == 'operator') return 'Operator';
+    if (isMultiple) return '$devices people at $groupId';
+    if (devices > 1) return '$devices devices';
+    return online ? 'Online' : 'Offline';
+  }
 
   /// How the client is shown — mobiles as "M141 Dirck", operators as their name.
   String get label {

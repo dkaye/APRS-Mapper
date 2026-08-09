@@ -561,6 +561,18 @@ class _RecipientPickerState extends State<_RecipientPicker> {
   @override
   Widget build(BuildContext context) {
     final list = widget.people.where((p) => _query.isEmpty || p.label.toLowerCase().contains(_query.toLowerCase()) || p.key.toLowerCase().contains(_query.toLowerCase())).toList();
+    // Operators first, then mobiles alphabetically by station ID and name. Each
+    // "<ID> (multiple)" sorts to the head of its own ID group so it sits directly
+    // above that station's people instead of drifting elsewhere in the list.
+    int byText(String a, String b) => a.toLowerCase().compareTo(b.toLowerCase());
+    list.sort((a, b) {
+      if (a.kind != b.kind) return a.kind == 'operator' ? -1 : 1;
+      if (a.kind == 'operator') return byText(a.name, b.name);
+      final g = byText(a.groupId, b.groupId);
+      if (g != 0) return g;
+      if (a.isMultiple != b.isMultiple) return a.isMultiple ? -1 : 1;
+      return byText(a.name, b.name);
+    });
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -585,7 +597,7 @@ class _RecipientPickerState extends State<_RecipientPicker> {
                       value: sel,
                       onChanged: (_) => setState(() => sel ? _sel.remove(p.id) : _sel.add(p.id)),
                       title: Text(p.label, style: const TextStyle(fontWeight: FontWeight.w600)),
-                      subtitle: Text(p.kind == 'operator' ? 'Operator' : (p.online ? 'Online' : 'Offline')),
+                      subtitle: Text(p.subtitle),
                       secondary: Icon(Icons.circle, size: 10, color: p.online ? Colors.green : Colors.grey.shade400),
                       controlAffinity: ListTileControlAffinity.leading,
                       dense: true,

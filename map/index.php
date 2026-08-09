@@ -15,7 +15,7 @@
  *   ?config  Map/background/course/tracker config from config.yaml (ETag-cached)
  */
 
-define('WEB_VERSION', '1.21.1+14');
+define('WEB_VERSION', '1.22.0+15');
 
 // ── Client/server API contract version ────────────────────────────────────────
 // Advertised in the ?json and ?config responses so mobile apps can detect an
@@ -6207,18 +6207,27 @@ function _pickerOptions() {
 		if (!namesById.has(t.id)) namesById.set(t.id, new Set());
 		namesById.get(t.id).add(t.name || '');
 	}
+	const rows = [];
 	for (const [key, list] of byEntity) {
 		const t = list[0];
-		opts.push({key, kind:'mobile', name:_entityName(t),
+		rows.push({key, kind:'mobile', name:_entityName(t), _id:t.id || '', _nm:t.name || '',
 			sub: list.length > 1 ? list.length + ' devices' : ''});
 	}
 	for (const [id, names] of namesById) {
 		if (names.size > 1) {
-			opts.push({key:'mult:' + id, kind:'mobile', name:id + ' (multiple)',
-				sub:'Everyone at ' + id});
+			rows.push({key:'mult:' + id, kind:'mobile', name:id + ' (multiple)',
+				_id:id || '', _nm:'', _mult:true,
+				sub:names.size + ' people at ' + id});
 		}
 	}
-	return opts;
+	// Alphabetical by ID, then by name — but each "<ID> (multiple)" sorts to the head
+	// of its own ID group, so it sits immediately above that station's people rather
+	// than being stranded at the end of the list.
+	const coll = (a, b) => a.localeCompare(b, undefined, {sensitivity:'base'});
+	rows.sort((a, b) => coll(a._id, b._id)
+		|| (a._mult ? -1 : 0) - (b._mult ? -1 : 0)
+		|| coll(a._nm, b._nm));
+	return opts.concat(rows);
 }
 function _pickerNameFor(key) { const o = _pickerOptions().find(x => x.key === key); return o ? o.name : key; }
 function _renderPicker() {

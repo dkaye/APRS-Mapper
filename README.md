@@ -2,7 +2,7 @@
 
 **Author:** Doug Kaye (K6DRK) · **Copyright:** 2026 Doug Kaye. All Rights Reserved.
 
-**Version:** Server & Displays (v1.21.1); Mobile App (v1.21.1); iGates (v5.1)
+**Version:** Server & Displays (v1.22.0); Mobile App (v1.22.0); iGates (v5.1)
 
 ---
 
@@ -15,11 +15,11 @@
    - [iGate Diagnostics](#igate-diagnostics)
 5. [iGate Aggregation Relay](#igate-aggregation-relay)
    - [The problem it solves](#the-problem-it-solves) · [How it works](#how-it-works-the-data-path) · [Why it runs on a VPS](#why-it-runs-on-a-vps-not-at-home) · [Cloudflare DNS](#cloudflare-dns-for-the-relay) · [Unique per-gate logins](#unique-per-gate-logins-required) · [Turning it on/off](#turning-it-on-or-off-for-a-gate) · [Components](#components-and-where-they-live)
-6. [APRS Server (v1.21.1)](#aprs-server-v1211)
+6. [APRS Server (v1.22.0)](#aprs-server-v1220)
    - [Cloudflare Tunnel](#cloudflare-tunnel)
-7. [Display Pis (v1.21.1)](#display-pis-v1211)
+7. [Display Pis (v1.22.0)](#display-pis-v1220)
    - [Running a display Pi on Starlink](#running-a-display-pi-on-starlink)
-8. [Mobile Apps (v1.21.1)](#mobile-apps-v1211)
+8. [Mobile Apps (v1.22.0)](#mobile-apps-v1220)
    - [Architecture](#app-architecture) · [Location Sharing Flow](#location-sharing-flow) · [Smart Track](#smart-track) · [Building & Distributing](#building-distributing) · [Background Location](#background-location)
 9. [User Interfaces](#user-interfaces)
 10. [Authentication](#authentication)
@@ -78,18 +78,18 @@ APRS Radio (144.39 MHz)
            ▼
 ┌──────────────────────────────────────┐     ┌──────────────────────────────┐
 │           APRS-IS Network            │◀────│  Mobile App  (iOS/Android)   │
-│         noam.aprs2.net:14580         │     │  Flutter v1.21.1               │
+│         noam.aprs2.net:14580         │     │  Flutter v1.22.0               │
 └────────────────┬─────────────────────┘     │  TCP 14580 (inject position) │
                  │ TCP 14580                 └──────────────┬───────────────┘
 ┌────────────────▼─────────────────────┐                    │ HTTPS (map + config + session)
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.21.1      │
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.22.0      │
 │  aprsDaemon.php → trackers.json      │◀───────────────────┘
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.21.1
+│  Display Pi  (×2)      │  Pi 4 · v1.22.0
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -492,7 +492,7 @@ No gate's ability to gate ever depended on any of this.
 
 ---
 
-## APRS Server (v1.21.1)
+## APRS Server (v1.22.0)
 
 The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
 APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
@@ -578,7 +578,7 @@ The tunnel token is obtained from the **Cloudflare Zero Trust dashboard**:
 
 ---
 
-## Display Pis (v1.21.1)
+## Display Pis (v1.22.0)
 
 A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
 `marsaprs.org`. It is a read-only display device — no long-term local configuration or data storage.
@@ -715,7 +715,7 @@ For details on using the map, see [USERGUIDE.MD](https://marsaprs.org/userguide.
 
 ---
 
-## Mobile Apps (v1.21.1)
+## Mobile Apps (v1.22.0)
 
 Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.
 
@@ -1200,6 +1200,8 @@ All messaging state lives in one SQLite database, `/var/lib/marsaprs/messages.db
 |---|---|---|
 | CRD Stanton on two phones | one row, "2 devices" | `ent:CRD\|Stanton` → both |
 | LKL Dirck + LKL Jerry | two rows **plus** "LKL (multiple)" | `mult:LKL` → everyone at LKL |
+
+Both pickers sort alphabetically by `display_id` then name, with each `(multiple)` row sorted to the **head of its own ID group** so it sits directly above the people it covers rather than trailing the list. Each `(multiple)` row reports how many entities it addresses ("5 people at CM"), and a multi-device row reports its device count ("2 devices"). The web builds this in `_pickerOptions()`; the app sorts in `_RecipientPicker` using `MsgParticipant.groupId`/`isMultiple`, with the counts carried by the `devices` field from `?messaging=participants`.
 
 `display_id` is the grouping key **by design** — it is operator-editable in the Admin UI (`?setdisplayid`) and is routinely edited to make this merging possible. The underlying callsign never changes and remains the APRS identity.
 

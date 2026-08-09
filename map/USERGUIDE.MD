@@ -1,6 +1,6 @@
 # APRS Tracker Map — User Guide
 
-**Version 1.21.1 · August 4, 2026**
+**Version 1.22.0 · August 8, 2026**
 
 ---
 
@@ -487,6 +487,8 @@ If you had already been messaging one of the phones on its own, **that conversat
 **Several people sharing one ID:**
 
 When one ID covers *different* people — say `LKL Dirck` and `LKL Jerry` are both at Lake Lagunitas — they each keep their own row, and you get one extra option: **LKL (multiple)**. Choose it to reach everyone at that location in a single message. Pick a person's own row instead when you want just them.
+
+The list is alphabetical by ID, and each **(multiple)** row sits directly above the people it covers, so you can see at a glance who is included. It also tells you how many: *5 people at CM*. A person carrying two phones shows *2 devices* on their single row.
 
 Receipts reflect this. For one person with two phones, you see the ordinary **Delivered ✓** / **Read ✓✓** as soon as either phone has it — it is still one person. For an **(multiple)** conversation you see the group wording, **Delivered to 2 of 3**, because those really are separate people.
 
