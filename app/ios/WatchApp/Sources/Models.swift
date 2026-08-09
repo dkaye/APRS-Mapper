@@ -21,12 +21,21 @@ struct WatchMessage: Identifiable, Codable, Equatable {
 
   var date: Date { Date(timeIntervalSince1970: TimeInterval(ts)) }
 
-  /// What the announcer reads out. A photo with no caption still deserves a
-  /// sentence, or the tone would be followed by silence.
-  var spoken: String {
-    let body = text.isEmpty && hasPhoto ? "sent a photo" : text
-    return broadcast ? "All trackers, from \(senderLabel). \(body)"
-                     : "\(senderLabel). \(body)"
+  /// Spoken as two utterances with a pause between, matching the phone
+  /// (messaging_screen.dart `_speakMessage`). Said as one phrase the name blurs into
+  /// the opening words and the listener loses both halves; the gap gives them a beat
+  /// to register who is calling before the content starts.
+  var announcementPhrase: String {
+    let who = senderLabel.trimmingCharacters(in: .whitespaces)
+    if who.isEmpty { return broadcast ? "Message to all trackers." : "Message." }
+    return broadcast ? "Message from \(who), to all trackers." : "Message from \(who)."
+  }
+
+  /// The content half. A photo with no caption still deserves a sentence, or the
+  /// announcement would be followed by silence.
+  var bodyPhrase: String {
+    if !text.isEmpty { return text }
+    return hasPhoto ? "sent a photo" : ""
   }
 
   /// Row text when there is no message body.

@@ -29,5 +29,9 @@
 	     works but costs an extra `xcodebuild -showBuildSettings` on every build. -->
 	<key>WKCompanionAppBundleIdentifier</key>
 	<string>org.marsaprs.aprsMap</string>
+	<!-- No microphone or speech-recognition usage strings, deliberately. Replies are
+	     dictated through watchOS's own input screen, which runs outside this app and
+	     handles its own permissions; this app only ever receives finished text. -->
+
 </dict>
 </plist>

@@ -7,6 +7,7 @@
 /// to remember.
 import Foundation
 import Observation
+import WatchKit
 
 @Observable
 final class AppState {
@@ -59,10 +60,6 @@ final class AppState {
   /// land first, marking them seen, is a race we must not depend on. Anything older
   /// than this is shown in the list and can be replayed deliberately.
   private static let maxAnnounceAge: TimeInterval = 120
-
-  /// Suppressed while the microphone is open (Phase 2) — never read a message
-  /// aloud into an open mic.
-  var isRecording = false
 
   enum Source {
     case relayLive // sendMessage — this app was frontmost when the phone sent it
@@ -155,7 +152,6 @@ final class AppState {
         && m.id > launchWatermark
         && now - TimeInterval(m.ts) <= Self.maxAnnounceAge
         && !m.isSelf
-        && !isRecording
         && (announceBroadcasts || !m.broadcast)
     }
     if source != .context {
@@ -205,6 +201,20 @@ final class AppState {
   func setAnnounceBroadcasts(_ on: Bool) {
     announceBroadcasts = on
     persist()
+  }
+
+  /// Change the sticky destination from the wrist and tell the phone, so the two
+  /// agree about where the next reply goes. The phone remains authoritative — it
+  /// echoes the choice back in the next context, which is what confirms it landed.
+  @MainActor
+  func chooseDestination(conversationId: Int?, recipients: [String]?, label: String) {
+    var wire: [String: Any] = ["type": "destination", "label": label]
+    if let c = conversationId { wire["conversationId"] = c }
+    if let r = recipients { wire["recipients"] = r }
+    destination = Destination(wire: wire)
+    persist()
+    WKInterfaceDevice.current().play(.click)
+    WatchSession.shared.send(wire)
   }
 
   /// Deliberate replay of one message, from the detail screen. Bypasses the

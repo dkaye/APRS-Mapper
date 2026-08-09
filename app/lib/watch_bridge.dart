@@ -253,8 +253,73 @@ class WatchBridge {
         unawaited(_sync((e['sinceId'] as num?)?.toInt() ?? 0));
         break;
 
+      case 'send':
+        unawaited(_send(e));
+        break;
+
+      case 'destination':
+        _destination = {
+          if (e['conversationId'] != null) 'conversationId': (e['conversationId'] as num).toInt(),
+          if (e['recipients'] != null) 'recipients': List<String>.from(e['recipients'] as List),
+          'label': e['label'] as String? ?? '',
+        };
+        unawaited(SharedPreferences.getInstance()
+            .then((p) => p.setString(_kWatchDestination, jsonEncode(_destination))));
+        // Echoed back in the next context, which is how the watch knows the phone
+        // accepted its choice rather than assuming it did.
+        _scheduleContext();
+        break;
+
       default:
         break;
+    }
+  }
+
+  /// A reply spoken into the watch. The phone owns the token and does the HTTP, so
+  /// the watch never talks to the server on this path.
+  ///
+  /// The result is reported by `clientId` rather than positionally, because it may
+  /// come back long after the request: the native side answers the watch immediately
+  /// with `queued` when this engine was still starting, and the real answer then
+  /// travels out of band.
+  Future<void> _send(Map<String, dynamic> e) async {
+    final clientId = e['clientId'] as String?;
+    if (clientId == null) return;
+    final text = (e['text'] as String? ?? '').trim();
+    final conversationId = (e['conversationId'] as num?)?.toInt();
+    final recipients =
+        e['recipients'] != null ? List<String>.from(e['recipients'] as List) : null;
+
+    if (text.isEmpty || (conversationId == null && recipients == null)) {
+      await _invoke('sendResult', {'clientId': clientId, 'ok': false, 'error': 'Nothing to send'});
+      return;
+    }
+    if (_token == null) {
+      await _invoke('sendResult', {'clientId': clientId, 'ok': false, 'error': 'Not sharing'});
+      return;
+    }
+
+    final r = await _client.send(
+      text: text,
+      conversationId: conversationId,
+      recipients: recipients,
+    );
+    await _invoke('sendResult', {
+      'clientId': clientId,
+      'ok': r.ok,
+      if (r.id != null) 'id': r.id,
+      if (r.conversationId != null) 'conversationId': r.conversationId,
+      if (r.error != null) 'error': r.error,
+    });
+
+    // A successful send may have created the thread the watch will keep replying to,
+    // so make that the sticky destination rather than leaving it on a recipient list
+    // that would open a second thread next time.
+    if (r.ok && r.conversationId != null && conversationId == null) {
+      setDestination(
+        conversationId: r.conversationId,
+        label: (_destination?['label'] as String?) ?? 'Conversation',
+      );
     }
   }
 

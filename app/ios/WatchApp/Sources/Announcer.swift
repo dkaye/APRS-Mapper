@@ -62,16 +62,20 @@ final class Announcer {
       if ordered.count > Self.summarizeAbove {
         let newest = ordered.suffix(2)
         utterances.append("\(ordered.count) new messages.")
-        utterances.append(contentsOf: newest.map(\.spoken))
+        utterances.append(contentsOf: newest.flatMap(Self.phrases))
         let rest = ordered.count - newest.count
         if rest > 0 { utterances.append("and \(rest) more.") }
       } else {
-        utterances = ordered.map(\.spoken)
+        utterances = ordered.flatMap(Self.phrases)
       }
     }
 
     queue.append(Announcement(doubleHaptic: doubleHaptic, utterances: utterances))
     drain()
+  }
+
+  private static func phrases(for m: WatchMessage) -> [String] {
+    [m.announcementPhrase, m.bodyPhrase].filter { !$0.isEmpty }
   }
 
   func stop() {
@@ -111,7 +115,10 @@ final class Announcer {
       try? await Task.sleep(nanoseconds: UInt64(min(p.duration, 2.0) * 1_000_000_000))
     }
 
-    for text in a.utterances {
+    for (index, text) in a.utterances.enumerated() {
+      // The same 500 ms the phone leaves between "Message from X." and the text
+      // (messaging_screen.dart _kSpeakGap), so both devices sound like one app.
+      if index > 0 { try? await Task.sleep(nanoseconds: 500_000_000) }
       await speak(text)
     }
   }

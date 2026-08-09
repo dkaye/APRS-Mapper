@@ -8,9 +8,13 @@ struct RootView: View {
   @Environment(AppState.self) private var state
 
   var body: some View {
+    // Talk first: it is the page the operator wants under their thumb when the wrist
+    // comes up, and the one they must not have to navigate to.
     TabView {
+      PTTView()
       LatestView()
       MessageListView()
+      DestinationPickerView()
       SettingsView()
     }
     .tabViewStyle(.verticalPage)
@@ -29,6 +33,7 @@ struct LatestView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 8) {
         StatusLine()
+        OutboxLine()
 
         if let m = latest {
           Text(m.senderLabel)
@@ -86,6 +91,27 @@ struct StatusLine: View {
       Text(text)
         .font(.caption2)
         .foregroundStyle(.secondary)
+    }
+  }
+}
+
+/// Shown only when a reply has not been confirmed yet. A message spoken into the
+/// wrist and then silently lost is the worst failure this app has, so an unresolved
+/// send stays visible rather than disappearing optimistically.
+struct OutboxLine: View {
+  private var outbox: Outbox { Outbox.shared }
+
+  var body: some View {
+    let pending = outbox.pending
+    if !pending.isEmpty {
+      let failed = pending.filter { $0.state == .failed }.count
+      HStack(spacing: 4) {
+        Image(systemName: failed > 0 ? "exclamationmark.triangle.fill" : "arrow.up.circle")
+          .font(.caption2)
+        Text(failed > 0 ? "\(failed) not sent" : "Sending \(pending.count)…")
+          .font(.caption2)
+      }
+      .foregroundStyle(failed > 0 ? .orange : .secondary)
     }
   }
 }
