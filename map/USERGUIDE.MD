@@ -520,7 +520,7 @@ Type up to 280 characters and press **Send**. To attach a **photo**, click the *
 
 **Delivery & read receipts:** Each message you send shows its status — **Delivered ✓** when it reaches the recipient's device and **Read ✓✓** once opened. In a group the status reads **Delivered to 2 of 3** / **Read by 1 of 3**.
 
-**Read aloud:** Toggle the **Read aloud** (speaker) button to have arriving messages spoken by the browser. Each is announced as *“Message from CRD Stanton”* before the text, so you know who is calling without looking at the screen — handy for a hands-free net control station. When it is off, a short alert **tone** plays instead; a volume slider sets its level (0 mutes).
+**Read aloud:** Toggle the **Read aloud** (speaker) button to have arriving messages spoken by the browser. Each is announced as *“Message from CRD Stanton”*, then a short pause, then the message itself — so you know who is calling without looking at the screen, and the name does not run into the first words — handy for a hands-free net control station. When it is off, a short alert **tone** plays instead; a volume slider sets its level (0 mutes).
 
 **Settings** (in the panel): **Change my name**, adjust the alert volume, open **View all** messages, or **Sign out** of messaging.
 
@@ -549,7 +549,7 @@ The people list shows only those you can reach — operators and participants ac
 
 **Receipts:** Your sent messages show **Delivered ✓** and **Read ✓✓** (or **Delivered to N of M** / **Read by N of M** in a group).
 
-**Read aloud:** Tap the **speaker** icon (**Read arriving messages aloud**) to have new messages spoken; tap again to mute.
+**Read aloud:** Arriving messages are **spoken aloud by default** — this is a net-control tool and you are usually not watching the screen. Each is announced as *“Message from CRD Stanton”*, then a short pause, then the message. Tap the **speaker** icon to mute; your choice is remembered.
 
 **When the app is in the background:** A message **notification** appears with a distinct, insistent **alert sound** so you don't miss it while the app is backgrounded or the screen is locked.
 

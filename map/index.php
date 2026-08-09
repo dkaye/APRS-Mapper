@@ -6780,18 +6780,38 @@ function _initMsgResize() {
 		if (panel.getBoundingClientRect().width > window.innerWidth) panel.style.width = window.innerWidth + 'px';
 	});
 }
+// Pause between the spoken sender announcement and the message text.
+const MSG_SPEAK_GAP_MS = 500;
+let _speakChain = Promise.resolve();
+// One phrase, resolving when it finishes speaking (or errors, or is cancelled) so a
+// gap can be timed between phrases.
+function _speakPhrase(text) {
+	return new Promise(resolve => {
+		if (!_msgSpeak) return resolve();
+		const u = new SpeechSynthesisUtterance(text);
+		u.rate = 1.0; u.volume = 1.0;
+		u.onend = u.onerror = () => resolve();
+		speechSynthesis.speak(u);
+	});
+}
 function _speakMessage(m) {
 	if (!_msgSpeak || !window.speechSynthesis || !(m.text || '').trim()) return;
-	try {
-		// Announce the sender first. Net control is usually not looking at the screen
-		// when this fires, so the text alone leaves them with no idea who called.
-		// _msgSenderName resolves a mobile through its display_id, giving "CRD Stanton".
-		const who = _msgSenderName(m).replace(/<[^>]*>/g, '')
-			.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
-		const u = new SpeechSynthesisUtterance(who ? 'Message from ' + who + '. ' + m.text : m.text);
-		u.rate = 1.0; u.volume = 1.0;
-		speechSynthesis.speak(u);
-	} catch {}
+	// Announce the sender first. Net control is usually not looking at the screen
+	// when this fires, so the text alone leaves them with no idea who called.
+	// _msgSenderName resolves a mobile through its display_id, giving "CRD Stanton".
+	const who = _msgSenderName(m).replace(/<[^>]*>/g, '')
+		.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').trim();
+	// Announcement and text are separate utterances with a real pause between them:
+	// run together, the name blurs into the first words and the listener loses both.
+	// Chained so two messages arriving close together cannot interleave their halves.
+	_speakChain = _speakChain.then(async () => {
+		if (!_msgSpeak) return;
+		if (who) {
+			await _speakPhrase('Message from ' + who + '.');
+			await new Promise(r => setTimeout(r, MSG_SPEAK_GAP_MS));
+		}
+		if (_msgSpeak) await _speakPhrase(m.text);
+	}).catch(() => {});
 }
 
 function _esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }

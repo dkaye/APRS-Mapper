@@ -14,6 +14,8 @@ import 'messaging_client.dart';
 const _kBlue = Color(0xFF2980B9);
 const _kLastRecipients = 'aprs_msg_last_recipients';
 const _kDark = Color(0xFF1A5276);
+/// Pause between the spoken sender announcement and the message text.
+const _kSpeakGap = Duration(milliseconds: 500);
 
 class MessagingScreen extends StatefulWidget {
   final MessagingClient client;
@@ -48,11 +50,13 @@ class _MessagingScreenState extends State<MessagingScreen> {
   String? _pendingPhotoPath; // photo staged in the composer, not yet sent
   bool _speak = false;
   List<String> _lastRecipients = const [];
+  Future<void> _speakQueue = Future.value();
 
   @override
   void initState() {
     super.initState();
     MessagingScreen.isOpen = true;
+    _tts.awaitSpeakCompletion(true);
     _restoreSpeak();
     _bootstrap();
     _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) => _poll());
@@ -73,7 +77,9 @@ class _MessagingScreenState extends State<MessagingScreen> {
     final p = await SharedPreferences.getInstance();
     if (mounted) {
       setState(() {
-        _speak = p.getBool('aprs_msg_speak') ?? false;
+        // Default ON: this is a net-control tool and the operator is usually not
+        // watching the screen. An explicit mute is still remembered.
+        _speak = p.getBool('aprs_msg_speak') ?? true;
         _lastRecipients = p.getStringList(_kLastRecipients) ?? const [];
       });
     }
@@ -122,14 +128,29 @@ class _MessagingScreenState extends State<MessagingScreen> {
   /// Speak a message, announcing the sender first — whoever is listening usually
   /// is not looking at the screen, so the text alone leaves them without a caller.
   /// senderLabel resolves a mobile through its display_id, giving "CRD Stanton".
-  Future<void> _speakMessage(MsgMessage m) =>
-      _speakText(m.senderLabel.trim().isEmpty ? m.text : 'Message from ${m.senderLabel}. ${m.text}');
+  ///
+  /// The announcement and the text are separate utterances with a real pause
+  /// between them: run together, the name blurs into the first words and the
+  /// listener loses both. Chained through _speakQueue so two messages arriving
+  /// close together cannot interleave their halves.
+  Future<void> _speakMessage(MsgMessage m) {
+    final who = m.senderLabel.trim();
+    if (who.isEmpty) return _speakText(m.text);
+    _speakQueue = _speakQueue.then((_) async {
+      await _speakText('Message from $who.');
+      await Future.delayed(_kSpeakGap);
+      await _speakText(m.text);
+    }).catchError((_) {});
+    return _speakQueue;
+  }
 
   Future<void> _speakText(String text) async {
     if (!_speak || text.trim().isEmpty) return;
     try {
       await _tts.setSpeechRate(0.5);
-      unawaited(_tts.speak(text));
+      // awaitSpeakCompletion (set in initState) makes this resolve when the phrase
+      // finishes, which is what lets the pause below actually land between them.
+      await _tts.speak(text);
     } catch (_) {}
   }
 
