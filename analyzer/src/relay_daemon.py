@@ -6,7 +6,7 @@ analyzer can show which trackers and which iGates are actually working (and how
 well their coverage overlaps).
 
 It streams the aggregation relay's UNDEDUPED capture (`capture.jsonl` on the VPS
-relay) over SSH and, for the active event, inserts a beacon per (tracker, iGate)
+relay) over SSH and, for the current event, inserts a beacon per (tracker, iGate)
 with `receiver` = the gating iGate (e.g. MARS-13). This complements
 `aprs_daemon.py`, which records the public APRS-IS feed (deduped — only ever one
 receiver per beacon). Both write to the same `aprs.db`; the display de-dups per
@@ -52,16 +52,15 @@ WATCH_REFRESH_SECS = 60  # re-read the tracker list this often (picks up new tra
 database = None
 event_id = None
 event_name = None
-start_time = 0
-end_time = 0
 watch_list = {}
 seen = set()             # (callsign, receiver, lat, lng) — insert-time de-dup
 beacons_logged = 0
 
 
 def read_event_data():
-    """Load the active event's id, time window and tracker watch-list. Returns True if found."""
-    global event_id, event_name, start_time, end_time, watch_list
+    """Resolve the current event and its tracker watch-list, creating the event's
+    database row if this is its first recording. Returns True if we have an event."""
+    global event_id, event_name, watch_list
     requested = sys.argv[1] if len(sys.argv) > 1 else None
     if not requested:
         try:
@@ -69,23 +68,25 @@ def read_event_data():
                 requested = (yaml.safe_load(f) or {}).get('event', '')
         except Exception as e:
             print(f"Could not read event from config.yaml: {e}")
-    if requested:
-        event = database.get_event(requested)
-        if event:
-            event_id   = event["id"]
-            event_name = event["name"]
-            start_time = event["start_time"]
-            end_time   = event["end_time"]
-            watch_list = database.get_trackers_for_event(event_name)
-            print(f"Found event {event_id}: {event_name}. Tracking {len(watch_list)} callsigns.")
-            return True
-    print("No matching event found — relay recorder idle.")
-    return False
+    if not requested:
+        print("No current event in config.yaml — relay recorder idle.")
+        return False
+    existed = database.get_event(requested) is not None
+    event = database.ensure_event(requested)
+    if not event:
+        print(f"Could not create event {requested} — relay recorder idle.")
+        return False
+    event_id   = event["id"]
+    event_name = event["name"]
+    watch_list = database.get_trackers_for_event(event_name)
+    print(f"{'Found' if existed else 'Created'} event {event_id}: {event_name}. "
+          f"Tracking {len(watch_list)} callsigns.")
+    return True
 
 
 def handle_line(line):
-    """Parse one capture.jsonl record and, if it is a tracked position in the event
-    window heard by an iGate, record it (de-duped per tracker/gate/position)."""
+    """Parse one capture.jsonl record and, if it is a tracked position heard by an
+    iGate, record it (de-duped per tracker/gate/position)."""
     global beacons_logged
     try:
         rec = json.loads(line)
@@ -95,8 +96,6 @@ def handle_line(line):
     igate = rec.get('igate')     # the gating iGate = q-construct entry station (our receiver)
     raw   = rec.get('raw')
     if not (t and igate and raw):
-        return
-    if t < start_time or t > end_time:
         return
     src = rec.get('src') or (raw.split('>', 1)[0] if '>' in raw else '')
     if src not in watch_list:
@@ -121,17 +120,16 @@ def handle_line(line):
 
 
 def stream_capture():
-    """Stream the relay capture until the event ends, reconnecting if the SSH pipe drops."""
+    """Stream the relay capture until the service is stopped, reconnecting if the
+    SSH pipe drops."""
     global watch_list
     last_refresh = 0.0
-    while time.time() < end_time:
+    while True:
         print(f"Connecting to relay capture ({RELAY_TARGET})…")
         proc = subprocess.Popen(SSH_CMD, stdout=subprocess.PIPE, text=True, bufsize=1)
         try:
             for line in proc.stdout:
                 now = time.time()
-                if now > end_time:
-                    break
                 if now - last_refresh > WATCH_REFRESH_SECS:
                     new_watch = database.get_trackers_for_event(event_name)
                     if new_watch:
@@ -141,6 +139,9 @@ def stream_capture():
                         watch_list = new_watch
                     last_refresh = now
                 handle_line(line)
+        except KeyboardInterrupt:
+            print(f"Stopped. Logged {beacons_logged} relay beacons.")
+            return
         except Exception as e:
             print(f"Capture stream error: {e}")
         finally:
@@ -148,19 +149,11 @@ def stream_capture():
                 proc.terminate()
             except Exception:
                 pass
-        if time.time() < end_time:
-            time.sleep(5)         # brief backoff before reconnecting
-    print(f"Event finished. Logged {beacons_logged} relay beacons.")
+        time.sleep(5)             # brief backoff before reconnecting
 
 
 if __name__ == '__main__':
     database = aprs_db_connection()
     if not read_event_data():
         sys.exit(0)
-    if time.time() > end_time:
-        print("Event has already finished.")
-        sys.exit(0)
-    if time.time() < start_time:
-        print(f"Waiting {int(start_time - time.time())}s for event start…")
-        time.sleep(start_time - time.time())
     stream_capture()

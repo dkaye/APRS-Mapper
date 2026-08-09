@@ -112,6 +112,30 @@ class aprs_db_connection:
             cursor.close()
         return None
 
+    def ensure_event(self, event_name):
+        """Return the named event, creating its row if it does not exist yet.
+
+        The event roster lives in the Admin UI (events/<name>/event.yaml); nothing
+        there writes to aprs.db, so an event that has never been recorded has no row
+        here. Rather than leave the recorders with no event to log into — which used
+        to write beacons with a NULL event_id, invisible to every query — provision
+        the row on first use. start_time records when the event was first seen;
+        end_time is unused (recording is controlled by the Record button, not a clock).
+        """
+        if not event_name:
+            return None
+        event = self.get_event(event_name)
+        if event:
+            return event
+        with self.connection:
+            cursor = self.connection.cursor()
+            cursor.execute(
+                "INSERT OR IGNORE INTO events (name, start_time, end_time) VALUES (?,?,NULL)",
+                [event_name, int(time.time())]
+            )
+            cursor.close()
+        return self.get_event(event_name)
+
     def get_all_event_names(self):
         event_name_list = []
         with self.connection:
@@ -131,8 +155,8 @@ class aprs_db_connection:
             results = cursor.fetchall()
             print(f"Found {len(results)} events\n")
             for event in results:
-                start = self.timestamp_to_readable(event[2])
-                end = self.timestamp_to_readable(event[3])
+                start = self.timestamp_to_readable(event[2]) if event[2] else "—"
+                end = self.timestamp_to_readable(event[3]) if event[3] else "—"
                 print(f"{event[0]} {event[1]} {start} {end}\n")
             cursor.close()
 
@@ -216,7 +240,14 @@ class aprs_db_connection:
             return []
         beacon_dictionary = self.create_sorted_beacon_dictionary(raw_list)
         filtered_data = []
-        position_tolerance = 0.00001
+        # ~11 m. Sized to bridge the two recorders' disagreement about the SAME
+        # beacon: the public APRS-IS feed carries uncompressed DDMM.mm positions,
+        # quantized to 1/100 minute (1.6667e-4 deg), while relay_daemon reads full
+        # precision from the relay capture. Rounding to nearest bounds their offset
+        # at half a step — 8.333e-5 deg — so this tolerance provably collapses every
+        # such pair. Rows from DIFFERENT gates are never merged: `receiver` is part
+        # of the comparison below, which is what makes widening this safe.
+        position_tolerance = 0.0001
         for callsign, data in beacon_dictionary.items():
             unique_beacons = []
 
@@ -261,7 +292,9 @@ class aprs_db_connection:
         return None
 
     def delete_event_beacons(self, event_name):
-        event_data = self.get_event(event_name)
+        """Erase All Data: removes every beacon recorded for this event, and only
+        this event. Other events' recordings are untouched."""
+        event_data = self.ensure_event(event_name)
         if not event_data:
             return 0
         with self.connection:

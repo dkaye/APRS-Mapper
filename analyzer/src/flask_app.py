@@ -462,13 +462,10 @@ def show_event_map(event_name):
     else:
         beacons_json = '[]'
 
-    # Event times
-    start_time = time.time()
-    end_time   = start_time + 3600
-    event_data = db.get_event(event_name)
-    if event_data:
-        start_time = event_data['start_time']
-        end_time   = event_data['end_time']
+    # Provision the event's database row the first time the Analyzer is opened for
+    # it, so Erase All and the recording-times query have an event to work against
+    # even before any recording has started.
+    db.ensure_event(event_name)
 
     # Recording start/end times from first and last stored beacon
     rec = db.get_event_recording_times(event_name)
@@ -500,8 +497,6 @@ def show_event_map(event_name):
         mobile_callsigns_json=json.dumps(list(mobile_callsigns)),
         historical_names_json=json.dumps(historical_names),
         carriers_json=json.dumps(carriers_map),
-        start_time=start_time,
-        end_time=end_time,
         course_data=course_data,
         bg_url=map_cfg['bg_url'],
         map_lat=map_cfg['lat'],
