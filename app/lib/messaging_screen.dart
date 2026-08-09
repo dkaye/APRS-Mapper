@@ -558,6 +558,49 @@ class _RecipientPickerState extends State<_RecipientPicker> {
   final Set<int> _sel = {};
   String _query = '';
 
+  /// The individual people at a station (never the "(multiple)" row itself).
+  List<MsgParticipant> _members(String groupId, List<MsgParticipant> all) => all
+      .where((p) => p.kind != 'operator' && !p.isMultiple && p.groupId == groupId)
+      .toList();
+
+  bool _stationAllChecked(String groupId, List<MsgParticipant> all) {
+    final m = _members(groupId, all);
+    return m.isNotEmpty && m.every((p) => _sel.contains(p.id));
+  }
+
+  /// Tapping a "(multiple)" row selects or clears its whole station. The selection
+  /// itself only ever holds individuals, which is what lets one be unchecked
+  /// afterwards without disturbing the others.
+  void _toggle(MsgParticipant p, List<MsgParticipant> all) {
+    if (p.isMultiple) {
+      final m   = _members(p.groupId, all);
+      final on  = _stationAllChecked(p.groupId, all);
+      for (final x in m) {
+        on ? _sel.remove(x.id) : _sel.add(x.id);
+      }
+      return;
+    }
+    _sel.contains(p.id) ? _sel.remove(p.id) : _sel.add(p.id);
+  }
+
+  /// Chosen recipients, with any fully-checked station collapsed back to its
+  /// "(multiple)" row so the message lands in that station's own stable thread
+  /// instead of an ad-hoc group of the same people.
+  List<MsgParticipant> _chosen(List<MsgParticipant> all) {
+    final picked  = all.where((p) => !p.isMultiple && _sel.contains(p.id)).toList();
+    final out     = <MsgParticipant>[];
+    final covered = <int>{};
+    for (final m in all.where((p) => p.isMultiple)) {
+      final mem = _members(m.groupId, all);
+      if (mem.length > 1 && mem.every((x) => _sel.contains(x.id))) {
+        out.add(m);
+        covered.addAll(mem.map((x) => x.id));
+      }
+    }
+    out.addAll(picked.where((p) => !covered.contains(p.id)));
+    return out;
+  }
+
   @override
   Widget build(BuildContext context) {
     final list = widget.people.where((p) => _query.isEmpty || p.label.toLowerCase().contains(_query.toLowerCase()) || p.key.toLowerCase().contains(_query.toLowerCase())).toList();
@@ -574,7 +617,7 @@ class _RecipientPickerState extends State<_RecipientPicker> {
       return byText(a.name, b.name);
     });
     // Stations that have a "(multiple)" row — their people get indented under it.
-    final multIds = list.where((p) => p.isMultiple).map((p) => p.groupId).toSet();
+    final multIds = widget.people.where((p) => p.isMultiple).map((p) => p.groupId).toSet();
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -594,7 +637,10 @@ class _RecipientPickerState extends State<_RecipientPicker> {
                   itemCount: list.length,
                   itemBuilder: (_, i) {
                     final p = list[i];
-                    final sel = _sel.contains(p.id);
+                    // A "(multiple)" row shows checked only while every person at
+                    // that station is checked, so unchecking one leaves the rest
+                    // selected and simply clears the group row.
+                    final sel = p.isMultiple ? _stationAllChecked(p.groupId, widget.people) : _sel.contains(p.id);
                     final sub = p.subtitle;
                     // Rule between the operators and the trackers. The list is sorted
                     // operators-first, so the boundary is wherever the kind changes.
@@ -605,24 +651,48 @@ class _RecipientPickerState extends State<_RecipientPicker> {
                     final child = p.kind != 'operator' && !p.isMultiple && multIds.contains(p.groupId);
                     final newGroup = !rule && i > 0 && p.kind != 'operator'
                         && list[i - 1].kind != 'operator' && list[i - 1].groupId != p.groupId;
-                    final tile = CheckboxListTile(
-                      value: sel,
-                      onChanged: (_) => setState(() => sel ? _sel.remove(p.id) : _sel.add(p.id)),
-                      title: Text(p.label, style: const TextStyle(fontWeight: FontWeight.w600)),
-                      subtitle: sub.isEmpty ? null : Text(sub, style: const TextStyle(fontSize: 12)),
-                      // Presence reads better as a word than as a colour-only dot,
-                      // which carries no meaning for a colour-blind operator.
-                      secondary: p.showsPresence
-                          ? Text(p.online ? 'Online' : 'Offline',
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: p.online ? const Color(0xFF1B8A3A) : const Color(0xFFC0392B)))
-                          : null,
-                      controlAffinity: ListTileControlAffinity.leading,
-                      dense: true,
-                      visualDensity: const VisualDensity(horizontal: -2, vertical: -4),
-                      contentPadding: EdgeInsets.only(left: child ? 26 : 12, right: 12),
+                    // A compact hand-built row rather than CheckboxListTile, which
+                    // bottoms out at visualDensity -4 and still reserves far more
+                    // height than these one-line entries need.
+                    final tile = InkWell(
+                      onTap: () => setState(() => _toggle(p, widget.people)),
+                      child: Padding(
+                        padding: EdgeInsets.only(left: child ? 22 : 4, right: 12, top: 1, bottom: 1),
+                        child: Row(children: [
+                          SizedBox(
+                            width: 34,
+                            child: Checkbox(
+                              value: sel,
+                              onChanged: (_) => setState(() => _toggle(p, widget.people)),
+                              visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
+                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(p.label,
+                                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14, height: 1.2)),
+                                if (sub.isNotEmpty)
+                                  Text(sub,
+                                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(fontSize: 11, height: 1.2, color: Colors.grey.shade600)),
+                              ],
+                            ),
+                          ),
+                          // Presence reads better as a word than as a colour-only dot,
+                          // which carries no meaning for a colour-blind operator.
+                          if (p.showsPresence)
+                            Text(p.online ? 'Online' : 'Offline',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: p.online ? const Color(0xFF1B8A3A) : const Color(0xFFC0392B))),
+                        ]),
+                      ),
                     );
                     if (rule) {
                       return Column(mainAxisSize: MainAxisSize.min,
@@ -642,7 +712,7 @@ class _RecipientPickerState extends State<_RecipientPicker> {
             width: double.infinity,
             child: FilledButton(
               style: FilledButton.styleFrom(backgroundColor: _kBlue),
-              onPressed: _sel.isEmpty ? null : () => Navigator.pop(context, widget.people.where((p) => _sel.contains(p.id)).toList()),
+              onPressed: _sel.isEmpty ? null : () => Navigator.pop(context, _chosen(widget.people)),
               child: Text(_sel.length > 1 ? 'Start group (${_sel.length})' : 'Start conversation'),
             ),
           ),

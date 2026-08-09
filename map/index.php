@@ -2064,13 +2064,13 @@ body.sidebar-resizing { cursor: ew-resize !important; user-select: none !importa
 #msg-pick-header button { background: none; border: none; font-size: 20px; cursor: pointer; color: #888; }
 #msg-pick-search { margin: 0 16px 8px; padding: 7px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; font-family: inherit; }
 #msg-pick-list { overflow-y: auto; padding: 0 8px 8px; }
-.msg-pick-item { display: flex; align-items: center; gap: 10px; padding: 9px 8px; border-radius: 6px; cursor: pointer; }
+.msg-pick-item { display: flex; align-items: center; gap: 10px; padding: 3px 8px; border-radius: 6px; cursor: pointer; line-height: 1.25; }
 .msg-pick-item:hover { background: #f2f6f9; }
 .msg-pick-item.sel { background: #eaf3fb; }
 .msg-pick-check { flex: 0 0 auto; width: 18px; color: #2980b9; font-weight: 700; }
 /* A station's rows cluster: gap before a new ID, its people indented under the
    "(multiple)" row so the grouping is visible without headings or boxes. */
-.msg-pick-item.grp-start { margin-top: 8px; }
+.msg-pick-item.grp-start { margin-top: 6px; }
 .msg-pick-item.grp-child { padding-left: 24px; }
 /* Presence as a word rather than a colour-only dot. */
 .msg-pick-presence { flex: 0 0 auto; font-size: 12px; font-weight: 600; white-space: nowrap; }
@@ -6205,6 +6205,35 @@ function _refreshPicker() { if (_msgPickerOpen()) _renderPicker(); }
 // rows and gains an extra "<ID> (multiple)" row addressing everyone under it.
 function _entityKey(t)  { return 'ent:' + (t.id || '') + '|' + (t.name || ''); }
 function _entityName(t) { return [t.id, t.name].filter(Boolean).join(' ') || t.callsign; }
+// display_id -> Set of the entity keys at that station.
+function _stationMap() {
+	const m = new Map();
+	for (const t of _mobileTrackers) {
+		const id = t.id || '';
+		if (!m.has(id)) m.set(id, new Set());
+		m.get(id).add(_entityKey(t));
+	}
+	return m;
+}
+// A "(multiple)" row is a select-all for its station: it shows as checked only while
+// every person there is checked, so unchecking one leaves the rest selected and
+// clears the group row — the selection stays the individuals, never a fuzzy "group".
+function _stationAllChecked(id) {
+	const mem = _stationMap().get(id);
+	return !!mem && mem.size > 0 && [...mem].every(k => _pickSel.has(k));
+}
+// Before sending, a fully-checked station collapses back to its mult: key so the
+// message lands in that station's own stable thread rather than an ad-hoc group.
+function _collapseSelection(keys) {
+	const out = new Set(keys);
+	for (const [id, mem] of _stationMap()) {
+		if (mem.size > 1 && [...mem].every(k => out.has(k))) {
+			for (const k of mem) out.delete(k);
+			out.add('mult:' + id);
+		}
+	}
+	return [...out];
+}
 function _pickerOptions() {
 	const opts = [{key:'all', kind:'all', name:'All Trackers', sub:'Broadcast to everyone'}];
 	const byEntity = new Map();     // ent:ID|Name -> [trackers]
@@ -6253,7 +6282,7 @@ function _renderPicker() {
 	const opts = _pickerOptions().filter(o => !q || o.name.toLowerCase().includes(q) || o.key.toLowerCase().includes(q));
 	let prevId = null;
 	list.innerHTML = opts.map((o, i) => {
-		const sel = _pickSel.has(o.key);
+		const sel = o._mult ? _stationAllChecked(o._id) : _pickSel.has(o.key);
 		// A station's rows read as one cluster: a small gap before each new ID, and
 		// its people indented under the "(multiple)" row that addresses them all.
 		const newGroup = i > 0 && o._id !== undefined && o._id !== prevId;
@@ -6275,6 +6304,15 @@ function _renderPicker() {
 }
 function _togglePick(key) {
 	if (key === 'all') { _pickSel = _pickSel.has('all') ? new Set() : new Set(['all']); }
+	else if (key.startsWith('mult:')) {
+		// Select-all / clear-all for the station. Selection only ever holds the
+		// individuals, so unchecking one afterwards simply leaves the rest.
+		const id  = key.slice(5);
+		const mem = _stationMap().get(id) || new Set();
+		const all = _stationAllChecked(id);
+		_pickSel.delete('all');
+		for (const k of mem) all ? _pickSel.delete(k) : _pickSel.add(k);
+	}
 	else { _pickSel.delete('all'); _pickSel.has(key) ? _pickSel.delete(key) : _pickSel.add(key); }
 	_renderPicker();
 }
@@ -6283,9 +6321,10 @@ function _startFromPicker() {
 	if (!keys.length) return;
 	document.getElementById('msg-pick-modal').style.display = 'none';
 	if (keys.length === 1 && keys[0] === 'all') { _openBroadcast(); return; }
-	const recipients = keys.includes('all') ? 'all' : keys;
+	const sendKeys  = keys.includes('all') ? keys : _collapseSelection(keys);
+	const recipients = keys.includes('all') ? 'all' : sendKeys;
 	_pendingConv = {recipients}; _openConvId = null;
-	const label = keys.includes('all') ? 'All Trackers' : keys.map(_pickerNameFor).join(', ');
+	const label = keys.includes('all') ? 'All Trackers' : sendKeys.map(_pickerNameFor).join(', ');
 	_showThreadView(_esc(label), keys.length > 1 ? keys.length + ' people' : '');
 	document.getElementById('msg-thread-scroll').innerHTML = '<div id="msg-thread-empty">New conversation — type a message below.</div>';
 	document.getElementById('msg-compose-text').value = ''; _autoGrow(document.getElementById('msg-compose-text'));

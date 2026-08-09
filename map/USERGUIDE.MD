@@ -504,6 +504,8 @@ LKL (multiple)    2 people at LKL
 
 The **(multiple)** row also tells you how many people it reaches, and a person carrying two phones shows *2 devices* on their single row.
 
+**Checking a location checks everyone in it.** Tick **CM (multiple)** and all of CM's people are ticked with it. You can then untick anyone you want to leave out — the others stay ticked, and the **(multiple)** row simply clears to show you are no longer sending to the whole location. Tick that last person again and the group row fills back in. Unticking **(multiple)** clears the whole location at once.
+
 The right-hand column shows **Online** (green) or **Offline** (red) for each person. Someone carrying two phones counts as Online if *either* phone has checked in recently — they are reachable, whichever one they are holding. **(multiple)** rows show no status, since they stand for several people at once. Offline is not a barrier: the message is delivered the moment that phone reconnects.
 
 Receipts reflect this. For one person with two phones, you see the ordinary **Delivered ✓** / **Read ✓✓** as soon as either phone has it — it is still one person. For an **(multiple)** conversation you see the group wording, **Delivered to 2 of 3**, because those really are separate people.
