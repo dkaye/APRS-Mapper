@@ -32,6 +32,17 @@ version: 1.16.1+2
 The part before `+` is the display version; the part after is the build number.
 **The build number must be higher than any previous upload** — increment it each time.
 
+**Bump the build number on every build, not just every release.** It is what makes
+watchOS install a new watch app at all: when the iPhone app lands, iOS compares the
+embedded `WatchApp.app`'s `CFBundleVersion` against what is on the Watch and only
+transfers if it is higher. Rebuild without bumping and iOS compares 15 against 15,
+concludes the Watch is current, and does nothing — the phone updates, the watch
+silently does not, and the two disagree with no indication that anything is wrong.
+The Watch's Settings page shows the build time next to the version so a stale copy is
+visible at a glance. (The marketing version — the part before `+` — only moves at
+release, as does `WEB_VERSION` in `map/index.php` and the build in
+`map/app_version.php`.)
+
 This one line is the source of truth for **both** the iPhone app and the embedded
 Apple Watch app. `ios/WatchApp/WatchApp.xcconfig` includes `Flutter/Generated.xcconfig`,
 so the watch app's `CFBundleShortVersionString` / `CFBundleVersion` come from the same
