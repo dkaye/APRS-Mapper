@@ -130,6 +130,15 @@ final class WatchSession: NSObject {
       case "audioReceived":
         TalkSession.shared.phoneReceived()
         return
+      case "receipt":
+        // Must be matched before the message decode below: a receipt carries a
+        // messageId, and anything with an id would otherwise parse as a message.
+        Announcer.shared.announceReceipt(
+          stage: payload["stage"] as? String ?? "",
+          count: payload["count"] as? Int ?? 0,
+          total: payload["total"] as? Int ?? 0,
+          speak: AppState.shared.speakEnabled)
+        return
       default:
         break
       }

@@ -37,6 +37,10 @@ final class Announcer {
   private struct Announcement {
     let doubleHaptic: Bool
     let utterances: [String]
+    /// Receipts get no alert tone: they answer something the user just did, rather
+    /// than interrupting them with something new, and a tone per state change would
+    /// mean three chimes for every reply.
+    var tone = true
   }
 
   private init() {
@@ -74,6 +78,30 @@ final class Announcer {
     drain()
   }
 
+  /// Confirms the fate of a reply the user just spoke: sent, delivered, read.
+  ///
+  /// Announced aloud because the whole point of talking into the wrist is that the
+  /// operator is not looking at it — a checkmark they never see confirms nothing.
+  /// The wording matches the phone's ack label, including the "N of M" form for a
+  /// group, so the two devices never disagree about what "delivered" means.
+  func announceReceipt(stage: String, count: Int, total: Int, speak: Bool) {
+    let phrase: String
+    switch stage {
+    case "sent":
+      phrase = "Message sent."
+    case "delivered":
+      phrase = total > 1 ? "Message delivered to \(count) of \(total)." : "Message delivered."
+    case "read":
+      phrase = total > 1 ? "Message read by \(count) of \(total)." : "Message read."
+    default:
+      return
+    }
+    WKInterfaceDevice.current().play(stage == "read" ? .success : .click)
+    guard speak else { return } // haptic still lands with read-aloud off
+    queue.append(Announcement(doubleHaptic: false, utterances: [phrase], tone: false))
+    drain()
+  }
+
   private static func phrases(for m: WatchMessage) -> [String] {
     [m.announcementPhrase, m.bodyPhrase].filter { !$0.isEmpty }
   }
@@ -102,14 +130,16 @@ final class Announcer {
   }
 
   private func play(_ a: Announcement) async {
-    haptic(double: a.doubleHaptic)
+    // Receipts have already buzzed with a haptic that suits their meaning; a second
+    // generic notification buzz would just make a confirmation feel like new traffic.
+    if a.tone { haptic(double: a.doubleHaptic) }
 
-    let wantsAudio = shouldPlayTone() || !a.utterances.isEmpty
+    let wantsAudio = (a.tone && shouldPlayTone()) || !a.utterances.isEmpty
     let ready = wantsAudio ? await activateAudio() : false
     AppState.shared.audioUnavailable = wantsAudio && !ready
     guard ready else { return } // haptic already fired; that is the guaranteed part
 
-    if shouldPlayTone(consume: true), let p = player {
+    if a.tone, shouldPlayTone(consume: true), let p = player {
       p.currentTime = 0
       p.play()
       try? await Task.sleep(nanoseconds: UInt64(min(p.duration, 2.0) * 1_000_000_000))

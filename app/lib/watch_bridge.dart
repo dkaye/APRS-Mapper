@@ -79,6 +79,18 @@ class WatchBridge {
 
   Timer? _contextTimer;
 
+  /// Messages sent from the watch whose receipts we are still following, and the
+  /// furthest stage each has reached (0 sent, 1 delivered, 2 read). Only watch sends
+  /// are tracked: the operator is looking at the phone for anything typed there, and
+  /// announcing its receipts on the wrist would be noise.
+  final Map<int, int> _receiptStage = {};
+  Timer? _receiptTimer;
+
+  /// Stop following a message after this. A recipient who never opens the app would
+  /// otherwise keep us polling for the rest of the event.
+  static const _receiptGiveUp = Duration(minutes: 10);
+  final Map<int, DateTime> _receiptSince = {};
+
   // ── lifecycle ───────────────────────────────────────────────────────────────
 
   /// Called from `main()` before `runApp`. No-op off iOS.
@@ -312,6 +324,8 @@ class WatchBridge {
       if (r.error != null) 'error': r.error,
     });
 
+    if (r.ok && r.id != null) _followReceipts(r.id!);
+
     // A successful send may have created the thread the watch will keep replying to,
     // so make that the sticky destination rather than leaving it on a recipient list
     // that would open a second thread next time.
@@ -320,6 +334,74 @@ class WatchBridge {
         conversationId: r.conversationId,
         label: (_destination?['label'] as String?) ?? 'Conversation',
       );
+    }
+  }
+
+  // ── delivery receipts for watch-originated sends ───────────────────────────
+
+  /// Start following one message and tell the watch it left the building.
+  void _followReceipts(int messageId) {
+    _receiptStage[messageId] = 0;
+    _receiptSince[messageId] = DateTime.now();
+    unawaited(_invoke('pushMessage', {
+      'type': 'receipt',
+      'messageId': messageId,
+      'stage': 'sent',
+      'total': 0,
+      'count': 0,
+    }));
+    _receiptTimer ??= Timer.periodic(const Duration(seconds: 5), (_) => unawaited(_pollReceipts()));
+  }
+
+  /// `poll` reports receipts for the sender's recent messages regardless of the id
+  /// watermark — deliberately, server-side, so a delivery landing after the watermark
+  /// still reaches the sender. That is what lets this ask for receipts without
+  /// re-fetching messages.
+  Future<void> _pollReceipts() async {
+    if (_receiptStage.isEmpty || _token == null) {
+      _receiptTimer?.cancel();
+      _receiptTimer = null;
+      return;
+    }
+
+    final now = DateTime.now();
+    _receiptSince.removeWhere((id, since) {
+      final expired = now.difference(since) > _receiptGiveUp;
+      if (expired) _receiptStage.remove(id);
+      return expired;
+    });
+
+    final result = await _client.poll(_lastId);
+    for (final r in result.receipts) {
+      final stage = _receiptStage[r.messageId];
+      if (stage == null) continue;
+      // Same thresholds the phone's own ack label uses, so the two never disagree
+      // about what "delivered" means.
+      final reached = r.read > 0 ? 2 : (r.delivered > 0 ? 1 : 0);
+      if (reached <= stage) continue;
+      _receiptStage[r.messageId] = reached;
+      unawaited(_invoke('pushMessage', {
+        'type': 'receipt',
+        'messageId': r.messageId,
+        'stage': reached == 2 ? 'read' : 'delivered',
+        'total': r.total,
+        'count': reached == 2 ? r.read : r.delivered,
+      }));
+      // Read is terminal; nothing further to wait for.
+      if (reached == 2) {
+        _receiptStage.remove(r.messageId);
+        _receiptSince.remove(r.messageId);
+      }
+    }
+
+    // The poll also carries any new inbound traffic. Relay it: this timer only runs
+    // while a watch send is outstanding, but during that window it may well be the
+    // first path to see a reply.
+    if (result.messages.isNotEmpty) {
+      for (final m in result.messages) {
+        if (m.id > _lastId) _lastId = m.id;
+      }
+      await _invoke('pushMessages', {'messages': result.messages.map(_msgMessageDict).toList()});
     }
   }
 
