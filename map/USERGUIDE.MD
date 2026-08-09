@@ -520,7 +520,7 @@ Type up to 280 characters and press **Send**. To attach a **photo**, click the *
 
 **Delivery & read receipts:** Each message you send shows its status — **Delivered ✓** when it reaches the recipient's device and **Read ✓✓** once opened. In a group the status reads **Delivered to 2 of 3** / **Read by 1 of 3**.
 
-**Read aloud:** Toggle the **Read aloud** (speaker) button to have arriving messages spoken by the browser. Each is announced as *“Message from CRD Stanton”*, then a short pause, then the message itself — so you know who is calling without looking at the screen, and the name does not run into the first words — handy for a hands-free net control station. When it is off, a short alert **tone** plays instead; a volume slider sets its level (0 mutes).
+**Read aloud:** Arriving messages are **spoken aloud by default** — you are usually watching the map rather than the message panel. Toggle the **Read aloud** (speaker) button to mute; your choice is remembered. Each is announced as *“Message from CRD Stanton”*, then a short pause, then the message itself — so you know who is calling without looking at the screen, and the name does not run into the first words — handy for a hands-free net control station. When it is off, a short alert **tone** plays instead; a volume slider sets its level (0 mutes).
 
 **Settings** (in the panel): **Change my name**, adjust the alert volume, open **View all** messages, or **Sign out** of messaging.
 

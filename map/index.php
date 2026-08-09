@@ -5604,8 +5604,29 @@ let _msgEnabled = false;
 let _msgPanelOpen = false;
 let _msgPollTimer = null;
 let _msgUiInitialized = false;
-let _msgSpeak = false;         // read arriving messages aloud (speaker toggle)
-try { _msgSpeak = localStorage.getItem('aprs_msg_speak') === '1'; } catch {}
+// Read arriving messages aloud. Defaults ON — net control is usually watching the
+// map, not the message panel. A stored value always wins, so an explicit mute sticks.
+let _msgSpeak = true;
+try { const _sv = localStorage.getItem('aprs_msg_speak'); if (_sv !== null) _msgSpeak = (_sv === '1'); } catch {}
+// Browsers only let speech start from a user gesture. _toggleSpeak does a silent
+// warm-up inside its click, but with the speaker on by default there may be no such
+// click to piggyback on — so unlock on the first interaction with the page instead,
+// or the first arriving message would fail silently and look like a broken feature.
+(function () {
+	const unlock = () => {
+		try {
+			if (_msgSpeak && window.speechSynthesis) {
+				const u = new SpeechSynthesisUtterance(' ');
+				u.volume = 0;
+				speechSynthesis.speak(u);
+			}
+		} catch {}
+		window.removeEventListener('pointerdown', unlock, true);
+		window.removeEventListener('keydown', unlock, true);
+	};
+	window.addEventListener('pointerdown', unlock, true);
+	window.addEventListener('keydown', unlock, true);
+})();
 
 const _convs   = new Map();   // id -> {id,kind,title,members,unread,last_id,preview,messages,loaded}
 let _openConvId = null;       // conversation shown in the thread view
