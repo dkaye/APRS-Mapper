@@ -76,6 +76,47 @@ function _msg_ensure_all_mobiles(MessagingDb $db, array $ctx): void
 
 /** Map recipient keys (callsign or operator name) to participant ids, creating
  *  mobile participants on demand from mobile_trackers.json. Unknown keys dropped. */
+/** Devices that are addressable right now: a live session token, seen within 24 h.
+ *  Same test index.php:99 uses to build the picker, so what an operator can select
+ *  and what actually receives a message never disagree. */
+function _msg_addressable(array $t, int $now): bool
+{
+    return !empty($t['callsign']) && empty($t['blocked'])
+        && !empty($t['token']) && ($now - ($t['lastUpdate'] ?? 0)) <= 86400;
+}
+
+/** The display_id shown to operators — the merge key. Falls back to the M0xx id. */
+function _msg_display_id(array $t): string
+{
+    return (string)(($t['display_id'] ?? '') !== '' ? $t['display_id'] : ($t['id'] ?? ''));
+}
+
+/**
+ * Expand an entity or multi-recipient key into the tracker records it addresses.
+ *   ent:<display_id>|<name>  → every device sharing BOTH (one person, several phones)
+ *   mult:<display_id>        → every device under that display_id, whatever the name
+ * Returns [] for anything else, so plain callsigns fall through to the caller.
+ */
+function _msg_expand_group_key(string $key, array $trackers): array
+{
+    $now = time();
+    if (strncmp($key, 'ent:', 4) === 0) {
+        $rest = substr($key, 4);
+        $bar  = strpos($rest, '|');
+        if ($bar === false) return [];
+        $disp = trim(substr($rest, 0, $bar));
+        $name = trim(substr($rest, $bar + 1));
+        return array_values(array_filter($trackers, fn($t) => _msg_addressable($t, $now)
+            && _msg_display_id($t) === $disp && trim((string)($t['name'] ?? '')) === $name));
+    }
+    if (strncmp($key, 'mult:', 5) === 0) {
+        $disp = trim(substr($key, 5));
+        return array_values(array_filter($trackers, fn($t) => _msg_addressable($t, $now)
+            && _msg_display_id($t) === $disp));
+    }
+    return [];
+}
+
 function _msg_resolve_recipients(MessagingDb $db, array $ctx, array $keys): array
 {
     $ids = [];
@@ -83,6 +124,16 @@ function _msg_resolve_recipients(MessagingDb $db, array $ctx, array $keys): arra
     foreach ($keys as $key) {
         $key = trim((string)$key);
         if ($key === '') continue;
+        // Entity / (multiple) keys expand to several devices before anything else,
+        // so one picker row can address a person's whole set of phones.
+        if (strncmp($key, 'ent:', 4) === 0 || strncmp($key, 'mult:', 5) === 0) {
+            if ($trackers === null) $trackers = _msg_load_trackers($ctx['mobileFile']);
+            foreach (_msg_expand_group_key($key, $trackers) as $t) {
+                $ids[] = $db->upsertParticipant($ctx['event'], 'mobile', $t['callsign'],
+                            $t['name'] ?? $t['callsign'], $t['id'] ?? null, null, _msg_tracker_pos($t));
+            }
+            continue;
+        }
         $p = $db->participantByKey($ctx['event'], $key);
         if ($p) { $ids[] = (int)$p['id']; continue; }
         if ($trackers === null) $trackers = _msg_load_trackers($ctx['mobileFile']);
@@ -159,15 +210,73 @@ function messaging_handle(string $action, array $body, array $ctx): void
 
     switch ($action) {
 
-    case 'participants': {   // addressable recipient list for the picker
-        $rows = $db->listParticipants($event);
-        $now  = time();
-        $out  = array_map(fn($p) => [
-            'id'=>(int)$p['id'], 'kind'=>$p['kind'], 'key'=>$p['key'],
-            'name'=>$p['display_name'], 'short_id'=>$p['short_id'],
-            'online'=> !empty($p['last_seen']) && ($now - (int)$p['last_seen']) < 90,
-            'self'=> (int)$p['id'] === (int)$me['id'],
-        ], $rows);
+    case 'participants': {
+        // Addressable recipient list for the mobile app's picker. (The web operator
+        // panel builds its own from the live tracker feed and does not call this.)
+        //
+        // Mobiles are grouped into ENTITIES — everyone sharing display_id and name is
+        // one person, however many phones they carry — and only addressable devices
+        // are listed. Returning the raw participants table here listed every identity
+        // the event had ever seen, which is what produced a picker full of duplicate
+        // names (one volunteer appearing four times across old sessions).
+        $now      = time();
+        $trackers = _msg_load_trackers($ctx['mobileFile']);
+        $out      = [];
+
+        // Operators: addressable if seen in the last 24 h. Drops the retired
+        // identities ("Net Control (ended)") that otherwise sat in the list forever.
+        foreach ($db->listParticipants($event) as $p) {
+            if ($p['kind'] !== 'operator') continue;
+            if (empty($p['last_seen']) || ($now - (int)$p['last_seen']) > 86400) continue;
+            $out[] = [
+                'id'=>(int)$p['id'], 'kind'=>'operator', 'key'=>$p['key'],
+                'name'=>$p['display_name'], 'short_id'=>$p['short_id'],
+                'online'=> ($now - (int)$p['last_seen']) < 90,
+                'self'=> (int)$p['id'] === (int)$me['id'],
+            ];
+        }
+
+        // Mobiles: one row per entity, plus a "<ID> (multiple)" row wherever one
+        // display_id covers more than one name.
+        $entities = [];   // "disp\x1fname" => [trackers]
+        $names    = [];   // disp => [name => true]
+        foreach ($trackers as $t) {
+            if (!_msg_addressable($t, $now)) continue;
+            $disp = _msg_display_id($t);
+            $name = trim((string)($t['name'] ?? ''));
+            $entities[$disp . "\x1f" . $name][] = $t;
+            $names[$disp][$name] = true;
+        }
+        foreach ($entities as $k => $list) {
+            [$disp, $name] = explode("\x1f", $k, 2);
+            $ids = [];
+            foreach ($list as $t) {
+                $ids[] = $db->upsertParticipant($event, 'mobile', $t['callsign'],
+                            $t['name'] ?? $t['callsign'], $t['id'] ?? null, null, _msg_tracker_pos($t));
+            }
+            $newest = 0;
+            foreach ($list as $t) $newest = max($newest, (int)($t['lastUpdate'] ?? 0));
+            $out[] = [
+                'id'      => (int)$ids[0],          // stable per entity: its first device
+                'kind'    => 'mobile',
+                'key'     => 'ent:' . $disp . '|' . $name,
+                'name'    => $name,
+                'short_id'=> $disp,
+                'online'  => ($now - $newest) < 90,
+                // Hide the caller's own entity from their picker.
+                'self'    => in_array((int)$me['id'], array_map('intval', $ids), true),
+                'devices' => count($list),
+            ];
+        }
+        $synth = -1;
+        foreach ($names as $disp => $set) {
+            if (count($set) < 2) continue;
+            $out[] = [
+                'id'=>$synth--, 'kind'=>'mobile', 'key'=>'mult:' . $disp,
+                'name'=>$disp . ' (multiple)', 'short_id'=>null,
+                'online'=>true, 'self'=>false, 'devices'=>count($set),
+            ];
+        }
         echo json_encode(['participants'=>$out, 'me'=>(int)$me['id']]);
         exit;
     }
@@ -186,12 +295,53 @@ function messaging_handle(string $action, array $body, array $ctx): void
         }
         $broadcast = ($recipients === 'all' || (is_array($recipients) && in_array('all', $recipients, true)));
         $title     = isset($body['title']) ? substr(trim($body['title']), 0, 40) : null;
-        $rIds      = $broadcast ? [] : _msg_resolve_recipients($db, $ctx, is_array($recipients) ? $recipients : [$recipients]);
+        $rKeys     = is_array($recipients) ? $recipients : [$recipients];
+        $rIds      = $broadcast ? [] : _msg_resolve_recipients($db, $ctx, $rKeys);
         if (!$broadcast && !$convId && !$rIds) _msg_fail(400, 'Recipient required');
-        [$conv, $kind] = $db->resolveConversation($event, (int)$me['id'], $rIds, $broadcast, $convId, $title);
-        // A broadcast reaches every registered mobile, so make sure they all exist.
-        if ($kind === 'broadcast') _msg_ensure_all_mobiles($db, $ctx);
-        $deliverTo = $db->conversationRecipients($event, $conv, $kind === 'broadcast', (int)$me['id']);
+
+        // Addressing a single entity (one person's phones) or a whole display_id
+        // gets a STABLE thread keyed to that entity rather than to the current set
+        // of devices, so a phone going offline or a third joining never splits the
+        // conversation. Only when the caller named the entity directly — replying
+        // into an existing $convId keeps that thread.
+        $entityKey = (!$broadcast && !$convId && count($rKeys) === 1
+                      && (strncmp((string)$rKeys[0], 'ent:', 4) === 0
+                          || strncmp((string)$rKeys[0], 'mult:', 5) === 0))
+                   ? (string)$rKeys[0] : null;
+
+        if ($entityKey !== null) {
+            $isMult = strncmp($entityKey, 'mult:', 5) === 0;
+            if ($isMult) {
+                $disp = trim(substr($entityKey, 5));
+                $name = '*';                       // every name under this display_id
+            } else {
+                $rest = substr($entityKey, 4);
+                $bar  = strpos($rest, '|');
+                $disp = trim(substr($rest, 0, (int)$bar));
+                $name = trim(substr($rest, (int)$bar + 1));
+            }
+            $conv = $db->resolveEntityConversation($event, (int)$me['id'], $disp, $name, $rIds);
+            $kind = 'entity';
+            // Fold in the prior 1:1 history for THIS person's devices, so merging two
+            // phones under one display_id doesn't leave a second stale thread behind.
+            // Never for (multiple): Dirck's and Jerry's own conversations must stay
+            // their own — an LKL group must not swallow them.
+            if (!$isMult) $db->migrateThreadsIntoEntity($event, $conv, (int)$me['id'], $rIds);
+            $deliverTo = array_values(array_filter($rIds, fn($id) => (int)$id !== (int)$me['id']));
+        } else {
+            [$conv, $kind] = $db->resolveConversation($event, (int)$me['id'], $rIds, $broadcast, $convId, $title);
+            // A broadcast reaches every registered mobile, so make sure they all exist.
+            if ($kind === 'broadcast') _msg_ensure_all_mobiles($db, $ctx);
+            $deliverTo = $db->conversationRecipients($event, $conv, $kind === 'broadcast', (int)$me['id']);
+            // Replying into an entity thread: recompute from who is in the entity NOW,
+            // so a device whose display_id moved elsewhere stops receiving even though
+            // it remains a historical member of the thread.
+            if (($kind === 'entity' || $kind === 'entity_multi') && ($ent = $db->entityOfConversation($conv))) {
+                $key   = $ent[1] === '*' ? 'mult:' . $ent[0] : 'ent:' . $ent[0] . '|' . $ent[1];
+                $live  = _msg_resolve_recipients($db, $ctx, [$key]);
+                if ($live) $deliverTo = array_values(array_filter($live, fn($id) => (int)$id !== (int)$me['id']));
+            }
+        }
         $pos = ($me['kind'] === 'mobile' && isset($me['lat'], $me['lon']))
              ? ['lat'=>(float)$me['lat'], 'lon'=>(float)$me['lon'], 'ts'=>$me['pos_ts'] ? (int)$me['pos_ts'] : null] : null;
         $mid = $db->insertMessage($event, $conv, (int)$me['id'], $text, $deliverTo, $kind === 'broadcast', $pos);
@@ -208,7 +358,8 @@ function messaging_handle(string $action, array $body, array $ctx): void
         $mid = (int)($_GET['id'] ?? $body['id'] ?? 0);
         $m   = $mid ? $db->messageById($mid) : null;
         if (!$m || empty($m['attachment'])) _msg_fail(404, 'No such photo');
-        if (($me['kind'] ?? '') !== 'operator' && !$db->isConversationMember((int)$m['conversation_id'], (int)$me['id']))
+        if (($me['kind'] ?? '') !== 'operator'
+            && !$db->canAccessConversation($event, (int)$m['conversation_id'], (int)$me['id']))
             _msg_fail(403, 'Not a member of this conversation');
         $path = MessagingDb::photoDir($m['event']) . '/' . basename($m['attachment']);
         if (!is_file($path)) _msg_fail(404, 'Photo missing');
@@ -239,8 +390,10 @@ function messaging_handle(string $action, array $body, array $ctx): void
         $sinceId = (int)($_GET['since_id'] ?? $body['since_id'] ?? 0);
         if (!$conv) _msg_fail(400, 'conversation_id required');
         // Only a member (or an operator) may read a thread — otherwise a mobile
-        // could pull any conversation by guessing its id.
-        if (($me['kind'] ?? '') !== 'operator' && !$db->isConversationMember($conv, (int)$me['id']))
+        // could pull any conversation by guessing its id. Broadcasts are readable
+        // by every participant in the event: they receive the message, so refusing
+        // the thread would ring the alert tone for something they cannot open.
+        if (($me['kind'] ?? '') !== 'operator' && !$db->canAccessConversation($event, $conv, (int)$me['id']))
             _msg_fail(403, 'Not a member of this conversation');
         echo json_encode(['messages'=>$db->thread($conv, $sinceId), 'conversation_id'=>$conv]);
         exit;

@@ -5967,7 +5967,7 @@ function _bubbleHtml(m, c) {
 	const textHtml = m.text ? '<div class="msg-bubble-text">' + _esc(m.text) + '</div>' : '';
 	const loc = (typeof m.lat === 'number' && typeof m.lon === 'number')
 		? '<button class="msg-bubble-locbtn" data-mid="' + m.id + '" title="Show where this was sent from">' + MSG_PIN_SVG + '</button>' : '';
-	const ack = me ? '<span class="msg-bubble-ack">' + _ackLabel(_msgReceipts.get(m.id)) + '</span>' : '';
+	const ack = me ? '<span class="msg-bubble-ack">' + _ackLabel(_msgReceipts.get(m.id), _ackSingle(m.conversation_id)) + '</span>' : '';
 	return '<div class="msg-bubble-row ' + (me ? 'me' : 'them') + '">' +
 		'<div class="msg-bubble">' + sender + photo + textHtml +
 		'<div class="msg-bubble-foot">' + loc + '<span class="msg-bubble-time">' + _msgClockTime(m.ts) + '</span>' + ack + '</div>' +
@@ -6086,11 +6086,20 @@ async function _poll() {
 // queued because the recipient is offline; "Sent" = queued while they're online
 // (delivers within seconds). Either way it delivers automatically when they next
 // poll. Groups/broadcasts keep the "N of M" wording.
-function _ackLabel(r) {
+// `single` collapses the "N of M" wording: one person carrying two phones is still
+// one person, so any device acknowledging counts as delivered/read. Passed true for
+// 'entity' threads but NOT 'entity_multi', which really is several people.
+function _ackLabel(r, single) {
 	if (!r || !r.total) return 'Sent';
-	if (r.read > 0) return r.total > 1 ? 'Read by ' + r.read + ' of ' + r.total : 'Read ✓✓';
-	if (r.delivered > 0) return r.total > 1 ? 'Delivered to ' + r.delivered + ' of ' + r.total : 'Delivered ✓';
+	const many = r.total > 1 && !single;
+	if (r.read > 0) return many ? 'Read by ' + r.read + ' of ' + r.total : 'Read ✓✓';
+	if (r.delivered > 0) return many ? 'Delivered to ' + r.delivered + ' of ' + r.total : 'Delivered ✓';
 	return r.pending ? 'Pending' : 'Sent';
+}
+// True when the message's thread is one person on several devices.
+function _ackSingle(cid) {
+	const c = (typeof _convs !== 'undefined' && cid != null) ? _convs.get(cid) : null;
+	return !!(c && c.kind === 'entity');
 }
 function _ingestIncoming(m) {
 	const cid = m.conversation_id;
@@ -6180,10 +6189,34 @@ function _openPicker() {
 function _refreshPicker() { if (_msgPickerOpen()) _renderPicker(); }
 // The picker lists the current mobile trackers only (plus the All-Trackers
 // broadcast) — no operators, and no long MARSQ-… callsigns.
+// One person may carry several phones. Everyone sharing BOTH display_id (t.id) and
+// name is one entity and gets a single row that addresses all their devices —
+// display_id is operator-editable in Admin precisely to make that merging possible.
+// A display_id covering SEVERAL names (LKL Dirck + LKL Jerry) keeps its individual
+// rows and gains an extra "<ID> (multiple)" row addressing everyone under it.
+function _entityKey(t)  { return 'ent:' + (t.id || '') + '|' + (t.name || ''); }
+function _entityName(t) { return [t.id, t.name].filter(Boolean).join(' ') || t.callsign; }
 function _pickerOptions() {
 	const opts = [{key:'all', kind:'all', name:'All Trackers', sub:'Broadcast to everyone'}];
+	const byEntity = new Map();     // ent:ID|Name -> [trackers]
+	const namesById = new Map();    // display_id  -> Set(names)
 	for (const t of _mobileTrackers) {
-		opts.push({key:t.callsign, kind:'mobile', name:[t.id, t.name].filter(Boolean).join(' ') || t.callsign, sub:''});
+		const k = _entityKey(t);
+		if (!byEntity.has(k)) byEntity.set(k, []);
+		byEntity.get(k).push(t);
+		if (!namesById.has(t.id)) namesById.set(t.id, new Set());
+		namesById.get(t.id).add(t.name || '');
+	}
+	for (const [key, list] of byEntity) {
+		const t = list[0];
+		opts.push({key, kind:'mobile', name:_entityName(t),
+			sub: list.length > 1 ? list.length + ' devices' : ''});
+	}
+	for (const [id, names] of namesById) {
+		if (names.size > 1) {
+			opts.push({key:'mult:' + id, kind:'mobile', name:id + ' (multiple)',
+				sub:'Everyone at ' + id});
+		}
 	}
 	return opts;
 }

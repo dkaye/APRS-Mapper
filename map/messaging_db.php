@@ -106,6 +106,18 @@ class MessagingDb
         if (!isset($cols['attachment'])) $this->db->exec('ALTER TABLE messages ADD COLUMN attachment TEXT');
         if (!isset($cols['attach_w']))   $this->db->exec('ALTER TABLE messages ADD COLUMN attach_w INTEGER');
         if (!isset($cols['attach_h']))   $this->db->exec('ALTER TABLE messages ADD COLUMN attach_h INTEGER');
+        // Migration: merge log. When devices are grouped into one entity (see
+        // entityHash), their prior 1:1 threads are folded into the entity thread.
+        // These two columns record where each moved message came from and when, so
+        // a mis-typed display_id can be reversed exactly. Without them the boundary
+        // between pre-merge and post-merge messages is not reliably recoverable:
+        // the obvious signal (one delivery row vs several) collapses whenever a
+        // device was offline at send time, which is the normal case for the
+        // multi-device people this feature exists to serve.
+        if (!isset($cols['prev_conversation_id']))
+            $this->db->exec('ALTER TABLE messages ADD COLUMN prev_conversation_id INTEGER');
+        if (!isset($cols['merged_ts']))
+            $this->db->exec('ALTER TABLE messages ADD COLUMN merged_ts INTEGER');
     }
 
     // ── Photo attachments ──────────────────────────────────────────────────────
@@ -266,12 +278,168 @@ class MessagingDb
             if ($c) return [(int)$c['id'], $c['kind']];
         }
         if ($broadcast) {
-            return [$this->findOrCreateConversation($event, 'broadcast', '*', [$senderId], $title), 'broadcast'];
+            // No members are recorded: the broadcast conversation is shared by the whole
+            // event, so access is decided by kind (see canAccessConversation), not by
+            // membership. Recording the creator here would make the thread render as a
+            // direct chat with whoever happened to send the event's first broadcast.
+            return [$this->findOrCreateConversation($event, 'broadcast', '*', [], $title), 'broadcast'];
         }
         $members = array_values(array_unique(array_merge([$senderId], array_map('intval', $recipientIds))));
         $kind    = count($members) > 2 ? 'group' : 'direct';
         $hash    = self::memberHash($members);
         return [$this->findOrCreateConversation($event, $kind, $hash, $members, $title), $kind];
+    }
+
+    /** Canonical key for a multi-device entity: everyone sharing BOTH display_id and
+     *  name is one person. display_id is operator-editable in the Admin UI and is
+     *  deliberately used to merge devices, so it is the grouping key by design; the
+     *  underlying callsign never changes and stays the APRS identity. */
+    public static function entityHash(string $displayId, string $name): string
+    {
+        return 'ent:' . trim($displayId) . "\x1f" . trim($name);
+    }
+
+    /** Find-or-create the stable thread between one operator and one entity.
+     *
+     *  Keyed by the entity, NOT by the set of device participants, so the thread
+     *  survives phones going offline, coming back, or a third being added — the
+     *  member set would otherwise change the hash and split the conversation.
+     *  $deviceIds are the entity's devices live right now; they are added as members
+     *  (never removed) so access and listing work, while delivery is resolved fresh
+     *  on every send.
+     */
+    public function resolveEntityConversation(string $event, int $operatorId, string $displayId,
+                                              string $name, array $deviceIds): int
+    {
+        $hash = $operatorId . '|' . self::entityHash($displayId, $name);
+        $ex   = $this->one('SELECT id FROM conversations WHERE event=:e AND member_hash=:h',
+                           [':e'=>$event, ':h'=>$hash]);
+        if ($ex) {
+            $cid = (int)$ex['id'];
+        } else {
+            // Title is what the conversation list shows (_convLabel falls back to it),
+            // so it must read the way the picker row did. The kind distinguishes ONE
+            // person on several phones ('entity') from several people sharing a
+            // display_id ('entity_multi') — receipts collapse for the former (any
+            // phone counts) but stay "N of M" for the latter, which really is a group.
+            $isMulti = ($name === '*');
+            $title   = $isMulti ? trim($displayId) . ' (multiple)' : trim($displayId . ' ' . $name);
+            $this->run('INSERT INTO conversations (event,kind,title,member_hash,created_ts)
+                        VALUES (:e,:k,:t,:h,:n)',
+                       [':e'=>$event, ':k'=>($isMulti ? 'entity_multi' : 'entity'),
+                        ':t'=>$title, ':h'=>$hash, ':n'=>time()]);
+            $cid = (int)$this->db->lastInsertRowID();
+        }
+        foreach (array_merge([$operatorId], $deviceIds) as $pid) {
+            $this->run('INSERT OR IGNORE INTO conversation_members (conversation_id,participant_id)
+                        VALUES (:c,:p)', [':c'=>$cid, ':p'=>(int)$pid]);
+        }
+        return $cid;
+    }
+
+    /** [display_id, name] for an entity conversation, or null if it isn't one.
+     *  name is '*' for a whole-display_id "(multiple)" thread. Lets the send path
+     *  re-resolve an entity's live devices when replying into an existing thread,
+     *  rather than trusting conversation_members — a device whose display_id was
+     *  edited away is no longer part of the entity and must stop receiving. */
+    public function entityOfConversation(int $conversationId): ?array
+    {
+        $c = $this->one("SELECT member_hash FROM conversations
+                          WHERE id=:i AND kind IN ('entity','entity_multi')",
+                        [':i'=>$conversationId]);
+        if (!$c) return null;
+        $bar = strpos($c['member_hash'], '|ent:');
+        if ($bar === false) return null;
+        $rest = substr($c['member_hash'], $bar + 5);
+        $sep  = strpos($rest, "\x1f");
+        if ($sep === false) return null;
+        return [substr($rest, 0, $sep), substr($rest, $sep + 1)];
+    }
+
+    /** Fold prior one-to-one threads for this entity's devices into its entity thread.
+     *
+     *  Called when an entity thread is resolved, so that merging two devices under one
+     *  display_id also merges the history the operator already had with each of them —
+     *  otherwise the conversation list shows a second, stale "CRD Stanton".
+     *
+     *  Guarded to DIRECT threads whose only non-operator member is one of this entity's
+     *  devices. Group and broadcast threads are never touched, so an unrelated
+     *  participant's messages can never be pulled in by a mistyped display_id.
+     *
+     *  Every moved row records prev_conversation_id + merged_ts, making the migration
+     *  exactly reversible (see undoMerge). Returns the number of messages moved.
+     */
+    public function migrateThreadsIntoEntity(string $event, int $entityConvId, int $operatorId,
+                                             array $deviceIds): int
+    {
+        if (!$deviceIds) return 0;
+        $now = time();
+        $moved = 0;
+        foreach ($deviceIds as $pid) {
+            $pid  = (int)$pid;
+            $rows = $this->all(
+                "SELECT c.id FROM conversations c
+                   JOIN conversation_members cm ON cm.conversation_id = c.id
+                  WHERE c.event = :e AND c.kind = 'direct' AND c.id <> :self
+                    AND cm.participant_id = :p
+                    AND (SELECT COUNT(*) FROM conversation_members x
+                          WHERE x.conversation_id = c.id) = 2
+                    AND EXISTS (SELECT 1 FROM conversation_members o
+                                 WHERE o.conversation_id = c.id AND o.participant_id = :op)",
+                [':e'=>$event, ':self'=>$entityConvId, ':p'=>$pid, ':op'=>$operatorId]);
+            foreach ($rows as $r) {
+                $old = (int)$r['id'];
+                $this->run('UPDATE messages
+                               SET prev_conversation_id = conversation_id,
+                                   merged_ts            = :n,
+                                   conversation_id      = :new
+                             WHERE conversation_id = :old',
+                           [':n'=>$now, ':new'=>$entityConvId, ':old'=>$old]);
+                $moved += $this->db->changes();
+                // The emptied thread is deliberately NOT deleted. It disappears from
+                // the conversation list on its own because conversationsFor() hides
+                // threads with no messages, and keeping the row (and its members)
+                // means undoMerge only has to move the messages back — the thread it
+                // restores them to still exists. Deleting here orphaned the history.
+            }
+        }
+        return $moved;
+    }
+
+    /** Kind of a conversation, or null if there is no such row. */
+    public function conversationKind(int $conversationId): ?string
+    {
+        $c = $this->one('SELECT kind FROM conversations WHERE id=:i', [':i'=>$conversationId]);
+        return $c ? (string)$c['kind'] : null;
+    }
+
+    /** Title of a conversation, or null. */
+    public function conversationTitle(int $conversationId): ?string
+    {
+        $c = $this->one('SELECT title FROM conversations WHERE id=:i', [':i'=>$conversationId]);
+        return $c ? ($c['title'] !== null ? (string)$c['title'] : null) : null;
+    }
+
+    /** Timestamp of the most recent merge in this event — the handle undoMerge needs. */
+    public function lastMergeTs(string $event): ?int
+    {
+        $r = $this->one('SELECT MAX(merged_ts) AS t FROM messages
+                          WHERE event=:e AND merged_ts IS NOT NULL', [':e'=>$event]);
+        return ($r && $r['t'] !== null) ? (int)$r['t'] : null;
+    }
+
+    /** Reverse one merge: put every message moved at $mergedTs back where it came from.
+     *  Recreating the old conversation row is not needed — the id is preserved in
+     *  prev_conversation_id — but the row is gone, so callers should re-resolve it. */
+    public function undoMerge(string $event, int $mergedTs): int
+    {
+        $this->run('UPDATE messages
+                       SET conversation_id      = prev_conversation_id,
+                           prev_conversation_id = NULL,
+                           merged_ts            = NULL
+                     WHERE event = :e AND merged_ts = :t AND prev_conversation_id IS NOT NULL',
+                   [':e'=>$event, ':t'=>$mergedTs]);
+        return $this->db->changes();
     }
 
     private function findOrCreateConversation(string $event, string $kind, string $hash,
@@ -424,8 +592,16 @@ class MessagingDb
                        WHERE d.recipient_id=:p AND mm.conversation_id=c.id AND d.read_ts IS NULL) AS unread,
                     (SELECT MAX(id) FROM messages WHERE conversation_id=c.id) AS last_id
              FROM conversations c
-             JOIN conversation_members cm ON cm.conversation_id=c.id
-             WHERE c.event=:e AND cm.participant_id=:p
+             LEFT JOIN conversation_members cm
+                    ON cm.conversation_id=c.id AND cm.participant_id=:p
+             WHERE c.event=:e
+               AND (cm.participant_id IS NOT NULL OR c.kind = \'broadcast\')
+               -- Hide threads with no messages. Conversations are only created when
+               -- something is sent, so an empty one means every message was migrated
+               -- into an entity thread; showing it is the stale duplicate that
+               -- merging exists to remove. Keeping the row (rather than deleting it)
+               -- is what lets undoMerge put the history back somewhere real.
+               AND EXISTS (SELECT 1 FROM messages mx WHERE mx.conversation_id = c.id)
              ORDER BY last_id DESC', [':e'=>$event, ':p'=>$participantId]);
         foreach ($rows as &$r) {
             $r['unread']  = (int)$r['unread'];
@@ -538,11 +714,24 @@ class MessagingDb
              ORDER BY m.id DESC LIMIT 1', [':p'=>$participantId]);
     }
 
-    /** True if $participantId is a member of the conversation. */
+    /** True if $participantId is a member of the conversation. Literal membership only —
+     *  callers gating *reads* want canAccessConversation() instead. */
     public function isConversationMember(int $conversationId, int $participantId): bool
     {
         return (bool)$this->one('SELECT 1 FROM conversation_members WHERE conversation_id=:c AND participant_id=:p',
                                 [':c'=>$conversationId, ':p'=>$participantId]);
+    }
+
+    /** True if $participantId may READ this conversation: either a member, or it is the
+     *  event's broadcast conversation, which every participant receives and so must be
+     *  able to open. Broadcast records no members (its hash is the constant '*'), so a
+     *  membership test alone would 403 every recipient of an announcement. */
+    public function canAccessConversation(string $event, int $conversationId, int $participantId): bool
+    {
+        if ($this->isConversationMember($conversationId, $participantId)) return true;
+        return (bool)$this->one(
+            "SELECT 1 FROM conversations WHERE id=:c AND event=:e AND kind='broadcast'",
+            [':c'=>$conversationId, ':e'=>$event]);
     }
 
     /** Operator participants active within $secs (the "who is monitoring" set). */
