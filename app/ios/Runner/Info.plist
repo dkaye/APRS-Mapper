@@ -41,6 +41,11 @@
 	<string>APRS Map shows your position on the map. With your permission, it can also share your location with other event participants.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>APRS Map plays alert sounds for incoming messages using an audio library; the app does not record audio.</string>
+	<!-- Push-to-talk on the Apple Watch: the watch records the reply and this app
+	     turns it into text, on-device where the model is available. The audio is
+	     deleted as soon as it is transcribed and is never sent to a server. -->
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Replies you speak into your Apple Watch are transcribed here so they can be sent as messages. Audio is deleted immediately after transcription.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>APRS Map accesses your photo library so you can attach a photo to a message.</string>
 	<key>UIApplicationSceneManifest</key>

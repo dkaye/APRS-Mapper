@@ -29,9 +29,10 @@
 	     works but costs an extra `xcodebuild -showBuildSettings` on every build. -->
 	<key>WKCompanionAppBundleIdentifier</key>
 	<string>org.marsaprs.aprsMap</string>
-	<!-- No microphone or speech-recognition usage strings, deliberately. Replies are
-	     dictated through watchOS's own input screen, which runs outside this app and
-	     handles its own permissions; this app only ever receives finished text. -->
-
+	<!-- Push-to-talk records while the Talk button is held. No speech-recognition
+	     string is needed here: watchOS has no recogniser to ask for. The clip goes to
+	     the iPhone, which transcribes it and deletes it. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Hold the Talk button to speak a reply. The microphone is only on while you hold it, and the recording is deleted as soon as it has been turned into text.</string>
 </dict>
 </plist>

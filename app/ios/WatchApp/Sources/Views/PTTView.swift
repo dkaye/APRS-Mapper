@@ -1,54 +1,50 @@
-/// Talk — the reply screen.
+/// Talk — press and hold to reply.
 ///
-/// Tap, speak into watchOS's own dictation screen, tap Done, and it sends itself.
+/// Hold the button, speak, let go. The clip goes to the iPhone, which transcribes it
+/// and sends the words back; the transcript then gets the same countdown as any other
+/// reply and sends itself. From the wrist it is one press and nothing else.
 ///
-/// Why a tap rather than a press-and-hold: `Speech.framework` does not exist on
-/// watchOS, so this app has no way to run a recognizer, open the microphone, or show
-/// words appearing as they are spoken. The only sanctioned route to dictated text is
-/// to ask the system for it — `TextFieldLink` puts up Apple's input screen, which
-/// owns the microphone and the transcription and hands back a finished string. That
-/// screen ends on its own Done button, so the start and end of listening are Apple's
-/// to define, not ours. Everything after Done is ours again, which is why the send
-/// still needs no further tap.
+/// The gesture is a `DragGesture` with zero minimum distance rather than a
+/// `LongPressGesture`. A long press fires once after its threshold and reports
+/// nothing about release, which is precisely the half a PTT key needs; drag reports
+/// both edges, so a finger sliding on a moving vehicle keeps transmitting instead of
+/// cutting out.
+///
+/// Dictation remains as the fallback, because recording only works with the phone in
+/// range — the recogniser lives there. When the phone is unreachable the button
+/// becomes watchOS's dictation screen instead, which is slower to use but works on
+/// the watch alone.
 import SwiftUI
 import WatchKit
 
 struct PTTView: View {
   @Environment(AppState.self) private var state
+  private var recorder: AudioRecorder { AudioRecorder.shared }
+  private var talk: TalkSession { TalkSession.shared }
 
   @State private var captured = ""
   @State private var showConfirm = false
-  private var canTalk: Bool { state.sharing && state.destination != nil }
 
-  private func accept(_ text: String?) {
-    let body = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !body.isEmpty else { return }
-    captured = body
-    showConfirm = true
+  private var hasDestination: Bool { state.sharing && state.destination != nil }
+
+  /// Recording needs the phone: it holds the recogniser and the token.
+  private var canRecord: Bool {
+    hasDestination && state.phoneReachable && recorder.granted == true
   }
 
   var body: some View {
-    VStack(spacing: 6) {
+    VStack(spacing: 4) {
       Text(state.destination?.label ?? "No destination")
         .font(.caption)
         .foregroundStyle(state.destination == nil ? .orange : .secondary)
         .lineLimit(1)
 
-      if canTalk {
-        TextFieldLink(prompt: Text("Reply")) {
-          talkButton
-        } onSubmit: { accept($0) }
-        .buttonStyle(.plain)
+      button
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-      } else {
-        talkButton
-          .opacity(0.35)
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
-      }
 
       Text(prompt)
         .font(.caption2)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(talkFailed ? .orange : .secondary)
         .lineLimit(2)
         .multilineTextAlignment(.center)
     }
@@ -57,36 +53,117 @@ struct PTTView: View {
       ConfirmSendView(text: $captured, isPresented: $showConfirm)
     }
     .navigationTitle("Talk")
+    .task {
+      if !recorder.permissionKnown { await recorder.requestPermission() }
+    }
+    // The transcript arrives asynchronously, long after the finger has left.
+    .onChange(of: talk.pendingTranscript) { _, text in
+      guard let text, !text.isEmpty else { return }
+      talk.pendingTranscript = nil
+      captured = text
+      showConfirm = true
+    }
   }
 
-  private var talkButton: some View {
+  @ViewBuilder
+  private var button: some View {
+    if canRecord {
+      face
+        .contentShape(Circle())
+        .gesture(
+          DragGesture(minimumDistance: 0)
+            .onChanged { _ in beginHold() }
+            .onEnded { _ in endHold() }
+        )
+    } else if hasDestination {
+      // No phone, or no microphone permission — fall back to the system dictation
+      // screen, which does not need either.
+      TextFieldLink(prompt: Text("Reply")) {
+        face
+      } onSubmit: { text in
+        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return }
+        captured = body
+        showConfirm = true
+      }
+      .buttonStyle(.plain)
+    } else {
+      face.opacity(0.35)
+    }
+  }
+
+  private var face: some View {
     ZStack {
-      Circle().fill(Color.accentColor.opacity(0.2))
-      Circle().strokeBorder(Color.accentColor, lineWidth: 3)
+      Circle().fill(fillColor)
+      Circle().strokeBorder(strokeColor, lineWidth: 3)
       VStack(spacing: 2) {
-        Image(systemName: "mic.fill")
+        Image(systemName: recorder.isRecording ? "waveform" : "mic.fill")
           .font(.title2)
-        Text("Talk")
-          .font(.caption2)
-          .foregroundStyle(.secondary)
+        if recorder.isRecording {
+          Text(String(format: "%.1fs", recorder.elapsed))
+            .font(.caption2)
+            .monospacedDigit()
+        } else if talk.isBusy {
+          ProgressView().controlSize(.mini)
+        } else {
+          Text(canRecord ? "Hold" : "Talk")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        }
       }
     }
   }
 
-  /// Says why the button is dead rather than leaving the user pressing a dim circle.
+  private var fillColor: Color {
+    recorder.isRecording ? Color.red.opacity(0.35) : Color.accentColor.opacity(0.2)
+  }
+
+  private var strokeColor: Color {
+    recorder.isRecording ? .red : .accentColor
+  }
+
+  private var talkFailed: Bool {
+    if case .failed = talk.phase { return true }
+    return false
+  }
+
+  private func beginHold() {
+    guard !recorder.isRecording, !talk.isBusy else { return }
+    talk.reset()
+    Task {
+      guard await recorder.start() else {
+        talk.fail("Microphone unavailable")
+        return
+      }
+      talk.beginRecording()
+      WKInterfaceDevice.current().play(.start)
+    }
+  }
+
+  private func endHold() {
+    guard recorder.isRecording else { return }
+    WKInterfaceDevice.current().play(.stop)
+    guard let url = recorder.stop() else {
+      talk.reset() // too short to be speech; say nothing rather than nag
+      return
+    }
+    let id = UUID().uuidString
+    if WatchSession.shared.transferAudio(url, clientId: id) {
+      talk.submitted(clientId: id)
+    } else {
+      talk.fail("iPhone unreachable")
+    }
+  }
+
+  /// Says what is happening, or why the button is dead — never a dim circle with no
+  /// explanation.
   private var prompt: String {
     if !state.sharing { return "Start sharing on iPhone" }
     if state.destination == nil { return "Choose a destination below" }
-    return "Tap, speak, then Done"
+    if let status = talk.statusText { return status }
+    if recorder.isRecording { return "Release to send" }
+    if recorder.granted == false { return "Allow Microphone in Settings" }
+    if !state.phoneReachable { return "iPhone away — tap to dictate" }
+    return "Hold to talk"
   }
 }
-
-// Which input method the system offers is not ours to choose. TextFieldLink takes
-// only a prompt and a label, and watchOS reopens on whichever method was last used —
-// the keyboard, for anyone who has ever typed on the Watch. WatchKit's older
-// presentTextInputController(withSuggestions: nil, allowedInputMode: .plain) used to
-// open dictation directly and was tried here; on watchOS 26 it made no difference,
-// so the extra code path was removed rather than left in looking load-bearing.
-//
-// In practice: the input screen's lower-right button switches method, and dictation
-// is behind it. Once chosen, the system remembers.

@@ -73,6 +73,31 @@ final class WatchSession: NSObject {
     })
   }
 
+  /// Ship a recorded clip to the phone for transcription.
+  ///
+  /// `transferFile` rather than `sendMessage`: audio does not fit in a message
+  /// payload, and the transfer is durable, so a clip survives the second or two it
+  /// takes to walk back into range. The phone deletes the file after transcribing;
+  /// audio is never stored on either device and never reaches the server.
+  func transferAudio(_ url: URL, clientId: String) -> Bool {
+    // No isPaired check: that property is iOS-only, and from this side a session
+    // that has activated is as much assurance as watchOS offers.
+    guard let s = session, s.activationState == .activated else {
+      try? FileManager.default.removeItem(at: url)
+      return false
+    }
+    s.transferFile(url, metadata: ["type": "talkAudio", "clientId": clientId])
+    return true
+  }
+
+  @MainActor
+  static func applyTranscript(_ payload: [String: Any]) {
+    guard let id = payload["clientId"] as? String else { return }
+    TalkSession.shared.deliver(clientId: id,
+                               text: payload["text"] as? String,
+                               error: payload["error"] as? String)
+  }
+
   @MainActor
   static func applySendResult(_ reply: [String: Any], fallbackId: String? = nil) {
     guard let id = reply["clientId"] as? String ?? fallbackId else { return }
@@ -95,9 +120,18 @@ final class WatchSession: NSObject {
   /// or a single message; all of them end at `ingest`.
   private func handle(_ payload: [String: Any], source: AppState.Source) {
     Task { @MainActor in
-      if payload["type"] as? String == "sendResult" {
+      switch payload["type"] as? String {
+      case "sendResult":
         Self.applySendResult(payload)
         return
+      case "transcript":
+        Self.applyTranscript(payload)
+        return
+      case "audioReceived":
+        TalkSession.shared.phoneReceived()
+        return
+      default:
+        break
       }
       if payload["v"] != nil || payload["conversations"] != nil || payload["recent"] != nil {
         AppState.shared.apply(context: payload)

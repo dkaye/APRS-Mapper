@@ -10,6 +10,7 @@
 /// `app/lib/watch_bridge.dart`. Watch counterpart: `app/ios/WatchApp/Sources/WatchSession.swift`.
 import Flutter
 import Foundation
+import Speech
 import WatchConnectivity
 
 final class WatchBridge: NSObject {
@@ -282,6 +283,80 @@ extension WatchBridge: WCSessionDelegate {
 
   func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
     DispatchQueue.main.async { self.route(applicationContext, reply: nil) }
+  }
+
+  /// A push-to-talk clip recorded on the watch.
+  ///
+  /// The watch has no speech recogniser — `Speech.framework` does not exist on
+  /// watchOS — so it records and this side listens. The file must be copied out
+  /// synchronously here; WatchConnectivity deletes the original as soon as this
+  /// method returns.
+  func session(_ session: WCSession, didReceive file: WCSessionFile) {
+    guard file.metadata?["type"] as? String == "talkAudio",
+          let clientId = file.metadata?["clientId"] as? String else { return }
+
+    let copy = FileManager.default.temporaryDirectory
+      .appendingPathComponent("talk-\(clientId).m4a")
+    try? FileManager.default.removeItem(at: copy)
+    do {
+      try FileManager.default.copyItem(at: file.fileURL, to: copy)
+    } catch {
+      replyTranscript(clientId: clientId, text: nil, error: "Audio lost in transfer")
+      return
+    }
+
+    // Tell the watch we have it, so its "Sending audio…" can become
+    // "Transcribing…" rather than sitting on a stale label.
+    _ = push(message: ["type": "audioReceived", "clientId": clientId])
+    transcribe(copy, clientId: clientId)
+  }
+}
+
+// ── speech recognition (this side only) ───────────────────────────────────────
+
+extension WatchBridge {
+  private static let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+
+  private func transcribe(_ url: URL, clientId: String) {
+    let finish: (String?, String?) -> Void = { [weak self] text, error in
+      try? FileManager.default.removeItem(at: url) // audio is never kept
+      self?.replyTranscript(clientId: clientId, text: text, error: error)
+    }
+
+    SFSpeechRecognizer.requestAuthorization { status in
+      DispatchQueue.main.async {
+        guard status == .authorized else {
+          finish(nil, "Speech recognition not allowed")
+          return
+        }
+        guard let recognizer = Self.recognizer, recognizer.isAvailable else {
+          finish(nil, "Recognizer unavailable")
+          return
+        }
+        let request = SFSpeechURLRecognitionRequest(url: url)
+        // Keep the audio on this device when the model is present. It is a ham
+        // operator's traffic; there is no reason to hand it to Apple if the phone
+        // can do the work itself.
+        request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
+        request.taskHint = .dictation
+
+        recognizer.recognitionTask(with: request) { result, error in
+          guard let result else {
+            if error != nil { finish(nil, "Didn't catch that") }
+            return
+          }
+          guard result.isFinal else { return }
+          finish(result.bestTranscription.formattedString, nil)
+        }
+      }
+    }
+  }
+
+  private func replyTranscript(clientId: String, text: String?, error: String?) {
+    var payload: [String: Any] = ["type": "transcript", "clientId": clientId]
+    if let text { payload["text"] = text }
+    if let error { payload["error"] = error }
+    _ = push(message: payload)
   }
 }
 
