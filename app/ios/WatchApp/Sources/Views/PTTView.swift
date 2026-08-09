@@ -18,8 +18,14 @@ struct PTTView: View {
 
   @State private var captured = ""
   @State private var showConfirm = false
-
   private var canTalk: Bool { state.sharing && state.destination != nil }
+
+  private func accept(_ text: String?) {
+    let body = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !body.isEmpty else { return }
+    captured = body
+    showConfirm = true
+  }
 
   var body: some View {
     VStack(spacing: 6) {
@@ -31,12 +37,7 @@ struct PTTView: View {
       if canTalk {
         TextFieldLink(prompt: Text("Reply")) {
           talkButton
-        } onSubmit: { text in
-          let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
-          guard !body.isEmpty else { return }
-          captured = body
-          showConfirm = true
-        }
+        } onSubmit: { accept($0) }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
@@ -79,3 +80,13 @@ struct PTTView: View {
     return "Tap, speak, then Done"
   }
 }
+
+// Which input method the system offers is not ours to choose. TextFieldLink takes
+// only a prompt and a label, and watchOS reopens on whichever method was last used —
+// the keyboard, for anyone who has ever typed on the Watch. WatchKit's older
+// presentTextInputController(withSuggestions: nil, allowedInputMode: .plain) used to
+// open dictation directly and was tried here; on watchOS 26 it made no difference,
+// so the extra code path was removed rather than left in looking load-bearing.
+//
+// In practice: the input screen's lower-right button switches method, and dictation
+// is behind it. Once chosen, the system remembers.
