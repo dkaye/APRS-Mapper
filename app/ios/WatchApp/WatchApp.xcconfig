@@ -1,0 +1,16 @@
+// WatchApp.xcconfig — build settings for the watchOS companion target.
+//
+// The Runner target gets FLUTTER_BUILD_NAME / FLUTTER_BUILD_NUMBER (from pubspec.yaml)
+// through Flutter/Debug.xcconfig and Flutter/Release.xcconfig, which #include
+// Generated.xcconfig. Project-level configurations have no baseConfigurationReference,
+// so a new target inherits nothing — this file is what carries the version across to
+// the watch app. Without it the embedded WatchApp.app would ship a different
+// CFBundleVersion than Runner.app and App Store Connect rejects the upload.
+//
+// Generated.xcconfig is written by `flutter pub get` / `flutter build` and is
+// gitignored. Runner already fails to build without it, so requiring it here too is
+// consistent rather than a new constraint.
+//
+// See: README.md ("Mobile Apps"), app/TESTFLIGHT.md
+
+#include "../Flutter/Generated.xcconfig"

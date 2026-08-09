@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>MARS APRS</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<!-- Both come from pubspec.yaml via WatchApp.xcconfig -> Flutter/Generated.xcconfig,
+	     so the watch app and the iPhone app always ship the same version. -->
+	<key>CFBundleShortVersionString</key>
+	<string>$(FLUTTER_BUILD_NAME)</string>
+	<key>CFBundleVersion</key>
+	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>WKApplication</key>
+	<true/>
+	<!-- Literal, not $(...): flutter_tools reads this file directly to detect a watch
+	     companion (xcode_project.dart containsWatchCompanion). A variable here still
+	     works but costs an extra `xcodebuild -showBuildSettings` on every build. -->
+	<key>WKCompanionAppBundleIdentifier</key>
+	<string>org.marsaprs.aprsMap</string>
+</dict>
+</plist>

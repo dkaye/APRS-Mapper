@@ -27,6 +27,9 @@ require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelpe
 
 flutter_ios_podfile_setup
 
+# The watchOS companion (target 'WatchApp') is deliberately absent from this file.
+# It is native Swift with no pod dependencies, and `use_frameworks!` against the
+# watchOS SDK will not link. Adding it here breaks `flutter build ipa`.
 target 'Runner' do
   use_frameworks!
 

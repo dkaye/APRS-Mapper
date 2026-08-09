@@ -32,6 +32,12 @@ version: 1.16.1+2
 The part before `+` is the display version; the part after is the build number.
 **The build number must be higher than any previous upload** — increment it each time.
 
+This one line is the source of truth for **both** the iPhone app and the embedded
+Apple Watch app. `ios/WatchApp/WatchApp.xcconfig` includes `Flutter/Generated.xcconfig`,
+so the watch app's `CFBundleShortVersionString` / `CFBundleVersion` come from the same
+place. There is nothing to bump separately — but step 2a verifies it, because an
+embedded watch app whose version does not match the host app is rejected at upload.
+
 ### 2. Build
 
 ```bash
@@ -40,6 +46,23 @@ flutter build ios --release
 ```
 
 This produces `build/ios/iphoneos/Runner.app`. The same build can be installed directly on your device for testing (see [Installing on device](#installing-on-device) below) before uploading to TestFlight.
+
+The build log must contain **`Watch companion app found.`** If it does not, the watch
+app is not being detected and the build will fail later with WatchKit-vs-iOS-SDK errors
+— see the troubleshooting table.
+
+### 2a. Verify the embedded Watch app
+
+Run this after any `pod install`, `flutter clean`, or plugin add/remove — those are the
+operations that can disturb the hand-maintained watch target in `project.pbxproj`.
+
+```bash
+xcodebuild -list -project ios/Runner.xcodeproj | grep -q WatchApp && echo "target OK"
+
+W=build/ios/iphoneos/Runner.app/Watch/WatchApp.app/Info.plist
+/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$W"   # must match pubspec
+/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$W"              # must match pubspec
+```
 
 ### 3. Archive in Xcode
 
@@ -83,13 +106,13 @@ This is the same build from step 2 — no separate build needed.
 If you prefer a fully command-line workflow (e.g. for CI), use `flutter build ipa` instead of steps 3–4 above:
 
 ```bash
-flutter build ipa --release --export-options-plist=ios/ExportOptions.plist
+flutter build ipa --release --export-options-plist=ExportOptions.plist
 ```
 
 The IPA lands at `build/ios/ipa/*.ipa`. Upload it via **Transporter** (Mac App Store, free):
 - Drag the `.ipa` onto the Transporter window → click **Deliver**
 
-`ios/ExportOptions.plist` is committed to the repo and configured for `app-store-connect` with team ID `KT84339238`.
+`app/ExportOptions.plist` (not `app/ios/`) is committed to the repo and configured for `app-store-connect` with team ID `KT84339238`.
 
 ---
 
@@ -102,3 +125,6 @@ The IPA lands at `build/ios/ipa/*.ipa`. Upload it via **Transporter** (Mac App S
 | `Signing requires a development team` | Team not set in Xcode | Xcode → Runner target → Signing & Capabilities → set Team |
 | Build number rejected | Build number already used | Increment the number after `+` in `pubspec.yaml` |
 | Organizer shows no devices | Simulator selected as target | Switch scheme to **Any iOS Device (arm64)** before archiving |
+| `No simulator device ID has been set` | A watch companion exists, so simulator builds need an explicit device | `flutter devices`, then `flutter build ios --simulator -d <udid>` (device builds are unaffected) |
+| WatchKit errors during an iOS build | `Watch companion app found.` missing from the log | `ios/WatchApp/Info.plist` must exist and contain `WKCompanionAppBundleIdentifier` = `org.marsaprs.aprsMap`; the target must be named `WatchApp` to match the directory |
+| Watch app version differs from the iPhone app | `WatchApp.xcconfig` lost its `#include` of `Flutter/Generated.xcconfig` | Restore the include; re-run step 2a |

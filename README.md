@@ -824,7 +824,7 @@ On launch the app fetches `https://marsaprs.org/app_version.php` (a small JSON m
 
 ### Smart Track
 
-Smart Track is the automatic beacon-interval algorithm in the native app (iOS/Android), Apple Watch app, and web map. It monitors GPS speed and adjusts the upload frequency without any input from the user.
+Smart Track is the automatic beacon-interval algorithm in the native app (iOS/Android) and the web map. It monitors GPS speed and adjusts the upload frequency without any input from the user. (The Apple Watch companion does messaging only — it never beacons position.)
 
 **Unknown (?) mode — startup phase:**
 
@@ -860,7 +860,7 @@ Two mechanisms prevent GPS jitter from causing false mode transitions:
 
 **Implementation:**
 
-The algorithm runs identically in `lib/map_screen.dart` (Flutter iOS/Android), `Sources/BeaconService.swift` (Apple Watch), and `index.php` (web JS). Key functions: `_processSpeedSample` / `processSpeedSample` / `_autoDetectFromSpeed` for sample-based detection; `_checkStationaryByTime` / `checkStationaryByTime` for the timer-based fallback.
+The algorithm runs identically in `lib/map_screen.dart` (Flutter iOS/Android) and `index.php` (web JS). Key functions: `_processSpeedSample` / `processSpeedSample` / `_autoDetectFromSpeed` for sample-based detection; `_checkStationaryByTime` / `checkStationaryByTime` for the timer-based fallback.
 
 ### Building & Distributing
 
@@ -1034,6 +1034,28 @@ Samsung One UI is particularly aggressive — users must also set the app to **U
 **Upload mechanism:** Both iOS and Android use the same `_heartbeatTimer` for timed uploads and `_maybeUploadFromStream()` for distance-triggered uploads. On iOS, the GPS event stream keeps the Dart isolate continuously alive, so `Timer.periodic` fires reliably. `_maybeUploadFromStream()` provides an additional trigger: it uploads immediately when the device has moved ≥ the configured distance threshold since the last upload, resetting the timer to avoid a duplicate beacon shortly after.
 
 **Why both platforms use server-side APRS injection:** Both iOS and Android POST position data to `?mobile=update` rather than sending raw TCP packets directly to APRS-IS. On iOS, `NSURLSession`-based HTTP is explicitly supported for background network tasks while raw `dart:io Socket` TCP connections are not reliable in background. Unifying Android to the same path keeps all beaconing logic in the main isolate, makes `background_task_handler.dart` a no-op, and simplifies the overall architecture.
+
+### Apple Watch Companion ("Watch")
+
+A watchOS companion that makes the wrist a nearly hands-free extension of the phone's microphone and speaker: an inbound message buzzes, plays a tone, is read aloud, and appears on the watch screen; a reply is a press-and-hold push-to-talk. It does **messaging only** — it never beacons position.
+
+**Why it is native Swift.** Flutter does not target watchOS, so the watch app cannot be Dart. It is a native SwiftUI target (`WatchApp`) inside the same `app/ios/Runner.xcodeproj`, bridged to the Flutter app over WatchConnectivity plus a Flutter method/event channel.
+
+| Path | Purpose |
+|------|---------|
+| `app/ios/WatchApp/Info.plist` | **Must** live at this exact path. `flutter_tools` detects a watch companion by reading `ios/<TargetName>/Info.plist` for `WKCompanionAppBundleIdentifier`, so the directory name and the target name have to match (`WatchApp`) |
+| `app/ios/WatchApp/WatchApp.xcconfig` | `#include`s `Flutter/Generated.xcconfig` so the watch app's version comes from `pubspec.yaml`, exactly like the iPhone app. Project-level configurations carry no `baseConfigurationReference`, so without this the watch target would inherit no Flutter build settings |
+| `app/ios/WatchApp/Sources/` | SwiftUI app, WatchConnectivity session, announcer (haptic/tone/TTS), dictation, direct messaging client |
+| `app/ios/Runner/WatchBridge.swift` | Phone side of the bridge: `WCSessionDelegate` + the `org.marsaprs/watch` method and event channels |
+| `app/lib/watch_bridge.dart` | Dart side of the bridge; reuses `MessagingClient` for all network traffic |
+
+**Transport is hybrid.** The phone is the fast path — it already polls, so it relays inbound messages to the watch and sends the watch's replies. The phone also hands the watch its tracker token, so when the phone is unreachable the watch polls `?messaging=poll` directly over WiFi or LTE. Both paths converge on one `ingest()` on the watch that dedupes by message `id`, so a message can never be announced twice. The watch never polls while the phone is reachable.
+
+**Two build-system consequences.** Once a watch companion exists, `flutter_tools` omits `-sdk` from the Xcode invocation and stops narrowing `ARCHS`/`ONLY_ACTIVE_ARCH`: simulator builds now need an explicit `-d <device-id>`, and debug builds are slower. Device builds are unaffected. `app/TESTFLIGHT.md` carries the release-time verification steps.
+
+**Do not move the "Embed Watch Content" build phase.** It sits immediately after `Resources` in the Runner target, and it has to stay before `Thin Binary`. `Thin Binary` runs `xcode_backend.sh embed_and_thin` and declares `${TARGET_BUILD_DIR}/${INFOPLIST_PATH}` as an input, which makes Xcode take a directory-tree signature of the whole of `Runner.app`. Scheduling a copy *into* `Runner.app/Watch/` after that closes a dependency loop and the build dies with `Cycle inside Runner`. The watch target also sets `SKIP_INSTALL = YES` so the archive contains only `Runner.app`, with the watch app nested inside it.
+
+**The limitation to know.** watchOS only lets an app play audio or speak while it is frontmost. Tone and read-aloud work with the watch app on screen. Backgrounded, message data still arrives silently and the phone's local notification mirrors to the wrist (haptic + long look) when the iPhone is locked. With the watch app closed **and** the phone off or out of range, nothing reaches the wrist — no mechanism exists.
 
 ---
 
