@@ -28,10 +28,34 @@ struct SettingsView: View {
       Section("Status") {
         LabeledContent("Phone", value: state.phoneReachable ? "Linked" : "Unreachable")
         LabeledContent("Sharing", value: state.sharing ? "On" : "Off")
+        if let at = state.lastContextAt {
+          LabeledContent("Updated", value: at.formatted(date: .omitted, time: .shortened))
+        } else {
+          LabeledContent("Updated", value: "Never")
+        }
         if !state.callsign.isEmpty {
           LabeledContent("Callsign", value: state.callsign)
         }
+        if let d = state.destination {
+          LabeledContent("Reply to", value: d.label)
+        }
         LabeledContent("Messages", value: "\(state.messages.count)")
+        // Deliberately not LabeledContent: on watchOS its trailing view is squeezed
+        // onto one line and a second line of detail is clipped away entirely.
+        VStack(alignment: .leading, spacing: 1) {
+          Text("Last message")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+          if let a = state.lastArrival {
+            Text("\(a.at.formatted(date: .omitted, time: .standard)) · \(a.detail)")
+              .font(.footnote)
+              .foregroundStyle(a.wasHeard ? .green : .orange)
+          } else {
+            Text("None yet")
+              .font(.footnote)
+              .foregroundStyle(.secondary)
+          }
+        }
       }
 
       Section {

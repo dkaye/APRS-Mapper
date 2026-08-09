@@ -108,9 +108,13 @@ final class WatchBridge: NSObject {
   /// link drains. Returns false when there is nothing to talk to.
   @discardableResult
   private func pushContext(_ dict: [String: Any]) -> Bool {
-    guard let s = session, s.activationState == .activated, s.isPaired else { return false }
+    guard let s = session, s.activationState == .activated, s.isPaired else {
+      NSLog("[watch] context skipped (activated=\(session?.activationState == .activated) paired=\(session?.isPaired ?? false))")
+      return false
+    }
     do {
-      try s.updateApplicationContext(dict)
+      try s.updateApplicationContext(sanitized(dict))
+      NSLog("[watch] context pushed (sharing=\(dict["sharing"] ?? "?") lastId=\(dict["lastId"] ?? "?"))")
       return true
     } catch {
       NSLog("[watch] updateApplicationContext failed: \(error.localizedDescription)")
@@ -126,15 +130,45 @@ final class WatchBridge: NSObject {
   private func push(message: [String: Any]) -> String {
     guard let s = session, s.activationState == .activated,
           s.isPaired, s.isWatchAppInstalled else { return "none" }
+    let payload = sanitized(message)
+    let id = (payload["id"] as? Int).map(String.init) ?? "batch"
     if s.isReachable {
-      s.sendMessage(message, replyHandler: nil) { error in
-        NSLog("[watch] sendMessage failed, queueing: \(error.localizedDescription)")
-        s.transferUserInfo(message)
+      NSLog("[watch] push id=\(id) via sendMessage")
+      s.sendMessage(payload, replyHandler: nil) { error in
+        NSLog("[watch] sendMessage id=\(id) failed, queueing: \(error.localizedDescription)")
+        s.transferUserInfo(payload)
       }
       return "sendMessage"
     }
-    s.transferUserInfo(message)
+    // Not reachable means the watch app is not frontmost. The transfer is durable
+    // and will be delivered when it next runs, but it will arrive silently — this
+    // log line is what distinguishes "the relay never fired" from "the watch was
+    // not listening", which look identical from the wrist.
+    NSLog("[watch] push id=\(id) via transferUserInfo (watch app not frontmost)")
+    s.transferUserInfo(payload)
     return "userInfo"
+  }
+
+  /// WatchConnectivity only accepts property-list types, and `NSNull` is not one —
+  /// a single null anywhere makes the whole call fail, taking every other key with
+  /// it. Flutter encodes a Dart `null` as `NSNull`, and the fields most likely to be
+  /// null (`token`, `destination`, a sender's short id) are null exactly when the
+  /// user has not started sharing or opened a thread yet, so the failure lands on a
+  /// first run and looks like the watch is simply dead. Absent means null by
+  /// contract on the watch side, so dropping them loses nothing.
+  private func sanitized(_ dict: [String: Any]) -> [String: Any] {
+    var out: [String: Any] = [:]
+    for (key, value) in dict {
+      if value is NSNull { continue }
+      if let nested = value as? [String: Any] {
+        out[key] = sanitized(nested)
+      } else if let list = value as? [[String: Any]] {
+        out[key] = list.map(sanitized)
+      } else {
+        out[key] = value
+      }
+    }
+    return out
   }
 
   /// The out-of-band answer to a watch send we could not answer inline.

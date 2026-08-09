@@ -120,12 +120,25 @@ class WatchBridge {
 
   // ── phone → watch ───────────────────────────────────────────────────────────
 
-  /// Relay one inbound message. Hangs off the same `onMessageReceived` callback
-  /// the phone's own notification path uses, so the two never diverge.
-  void pushInbound(InboundMessage m) {
+  /// Relay a message seen by the background session (legacy `?mobile=poll`).
+  void pushInbound(InboundMessage m) => _relay(_messageDict(m));
+
+  /// Relay a message seen by the chat screen's own poll loop (`?messaging=poll`).
+  ///
+  /// The phone ingests messages by two independent routes and the watch has to see
+  /// both. They are not interchangeable: the chat screen marks what it displays as
+  /// read, and the legacy feed only returns messages with `read_ts IS NULL`, so once
+  /// this path has taken a message the other one can never deliver it. Tapping only
+  /// the background session left the watch silent whenever the phone's Messages
+  /// screen happened to be open. Relaying from both is safe — the watch dedupes by
+  /// message id, so whichever arrives second is dropped.
+  void pushSeenInChat(MsgMessage m, {required bool isSelf}) =>
+      _relay(_msgMessageDict(m, isSelf: isSelf));
+
+  void _relay(Map<String, dynamic> dict) {
     if (!Platform.isIOS || !_started) return;
-    final dict = _messageDict(m);
-    if (m.id > _lastId) _lastId = m.id;
+    final id = dict['id'] as int;
+    if (id > _lastId) _lastId = id;
     _recent.add(dict);
     while (_recent.length > _kRecentCap) {
       _recent.removeAt(0);
@@ -148,8 +161,8 @@ class WatchBridge {
   void setDestination({int? conversationId, List<String>? recipients, required String label}) {
     if (!Platform.isIOS || !_started) return;
     _destination = {
-      'conversationId': conversationId,
-      'recipients': recipients,
+      if (conversationId != null) 'conversationId': conversationId,
+      if (recipients != null) 'recipients': recipients,
       'label': label,
     };
     unawaited(SharedPreferences.getInstance()
@@ -192,17 +205,21 @@ class WatchBridge {
 
   Future<void> _sendContext() async {
     final token = _token;
+    // Null-valued keys are omitted rather than sent: WatchConnectivity rejects the
+    // whole payload if any value is not a property-list type, and Flutter encodes a
+    // Dart null as NSNull. The native side strips them too, belt and braces. Absent
+    // means null by contract -- the context is always a complete snapshot.
     await _invoke('setContext', {
       'v': 1,
       'ts': DateTime.now().millisecondsSinceEpoch ~/ 1000,
-      'token': token,
+      if (token != null) 'token': token,
       'serverBase': MapConfig.serverBaseUrl,
       'callsign': _bg?.callsign ?? '',
       'trackerName': _bg?.trackerName ?? '',
       'sharing': token != null,
       'speak': _speak,
       'lastId': _lastId,
-      'destination': _destination,
+      if (_destination != null) 'destination': _destination,
       'conversations': _conversations,
       'recent': _recent,
     });
@@ -285,23 +302,23 @@ class WatchBridge {
         'ts': m.ts,
         'text': m.text,
         'senderLabel': m.senderLabel,
-        'fromKind': m.fromKind,
-        'fromShort': m.fromShort,
+        if (m.fromKind != null) 'fromKind': m.fromKind,
+        if (m.fromShort != null) 'fromShort': m.fromShort,
         'broadcast': m.broadcast,
         'hasPhoto': false,
         'self': false,
       };
 
-  Map<String, dynamic> _msgMessageDict(MsgMessage m) => {
+  Map<String, dynamic> _msgMessageDict(MsgMessage m, {bool isSelf = false}) => {
         'id': m.id,
         'conversationId': m.conversationId,
         'ts': m.ts,
         'text': m.text,
         'senderLabel': m.senderLabel,
-        'fromKind': m.fromKind,
-        'fromShort': m.fromShort,
+        if (m.fromKind != null) 'fromKind': m.fromKind,
+        if (m.fromShort != null) 'fromShort': m.fromShort,
         'broadcast': m.broadcast,
         'hasPhoto': m.hasPhoto,
-        'self': false,
+        'self': isSelf,
       };
 }

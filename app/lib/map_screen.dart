@@ -818,6 +818,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     final resumed = await _bgLocation.resumeSharing();
     if (!mounted) return;
     if (resumed) {
+      // The token only exists once a session is live, and the watch cannot do
+      // anything without it -- so a session starting is the one event it most
+      // needs, pushed immediately rather than waiting for the next natural one.
+      WatchBridge.instance.pushContextNow();
       setState(() { _isSharing = true; _sharingActivityMode = _bgLocation.activityMode; });
       _resetAutoModeDetection();
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -1014,6 +1018,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             );
             if (!ctx.mounted) return;
             if (joinResult == JoinResult.success) {
+              WatchBridge.instance.pushContextNow(); // the watch has no token until now
               Navigator.pop(ctx);
               if (mounted) setState(() { _isSharing = true; _sharingActivityMode = 4; });
               _resetAutoModeDetection(fullReset: true);

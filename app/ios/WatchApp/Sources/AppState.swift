@@ -29,6 +29,11 @@ final class AppState {
   var callsign = ""
   var audioUnavailable = false
 
+  /// When the phone last got a full state snapshot through. Surfaced in Settings
+  /// because "never" and "twenty minutes ago" are the two symptoms that distinguish
+  /// a broken link from a quiet net, and without it both just look like a dead app.
+  var lastContextAt: Date?
+
   private(set) var lastId = 0
 
   /// Ids already seen, so the same message arriving over two transports is one
@@ -60,10 +65,34 @@ final class AppState {
   var isRecording = false
 
   enum Source {
-    case relay // pushed by the phone as it arrives
+    case relayLive // sendMessage — this app was frontmost when the phone sent it
+    case relayQueued // transferUserInfo — held in the durable queue until we next ran
     case directPoll // the watch fetched it itself
     case context // a snapshot for display; never announced
   }
+
+  /// How the most recent message got here, and whether anything was heard.
+  ///
+  /// Surfaced in Settings because "the relay is broken" and "the watch was asleep so
+  /// it queued and arrived silently" produce exactly the same experience — a message
+  /// that shows up late and without a sound — and there is otherwise no way to tell
+  /// them apart from the wrist.
+  struct Arrival {
+    let at: Date
+    let live: Bool
+    let announced: Bool
+
+    /// Green only when the user actually heard something; everything else is a
+    /// state worth explaining rather than a success.
+    var wasHeard: Bool { live && announced }
+
+    var detail: String {
+      if !live { return "queued, silent" }
+      return announced ? "live, spoken" : "live, silent"
+    }
+  }
+
+  var lastArrival: Arrival?
 
   private static let messagesCap = 100
   private static let seenCap = 500
@@ -129,6 +158,11 @@ final class AppState {
         && !isRecording
         && (announceBroadcasts || !m.broadcast)
     }
+    if source != .context {
+      lastArrival = Arrival(at: Date(), live: source == .relayLive,
+                            announced: !announceable.isEmpty)
+    }
+
     guard !announceable.isEmpty else { return }
     Announcer.shared.enqueue(announceable, speak: speakEnabled)
   }
@@ -141,11 +175,11 @@ final class AppState {
     if let c = context["callsign"] as? String { callsign = c }
     sharing = context["sharing"] as? Bool ?? false
 
-    if let d = context["destination"] as? [String: Any] {
-      destination = Destination(wire: d)
-    } else if context.keys.contains("destination") {
-      destination = nil
-    }
+    // Absent means none. The context is always a complete snapshot, and null values
+    // cannot cross WatchConnectivity at all, so "key missing" is the only way the
+    // phone can express "no destination".
+    destination = (context["destination"] as? [String: Any]).flatMap(Destination.init(wire:))
+    lastContextAt = Date()
 
     if let raw = context["conversations"] as? [[String: Any]] {
       conversations = raw.compactMap(WatchConversation.init(wire:))

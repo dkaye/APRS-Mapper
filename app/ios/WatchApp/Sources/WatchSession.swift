@@ -84,12 +84,15 @@ extension WatchSession: WCSessionDelegate {
     Task { @MainActor in refreshReachability(session) }
   }
 
+  /// Live: the phone only reaches us this way while this app is frontmost.
   func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
-    handle(message, source: .relay)
+    handle(message, source: .relayLive)
   }
 
+  /// Queued: the phone sent this while we were not running or not frontmost, and
+  /// WatchConnectivity held it until now. It is real, but it is not news.
   func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
-    handle(userInfo, source: .relay)
+    handle(userInfo, source: .relayQueued)
   }
 
   func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {

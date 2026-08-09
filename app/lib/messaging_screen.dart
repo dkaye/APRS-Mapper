@@ -186,6 +186,12 @@ class _MessagingScreenState extends State<MessagingScreen> {
   void _ingest(MsgMessage m) {
     final isNew = _seen.add(m.id);
     if (!isNew) return;
+    // The watch is a separate device and must see every message the phone does.
+    // This path is not interchangeable with the background session's: _markRead
+    // below sets read_ts, and the legacy feed that drives the other path only
+    // returns messages where read_ts IS NULL -- so anything this screen sees first,
+    // it sees exclusively.
+    WatchBridge.instance.pushSeenInChat(m, isSelf: m.fromId == _myId);
     final inOpen = _open != null && _open!.id == m.conversationId;
     if (inOpen) {
       setState(() => _messages.add(m));
