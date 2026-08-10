@@ -178,8 +178,8 @@ final class WatchSession: NSObject {
       Outbox.shared.remove(id)
       AppState.shared.lastSentText = sent
       WKInterfaceDevice.current().play(.success)
-      if AppState.shared.readBackSent, AppState.shared.speakEnabled, !sent.isEmpty {
-        Announcer.shared.announceSent(sent)
+      if AppState.shared.speakEnabled {
+        Announcer.shared.announceSent(sent, repeatingWords: AppState.shared.readBackSent)
       }
     } else {
       Outbox.shared.mark(id, .failed)

@@ -78,13 +78,18 @@ final class Announcer {
     drain()
   }
 
-  /// Says back what actually went out.
+  /// Confirms a reply went out, optionally repeating the words.
   ///
-  /// The only transcription check that works with eyes on the road. No tone: this
-  /// answers something the operator just did rather than interrupting them with
-  /// something new.
-  func announceSent(_ text: String) {
-    queue.append(Announcement(doubleHaptic: false, utterances: ["Sent. \(text)"], tone: false))
+  /// The confirmation itself is not optional — it is the first of the three states an
+  /// operator tracks, alongside delivered and read. Only whether it carries the text
+  /// is a preference: repeating it is the one transcription check that works with
+  /// eyes on the road, and it is also more airtime during a busy net.
+  ///
+  /// No tone either way: this answers something the operator just did rather than
+  /// interrupting them with something new.
+  func announceSent(_ text: String, repeatingWords: Bool) {
+    let phrase = repeatingWords && !text.isEmpty ? "Sent. \(text)" : "Message sent."
+    queue.append(Announcement(doubleHaptic: false, utterances: [phrase], tone: false))
     drain()
   }
 

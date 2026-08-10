@@ -20,12 +20,19 @@ struct SettingsView: View {
           get: { state.announceBroadcasts },
           set: { state.setAnnounceBroadcasts($0) }
         ))
-        Toggle("Read back sent", isOn: Binding(
+        Toggle("Repeat my words", isOn: Binding(
           get: { state.readBackSent },
           set: { state.setReadBackSent($0) }
         ))
       } footer: {
-        Text("Alerts buzz and play a tone even with read aloud off. Wear headphones for reliable speech.")
+        // Three switches that all affect speech is two too many to guess at, and the
+        // difference between them only matters mid-net when there is no time to
+        // experiment.
+        Text("""
+        Read aloud — speak everything. Off leaves only buzzes and tones.
+        Announce broadcasts — also speak All Trackers calls.
+        Repeat my words — say a reply back after sending. Off still says "Message sent".
+        """)
           .font(.caption2)
       }
 
