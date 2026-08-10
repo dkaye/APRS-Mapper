@@ -277,14 +277,29 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             .map((t) => t.callsign)
             .toSet();
         TrackerData? refetchTracker;
+        // Hiding a tracker that happens to be selected takes its marker away, so the
+        // selection and the breadcrumb trail hanging off it have to go too -- otherwise
+        // a trail is left drawn to a tracker with nothing at the end of it. The web map
+        // drops the marker, the popup and the selection together for the same reason.
+        var deselectHidden = false;
         if (_selectedId != null) {
           final sel = data.trackers.where((t) => t.id == _selectedId).firstOrNull;
-          if (sel != null && updated.contains(sel.callsign)) refetchTracker = sel;
+          if (sel != null && sel.hidden) {
+            deselectHidden = true;
+          } else if (sel != null && updated.contains(sel.callsign)) {
+            refetchTracker = sel;
+          }
         }
         final newIntervals  = data.beaconIntervalsSec;
         final newDistances  = data.beaconDistancesMi;
         setState(() {
           _trackers = data.trackers;
+          if (deselectHidden) {
+            _selectedId = null;
+            _trailEntries = [];
+            _cellTrailPts = [];
+            _radioTrailPts = [];
+          }
           _blinkDurationSec = data.blinkDuration;
           _breadcrumbCount  = data.breadcrumbCount;
           if (newIntervals != null) _beaconIntervalsSec = newIntervals;

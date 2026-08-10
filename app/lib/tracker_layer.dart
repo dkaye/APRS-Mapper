@@ -39,7 +39,7 @@ class TrackerLayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MarkerLayer(
-      markers: trackers.where((t) => t.hasPosition).map((t) {
+      markers: trackers.where((t) => t.showsOnMap).map((t) {
         final color = _markerColor(t.color);
         final fullLabel = t.id == fullLabelId;
         // Keyed by callsign: display_id is shared across an entity's devices, so

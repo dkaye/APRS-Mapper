@@ -14,6 +14,9 @@ class TrackerData {
   final bool mobile;
   final String sharingMode; // 'walk_run' | 'cycle' | 'drive' | 'stationary' | ''
   final String? hamCallsign;
+  /// Admin "Hide" toggle. Suppresses the map marker but not the drawer entry —
+  /// the operator hiding a tracker wants it off the map, not out of the roster.
+  final bool hidden;
 
   const TrackerData({
     required this.id,
@@ -27,9 +30,15 @@ class TrackerData {
     required this.mobile,
     this.sharingMode = '',
     this.hamCallsign,
+    this.hidden = false,
   });
 
   bool get hasPosition => lat != null && lon != null;
+
+  /// Whether this tracker earns a map marker. Hidden trackers keep their position
+  /// -- they are still reporting, and the drawer still shows their age -- so the
+  /// two questions have to stay separate.
+  bool get showsOnMap => hasPosition && !hidden;
   LatLng get latLng => LatLng(lat!, lon!);
 
   factory TrackerData.fromJson(Map<String, dynamic> j) => TrackerData(
@@ -44,6 +53,7 @@ class TrackerData {
         mobile: j['mobile'] as bool? ?? false,
         sharingMode: j['sharing_mode'] as String? ?? '',
         hamCallsign: j['ham_callsign'] as String?,
+        hidden: j['hidden'] as bool? ?? false,
       );
 }
 

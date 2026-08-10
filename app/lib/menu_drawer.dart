@@ -432,11 +432,25 @@ class _MenuDrawerState extends State<MenuDrawer> {
 
   Widget _trackerTile(TrackerData t) {
     final baseColor = _trackerColor(t.color);
-    final isSelected = t.id == widget.selectedId;
     // Keyed by callsign — display_id is shared across an entity's devices.
     final isBlinking = widget.blinkingIds.contains(t.callsign);
     final opacity = (isBlinking && !widget.blinkOn) ? 0.15 : 1.0;
     final color = baseColor.withOpacity(opacity);
+    // Dimmed rather than dropped, matching the web sidebar: hiding a tracker takes
+    // it off the map, but an operator still needs to see that it exists and how
+    // long ago it reported.
+    if (t.hidden) {
+      return Tooltip(
+        message: 'Hidden from map — listed here only',
+        child: Opacity(opacity: 0.5, child: _trackerRow(t, color, opacity)),
+      );
+    }
+    return _trackerRow(t, color, opacity);
+  }
+
+  Widget _trackerRow(TrackerData t, Color color, double opacity) {
+    final baseColor = _trackerColor(t.color);
+    final isSelected = t.id == widget.selectedId;
     return InkWell(
       onTap: () {
         Navigator.pop(context);
