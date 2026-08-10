@@ -411,9 +411,10 @@ function messaging_handle(string $action, array $body, array $ctx): void
 
     case 'log': {   // an entry written to the event's log, addressed to nobody
         if (($me['kind'] ?? '') !== 'operator') _msg_fail(403, 'Operators only');
-        $text = trim((string)($body['text'] ?? ''));
+        // substr rather than mb_substr: this server has no mbstring, and send bounds
+        // its text the same way, so the two cannot disagree about what fits.
+        $text = substr(trim((string)($body['text'] ?? '')), 0, 280);
         if ($text === '') _msg_fail(400, 'text required');
-        if (mb_strlen($text) > 280) $text = mb_substr($text, 0, 280);
         // No recipients, so insertMessage writes no deliveries: nothing is queued for
         // anyone to poll, nothing is announced, and no receipt can come back. The entry
         // exists only as history, which is the whole point of it.
