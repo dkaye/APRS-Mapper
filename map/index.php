@@ -33,6 +33,15 @@ define('API_MIN_CLIENT', 1);
 
 $trackerStatusFilename = 'trackers.json';
 
+// Two-screen operation: ?messages renders this same page as a messaging-only window,
+// meant to be dragged to a second monitor while the map keeps the first. It is the
+// same document with different chrome rather than a separate page — the messaging code
+// is interleaved through this file, and everything it touches has to stay in scope.
+// The operator session lives in localStorage and is therefore already shared between
+// windows, so this window inherits it and must never subscribe again (that would mint
+// a new token and sign the map window out).
+$msgWindow = isset($_GET['messages']);
+
 // Track real client IP + timestamp + page type for the Clients modal (non-blocking)
 {
     $_rip = trim($_SERVER['HTTP_CF_CONNECTING_IP']
@@ -41,6 +50,7 @@ $trackerStatusFilename = 'trackers.json';
     $_page = 'map';
     if     (isset($_GET['mobile']))         $_page = 'tracker';
     elseif (isset($_GET['messaging']))      $_page = 'msg';
+    elseif (isset($_GET['messages']))       $_page = 'msgwin';   // second-screen window
     elseif (isset($_GET['clientstatus']))   $_page = 'status';
     elseif (isset($_GET['history']))        $_page = 'hist';
     $_ipFile = '/run/aprs/recent_ips.json';
@@ -2157,9 +2167,34 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
 
 /* Map marker dropped by "show where this message was sent from". */
 .msg-loc-pin { background: none; border: none; filter: drop-shadow(0 1px 2px rgba(0,0,0,.4)); }
+
+/* ── Second-screen messaging window (?messages) ──────────────────────────────
+   The same document with the map's chrome taken away and the panel promoted from
+   a floating overlay to the whole window. Everything stays in the DOM so the
+   messaging code, which is interleaved with the map's, keeps working untouched. */
+body.msg-window #sidebar,
+body.msg-window #sidebar-toggle-btn,
+body.msg-window #sidebar-resizer,
+body.msg-window #map,
+body.msg-window #mobile-event-name,
+body.msg-window #sharing-badge,
+body.msg-window #mobile-gear-btn,
+body.msg-window #mobile-backdrop,
+body.msg-window #mobile-drawer,
+body.msg-window #msg-toast,
+/* Nothing behind the panel to reveal, so Close would leave a blank window. */
+body.msg-window #msg-panel-close { display: none !important; }
+body.msg-window { overflow: hidden; }
+body.msg-window #msg-panel {
+    position: fixed; inset: 0; width: 100%; max-width: none;
+    transform: none; visibility: visible; box-shadow: none; transition: none;
+}
+/* The grip resizes a panel that no longer floats over anything. The split between
+   the inbox and the thread stays — on a full screen it matters more, not less. */
+body.msg-window #msg-panel-grip { display: none; }
 </style>
 </head>
-<body>
+<body<?= $msgWindow ? ' class="msg-window"' : '' ?>>
 
 <!-- ── Desktop sidebar ─────────────────────────────────────────────────── -->
 <div id="sidebar">
@@ -2510,6 +2545,7 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
 				<span id="msg-sound-vol-val" style="font-size:12px;color:#555;width:34px;text-align:right">70%</span>
 			</div>
 			<hr>
+			<button class="mi" id="msg-mi-window">Open messages in a separate window</button>
 			<button class="mi" id="msg-mi-all">View all messages…</button>
 			<button class="mi" id="msg-mi-operators" style="display:none">Manage operators…</button>
 				<button class="mi danger" id="msg-mi-disable">Sign out of messaging</button>
@@ -4963,6 +4999,9 @@ foreach (['tracker_id','tracker_name','aid_name','aid_callsign','igate_name','ig
 }
 ?>
 const LABEL_DEFAULTS = <?= json_encode($_ldJs) ?>;
+// True in the second-screen messaging window (?messages). Emitted by PHP rather than
+// read off the body class so it is settled before any script runs.
+const MSG_WINDOW = <?= $msgWindow ? 'true' : 'false' ?>;
 
 // ── Tracker label content: separate ID and Name eyes (default both on) ────────
 const LS_TRACKER_LABELS = 'aprs_tracker_label_vis';
@@ -5671,7 +5710,15 @@ try {
 } catch {}
 function _msgIsSubscribed() { return !!_msgToken; }
 function _persistSession() {
-	try { localStorage.setItem('aprs_msg_session', JSON.stringify({token:_msgToken, name:_msgName, last_id:_msgLastId})); } catch {}
+	try {
+		// Both windows share this key and each keeps its own in-memory watermark, so a
+		// plain write lets whichever saved last drag last_id backwards. Polling is
+		// repeatable so nothing is lost while running, but this value decides where a
+		// reload starts, and going backwards there re-announces messages already heard.
+		const prev = JSON.parse(localStorage.getItem('aprs_msg_session') || 'null');
+		const last = Math.max(_msgLastId || 0, (prev && prev.token === _msgToken && prev.last_id) || 0);
+		localStorage.setItem('aprs_msg_session', JSON.stringify({token:_msgToken, name:_msgName, last_id:last}));
+	} catch {}
 }
 function _clearSession() { try { localStorage.removeItem('aprs_msg_session'); } catch {} }
 function _escAttr(s) { return _esc(s).replace(/"/g, '&quot;'); }
@@ -5852,6 +5899,9 @@ function _openPanel() {
 	_refreshConversations();
 }
 function _closePanel() {
+	// In the second-screen window the panel IS the window — closing it would leave a
+	// blank page with nothing behind it to reveal.
+	if (MSG_WINDOW) return;
 	document.getElementById('msg-panel').classList.remove('open');
 	_msgPanelOpen = false;
 	_closeSettings();
@@ -6133,7 +6183,14 @@ function _appendBubble(c, m) {
 function _wireLocButtons(root) {
 	root.querySelectorAll('.msg-bubble-locbtn').forEach(b => {
 		if (b._wired) return; b._wired = true;
-		b.addEventListener('click', e => { e.stopPropagation(); _showMsgLocation(_msgFindById(+b.dataset.mid)); });
+		b.addEventListener('click', e => {
+			e.stopPropagation();
+			const m = _msgFindById(+b.dataset.mid);
+			// In the messages window there is no map to draw on, so the pin drives the
+			// map on the other screen — which is the point of running two.
+			if (MSG_WINDOW) { if (m) _chanPost({type:'showLocation', msg:m}); return; }
+			_showMsgLocation(m);
+		});
 	});
 	root.querySelectorAll('.msg-bubble-copybtn').forEach(b => {
 		if (b._wired) return; b._wired = true;
@@ -6277,19 +6334,26 @@ function _ingestIncoming(m) {
 		// no tone. Otherwise play the alert tone (speaker off, OR the message is in
 		// a thread that isn't currently showing) and defer any read until its thread
 		// becomes active.
-		if (_msgSpeak && isOpen) {
-			_speakMessage(m);
-		} else {
-			if (_msgSpeak) _deferredSpeak.add(m.id);
-			_playMsgTone();
+		// Only the announcing window makes noise — see _mayAnnounce. The silent window
+		// does not queue deferred speech either, or opening a thread on it later would
+		// suddenly read out a backlog the operator already heard on the other screen.
+		if (_mayAnnounce()) {
+			if (_msgSpeak && isOpen) {
+				_speakMessage(m);
+			} else {
+				if (_msgSpeak) _deferredSpeak.add(m.id);
+				_playMsgTone();
+			}
 		}
+		// The toast stays on both: on the map window it is how the operator sees that
+		// traffic arrived on the other screen. It is visual only, so it cannot double up.
 		if (!isOpen) _notifyArrival(m, c);
 	}
 }
 // Read aloud any messages in $cid that were deferred while it wasn't the active
 // thread (they're now visible in the window). Spoken in id order.
 function _speakDeferred(cid) {
-	if (!_msgSpeak || !_deferredSpeak.size) return;
+	if (!_mayAnnounce() || !_msgSpeak || !_deferredSpeak.size) return;
 	const c = _convs.get(cid);
 	if (!c) return;
 	for (const m of (c.messages || [])) {
@@ -6514,6 +6578,10 @@ function _openBroadcast() {
 // Right-click / Ctrl+click a sidebar tracker → message that tracker.
 function _handleTrackerActivate(cs, name) {
 	if (!_msgIsSubscribed()) { _openSubModal(); return; }
+	// With a messages window on the other screen, composing there is the whole point:
+	// sliding a panel over the map the operator is looking at is what two screens are
+	// meant to stop. Hand it over and leave this map alone.
+	if (_peerMessagesWindow) { _chanPost({type:'compose', callsign:cs, name}); return; }
 	_openPanel();
 	const conv = [..._convs.values()].find(c => c.kind === 'direct' && (c.members || []).some(m => m.key === cs));
 	if (conv) { _openConversation(conv.id); return; }
@@ -6521,6 +6589,74 @@ function _handleTrackerActivate(cs, name) {
 	_showThreadView(_esc([_trackerIdByCs[cs], name].filter(Boolean).join(' ') || cs), cs);
 	document.getElementById('msg-thread-scroll').innerHTML = '<div id="msg-thread-empty">New conversation — type a message below.</div>';
 	setTimeout(() => document.getElementById('msg-compose-text').focus(), 60);
+}
+
+// ── Two-screen coordination ──────────────────────────────────────────────────
+// The map window and the ?messages window are separate documents sharing one operator
+// session (localStorage) and one BroadcastChannel. Everything here is inert when only
+// one window is open, so single-screen behaviour is exactly what it was.
+let _msgChan = null;
+let _peerMessagesWindow = false;   // map window: is a messages window alive right now?
+let _peerLastAlive = 0;
+
+/** Whether this window is the one that alerts and reads aloud.
+ *
+ *  Both windows poll, so without this a message is announced twice. The messages
+ *  window owns audio whenever it is open, because that is where the operator is
+ *  reading; the map window falls silent and reclaims when it goes away. Ownership is
+ *  deliberately NOT tied to focus — the speaker would then change as the operator
+ *  clicks between screens, and a message arriving mid-switch could be announced twice
+ *  or not at all. */
+function _mayAnnounce() { return MSG_WINDOW || !_peerMessagesWindow; }
+
+function _chanPost(d) { try { if (_msgChan) _msgChan.postMessage(d); } catch {} }
+
+function _initMsgChannel() {
+	// No BroadcastChannel (pre-15.4 Safari) simply means no second-screen coordination:
+	// the map window keeps audio and the panel behaves as it always has.
+	if (!('BroadcastChannel' in window)) return;
+	_msgChan = new BroadcastChannel('aprs-msg');
+	_msgChan.onmessage = e => _onChanMsg(e.data || {});
+	if (MSG_WINDOW) {
+		_chanPost({type:'hello', role:'messages'});
+		setInterval(() => _chanPost({type:'alive'}), 3000);
+		// pagehide, not unload: it fires on tab close and on bfcache suspend, and unload
+		// is unreliable in every current browser.
+		window.addEventListener('pagehide', () => _chanPost({type:'bye', role:'messages'}));
+	} else {
+		// Announcing tells any live messages window to identify itself, which is how a
+		// map window reloaded mid-session learns it should stay silent.
+		_chanPost({type:'hello', role:'map'});
+		// A window that crashes or is force-quit never sends bye. Left unhandled the
+		// failure mode is a net gone completely silent with nobody realising, so the
+		// heartbeat stopping is what actually returns audio here.
+		setInterval(() => {
+			if (_peerMessagesWindow && Date.now() - _peerLastAlive > 8000) _peerMessagesWindow = false;
+		}, 2000);
+	}
+}
+
+function _onChanMsg(d) {
+	switch (d.type) {
+		case 'hello':
+			if (d.role === 'messages' && !MSG_WINDOW) { _peerMessagesWindow = true; _peerLastAlive = Date.now(); }
+			if (d.role === 'map' && MSG_WINDOW) _chanPost({type:'hello', role:'messages'});
+			break;
+		case 'alive':
+			if (!MSG_WINDOW) { _peerMessagesWindow = true; _peerLastAlive = Date.now(); }
+			break;
+		case 'bye':
+			if (d.role === 'messages' && !MSG_WINDOW) _peerMessagesWindow = false;
+			break;
+		case 'showLocation':
+			// Handed the whole message, so the map window runs the existing
+			// _showMsgLocation unchanged — marker, popup, recentre and all.
+			if (!MSG_WINDOW && d.msg) _showMsgLocation(d.msg);
+			break;
+		case 'compose':
+			if (MSG_WINDOW) { try { window.focus(); } catch {} _handleTrackerActivate(d.callsign, d.name); }
+			break;
+	}
 }
 
 // ── Subscribe / init ─────────────────────────────────────────────────────────
@@ -6569,6 +6705,10 @@ async function _afterSubscribe() {
 	_startPoll();
 	try { await _refreshConversations(); } catch {}
 	_showListView();
+	// The second-screen window opens straight into the panel: there is no map to come
+	// back to, and _openPanel is also what marks the panel open, which is what decides
+	// whether an arriving message is read aloud or merely chimes.
+	if (MSG_WINDOW) _openPanel();
 }
 
 let _msgUiWired = false;
@@ -6579,8 +6719,26 @@ function _initMsgUI(enabled) {
 	btn.style.display = '';
 	if (!document.getElementById('msg-btn-badge')) { const s = document.createElement('span'); s.id = 'msg-btn-badge'; btn.appendChild(s); }
 	_wireMsgUI();
+	_initMsgChannel();
 	if (_msgIsSubscribed()) _afterSubscribe();
+	// A messages window must never subscribe. Subscribing mints a fresh token and
+	// upserts it, which would silently invalidate the map window's token and sign it
+	// out — the one way two-screen mode can break single-screen use. Reaching here
+	// without a session means it was opened directly rather than from the map window,
+	// so say so instead of offering a modal that would do the damage.
+	else if (MSG_WINDOW) _showMsgWindowOrphaned();
 	else if (window._aprsAutoMsgPw) _autoSubscribe(window._aprsAutoMsgPw, window._aprsAutoOp);
+}
+
+/** The ?messages window with no operator session to inherit. */
+function _showMsgWindowOrphaned() {
+	document.getElementById('msg-panel').classList.add('open');
+	const el = document.getElementById('msg-thread-scroll');
+	if (el) el.innerHTML = '<div id="msg-thread-empty">No messaging session in this browser.<br><br>' +
+		'Open this window from the map window: <b>Messages → Open messages in a separate window</b>.<br><br>' +
+		'It shares the map window\'s sign-in, so it has to be opened from the same browser.</div>';
+	const list = document.getElementById('msg-conv-scroll');
+	if (list) list.innerHTML = '';
 }
 
 // ── Settings menu ────────────────────────────────────────────────────────────
@@ -6600,6 +6758,12 @@ function _wireMsgUI() {
 	});
 	_initMsgResize();
 	document.getElementById('msg-panel-close').addEventListener('click', _closePanel);
+	// Named window: clicking again focuses the one already open rather than spawning a
+	// third. The operator drags it to the second monitor once and the browser remembers.
+	document.getElementById('msg-mi-window').addEventListener('click', () => {
+		_closeSettings();
+		try { window.open('?messages', 'aprsMessages', 'width=900,height=1100').focus(); } catch {}
+	});
 	document.getElementById('msg-panel-back').addEventListener('click', _showListView);
 	document.getElementById('msg-speaker-btn').addEventListener('click', _toggleSpeak);
 	_updateSpeakerBtn();
