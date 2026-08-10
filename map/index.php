@@ -5988,24 +5988,39 @@ function _renderConvList() {
 	// left the event yesterday is not that. Kept regardless: anything unread, and
 	// whatever is open, so the panel cannot empty out under someone mid-read.
 	const items = [..._convs.values()]
-		.filter(c => c.last_id > 0 && (!c.stale || c.unread > 0 || c.id === _openConvId))
+		.filter(c => c.last_id > 0 && c.kind !== 'broadcast'
+			&& (!c.stale || c.unread > 0 || c.id === _openConvId))
 		.sort((a, b) => b.last_id - a.last_id);
-	if (!items.length) {
-		scroll.innerHTML = '<div id="msg-conv-empty">No conversations yet.<br>Tap “New message” to start one.</div>';
-		return;
-	}
-	scroll.innerHTML = items.map(c => {
-		const pv = c.preview;
-		const prev = pv ? ((pv.self ? 'You: ' : '') + pv.text) : '';
-		const badge = c.unread > 0 ? '<span class="msg-badge">' + c.unread + '</span>' : '';
-		const sel = c.id === _openConvId ? ' sel' : '';
-		return '<div class="msg-conv-item' + sel + '" data-cid="' + c.id + '">' +
-			'<div class="msg-conv-main"><div class="msg-conv-name">' + _esc(_convLabel(c)) + '</div>' +
+
+	const row = (c, name, sub, cid) => {
+		const pv = c && c.preview;
+		const prev = pv ? ((pv.self ? 'You: ' : '') + pv.text) : sub;
+		const badge = c && c.unread > 0 ? '<span class="msg-badge">' + c.unread + '</span>' : '';
+		const sel = cid != null && cid === _openConvId ? ' sel' : '';
+		return '<div class="msg-conv-item' + sel + '" data-cid="' + (cid == null ? '' : cid) + '">' +
+			'<div class="msg-conv-main"><div class="msg-conv-name">' + _esc(name) + '</div>' +
 			'<div class="msg-conv-preview">' + _esc(prev) + '</div></div>' +
 			'<div class="msg-conv-meta"><span class="msg-conv-time">' + (pv ? _msgShortTime(pv.ts) : '') + '</span>' + badge + '</div></div>';
-	}).join('');
+	};
+
+	// All Trackers is pinned at the top and always present, worded as it is in the
+	// New message picker. It is the one destination that always exists, and an
+	// operator needing to reach the whole net should not have to compose their way to
+	// it — nor scroll for it once ordinary traffic has pushed it down.
+	const bc = [..._convs.values()].find(c => c.kind === 'broadcast');
+	const head = row(bc, 'All Trackers', 'Broadcast to everyone', bc ? bc.id : null);
+
+	scroll.innerHTML = head + (items.length
+		? items.map(c => row(c, _convLabel(c), '', c.id)).join('')
+		: '<div id="msg-conv-empty">No other conversations yet.<br>Tap “New message” to start one.</div>');
+
 	scroll.querySelectorAll('.msg-conv-item').forEach(el =>
-		el.addEventListener('click', () => _openConversation(+el.dataset.cid)));
+		el.addEventListener('click', () => {
+			const cid = el.dataset.cid;
+			// The pinned row before anyone has broadcast has no thread behind it yet;
+			// _openBroadcast composes one rather than opening nothing.
+			if (cid === '') _openBroadcast(); else _openConversation(+cid);
+		}));
 }
 
 // ── Thread view ──────────────────────────────────────────────────────────────
