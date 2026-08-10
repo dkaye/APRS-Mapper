@@ -1,6 +1,6 @@
 # APRS Tracker Map — User Guide
 
-**Version 1.22.0 · August 8, 2026**
+**Version 1.22.1 · August 10, 2026**
 
 ---
 
@@ -466,6 +466,10 @@ An **Operator** is any web user who has subscribed to the messaging channel for 
 Messaging opens as a **chat panel docked to the right of the map**, in two parts:
 
 - **Conversations list** — every conversation you are part of, each with the other party's ID and name and an unread badge. Click one to open its thread.
+
+  Two entries are **pinned at the top** and always present: **All Trackers**, for broadcasting to everyone, and the **Event Log** (below). Neither has to be composed or scrolled to once ordinary traffic builds up.
+
+  Below them, conversations whose other end has not been seen for a day are **hidden**, on the same 24-hour rule the New message list uses — you are looking for someone to talk to, and a station that left the event yesterday is not that. Anything unread, and whatever thread you have open, stays regardless, so the list cannot empty out under you mid-read.
 - **Resizing** — drag the **left edge** of the message window to make it wider or narrower, and drag the **divider** between the conversation list and the messages to rebalance them. Both are remembered for next time.
 
 **Thread + composer** — the selected conversation's messages, newest at the bottom, with an **always-visible message box** that is never covered by an incoming message. New messages appear live as they arrive — nothing to reload. Only your own conversations are shown; traffic between other operators and trackers is not.
@@ -520,6 +524,8 @@ Type up to 280 characters and press **Send**. To attach a **photo**, click the *
 
 **Delivery & read receipts:** Each message you send shows its status — **Delivered ✓** when it reaches the recipient's device and **Read ✓✓** once opened. In a group the status reads **Delivered to 2 of 3** / **Read by 1 of 3**.
 
+**Copying a message:** Each message carries a small **copy** icon beside its timestamp. It copies **the message text only** — no sender, no timestamp, no receipt — which is what belongs in a log entry, an email, or an incident report. The icon turns into a green tick to confirm.
+
 **Read aloud:** Arriving messages are **spoken aloud by default** — you are usually watching the map rather than the message panel. Toggle the **Read aloud** (speaker) button to mute; your choice is remembered. Each is announced as *“Message from CRD Stanton”*, then a short pause, then the message itself — so you know who is calling without looking at the screen, and the name does not run into the first words — handy for a hands-free net control station. When it is off, a short alert **tone** plays instead; a volume slider sets its level (0 mutes).
 
 **Settings** (in the panel): **Change my name**, adjust the alert volume, open **View all** messages, or **Sign out** of messaging.
@@ -530,6 +536,32 @@ Click **View all** to see the complete message log for the event — every messa
 
 - **Export CSV** — download the whole log with full timestamps (local and UTC), callsigns, and the sender's coordinates where recorded.
 - **Delete All Messages** — permanently erase the log for everyone. It asks for confirmation and cannot be undone, so export first if you need a record.
+
+**The Event Log:**
+
+Not everything worth recording is worth sending to anyone. Times, arrivals, decisions, a vehicle description passed over the radio — the net's own account of itself. The **Event Log** is where that goes, so it lives beside the traffic instead of on paper next to the keyboard.
+
+Write an entry with the **📋 Log** button beside **New message**, or press **Ctrl+L** (**⌘L** on a Mac) from anywhere with the panel open — the cursor lands in the box ready to type, so an entry can be made mid-net without reaching for the mouse.
+
+Entries are **stored and sent nowhere**. No tracker receives them, no phone or watch chimes, and no receipt comes back. They appear only in the pinned **Event Log** thread, each stamped with **who wrote it** — the log is shared between operators and gets read later by someone reconstructing what happened, so every entry names its author, including your own.
+
+Mobile trackers never see the log, and it appears in **View all messages** alongside everything else, marked as going to *Log*, so an exported CSV carries the log and the traffic together in one timeline.
+
+**Using two screens:**
+
+With two monitors, the map can have one and messaging the other, instead of the panel covering the map exactly when both matter.
+
+Choose **Open messages in a separate window** from the panel's settings menu and drag the new window to the second monitor. It fills that window completely — the map, sidebar and controls are gone — and the browser remembers where you put it. Choosing it again focuses the window you already have rather than opening another.
+
+The two windows share your sign-in automatically, so there is nothing to log into twice. **Open it from the map window's menu**, though — a messages window opened from a bookmark, another browser, or a different profile has no sign-in to inherit and will say so.
+
+They also work together:
+
+- **Only one of them speaks.** While the messages window is open, it does all the reading aloud and alert tones and the map window stays silent, so a message is never announced twice. Close it and the map window takes the job back.
+- **A message's location pin drives the *other* screen** — click it and the map centres and drops the marker over there, where you can see it.
+- **Right-clicking a tracker on the map opens the compose over there too**, in that person's existing conversation, rather than sliding a panel across the map you are looking at.
+
+To fill the whole monitor without browser chrome, use your browser's full-screen key (**F11**, or **⌃⌘F** on a Mac).
 
 **Operator auto-login (Display Pis without keyboards):**
 
@@ -845,7 +877,7 @@ Below the settings is the **active participant list**, which refreshes automatic
 | Button | Action |
 |--------|--------|
 | **Rename** | Change the participant's displayed name on the map. |
-| **Hide** | Toggle a mobile tracker's map visibility. When on, the tracker is hidden from the map but still appears in the sidebar and tracker list; default is off (visible). |
+| **Hide** | Toggle a mobile tracker's map visibility. When on, the tracker is hidden from the map but still appears in the sidebar and tracker list, dimmed; default is off (visible). Hiding is about map clutter, not access: a hidden tracker keeps reporting, can still be messaged, and still shows how long ago it was heard from. **The native app honours this too** — the marker disappears there within a poll, and if the hidden tracker happened to be selected, its breadcrumb trail is cleared with it. |
 | **Remove** | End the session immediately and remove the participant from the list and the map. |
 
 #### Beacon Settings

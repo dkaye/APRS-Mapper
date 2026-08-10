@@ -10,7 +10,7 @@ import 'map_config.dart';
 /// Release date shown under the Quick Start title. The version number itself
 /// comes from PackageInfo (i.e. pubspec.yaml), but the date has no such source —
 /// bump it by hand alongside the version.
-const kGuideDate = 'August 4, 2026';
+const kGuideDate = 'August 10, 2026';
 
 const _tipStyle = TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4);
 const _tipStyleBold = TextStyle(fontSize: 14, color: Color(0xFF333333), height: 1.4, fontWeight: FontWeight.w600);
@@ -102,7 +102,8 @@ class HelpScreen extends StatelessWidget {
             _shapeTip(_ShapeSquare(), 'Rounded square — mobile-only, sharing via this app with no ham radio.'),
             _shapeTip(_ShapeTriangle(), 'Triangle — hybrid: both this app and a licensed ham radio simultaneously.'),
             _tip('In the sidebar: tap any Tracker, Aid/Rest Stop, or iGate to close the menu, center the map on it, and blink its marker.'),
-            _tip('In the sidebar: long-press any Tracker, Aid/Rest Stop, or iGate to do the same and also zoom in.'),
+            _tip('In the sidebar: long-press any Tracker, Aid/Rest Stop, or iGate to do the same and also zoom in close.'),
+            _tip('A tracker greyed out in the sidebar has been hidden from the map by net control. It is still reporting and can still be messaged — it just has no marker.'),
             _tip('On the map: tap a marker to see its details. Long-press any marker to open Google Maps centered on that location.'),
             _tipWidget(Text.rich(TextSpan(children: [
               const TextSpan(text: 'The ', style: _tipStyle),

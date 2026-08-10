@@ -15,7 +15,7 @@
  *   ?config  Map/background/course/tracker config from config.yaml (ETag-cached)
  */
 
-define('WEB_VERSION', '1.22.0+15');
+define('WEB_VERSION', '1.22.1+40');
 
 // ── Client/server API contract version ────────────────────────────────────────
 // Advertised in the ?json and ?config responses so mobile apps can detect an
@@ -2345,7 +2345,7 @@ body.msg-window #msg-panel-grip { display: none; }
 			<button id="qs-close">&times;</button>
 		</div>
 		<div id="qs-body">
-			<div class="qs-ver">Version <?= WEB_VERSION ?> &middot; August 4, 2026</div>
+			<div class="qs-ver">Version <?= WEB_VERSION ?> &middot; August 10, 2026</div>
 			<div class="qs-note">You can reopen this guide anytime from <strong>Help &rarr; Quick Start</strong>.</div>
 
 			<div class="qs-sec">
@@ -2392,7 +2392,10 @@ body.msg-window #msg-panel-grip { display: none; }
 				<div class="qs-sec-title">Messaging</div>
 				<div class="qs-tip">While you are sharing your location, net control can send you text messages. An incoming message plays a tone and shows a pop-up with the sender's name and text.</div>
 				<div class="qs-tip">Click <strong>Reply</strong> to respond, or use the <strong>Messaging</strong> button to start a new message.</div>
-				<div class="qs-tip">Operators: the <strong>To:</strong> dropdown at the top of the message window lists <strong>All Trackers</strong> (the default) and every mobile tracker on the map. Switching recipients switches the conversation shown above the text box, and new messages appear there as they arrive.</div>
+				<div class="qs-tip">Operators: the panel lists your conversations on the left and the selected one on the right. <strong>All Trackers</strong> and the <strong>Event Log</strong> stay pinned at the top; below them, stations not heard from in a day drop off the list. Click <strong>New message</strong> to start one, or right-click a tracker in the sidebar to message it directly.</div>
+				<div class="qs-tip">Each message has a small <strong>copy</strong> icon that copies just the text &mdash; no sender or timestamp &mdash; ready to paste into a log or an email.</div>
+				<div class="qs-tip">To record something without sending it to anyone, click <strong>&#128203; Log</strong> or press <strong>Ctrl+L</strong>. Entries go into the event's log and reach no one &mdash; times, arrivals, decisions.</div>
+				<div class="qs-tip">Two monitors? The panel menu has <strong>Open messages in a separate window</strong>. Drag it to the second screen: the map keeps the first, only one window reads messages aloud, and clicking a message's location pin moves the map on the other screen.</div>
 				<div class="qs-tip"><strong>View all messages</strong> at the bottom of that window opens the complete log for the event, with the time, who sent it and who it went to. Messages sent from a phone carry a location pin &mdash; click it to see on the map where the sender was. You can also export the whole log to a spreadsheet.</div>
 			</div>
 

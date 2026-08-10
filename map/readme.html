@@ -193,7 +193,7 @@
 <div id="content">
 <h1 id="mars-aprs-system">MARS APRS System</h1>
 <p><strong>Author:</strong> Doug Kaye (K6DRK) · <strong>Copyright:</strong> 2026 Doug Kaye. All Rights Reserved.</p>
-<p><strong>Version:</strong> Server &amp; Displays (v1.22.0); Mobile App (v1.22.0); iGates (v5.1)</p>
+<p><strong>Version:</strong> Server &amp; Displays (v1.22.1); Mobile App (v1.22.1); iGates (v5.1)</p>
 <hr />
 <h2 id="table-of-contents">Table of Contents</h2>
 <ol>
@@ -204,11 +204,11 @@
 <li><a href="#igate-diagnostics">iGate Diagnostics</a></li>
 <li><a href="#igate-aggregation-relay">iGate Aggregation Relay</a></li>
 <li><a href="#the-problem-it-solves">The problem it solves</a> · <a href="#how-it-works-the-data-path">How it works</a> · <a href="#why-it-runs-on-a-vps-not-at-home">Why it runs on a VPS</a> · <a href="#cloudflare-dns-for-the-relay">Cloudflare DNS</a> · <a href="#unique-per-gate-logins-required">Unique per-gate logins</a> · <a href="#turning-it-on-or-off-for-a-gate">Turning it on/off</a> · <a href="#components-and-where-they-live">Components</a></li>
-<li><a href="#aprs-server-v1220">APRS Server (v1.22.0)</a></li>
+<li><a href="#aprs-server-v1221">APRS Server (v1.22.1)</a></li>
 <li><a href="#cloudflare-tunnel">Cloudflare Tunnel</a></li>
-<li><a href="#display-pis-v1220">Display Pis (v1.22.0)</a></li>
+<li><a href="#display-pis-v1221">Display Pis (v1.22.1)</a></li>
 <li><a href="#running-a-display-pi-on-starlink">Running a display Pi on Starlink</a></li>
-<li><a href="#mobile-apps-v1220">Mobile Apps (v1.22.0)</a></li>
+<li><a href="#mobile-apps-v1221">Mobile Apps (v1.22.1)</a></li>
 <li><a href="#app-architecture">Architecture</a> · <a href="#location-sharing-flow">Location Sharing Flow</a> · <a href="#smart-track">Smart Track</a> · <a href="#building-distributing">Building &amp; Distributing</a> · <a href="#background-location">Background Location</a></li>
 <li><a href="#user-interfaces">User Interfaces</a></li>
 <li><a href="#authentication">Authentication</a></li>
@@ -266,18 +266,18 @@ forwarding or static public IP addresses.</p>
            ▼
 ┌──────────────────────────────────────┐     ┌──────────────────────────────┐
 │           APRS-IS Network            │◀────│  Mobile App  (iOS/Android)   │
-│         noam.aprs2.net:14580         │     │  Flutter v1.22.0               │
+│         noam.aprs2.net:14580         │     │  Flutter v1.22.1               │
 └────────────────┬─────────────────────┘     │  TCP 14580 (inject position) │
                  │ TCP 14580                 └──────────────┬───────────────┘
 ┌────────────────▼─────────────────────┐                    │ HTTPS (map + config + session)
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.22.0      │
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.22.1      │
 │  aprsDaemon.php → trackers.json      │◀───────────────────┘
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.22.0
+│  Display Pi  (×2)      │  Pi 4 · v1.22.1
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -802,7 +802,7 @@ running an <code>auto-update.sh</code> that predates this flag picks the flag up
 their updater (returns them to direct gating); the relay and sync can then simply be stopped.
 No gate's ability to gate ever depended on any of this.</p>
 <hr />
-<h2 id="aprs-server-v1220">APRS Server (v1.22.0)</h2>
+<h2 id="aprs-server-v1221">APRS Server (v1.22.1)</h2>
 <p>The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
 APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
 NetBird monitor and WiFi credential manager. It is reachable at <code>marsaprs.org</code> via a
@@ -907,7 +907,7 @@ sudo systemctl start cloudflared
 <p>The tunnel token is obtained from the <strong>Cloudflare Zero Trust dashboard</strong>:
 <em>Networks → Tunnels → \&lt;tunnel&gt; → Configure → Install and run connector</em></p>
 <hr />
-<h2 id="display-pis-v1220">Display Pis (v1.22.0)</h2>
+<h2 id="display-pis-v1221">Display Pis (v1.22.1)</h2>
 <p>A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
 <code>marsaprs.org</code>. It is a read-only display device — no long-term local configuration or data storage.
 Two display Pis are in use: <strong>NetControl</strong> (operator screen) and <strong>BigTV</strong> (large audience
@@ -1021,9 +1021,10 @@ amount of resetting the mouse helps — the stale bond is on the Pi), plus hostn
 <code>autologin.txt</code>, SSH host keys and machine-id. Prefer a fresh <code>install.sh</code> per device.</p>
 <p>For details on using the map, see <a href="https://marsaprs.org/userguide.html?back=/readme.html">USERGUIDE.MD</a>.</p>
 <hr />
-<h2 id="mobile-apps-v1220">Mobile Apps (v1.22.0)</h2>
+<h2 id="mobile-apps-v1221">Mobile Apps (v1.22.1)</h2>
 <p>Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.</p>
 <p><strong>Location:</strong> the <code>app/</code> subdirectory of this repo (<code>app/lib</code>, <code>app/ios</code>, <code>app/android</code>, <code>app/pubspec.yaml</code>). It was merged in from the former standalone <code>aprs-map</code> repo, with history preserved.</p>
+<p><strong>The Admin "Hide" toggle applies to both clients.</strong> <code>index.php?json</code> has always carried a <code>hidden</code> flag per tracker; the app simply never read it, so a tracker hidden from the web map kept its marker on the phone. <code>TrackerData.showsOnMap</code> (position <strong>and</strong> not hidden — kept distinct from <code>hasPosition</code>, since a hidden tracker still has a position and the drawer still reports its age) now gates the marker, the drawer keeps the entry dimmed, and a tracker hidden while selected has its selection and breadcrumb trail dropped together — otherwise a trail is left drawn to nothing. Hiding is about map clutter, not reachability: a hidden tracker remains addressable in messaging on both clients.</p>
 <h3 id="app-architecture">App Architecture</h3>
 <p>The app is a Flutter application with a hybrid architecture:</p>
 <pre><code>┌────────────────────────────────────────────────┐
@@ -1160,7 +1161,7 @@ App restart while sharing was active:
 <h3 id="app-update-check">App Update Check</h3>
 <p>On launch the app fetches <code>https://marsaprs.org/app_version.php</code> (a small JSON manifest carrying the latest <code>build</code> per platform) and, if a newer build is available, shows a <strong>dismissable</strong> "Update available" prompt — never a forced upgrade. iOS opens the App Store listing (<code>store_url</code>; the check is a silent no-op while that URL is empty), Android opens the APK download (<code>apk_url</code>). A "Later" choice is remembered until an even newer build ships. Client logic lives in <code>lib/update_check.dart</code>; bump <code>build</code>/<code>latest</code> in <code>map/app_version.php</code> when a new app version is released (see the version-bump checklist).</p>
 <h3 id="smart-track">Smart Track</h3>
-<p>Smart Track is the automatic beacon-interval algorithm in the native app (iOS/Android), Apple Watch app, and web map. It monitors GPS speed and adjusts the upload frequency without any input from the user.</p>
+<p>Smart Track is the automatic beacon-interval algorithm in the native app (iOS/Android) and the web map. It monitors GPS speed and adjusts the upload frequency without any input from the user. (The Apple Watch companion does messaging only — it never beacons position.)</p>
 <p><strong>Unknown (?) mode — startup phase:</strong></p>
 <p>Every session begins in <strong>unknown</strong> mode (shown as <strong>?</strong> in the web sidebar). The app joins the server with <code>sharing_mode: "unknown"</code> and stays in this phase until Smart Track collects enough GPS readings to make a confident initial determination — typically within 90 seconds. When the mode is first set, the app waits 15 seconds before sending the first real-mode beacon so the sidebar briefly shows <strong>?</strong> before the actual activity icon appears.</p>
 <p><strong>Speed thresholds:</strong></p>
@@ -1209,7 +1210,7 @@ App restart while sharing was active:
 <li><strong>Movement confirmation guard:</strong> Three consecutive readings must all exceed the stationary threshold (&gt; 1.0 m/s with accuracy ≤ 20 m) before the last-movement timestamp is updated. A single speed spike from GPS noise cannot prevent the stationary timer from eventually firing.</li>
 </ol>
 <p><strong>Implementation:</strong></p>
-<p>The algorithm runs identically in <code>lib/map_screen.dart</code> (Flutter iOS/Android), <code>Sources/BeaconService.swift</code> (Apple Watch), and <code>index.php</code> (web JS). Key functions: <code>_processSpeedSample</code> / <code>processSpeedSample</code> / <code>_autoDetectFromSpeed</code> for sample-based detection; <code>_checkStationaryByTime</code> / <code>checkStationaryByTime</code> for the timer-based fallback.</p>
+<p>The algorithm runs identically in <code>lib/map_screen.dart</code> (Flutter iOS/Android) and <code>index.php</code> (web JS). Key functions: <code>_processSpeedSample</code> / <code>processSpeedSample</code> / <code>_autoDetectFromSpeed</code> for sample-based detection; <code>_checkStationaryByTime</code> / <code>checkStationaryByTime</code> for the timer-based fallback.</p>
 <h3 id="building-distributing">Building &amp; Distributing</h3>
 <h4 id="ios">iOS</h4>
 <pre><code class="language-bash">cd ~/marsaprs/app
@@ -1268,7 +1269,15 @@ keyPassword=&lt;password&gt;
 keyAlias=&lt;alias&gt;
 storeFile=&lt;absolute path to .jks or .p12&gt;
 </code></pre>
-<p><code>android/app/build.gradle.kts</code> reads this file automatically. If absent, the release build falls back to debug signing.</p>
+<p><code>android/app/build.gradle.kts</code> reads this file automatically. If it is absent or incomplete, a <strong>release build fails</strong> rather than falling back to debug signing — an APK signed with the wrong key installs fine on a clean device and is rejected as an update for every existing user, who would have to uninstall (losing their tracker token and registration) to take it. Debug builds are unaffected and need no keystore.</p>
+<p>The canonical copy predates the merge of the standalone <code>aprs-map</code> repo into this one and, being gitignored, did not travel with it:</p>
+<pre><code class="language-bash">cp ~/aprs-map/android/key.properties app/android/key.properties
+</code></pre>
+<p>Always verify a release before publishing it — the certificate is the only thing that distinguishes a correct APK from a broken one:</p>
+<pre><code class="language-bash">apksigner verify --print-certs &lt;apk&gt; | grep SHA-256
+# expected: 0d30a9f258e1330cb22a092ca6df65af5d3bf085905fb9bc01d74e54c866da57
+#           CN=Doug Kaye, OU=MARS, O=W6SG, L=Marin, ST=CA, C=US
+</code></pre>
 <p><strong><code>compileSdk</code> note:</strong> <code>objectbox_flutter_libs</code> in <code>~/.pub-cache</code> may hardcode <code>compileSdkVersion 31</code>. Patch it to <code>36</code> to match <code>build.gradle.kts</code>.</p>
 <p>To distribute: share the APK via Google Drive or email. Testers tap the download link, open the file with <strong>Package Installer</strong>, and if Android warns about an unknown source, tap <strong>More details</strong> → <strong>Install anyway</strong>.</p>
 <h4 id="submitting-to-google-play-store">Submitting to Google Play Store</h4>
@@ -1387,6 +1396,46 @@ storeFile=&lt;absolute path to .jks or .p12&gt;
 <p><strong>Single GPS stream — critical constraint:</strong> <code>geolocator_apple</code> only supports one active event-channel listener at a time. If a second <code>Geolocator.getPositionStream()</code> call is made while one is already active, <code>PositionStreamHandler.onListenWithArguments</code> returns an error and the second call silently fails — <code>allowsBackgroundLocationUpdates</code> is never set to <code>true</code> on the underlying <code>CLLocationManager</code>, and the background location indicator never appears. The fix: <code>startTracking()</code> in <code>BackgroundLocationService</code> owns the single Geolocator stream (with <code>AppleSettings</code>), and the map's blue-dot layer subscribes to <code>_bgLocation.positionStream</code> (a Dart broadcast stream fed by that same stream) rather than opening its own.</p>
 <p><strong>Upload mechanism:</strong> Both iOS and Android use the same <code>_heartbeatTimer</code> for timed uploads and <code>_maybeUploadFromStream()</code> for distance-triggered uploads. On iOS, the GPS event stream keeps the Dart isolate continuously alive, so <code>Timer.periodic</code> fires reliably. <code>_maybeUploadFromStream()</code> provides an additional trigger: it uploads immediately when the device has moved ≥ the configured distance threshold since the last upload, resetting the timer to avoid a duplicate beacon shortly after.</p>
 <p><strong>Why both platforms use server-side APRS injection:</strong> Both iOS and Android POST position data to <code>?mobile=update</code> rather than sending raw TCP packets directly to APRS-IS. On iOS, <code>NSURLSession</code>-based HTTP is explicitly supported for background network tasks while raw <code>dart:io Socket</code> TCP connections are not reliable in background. Unifying Android to the same path keeps all beaconing logic in the main isolate, makes <code>background_task_handler.dart</code> a no-op, and simplifies the overall architecture.</p>
+<h3 id="apple-watch-companion-watch">Apple Watch Companion ("Watch")</h3>
+<p>A watchOS companion that makes the wrist a nearly hands-free extension of the phone: a reply is a press-and-hold push-to-talk. It does <strong>messaging only</strong> — it never beacons position.</p>
+<p><strong>The phone is the loudspeaker; the watch is the microphone.</strong> That is the opposite of how this was first built, and the inversion came from field testing. watchOS lets an app play audio only while it is frontmost, so a watch on a lowered wrist cannot alert anybody — while the phone, in a pocket, can both chime and read a message aloud. So the phone announces everything unless the watch app is genuinely on screen, and the watch's job the rest of the time is to be ready to take a reply.</p>
+<p><strong>Who announces an arriving message</strong> is decided by the watch and obeyed by the phone. The watch publishes <code>canAnnounce</code> whenever its scene phase changes; the phone suppresses its own alert only while that is true. It is reported rather than inferred because the two devices had different notions of "awake": a dimmed watch is unreachable over WatchConnectivity yet still frontmost, so each assumed the other had it and messages were announced twice or not at all. Every relayed message also carries <code>phoneAnnounced</code>, which stops the watch re-reading a backlog when queued transfers flush on waking, and lets it raise a notification if it went quiet after promising to speak.</p>
+<p><strong>Why it is native Swift.</strong> Flutter does not target watchOS, so the watch app cannot be Dart. It is a native SwiftUI target (<code>WatchApp</code>) inside the same <code>app/ios/Runner.xcodeproj</code>, bridged to the Flutter app over WatchConnectivity plus a Flutter method/event channel.</p>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>app/ios/WatchApp/Info.plist</code></td>
+<td><strong>Must</strong> live at this exact path. <code>flutter_tools</code> detects a watch companion by reading <code>ios/&lt;TargetName&gt;/Info.plist</code> for <code>WKCompanionAppBundleIdentifier</code>, so the directory name and the target name have to match (<code>WatchApp</code>)</td>
+</tr>
+<tr>
+<td><code>app/ios/WatchApp/WatchApp.xcconfig</code></td>
+<td><code>#include</code>s <code>Flutter/Generated.xcconfig</code> so the watch app's version comes from <code>pubspec.yaml</code>, exactly like the iPhone app. Project-level configurations carry no <code>baseConfigurationReference</code>, so without this the watch target would inherit no Flutter build settings</td>
+</tr>
+<tr>
+<td><code>app/ios/WatchApp/Sources/</code></td>
+<td>SwiftUI app, WatchConnectivity session, announcer (haptic/tone/TTS), dictation, direct messaging client</td>
+</tr>
+<tr>
+<td><code>app/ios/Runner/WatchBridge.swift</code></td>
+<td>Phone side of the bridge: <code>WCSessionDelegate</code> + the <code>org.marsaprs/watch</code> method and event channels</td>
+</tr>
+<tr>
+<td><code>app/lib/watch_bridge.dart</code></td>
+<td>Dart side of the bridge; reuses <code>MessagingClient</code> for all network traffic</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Transport is hybrid.</strong> The phone is the fast path — it already polls, so it relays inbound messages to the watch and sends the watch's replies. The phone also hands the watch its tracker token, so when the phone is unreachable the watch polls <code>?messaging=poll</code> directly over WiFi or LTE. Both paths converge on one <code>ingest()</code> on the watch that dedupes by message <code>id</code>, so a message can never be announced twice. The watch never polls while the phone is reachable.</p>
+<p><strong>Two build-system consequences.</strong> Once a watch companion exists, <code>flutter_tools</code> omits <code>-sdk</code> from the Xcode invocation and stops narrowing <code>ARCHS</code>/<code>ONLY_ACTIVE_ARCH</code>: simulator builds now need an explicit <code>-d &lt;device-id&gt;</code>, and debug builds are slower. Device builds are unaffected. <code>app/TESTFLIGHT.md</code> carries the release-time verification steps.</p>
+<p><strong>Do not move the "Embed Watch Content" build phase.</strong> It sits immediately after <code>Resources</code> in the Runner target, and it has to stay before <code>Thin Binary</code>. <code>Thin Binary</code> runs <code>xcode_backend.sh embed_and_thin</code> and declares <code>${TARGET_BUILD_DIR}/${INFOPLIST_PATH}</code> as an input, which makes Xcode take a directory-tree signature of the whole of <code>Runner.app</code>. Scheduling a copy <em>into</em> <code>Runner.app/Watch/</code> after that closes a dependency loop and the build dies with <code>Cycle inside Runner</code>. The watch target also sets <code>SKIP_INSTALL = YES</code> so the archive contains only <code>Runner.app</code>, with the watch app nested inside it.</p>
+<p><strong>Reading aloud on the phone needs <code>UIBackgroundModes: audio</code>.</strong> Without it iOS refuses to start an audio session once the app leaves the screen, which is the situation the feature exists for. One shared <code>Speaker</code> (<code>app/lib/speaker.dart</code>) owns the app's only text-to-speech engine — the chat screen used to own a second, and two contend for the same audio session and cut each other off mid-sentence. Note that <code>defaultToSpeaker</code> must not be passed with the <code>playback</code> category: it is valid only with <code>playAndRecord</code>, and including it fails the whole category call, leaving the app silent in the background with no error anywhere obvious.</p>
+<p><strong>The limitation accepted.</strong> watchOS only lets an app play audio while frontmost, and will not run a timer for a backgrounded one. So with the phone off or out of range <strong>and</strong> the watch app backgrounded, nothing reaches the operator until they raise their wrist — at which point the watch polls and announces what it missed. The only mechanism that would change this is a <code>WKExtendedRuntimeSession</code>, which costs heavy battery and a background-mode declaration App Review may query; the deliberate decision is to live without it, since the phone covers every case in which it is alive.</p>
 <hr />
 <h2 id="user-interfaces">User Interfaces</h2>
 <p>Six browser-based interfaces run on <code>marsaprs.org</code>. All are served by Apache on the server
@@ -1643,7 +1692,7 @@ admin actions are gated by the user-account permission system.</p>
 </tr>
 <tr>
 <td><code>conversations</code></td>
-<td>A <code>direct</code>, <code>group</code>, or <code>broadcast</code> thread, with a <code>member_hash</code> so a given set of participants maps to exactly one conversation.</td>
+<td>A <code>direct</code>, <code>group</code>, <code>broadcast</code>, <code>entity</code>, <code>entity_multi</code>, or <code>log</code> thread, with a <code>member_hash</code> so a given set of participants maps to exactly one conversation.</td>
 </tr>
 <tr>
 <td><code>conversation_members</code></td>
@@ -1692,6 +1741,8 @@ admin actions are gated by the user-account permission system.</p>
 <li><strong>Every moved row records <code>prev_conversation_id</code> and <code>merged_ts</code></strong>, so <code>undoMerge()</code> reverses a bad merge exactly. The log is not optional: the tempting alternative signal — one delivery row means pre-merge, several mean post-merge — collapses whenever a device was offline at send time, which is the normal case for the multi-device people this feature serves.</li>
 </ul>
 <p>Emptied threads are <strong>hidden, not deleted</strong> (<code>conversationsFor()</code> skips conversations with no messages). Deleting them orphaned the history on undo — the messages returned to a <code>conversation_id</code> whose row no longer existed.</p>
+<p><strong>The entity thread is chosen, not merged into afterwards.</strong> Migration only ran when an operator sent via an <code>ent:</code> picker row, so any <em>other</em> path that addressed a device by callsign — notably right-clicking a tracker, which composes <code>recipients:[callsign]</code> — resolved a fresh <code>direct</code> thread beside the entity one and undid the tidying. Both render from the same <code>display_id</code> and name, so the operator saw the same person listed twice with the history split; they cannot converge on their own because the hashes differ (<code>111|ent:-LOGDoug</code> vs <code>77,111</code>). <code>entityConversationForDevice()</code> now looks the person's thread up at send time when an operator addresses a single device. Restricted to kind <code>entity</code>, never <code>entity_multi</code> — a <code>(multiple)</code> thread is a station's whole group, and routing one person's message into it would put a private reply in front of everyone there.</p>
+<p><strong>The event log is a conversation with no recipients.</strong> One <code>log</code> thread per event (<code>member_hash = 'log:*'</code>), holding entries that were written rather than sent — times, arrivals, decisions. <code>insertMessage()</code> with an empty recipient list writes no <code>deliveries</code>, so nothing is queued for anyone to poll, no client announces it, and no receipt can come back; everything else (storage, threading, <code>history</code>, CSV export) it gets for free by being an ordinary message. Memberless like the broadcast thread, because it belongs to the event rather than to whoever made the first entry — which also settles access without a rule of its own, since the <code>thread</code> handler already lets an operator open anything and refuses a non-member everything. The one place that could still leak it is the conversation list, so <code>conversationsFor()</code> takes an <code>$includeLog</code> flag the caller sets only for operators. <code>to_label</code> is <code>'Log'</code> in both <code>thread()</code> and <code>history()</code>, and entries are attributed to their author — the inverse of the rule for ordinary traffic, because the log is shared and is read later by someone reconstructing events.</p>
 <p>The mobile app needs no change for any of this: <code>?messaging=participants</code> returns entity-grouped rows keyed <code>ent:</code>/<code>mult:</code>, and the app already renders <code>short_id + name</code> and sends <code>p.key</code> back. That endpoint also now filters to addressable participants only (mobiles with a live session in the last 24 h, operators seen in the last 24 h); it previously returned the entire never-pruned participants table, which is what filled the app's picker with one volunteer repeated across four old sessions.</p>
 <p><strong>Broadcast access is decided by kind, not membership.</strong> Direct and group conversations are keyed by <code>member_hash</code> — the member set <em>is</em> the identity, so whoever finds one is already in it. The broadcast conversation is different: its hash is the constant <code>'*'</code>, so a single row is shared by the whole event, and it therefore records <strong>no members at all</strong>. Access goes through <code>canAccessConversation()</code>, which admits any participant in the event; <code>isConversationMember()</code> remains a literal membership test for callers that need one (such as the mobile reply-routing path, which deliberately skips broadcasts). <code>conversationsFor()</code> likewise unions the broadcast thread in for every participant.</p>
 <blockquote>
@@ -1732,6 +1783,10 @@ admin actions are gated by the user-account permission system.</p>
 <td>The full event log (View All / admin) — operators only.</td>
 </tr>
 <tr>
+<td><code>log</code></td>
+<td><code>{token, text}</code> — append an entry to the event log. Operators only; writes a message with <strong>no recipients</strong>, so no <code>deliveries</code> rows exist and nothing is queued, announced, or acknowledged.</td>
+</tr>
+<tr>
 <td><code>read</code></td>
 <td>Mark delivered messages read (read receipts).</td>
 </tr>
@@ -1748,6 +1803,10 @@ admin actions are gated by the user-account permission system.</p>
 <p><strong>Backward compatibility.</strong> The legacy mobile endpoints (<code>?mobile=message</code>, mobile <code>poll</code>, <code>web_recipients</code>) are a thin shim over the same <code>messages.db</code>, so an older app keeps working unchanged alongside the new chat clients — old and new interoperate through one database.</p>
 <h3 id="web-operator-ui-chat-panel">Web Operator UI (chat panel)</h3>
 <p>The <strong>Messaging</strong> button subscribes (name + password → token, remembered in <code>localStorage</code>). Messaging then lives in a persistent <strong>chat panel docked right of the map</strong>: a conversation list with unread badges, the selected thread, and an always-visible composer that incoming messages never cover. The 5-second poll drives live updates into the open thread, the list, and the unread counts without a reload. <strong>New message</strong> searches mobiles + operators (multi-select → a group; <strong>All Trackers</strong> → broadcast). Sent messages show <strong>Delivered ✓</strong> / <strong>Read ✓✓</strong> (or <em>N of M</em> in a group). A <strong>Read aloud</strong> toggle speaks arriving messages (Web Speech API); when off, a volume-controlled tone plays. A <strong>microphone</strong> dictates into the composer. <strong>View all</strong> opens the whole-event feed — searchable, and clicking a message opens its thread; operators holding <code>messages.manage</code> also get <strong>Export CSV</strong> and <strong>Delete All Messages</strong> (both re-checked server-side). The panel's settings menu also offers <strong>Manage operators</strong> (same permission) — a list of every operator with their connected/idle state and a <strong>Disconnect</strong> button that frees a stuck name and signs that session out. A name is only "in use" while an operator was seen within the last <strong>90 s</strong> with a live token; both <code>subscribe</code> and <code>rename</code> use that same test, so a departed operator's name auto-frees.</p>
+<p><strong>Conversation list housekeeping.</strong> <strong>All Trackers</strong> and the <strong>Event Log</strong> are pinned at the head of the list and always present — the two destinations that always exist should not have to be composed to, nor scroll away under ordinary traffic. Below them, threads whose other end has not been seen for 24 hours are hidden, keeping anything unread or currently open. Staleness is read from the <strong>tracker feed's <code>lastUpdate</code></strong>, not <code>participants.last_seen</code>: <code>upsertParticipant()</code> writes <code>last_seen</code> on every write and it is written in bulk by paths that say nothing about activity (<code>_msg_ensure_all_mobiles()</code> touches every tracker on each broadcast), so a station gone for weeks looked freshly seen the moment somebody else broadcast. The recipient picker had always used the tracker feed, which is exactly why it was right about who was reachable while the conversation list was not — <code>_msg_mark_stale()</code> in <code>messaging.php</code> now puts both on the same clock. Each message also carries a <strong>copy</strong> button that yields the message text alone, with an <code>execCommand</code> fallback for the non-secure contexts (plain-HTTP LAN, NetBird address) where <code>navigator.clipboard</code> is unavailable.</p>
+<p><strong>Two-screen operation (<code>?messages</code>).</strong> The same document rendered as a messaging-only window for a second monitor — the map's chrome hidden and the panel promoted to fill the window. Not a separate page: the messaging JS is interleaved through <code>index.php</code> and everything it touches has to stay in scope. Opened from the panel menu via a <strong>named</strong> <code>window.open</code>, so repeat clicks focus the existing window.</p>
+<p>The operator session already spans windows — it lives in <code>localStorage</code> and the restore at script load hands a second window the same token — so the second window <strong>must never subscribe</strong>: that would mint a fresh token, invalidate the map window's, and also collide with the 90-second name-in-use check. A <code>?messages</code> window opened directly, with no session to inherit, says how to open it properly rather than offering a modal that would do the damage.</p>
+<p>Both windows poll, so exactly one announces. The messages window owns audio while open via a <strong>speaker lease</strong> in <code>localStorage</code>, renewed <strong>on each poll rather than by a heartbeat timer</strong>: background tabs have their timers throttled (to 1/s, and 1/min once hidden a while), so a merely covered messages window stops heartbeating while still running, and a timer-based liveness check reads that as death — measured against a real browser, the map window wrongly reclaimed audio and both would have announced. Renewing from the poll ties the lease to the activity that produces an announcement, so the two cannot disagree: a window that stopped polling stopped announcing, and reclaiming is then correct. The map window evaluates it lazily at announce time and needs no timer of its own. A <code>BroadcastChannel</code> carries the rest — a message's location pin drives <code>_showMsgLocation()</code> on the map window, and a tracker right-click on the map composes in the messages window.</p>
 <p><strong>Auto-subscribe for Display Pi operators:</strong> when <code>?autologin&amp;operator=&lt;name&gt;</code> embeds the messaging password into the page (via PHP session → in-page script), the panel subscribes silently on load. The token is held only in memory, so removing line 1 of <code>~/autologin.txt</code> and rebooting cleanly unsubscribes.</p>
 <h3 id="mobile-participant-ui-chat-screen">Mobile Participant UI (chat screen)</h3>
 <p>The app's <strong>Message</strong> (💬) button opens a <strong>chat screen</strong> mirroring the web panel: a <strong>Conversations</strong> list, threads, and a composer, with <strong>New message → Start conversation / Start group</strong> over the participant list (with Online/Offline presence). It sends text and <strong>photos</strong> (Take a photo / Choose from library), shows <strong>Delivered ✓</strong> / <strong>Read ✓✓</strong> receipts, and can <strong>Read arriving messages aloud</strong>. Background arrivals raise a notification with a distinct, insistent alert sound; tapping it opens the conversation. The app continues to satisfy the older <code>?mobile=</code> contract, so mixed-version fleets interoperate.</p>

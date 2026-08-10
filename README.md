@@ -2,7 +2,7 @@
 
 **Author:** Doug Kaye (K6DRK) · **Copyright:** 2026 Doug Kaye. All Rights Reserved.
 
-**Version:** Server & Displays (v1.22.0); Mobile App (v1.22.0); iGates (v5.1)
+**Version:** Server & Displays (v1.22.1); Mobile App (v1.22.1); iGates (v5.1)
 
 ---
 
@@ -15,11 +15,11 @@
    - [iGate Diagnostics](#igate-diagnostics)
 5. [iGate Aggregation Relay](#igate-aggregation-relay)
    - [The problem it solves](#the-problem-it-solves) · [How it works](#how-it-works-the-data-path) · [Why it runs on a VPS](#why-it-runs-on-a-vps-not-at-home) · [Cloudflare DNS](#cloudflare-dns-for-the-relay) · [Unique per-gate logins](#unique-per-gate-logins-required) · [Turning it on/off](#turning-it-on-or-off-for-a-gate) · [Components](#components-and-where-they-live)
-6. [APRS Server (v1.22.0)](#aprs-server-v1220)
+6. [APRS Server (v1.22.1)](#aprs-server-v1221)
    - [Cloudflare Tunnel](#cloudflare-tunnel)
-7. [Display Pis (v1.22.0)](#display-pis-v1220)
+7. [Display Pis (v1.22.1)](#display-pis-v1221)
    - [Running a display Pi on Starlink](#running-a-display-pi-on-starlink)
-8. [Mobile Apps (v1.22.0)](#mobile-apps-v1220)
+8. [Mobile Apps (v1.22.1)](#mobile-apps-v1221)
    - [Architecture](#app-architecture) · [Location Sharing Flow](#location-sharing-flow) · [Smart Track](#smart-track) · [Building & Distributing](#building-distributing) · [Background Location](#background-location)
 9. [User Interfaces](#user-interfaces)
 10. [Authentication](#authentication)
@@ -78,18 +78,18 @@ APRS Radio (144.39 MHz)
            ▼
 ┌──────────────────────────────────────┐     ┌──────────────────────────────┐
 │           APRS-IS Network            │◀────│  Mobile App  (iOS/Android)   │
-│         noam.aprs2.net:14580         │     │  Flutter v1.22.0               │
+│         noam.aprs2.net:14580         │     │  Flutter v1.22.1               │
 └────────────────┬─────────────────────┘     │  TCP 14580 (inject position) │
                  │ TCP 14580                 └──────────────┬───────────────┘
 ┌────────────────▼─────────────────────┐                    │ HTTPS (map + config + session)
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.22.0      │
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.22.1      │
 │  aprsDaemon.php → trackers.json      │◀───────────────────┘
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.22.0
+│  Display Pi  (×2)      │  Pi 4 · v1.22.1
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -492,7 +492,7 @@ No gate's ability to gate ever depended on any of this.
 
 ---
 
-## APRS Server (v1.22.0)
+## APRS Server (v1.22.1)
 
 The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
 APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
@@ -578,7 +578,7 @@ The tunnel token is obtained from the **Cloudflare Zero Trust dashboard**:
 
 ---
 
-## Display Pis (v1.22.0)
+## Display Pis (v1.22.1)
 
 A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
 `marsaprs.org`. It is a read-only display device — no long-term local configuration or data storage.
@@ -715,11 +715,13 @@ For details on using the map, see [USERGUIDE.MD](https://marsaprs.org/userguide.
 
 ---
 
-## Mobile Apps (v1.22.0)
+## Mobile Apps (v1.22.1)
 
 Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.
 
 **Location:** the `app/` subdirectory of this repo (`app/lib`, `app/ios`, `app/android`, `app/pubspec.yaml`). It was merged in from the former standalone `aprs-map` repo, with history preserved.
+
+**The Admin "Hide" toggle applies to both clients.** `index.php?json` has always carried a `hidden` flag per tracker; the app simply never read it, so a tracker hidden from the web map kept its marker on the phone. `TrackerData.showsOnMap` (position **and** not hidden — kept distinct from `hasPosition`, since a hidden tracker still has a position and the drawer still reports its age) now gates the marker, the drawer keeps the entry dimmed, and a tracker hidden while selected has its selection and breadcrumb trail dropped together — otherwise a trail is left drawn to nothing. Hiding is about map clutter, not reachability: a hidden tracker remains addressable in messaging on both clients.
 
 ### App Architecture
 
@@ -1229,7 +1231,7 @@ All messaging state lives in one SQLite database, `/var/lib/marsaprs/messages.db
 | Table | Purpose |
 |-------|---------|
 | `participants` | One row per addressable party per event — mobiles (keyed by callsign) and operators (keyed by unique name). Holds `display_name`, `short_id`, `token`, `last_seen`, and last-known `lat`/`lon`/`pos_ts`. |
-| `conversations` | A `direct`, `group`, or `broadcast` thread, with a `member_hash` so a given set of participants maps to exactly one conversation. |
+| `conversations` | A `direct`, `group`, `broadcast`, `entity`, `entity_multi`, or `log` thread, with a `member_hash` so a given set of participants maps to exactly one conversation. |
 | `conversation_members` | Membership join between conversations and participants. **Empty for broadcast conversations** — see below. |
 | `messages` | The messages: monotonic `id` (the wire id for `since_id` polling), `event`, `conversation_id`, `sender_id`, `ts`, `text`, sender `lat`/`lon`/`pos_ts`, `broadcast`, and photo columns (`attachment`, `attach_w`, `attach_h`). |
 | `deliveries` | Per-recipient row for each message with `delivered_ts` / `read_ts` — this is the inbox, the unread count, and the delivery/read receipts. Replaces the old `pending_msgs` queue. |
@@ -1258,6 +1260,10 @@ Kinds are distinct: `entity` is one person (receipts collapse — any phone ackn
 
 Emptied threads are **hidden, not deleted** (`conversationsFor()` skips conversations with no messages). Deleting them orphaned the history on undo — the messages returned to a `conversation_id` whose row no longer existed.
 
+**The entity thread is chosen, not merged into afterwards.** Migration only ran when an operator sent via an `ent:` picker row, so any *other* path that addressed a device by callsign — notably right-clicking a tracker, which composes `recipients:[callsign]` — resolved a fresh `direct` thread beside the entity one and undid the tidying. Both render from the same `display_id` and name, so the operator saw the same person listed twice with the history split; they cannot converge on their own because the hashes differ (`111|ent:-LOGDoug` vs `77,111`). `entityConversationForDevice()` now looks the person's thread up at send time when an operator addresses a single device. Restricted to kind `entity`, never `entity_multi` — a `(multiple)` thread is a station's whole group, and routing one person's message into it would put a private reply in front of everyone there.
+
+**The event log is a conversation with no recipients.** One `log` thread per event (`member_hash = 'log:*'`), holding entries that were written rather than sent — times, arrivals, decisions. `insertMessage()` with an empty recipient list writes no `deliveries`, so nothing is queued for anyone to poll, no client announces it, and no receipt can come back; everything else (storage, threading, `history`, CSV export) it gets for free by being an ordinary message. Memberless like the broadcast thread, because it belongs to the event rather than to whoever made the first entry — which also settles access without a rule of its own, since the `thread` handler already lets an operator open anything and refuses a non-member everything. The one place that could still leak it is the conversation list, so `conversationsFor()` takes an `$includeLog` flag the caller sets only for operators. `to_label` is `'Log'` in both `thread()` and `history()`, and entries are attributed to their author — the inverse of the rule for ordinary traffic, because the log is shared and is read later by someone reconstructing events.
+
 The mobile app needs no change for any of this: `?messaging=participants` returns entity-grouped rows keyed `ent:`/`mult:`, and the app already renders `short_id + name` and sends `p.key` back. That endpoint also now filters to addressable participants only (mobiles with a live session in the last 24 h, operators seen in the last 24 h); it previously returned the entire never-pruned participants table, which is what filled the app's picker with one volunteer repeated across four old sessions.
 
 **Broadcast access is decided by kind, not membership.** Direct and group conversations are keyed by `member_hash` — the member set *is* the identity, so whoever finds one is already in it. The broadcast conversation is different: its hash is the constant `'*'`, so a single row is shared by the whole event, and it therefore records **no members at all**. Access goes through `canAccessConversation()`, which admits any participant in the event; `isConversationMember()` remains a literal membership test for callers that need one (such as the mobile reply-routing path, which deliberately skips broadcasts). `conversationsFor()` likewise unions the broadcast thread in for every participant.
@@ -1276,6 +1282,7 @@ The mobile app needs no change for any of this: `?messaging=participants` return
 | `poll` | `{token, since_id}` — new messages addressed to me plus delivery/read updates; incremental. |
 | `thread` | The running exchange for one conversation (members only). |
 | `history` | The full event log (View All / admin) — operators only. |
+| `log` | `{token, text}` — append an entry to the event log. Operators only; writes a message with **no recipients**, so no `deliveries` rows exist and nothing is queued, announced, or acknowledged. |
 | `read` | Mark delivered messages read (read receipts). |
 | `photo` | Stream an attachment (conversation members or operators only). |
 | `flush` | Per-event wipe, gated by `messages.manage`. |
@@ -1285,6 +1292,14 @@ The mobile app needs no change for any of this: `?messaging=participants` return
 ### Web Operator UI (chat panel)
 
 The **Messaging** button subscribes (name + password → token, remembered in `localStorage`). Messaging then lives in a persistent **chat panel docked right of the map**: a conversation list with unread badges, the selected thread, and an always-visible composer that incoming messages never cover. The 5-second poll drives live updates into the open thread, the list, and the unread counts without a reload. **New message** searches mobiles + operators (multi-select → a group; **All Trackers** → broadcast). Sent messages show **Delivered ✓** / **Read ✓✓** (or *N of M* in a group). A **Read aloud** toggle speaks arriving messages (Web Speech API); when off, a volume-controlled tone plays. A **microphone** dictates into the composer. **View all** opens the whole-event feed — searchable, and clicking a message opens its thread; operators holding `messages.manage` also get **Export CSV** and **Delete All Messages** (both re-checked server-side). The panel's settings menu also offers **Manage operators** (same permission) — a list of every operator with their connected/idle state and a **Disconnect** button that frees a stuck name and signs that session out. A name is only "in use" while an operator was seen within the last **90 s** with a live token; both `subscribe` and `rename` use that same test, so a departed operator's name auto-frees.
+
+**Conversation list housekeeping.** **All Trackers** and the **Event Log** are pinned at the head of the list and always present — the two destinations that always exist should not have to be composed to, nor scroll away under ordinary traffic. Below them, threads whose other end has not been seen for 24 hours are hidden, keeping anything unread or currently open. Staleness is read from the **tracker feed's `lastUpdate`**, not `participants.last_seen`: `upsertParticipant()` writes `last_seen` on every write and it is written in bulk by paths that say nothing about activity (`_msg_ensure_all_mobiles()` touches every tracker on each broadcast), so a station gone for weeks looked freshly seen the moment somebody else broadcast. The recipient picker had always used the tracker feed, which is exactly why it was right about who was reachable while the conversation list was not — `_msg_mark_stale()` in `messaging.php` now puts both on the same clock. Each message also carries a **copy** button that yields the message text alone, with an `execCommand` fallback for the non-secure contexts (plain-HTTP LAN, NetBird address) where `navigator.clipboard` is unavailable.
+
+**Two-screen operation (`?messages`).** The same document rendered as a messaging-only window for a second monitor — the map's chrome hidden and the panel promoted to fill the window. Not a separate page: the messaging JS is interleaved through `index.php` and everything it touches has to stay in scope. Opened from the panel menu via a **named** `window.open`, so repeat clicks focus the existing window.
+
+The operator session already spans windows — it lives in `localStorage` and the restore at script load hands a second window the same token — so the second window **must never subscribe**: that would mint a fresh token, invalidate the map window's, and also collide with the 90-second name-in-use check. A `?messages` window opened directly, with no session to inherit, says how to open it properly rather than offering a modal that would do the damage.
+
+Both windows poll, so exactly one announces. The messages window owns audio while open via a **speaker lease** in `localStorage`, renewed **on each poll rather than by a heartbeat timer**: background tabs have their timers throttled (to 1/s, and 1/min once hidden a while), so a merely covered messages window stops heartbeating while still running, and a timer-based liveness check reads that as death — measured against a real browser, the map window wrongly reclaimed audio and both would have announced. Renewing from the poll ties the lease to the activity that produces an announcement, so the two cannot disagree: a window that stopped polling stopped announcing, and reclaiming is then correct. The map window evaluates it lazily at announce time and needs no timer of its own. A `BroadcastChannel` carries the rest — a message's location pin drives `_showMsgLocation()` on the map window, and a tracker right-click on the map composes in the messages window.
 
 **Auto-subscribe for Display Pi operators:** when `?autologin&operator=<name>` embeds the messaging password into the page (via PHP session → in-page script), the panel subscribes silently on load. The token is held only in memory, so removing line 1 of `~/autologin.txt` and rebooting cleanly unsubscribes.
 

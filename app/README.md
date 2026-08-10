@@ -2,7 +2,7 @@
 
 **Author:** Doug Kaye (K6DRK) · **Copyright:** 2026 Doug Kaye. All Rights Reserved.
 
-**Version:** 1.22.0+15 · August 8, 2026
+**Version:** 1.22.1+40 · August 10, 2026
 
 A Flutter iOS and Android application for the MARS APRS system. Displays live tracker positions from the marsaprs.org server and supports mobile location sharing over APRS-IS.
 
@@ -18,7 +18,8 @@ A Flutter iOS and Android application for the MARS APRS system. Displays live tr
 - **Live breadcrumb colors** — trail color matches the tracker's current staleness color (green/blue/red) and updates in real time
 - Mobile tracker markers displayed as rounded squares; fixed trackers displayed as circles
 - **Tracker ID labels** shown next to each map marker for at-a-glance identification
-- Tap tracker in drawer to show breadcrumb trail (dashed line with directional arrows, auto-refreshes as tracker moves); long-press to also zoom
+- Tap tracker in drawer to show breadcrumb trail (dashed line with directional arrows, auto-refreshes as tracker moves); long-press to also zoom in close
+- **Hidden trackers honoured** — a tracker hidden from the Admin page loses its map marker here too, stays listed in the drawer dimmed, and if hidden while selected has its selection and trail cleared with it
 - **Save Map** — saves current map position and zoom as personal default
 - **Help** button in drawer footer opens a modal with app info (organization, version, event, callsign, map attribution, copyright) and buttons for Quick Start guide, User Guide, and bug/suggestion tickets
 - **Exit** button (iOS/Android) to close the app from the drawer footer

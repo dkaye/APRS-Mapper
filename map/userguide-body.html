@@ -1,5 +1,5 @@
 <h1 id="aprs-tracker-map-user-guide">APRS Tracker Map — User Guide</h1>
-<p><strong>Version 1.22.0 · August 8, 2026</strong></p>
+<p><strong>Version 1.22.1 · August 10, 2026</strong></p>
 <hr />
 <p>This document is a guide for users of the MARS APRS system. For technical details on the architecture and software see the <a href="https://marsaprs.org/readme.html?back=/userguide.html">README</a> file.</p>
 <h2 id="contents">Contents</h2>
@@ -477,8 +477,10 @@ in beyond its maximum, the map automatically zooms out to the highest level that
 <p>Messaging opens as a <strong>chat panel docked to the right of the map</strong>, in two parts:</p>
 <ul>
 <li><strong>Conversations list</strong> — every conversation you are part of, each with the other party's ID and name and an unread badge. Click one to open its thread.</li>
-<li><strong>Resizing</strong> — drag the <strong>left edge</strong> of the message window to make it wider or narrower, and drag the <strong>divider</strong> between the conversation list and the messages to rebalance them. Both are remembered for next time.</li>
 </ul>
+<p>Two entries are <strong>pinned at the top</strong> and always present: <strong>All Trackers</strong>, for broadcasting to everyone, and the <strong>Event Log</strong> (below). Neither has to be composed or scrolled to once ordinary traffic builds up.</p>
+<p>Below them, conversations whose other end has not been seen for a day are <strong>hidden</strong>, on the same 24-hour rule the New message list uses — you are looking for someone to talk to, and a station that left the event yesterday is not that. Anything unread, and whatever thread you have open, stays regardless, so the list cannot empty out under you mid-read.
+- <strong>Resizing</strong> — drag the <strong>left edge</strong> of the message window to make it wider or narrower, and drag the <strong>divider</strong> between the conversation list and the messages to rebalance them. Both are remembered for next time.</p>
 <p><strong>Thread + composer</strong> — the selected conversation's messages, newest at the bottom, with an <strong>always-visible message box</strong> that is never covered by an incoming message. New messages appear live as they arrive — nothing to reload. Only your own conversations are shown; traffic between other operators and trackers is not.</p>
 <p><strong>Starting a conversation or group:</strong></p>
 <p>Click <strong>New message</strong> to see the list of <strong>mobile trackers</strong>. Pick one recipient for a direct chat, several for a <strong>group</strong>, or choose <strong>All Trackers</strong> to broadcast to every mobile participant. You can also click a tracker in the sidebar to open a conversation already addressed to that participant. Radio-only trackers are not listed — they cannot receive messages.</p>
@@ -509,6 +511,7 @@ LKL (multiple)    2 people at LKL
 <p>Type up to 280 characters and press <strong>Send</strong>. To attach a <strong>photo</strong>, click the <strong>Attach</strong> (📷) button, choose an image, and send it with or without text; recipients see a thumbnail they can click to view full-size.</p>
 <p><strong>Voice:</strong> Click the <strong>microphone</strong> button to dictate a message instead of typing (uses your browser's speech recognition; best in Chrome/Edge).</p>
 <p><strong>Delivery &amp; read receipts:</strong> Each message you send shows its status — <strong>Delivered ✓</strong> when it reaches the recipient's device and <strong>Read ✓✓</strong> once opened. In a group the status reads <strong>Delivered to 2 of 3</strong> / <strong>Read by 1 of 3</strong>.</p>
+<p><strong>Copying a message:</strong> Each message carries a small <strong>copy</strong> icon beside its timestamp. It copies <strong>the message text only</strong> — no sender, no timestamp, no receipt — which is what belongs in a log entry, an email, or an incident report. The icon turns into a green tick to confirm.</p>
 <p><strong>Read aloud:</strong> Arriving messages are <strong>spoken aloud by default</strong> — you are usually watching the map rather than the message panel. Toggle the <strong>Read aloud</strong> (speaker) button to mute; your choice is remembered. Each is announced as <em>“Message from CRD Stanton”</em>, then a short pause, then the message itself — so you know who is calling without looking at the screen, and the name does not run into the first words — handy for a hands-free net control station. When it is off, a short alert <strong>tone</strong> plays instead; a volume slider sets its level (0 mutes).</p>
 <p><strong>Settings</strong> (in the panel): <strong>Change my name</strong>, adjust the alert volume, open <strong>View all</strong> messages, or <strong>Sign out</strong> of messaging.</p>
 <p><strong>View all messages:</strong></p>
@@ -517,6 +520,22 @@ LKL (multiple)    2 people at LKL
 <li><strong>Export CSV</strong> — download the whole log with full timestamps (local and UTC), callsigns, and the sender's coordinates where recorded.</li>
 <li><strong>Delete All Messages</strong> — permanently erase the log for everyone. It asks for confirmation and cannot be undone, so export first if you need a record.</li>
 </ul>
+<p><strong>The Event Log:</strong></p>
+<p>Not everything worth recording is worth sending to anyone. Times, arrivals, decisions, a vehicle description passed over the radio — the net's own account of itself. The <strong>Event Log</strong> is where that goes, so it lives beside the traffic instead of on paper next to the keyboard.</p>
+<p>Write an entry with the <strong>📋 Log</strong> button beside <strong>New message</strong>, or press <strong>Ctrl+L</strong> (<strong>⌘L</strong> on a Mac) from anywhere with the panel open — the cursor lands in the box ready to type, so an entry can be made mid-net without reaching for the mouse.</p>
+<p>Entries are <strong>stored and sent nowhere</strong>. No tracker receives them, no phone or watch chimes, and no receipt comes back. They appear only in the pinned <strong>Event Log</strong> thread, each stamped with <strong>who wrote it</strong> — the log is shared between operators and gets read later by someone reconstructing what happened, so every entry names its author, including your own.</p>
+<p>Mobile trackers never see the log, and it appears in <strong>View all messages</strong> alongside everything else, marked as going to <em>Log</em>, so an exported CSV carries the log and the traffic together in one timeline.</p>
+<p><strong>Using two screens:</strong></p>
+<p>With two monitors, the map can have one and messaging the other, instead of the panel covering the map exactly when both matter.</p>
+<p>Choose <strong>Open messages in a separate window</strong> from the panel's settings menu and drag the new window to the second monitor. It fills that window completely — the map, sidebar and controls are gone — and the browser remembers where you put it. Choosing it again focuses the window you already have rather than opening another.</p>
+<p>The two windows share your sign-in automatically, so there is nothing to log into twice. <strong>Open it from the map window's menu</strong>, though — a messages window opened from a bookmark, another browser, or a different profile has no sign-in to inherit and will say so.</p>
+<p>They also work together:</p>
+<ul>
+<li><strong>Only one of them speaks.</strong> While the messages window is open, it does all the reading aloud and alert tones and the map window stays silent, so a message is never announced twice. Close it and the map window takes the job back.</li>
+<li><strong>A message's location pin drives the <em>other</em> screen</strong> — click it and the map centres and drops the marker over there, where you can see it.</li>
+<li><strong>Right-clicking a tracker on the map opens the compose over there too</strong>, in that person's existing conversation, rather than sliding a panel across the map you are looking at.</li>
+</ul>
+<p>To fill the whole monitor without browser chrome, use your browser's full-screen key (<strong>F11</strong>, or <strong>⌃⌘F</strong> on a Mac).</p>
 <p><strong>Operator auto-login (Display Pis without keyboards):</strong></p>
 <p>Operators using a Display Pi such as NetControl can be subscribed automatically at boot — no keyboard needed. The system administrator configures this via <code>~/autologin.txt</code> on the Pi; see your administrator for setup details.</p>
 <hr />
@@ -881,7 +900,7 @@ recognized, as are N/S/E/W direction letters.</p>
 </tr>
 <tr>
 <td><strong>Hide</strong></td>
-<td>Toggle a mobile tracker's map visibility. When on, the tracker is hidden from the map but still appears in the sidebar and tracker list; default is off (visible).</td>
+<td>Toggle a mobile tracker's map visibility. When on, the tracker is hidden from the map but still appears in the sidebar and tracker list, dimmed; default is off (visible). Hiding is about map clutter, not access: a hidden tracker keeps reporting, can still be messaged, and still shows how long ago it was heard from. <strong>The native app honours this too</strong> — the marker disappears there within a poll, and if the hidden tracker happened to be selected, its breadcrumb trail is cleared with it.</td>
 </tr>
 <tr>
 <td><strong>Remove</strong></td>
