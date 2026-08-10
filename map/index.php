@@ -2185,8 +2185,11 @@ body.msg-window #msg-toast,
 /* Nothing behind the panel to reveal, so Close would leave a blank window. */
 body.msg-window #msg-panel-close { display: none !important; }
 body.msg-window { overflow: hidden; }
+/* !important so a width left inline by an earlier build — the panel width is persisted
+   in localStorage and was applied directly to the element — cannot pin this window to a
+   slice of the monitor. */
 body.msg-window #msg-panel {
-    position: fixed; inset: 0; width: 100%; max-width: none;
+    position: fixed; inset: 0; width: 100% !important; max-width: none;
     transform: none; visibility: visible; box-shadow: none; transition: none;
 }
 /* The grip resizes a panel that no longer floats over anything. The split between
@@ -6585,7 +6588,10 @@ function _handleTrackerActivate(cs, name) {
 	// With a messages window on the other screen, composing there is the whole point:
 	// sliding a panel over the map the operator is looking at is what two screens are
 	// meant to stop. Hand it over and leave this map alone.
-	if (_speakerAlive()) { _chanPost({type:'compose', callsign:cs, name}); return; }
+	// !MSG_WINDOW matters: the messages window holds the lease itself, so without it
+	// that window answers an incoming compose by posting the same compose straight back
+	// and returning, and the thread never opens anywhere.
+	if (!MSG_WINDOW && _speakerAlive()) { _chanPost({type:'compose', callsign:cs, name}); return; }
 	_openPanel();
 	const conv = [..._convs.values()].find(c => c.kind === 'direct' && (c.members || []).some(m => m.key === cs));
 	if (conv) { _openConversation(conv.id); return; }
@@ -7107,7 +7113,11 @@ const MSG_PANEL_MIN = 380, MSG_LIST_MIN = 150, MSG_THREAD_MIN = 260;
 function _msgApplySizes() {
 	const panel = document.getElementById('msg-panel');
 	const listv = document.getElementById('msg-list-view');
-	const w = parseInt(localStorage.getItem('aprs_msg_panel_w') || '0', 10);
+	// The saved width is how much map to leave visible beside the panel, which means
+	// nothing in the second-screen window — there is no map beside it. Applying it there
+	// pins the window to a slice of the monitor, and as an inline style it beats the
+	// stylesheet, so it has to be skipped rather than overridden.
+	const w = MSG_WINDOW ? 0 : parseInt(localStorage.getItem('aprs_msg_panel_w') || '0', 10);
 	if (w) panel.style.width = Math.min(Math.max(w, MSG_PANEL_MIN), window.innerWidth) + 'px';
 	const l = parseInt(localStorage.getItem('aprs_msg_list_w') || '0', 10);
 	if (l) listv.style.flex = '0 0 ' + Math.max(l, MSG_LIST_MIN) + 'px';
@@ -7162,8 +7172,11 @@ function _initMsgResize() {
 		localStorage.setItem('aprs_msg_list_w', String(Math.round(l)));
 	});
 	// A window that shrank below the remembered width would otherwise leave the
-	// panel wider than the viewport.
+	// panel wider than the viewport. Not in the second-screen window, where the panel
+	// is sized by the stylesheet to fill it — writing an inline width here would pin it
+	// to whatever the monitor was at that moment and stop it following later resizes.
 	window.addEventListener('resize', () => {
+		if (MSG_WINDOW) return;
 		if (panel.getBoundingClientRect().width > window.innerWidth) panel.style.width = window.innerWidth + 'px';
 	});
 }
