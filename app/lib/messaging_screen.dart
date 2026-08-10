@@ -778,8 +778,14 @@ class _RecipientPickerState extends State<_RecipientPicker> {
                   },
                 ),
         ),
+        // The bottom inset is the sheet's own to add: showModalBottomSheet(useSafeArea:
+        // true) inserts SafeArea(bottom: false), freeing that edge on purpose so a sheet
+        // can run to the screen edge. Without it this row sits under Android's gesture
+        // bar, and it is the only way to commit the selection. MediaQuery.padding
+        // already drops to zero when the keyboard consumes the inset, so this does not
+        // double up with the viewInsets padding above.
         Padding(
-          padding: const EdgeInsets.all(12),
+          padding: EdgeInsets.fromLTRB(12, 12, 12, 12 + MediaQuery.of(context).padding.bottom),
           child: Row(children: [
             // Explicit Cancel: swiping the sheet down is the only other way out and
             // is easy to miss. Returning null (not an empty list) leaves the last
