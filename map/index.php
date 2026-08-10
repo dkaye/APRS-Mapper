@@ -6274,6 +6274,10 @@ async function _poll() {
 	try {
 		const d = await _msgApi('poll', {body:{since_id: _msgLastId}});
 		if (!d) return;
+		// Renew the speaker lease from the poll itself, not a timer — see _speakerAlive.
+		// A messages window that has stopped polling has stopped announcing, so letting
+		// the lease lapse with it is exactly right.
+		if (MSG_WINDOW) _claimSpeaker();
 		if (d.last_id > _msgLastId) { _msgLastId = d.last_id; _persistSession(); }
 		let acksChanged = false;
 		if (d.receipts && d.receipts.length) {
@@ -6581,7 +6585,7 @@ function _handleTrackerActivate(cs, name) {
 	// With a messages window on the other screen, composing there is the whole point:
 	// sliding a panel over the map the operator is looking at is what two screens are
 	// meant to stop. Hand it over and leave this map alone.
-	if (_peerMessagesWindow) { _chanPost({type:'compose', callsign:cs, name}); return; }
+	if (_speakerAlive()) { _chanPost({type:'compose', callsign:cs, name}); return; }
 	_openPanel();
 	const conv = [..._convs.values()].find(c => c.kind === 'direct' && (c.members || []).some(m => m.key === cs));
 	if (conv) { _openConversation(conv.id); return; }
@@ -6596,18 +6600,44 @@ function _handleTrackerActivate(cs, name) {
 // session (localStorage) and one BroadcastChannel. Everything here is inert when only
 // one window is open, so single-screen behaviour is exactly what it was.
 let _msgChan = null;
-let _peerMessagesWindow = false;   // map window: is a messages window alive right now?
-let _peerLastAlive = 0;
+
+// Speaker lease. The messages window renews this on every poll, and the map window
+// reads it at the moment it is about to announce.
+//
+// The obvious design — a heartbeat on a timer — is wrong here, and measurably so:
+// Chrome throttles setInterval in a background tab to about once a minute, so a
+// messages window that is merely covered stops sending heartbeats while still running,
+// the map window concludes it died, and both announce. Testing this against a real
+// browser is what surfaced it.
+//
+// Renewing on the poll instead ties the lease to the very activity that produces an
+// announcement. The two can no longer disagree: if the messages window is throttled
+// then it is not polling, so it is not announcing either, and the map window taking
+// over is the correct outcome rather than a duplicate. Timer throttling stops being a
+// hazard and becomes the mechanism.
+const _SPEAKER_KEY = 'aprs_msg_speaker';
+const _SPEAKER_STALE_MS = 16000;   // three poll cycles (5s) plus slack
+
+function _claimSpeaker()   { try { localStorage.setItem(_SPEAKER_KEY, String(Date.now())); } catch {} }
+function _releaseSpeaker() { try { localStorage.removeItem(_SPEAKER_KEY); } catch {} }
+function _speakerAlive() {
+	try {
+		const t = Number(localStorage.getItem(_SPEAKER_KEY) || 0);
+		return t > 0 && Date.now() - t < _SPEAKER_STALE_MS;
+	} catch { return false; }
+}
 
 /** Whether this window is the one that alerts and reads aloud.
  *
  *  Both windows poll, so without this a message is announced twice. The messages
  *  window owns audio whenever it is open, because that is where the operator is
- *  reading; the map window falls silent and reclaims when it goes away. Ownership is
- *  deliberately NOT tied to focus — the speaker would then change as the operator
- *  clicks between screens, and a message arriving mid-switch could be announced twice
- *  or not at all. */
-function _mayAnnounce() { return MSG_WINDOW || !_peerMessagesWindow; }
+ *  reading; the map window falls silent and reclaims when the lease lapses.
+ *
+ *  Ownership is deliberately NOT tied to focus — the speaker would then change as the
+ *  operator clicks between screens, and a message arriving mid-switch could be
+ *  announced twice or not at all. It is evaluated lazily, at announce time, so the map
+ *  window needs no timer of its own and nothing to throttle. */
+function _mayAnnounce() { return MSG_WINDOW || !_speakerAlive(); }
 
 function _chanPost(d) { try { if (_msgChan) _msgChan.postMessage(d); } catch {} }
 
@@ -6618,36 +6648,19 @@ function _initMsgChannel() {
 	_msgChan = new BroadcastChannel('aprs-msg');
 	_msgChan.onmessage = e => _onChanMsg(e.data || {});
 	if (MSG_WINDOW) {
-		_chanPost({type:'hello', role:'messages'});
-		setInterval(() => _chanPost({type:'alive'}), 3000);
+		// Claim before the first poll completes, so there is no window in which both
+		// this and the map window think they are the speaker.
+		_claimSpeaker();
 		// pagehide, not unload: it fires on tab close and on bfcache suspend, and unload
-		// is unreliable in every current browser.
-		window.addEventListener('pagehide', () => _chanPost({type:'bye', role:'messages'}));
-	} else {
-		// Announcing tells any live messages window to identify itself, which is how a
-		// map window reloaded mid-session learns it should stay silent.
-		_chanPost({type:'hello', role:'map'});
-		// A window that crashes or is force-quit never sends bye. Left unhandled the
-		// failure mode is a net gone completely silent with nobody realising, so the
-		// heartbeat stopping is what actually returns audio here.
-		setInterval(() => {
-			if (_peerMessagesWindow && Date.now() - _peerLastAlive > 8000) _peerMessagesWindow = false;
-		}, 2000);
+		// is unreliable in every current browser. It is only an optimisation — dropping
+		// the lease hands audio back at once instead of within _SPEAKER_STALE_MS — so a
+		// window that crashes without firing it still recovers, just more slowly.
+		window.addEventListener('pagehide', _releaseSpeaker);
 	}
 }
 
 function _onChanMsg(d) {
 	switch (d.type) {
-		case 'hello':
-			if (d.role === 'messages' && !MSG_WINDOW) { _peerMessagesWindow = true; _peerLastAlive = Date.now(); }
-			if (d.role === 'map' && MSG_WINDOW) _chanPost({type:'hello', role:'messages'});
-			break;
-		case 'alive':
-			if (!MSG_WINDOW) { _peerMessagesWindow = true; _peerLastAlive = Date.now(); }
-			break;
-		case 'bye':
-			if (d.role === 'messages' && !MSG_WINDOW) _peerMessagesWindow = false;
-			break;
 		case 'showLocation':
 			// Handed the whole message, so the map window runs the existing
 			// _showMsgLocation unchanged — marker, popup, recentre and all.
