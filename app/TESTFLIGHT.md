@@ -102,12 +102,39 @@ In the Organizer:
 - Leave defaults (automatic signing) → **Next** → **Upload**
 - Xcode uploads and confirms delivery — no separate Transporter step needed
 
-### 5. Add to TestFlight external group
+### 5. Clear export compliance
 
-- Go to [appstoreconnect.apple.com](https://appstoreconnect.apple.com) → your app → **TestFlight**
-- Wait for the build status to change from "Processing" to "Ready to Submit" (5–30 min)
+Go to [appstoreconnect.apple.com](https://appstoreconnect.apple.com) → your app →
+**TestFlight** and wait for the build to leave "Processing" (5–30 min).
+
+If it then reads **Missing Compliance**, nothing is distributed to anyone — internal
+testers included — until the question is answered. Click **Manage** beside the build,
+answer *no* to non-exempt encryption, and it distributes immediately. No re-upload.
+
+Both `ios/Runner/Info.plist` and `ios/WatchApp/Info.plist` declare
+`ITSAppUsesNonExemptEncryption = false` so the question is never asked. Both, not one:
+the question is put to every binary in the bundle, and a silent embedded watch app
+raises it for the whole build even though the iPhone app answered. Build 36 stalled
+this way — it was the first upload to carry a watch app.
+
+### 6. Internal testers
+
+Internal testers are App Store Connect users on your team, up to 100, and they get
+builds **without Beta Review** — usually within a minute or two of processing finishing.
+If a build has not arrived, the cause is one of:
+
+- **Missing Compliance** — step 5. By far the most likely, and the only one that is
+  invisible unless you look at the build's row.
+- **Automatic distribution is off for the group** — TestFlight → Internal Testing →
+  your group. With it off, each build must be added by hand with **+**.
+- **The tester never accepted the invitation**, or is not in the group at all. Being an
+  App Store Connect user is not enough; they must also be added to an internal group.
+
+### 7. External testers (optional)
+
 - Under **External Testing**, select your group → **+** → add the new build
-- Apple runs a brief **Beta Review** (usually same day); testers get an email when it's approved
+- Apple runs a brief **Beta Review** (usually same day); testers get an email when it's
+  approved. This gate applies only to external testers — never to internal ones.
 
 ---
 
@@ -151,3 +178,4 @@ The IPA lands at `build/ios/ipa/*.ipa`. Upload it via **Transporter** (Mac App S
 | `No simulator device ID has been set` | A watch companion exists, so simulator builds need an explicit device | `flutter devices`, then `flutter build ios --simulator -d <udid>` (device builds are unaffected) |
 | WatchKit errors during an iOS build | `Watch companion app found.` missing from the log | `ios/WatchApp/Info.plist` must exist and contain `WKCompanionAppBundleIdentifier` = `org.marsaprs.aprsMap`; the target must be named `WatchApp` to match the directory |
 | Watch app version differs from the iPhone app | `WatchApp.xcconfig` lost its `#include` of `Flutter/Generated.xcconfig` | Restore the include; re-run step 2a |
+| Build processes but reaches no testers | Build sits at **Missing Compliance** — an embedded binary did not declare `ITSAppUsesNonExemptEncryption` | Answer it under **Manage** to release the build you already uploaded; check both `Info.plist` files so the next one does not ask |

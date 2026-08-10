@@ -20,6 +20,14 @@
 	<string>APRS Map</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<!-- Repeated from the iPhone app's Info.plist rather than inherited: App Store
+	     Connect asks the export-compliance question of every binary in the bundle, and
+	     an embedded watch app that stays silent parks the whole build at "Missing
+	     Compliance", where it goes out to no testers at all — internal included.
+	     False is the right answer for the same reason it is on the phone: HTTPS and
+	     Keychain are exempt, and neither app carries encryption of its own. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<!-- Both come from pubspec.yaml via WatchApp.xcconfig -> Flutter/Generated.xcconfig,
 	     so the watch app and the iPhone app always ship the same version. -->
 	<key>CFBundleShortVersionString</key>
