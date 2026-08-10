@@ -67,11 +67,20 @@ class WatchBridge {
   bool appInstalled = false;
   bool reachable = false;
 
-  /// The watch app is on screen in front of the operator, which on watchOS is the
-  /// only state in which it can make a sound. The phone stays quiet only then — the
-  /// watch is an extension of the phone, not a replacement for it, so the phone
-  /// alerts for everything else including a backgrounded watch.
-  bool get watchAppFrontmost => Platform.isIOS && paired && appInstalled && reachable;
+  /// Reported by the watch, not inferred. False until it says otherwise.
+  ///
+  /// Inferring it from WatchConnectivity reachability was wrong in both directions: a
+  /// watch with a dimmed screen is unreachable yet perfectly able to speak, so both
+  /// devices announced; and a watch running someone else's app is equally
+  /// unreachable but cannot, so neither did.
+  bool _watchCanAnnounce = false;
+
+  /// Whether the wrist will announce this message, in which case the phone says
+  /// nothing. Preferred when available — the watch is on the operator's arm and
+  /// speaks at conversational distance, where the phone is in a pocket and has to
+  /// shout.
+  bool get watchWillAnnounce =>
+      Platform.isIOS && paired && appInstalled && _watchCanAnnounce;
 
   /// Alert the phone raises for a message, whichever path saw it first. Registered by
   /// MapScreen.
@@ -389,6 +398,10 @@ class WatchBridge {
         if (!wasReachable && reachable) pushContextNow();
         break;
 
+      case 'canAnnounce':
+        _watchCanAnnounce = e['enabled'] as bool? ?? false;
+        break;
+
       case 'hello':
         // The watch has just come forward and may have been away for hours.
         unawaited(_refreshConversations());
@@ -615,6 +628,10 @@ class WatchBridge {
         'broadcast': m.broadcast,
         'hasPhoto': false,
         'self': false,
+        // Closes the gap between the watch reporting that it can speak and actually
+        // doing so: if the phone stayed quiet on that promise and the watch has since
+        // gone to background, the watch raises a notification rather than nothing.
+        'phoneAnnounced': !watchWillAnnounce,
       };
 
   Map<String, dynamic> _msgMessageDict(MsgMessage m, {bool isSelf = false}) => {
@@ -629,5 +646,6 @@ class WatchBridge {
         'broadcast': m.broadcast,
         'hasPhoto': m.hasPhoto,
         'self': isSelf,
+        'phoneAnnounced': !watchWillAnnounce,
       };
 }

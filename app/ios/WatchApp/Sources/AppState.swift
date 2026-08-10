@@ -67,10 +67,19 @@ final class AppState {
   /// already on disk, so it is displayed but never announced.
   private var launchWatermark = 0
 
-  /// Whether this app is frontmost. watchOS only lets a frontmost app make noise,
-  /// so announcing at any other time would fire a haptic into a void and, worse,
-  /// desynchronize the announcer's queue from what the user actually heard.
-  var isActive = false
+  /// Whether this app can currently speak — set from the scene phase, and the only
+  /// authority on the question.
+  ///
+  /// The phone used to infer it from WatchConnectivity reachability, which is a
+  /// different thing: a watch showing a dimmed screen with this app still resident is
+  /// unreachable but perfectly able to talk. The two devices disagreed, so both
+  /// announced. It is reported now rather than guessed at.
+  var isActive = false {
+    didSet {
+      guard isActive != oldValue else { return }
+      WatchSession.shared.send(["type": "canAnnounce", "enabled": isActive])
+    }
+  }
 
   /// How stale a message may be and still be announced.
   ///
@@ -185,15 +194,15 @@ final class AppState {
     guard !alertable.isEmpty else { return }
     if isActive {
       Announcer.shared.enqueue(alertable)
-    } else if source == .directPoll {
-      // Backgrounded, and we fetched this ourselves because the phone was
-      // unreachable — so the phone cannot have alerted and a notification here is the
-      // only thing that will reach the operator.
-      //
-      // Deliberately not for relayed messages: the phone saw those, and it alerts for
-      // everything unless this app is on screen. Notifying here too would be a second
-      // buzz for one message, and the phone's is the better one — it can speak.
-      for m in alertable { Notifier.alert(m) }
+    } else {
+      // Backgrounded, so nothing can be spoken here. Raise a notification only for
+      // messages the phone did not handle: ones we fetched ourselves because it was
+      // unreachable, and ones it deliberately left to us on the strength of a
+      // capability report we have since invalidated by going quiet. Notifying for
+      // anything else would be a second buzz for a message already announced better.
+      for m in alertable where source == .directPoll || !m.phoneAnnounced {
+        Notifier.alert(m)
+      }
     }
   }
 

@@ -40,6 +40,11 @@ final class WatchSession: NSObject {
   /// missed context entirely.
   func hello() {
     send(["type": "hello"])
+    // Restate it on every wake: the phone decides whether to announce a message
+    // itself based on this, and a stale answer means either silence or a duet.
+    Task { @MainActor in
+      send(["type": "canAnnounce", "enabled": AppState.shared.isActive])
+    }
   }
 
   /// Hand a spoken reply to the phone, which owns the token and does the HTTP.

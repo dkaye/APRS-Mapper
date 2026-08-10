@@ -19,6 +19,11 @@ struct WatchMessage: Identifiable, Codable, Equatable {
   let hasPhoto: Bool
   let isSelf: Bool
 
+  /// Whether the phone alerted for this message. Sent with it, so a watch that has
+  /// gone quiet since promising to speak can still raise a notification rather than
+  /// leaving the message unannounced by either device.
+  var phoneAnnounced = false
+
   var date: Date { Date(timeIntervalSince1970: TimeInterval(ts)) }
 
   /// Spoken as two utterances with a pause between, matching the phone
@@ -72,6 +77,7 @@ struct WatchMessage: Identifiable, Codable, Equatable {
     broadcast = d["broadcast"] as? Bool ?? false
     hasPhoto = d["hasPhoto"] as? Bool ?? false
     isSelf = d["self"] as? Bool ?? false
+    phoneAnnounced = d["phoneAnnounced"] as? Bool ?? false
   }
 }
 

@@ -428,7 +428,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         // looking at it. A backgrounded watch is not an alerting device — watchOS
         // will not let it make a sound — so treating "a watch exists" as "the wrist
         // will handle it" left both devices silent.
-        if (WatchBridge.instance.watchAppFrontmost) return;
+        if (WatchBridge.instance.watchWillAnnounce) return;
         // Read it out as well as raising the notification. The notification sound
         // says a message arrived; this says what it was, which is the difference
         // between a driver having to stop and a driver carrying on. Needs the `audio`
