@@ -655,7 +655,7 @@ class MessagingDb
     public function conversationsFor(string $event, int $participantId, bool $includeLog = false): array
     {
         $rows = $this->all(
-            'SELECT c.id, c.kind, c.title,
+            'SELECT c.id, c.kind, c.title, c.member_hash,
                     (SELECT COUNT(*) FROM deliveries d JOIN messages mm ON mm.id=d.message_id
                        WHERE d.recipient_id=:p AND mm.conversation_id=c.id AND d.read_ts IS NULL) AS unread,
                     (SELECT MAX(id) FROM messages WHERE conversation_id=c.id) AS last_id
@@ -676,6 +676,22 @@ class MessagingDb
         foreach ($rows as &$r) {
             $r['unread']  = (int)$r['unread'];
             $r['last_id'] = (int)($r['last_id'] ?? 0);
+            // An entity thread's title names the person it was addressed TO -- "M040
+            // Doug" -- which is what the sender needs to see and is that person's own
+            // name when they look at the same thread. Both clients prefer title over
+            // members, so the recipient's conversation list showed them themselves
+            // instead of whoever had just called.
+            //
+            // The title is sender-relative but stored once on the conversation, so it
+            // is suppressed for the other side and the label falls back to `members`,
+            // which is already everyone-except-me. The addresser is the id prefixed to
+            // the entity hash, which is what makes these threads per-sender.
+            if (($r['kind'] === 'entity' || $r['kind'] === 'entity_multi')
+                && ($cut = strpos((string)$r['member_hash'], '|')) !== false
+                && (int)substr((string)$r['member_hash'], 0, $cut) !== $participantId) {
+                $r['title'] = null;
+            }
+            unset($r['member_hash']);   // internal key, not part of the API
             // Other members (excludes the caller) for the thread label.
             $mem = $this->all(
                 'SELECT p.id,p.kind,p.key,p.short_id,p.display_name,p.last_seen

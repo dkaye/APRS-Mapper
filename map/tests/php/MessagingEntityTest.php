@@ -77,6 +77,62 @@ class MessagingEntityTest extends TestCase
         $this->assertNull($this->db->entityConversationForDevice($this->ev, $op2, $this->d1));
     }
 
+    // ── whose name is on the thread ───────────────────────────────────────────
+
+    /** The addresser sees who they addressed. */
+    public function testTheAddresserSeesTheEntityTitle(): void
+    {
+        $ent = $this->db->resolveEntityConversation($this->ev, $this->op, 'CRD', 'Stanton', [$this->d1]);
+        $this->send($ent, $this->op, 'Radio check', [$this->d1]);
+
+        $this->assertSame('CRD Stanton', $this->conv($this->op, $ent)['title']);
+    }
+
+    /** The person addressed must not. The title names *them*, so showing it would put
+     *  their own name in their conversation list where the caller should be — the
+     *  clients prefer title over members, so they would never see who called. */
+    public function testTheEntitySeesTheCallerNotItsOwnName(): void
+    {
+        $ent = $this->db->resolveEntityConversation($this->ev, $this->op, 'CRD', 'Stanton', [$this->d1]);
+        $this->send($ent, $this->op, 'Radio check', [$this->d1]);
+
+        $row = $this->conv($this->d1, $ent);
+
+        $this->assertNull($row['title'], 'the title is about the viewer, so it is suppressed');
+        $this->assertSame(['Net Control'], array_column($row['members'], 'display_name'),
+                          'leaving the caller as the only thing to label it with');
+    }
+
+    /** Mobile-to-mobile entity threads have the same shape and the same trap. */
+    public function testTheSameHoldsBetweenTwoMobiles(): void
+    {
+        $ent = $this->db->resolveEntityConversation($this->ev, $this->other, 'CRD', 'Stanton', [$this->d1]);
+        $this->send($ent, $this->other, 'You there?', [$this->d1]);
+
+        $this->assertSame('CRD Stanton', $this->conv($this->other, $ent)['title']);
+        $this->assertNull($this->conv($this->d1, $ent)['title']);
+    }
+
+    /** A direct thread has no title to suppress, and must keep working untouched. */
+    public function testDirectThreadsAreUnaffected(): void
+    {
+        [$c, ] = $this->db->resolveConversation($this->ev, $this->op, [$this->d1], false, null);
+        $this->send($c, $this->op, 'Hello', [$this->d1]);
+
+        $row = $this->conv($this->d1, $c);
+
+        $this->assertNull($row['title'] ?? null);
+        $this->assertSame(['Net Control'], array_column($row['members'], 'display_name'));
+    }
+
+    private function conv(int $me, int $conversationId): array
+    {
+        foreach ($this->db->conversationsFor($this->ev, $me, true) as $c) {
+            if ((int)$c['id'] === $conversationId) return $c;
+        }
+        $this->fail("conversation $conversationId not returned for participant $me");
+    }
+
     // ── entity key ────────────────────────────────────────────────────────────
 
     public function testEntityHashIgnoresSurroundingWhitespace(): void
