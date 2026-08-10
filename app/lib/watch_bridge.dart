@@ -67,6 +67,19 @@ class WatchBridge {
   bool appInstalled = false;
   bool reachable = false;
 
+  /// Reported by the watch itself, not assumed. False until it says otherwise, so a
+  /// denied notification permission on the wrist leaves the phone alerting rather
+  /// than both devices staying quiet.
+  bool _watchCanAlert = false;
+
+  /// Whether the wrist can raise its own alert for an inbound message, in which case
+  /// the phone should not also raise one for the same event. Reachability is
+  /// deliberately not part of this: an unreachable watch is simply one whose app is
+  /// backgrounded, which is exactly when its own notification matters most — the
+  /// message still reaches it by durable transfer and it alerts from there.
+  bool get canAlertOnWrist =>
+      Platform.isIOS && paired && appInstalled && _watchCanAlert;
+
   /// Highest message id we have handed to the watch.
   ///
   /// Persisted. It used to reset to 0 on every launch of the phone app, which turned
@@ -355,6 +368,10 @@ class WatchBridge {
         // Newly reachable: the watch has just stopped whatever it was doing on its
         // own and needs current state now, not at the next natural push.
         if (!wasReachable && reachable) pushContextNow();
+        break;
+
+      case 'canAlert':
+        _watchCanAlert = e['enabled'] as bool? ?? false;
         break;
 
       case 'hello':

@@ -415,6 +415,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           ),
         ));
       } else if (Platform.isIOS) {
+        // A paired watch running our app raises its own notification the moment the
+        // message reaches it, so this one would be a second buzz for the same event.
+        // iOS only mirrors this to the wrist while the phone is locked, and the user
+        // can turn mirroring off entirely, so the watch's own alert is both the more
+        // reliable and the more informative of the two — it opens straight into the
+        // message. The phone stays the only alert when no watch is there to speak.
+        if (WatchBridge.instance.canAlertOnWrist) return;
         unawaited(_notifPlugin.show(
           id: msg.id & 0x7FFFFFFF,
           title: '📨 ${msg.fromLabel}',

@@ -100,14 +100,16 @@ final class AppState {
     let at: Date
     let live: Bool
     let announced: Bool
+    let notified: Bool
 
-    /// Green only when the user actually heard something; everything else is a
-    /// state worth explaining rather than a success.
-    var wasHeard: Bool { live && announced }
+    /// Green only when the operator actually got something — heard it, or was buzzed
+    /// by a notification. Silent arrival is the one state worth flagging.
+    var wasHeard: Bool { announced || notified }
 
     var detail: String {
-      if !live { return "queued, silent" }
-      return announced ? "live, spoken" : "live, silent"
+      if announced { return live ? "live, spoken" : "queued, spoken" }
+      if notified { return live ? "live, notified" : "queued, notified" }
+      return live ? "live, silent" : "queued, silent"
     }
   }
 
@@ -165,21 +167,30 @@ final class AppState {
     trimSeen()
     persist()
 
+    // Worth the operator's attention. Whether that attention is speech or a
+    // notification depends only on whether this app happens to be on screen.
     let now = Date().timeIntervalSince1970
-    let announceable = fresh.filter { m in
+    let alertable = fresh.filter { m in
       source != .context
-        && isActive
         && m.id > launchWatermark
         && now - TimeInterval(m.ts) <= Self.maxAnnounceAge
         && !m.isSelf
     }
     if source != .context {
       lastArrival = Arrival(at: Date(), live: source == .relayLive,
-                            announced: !announceable.isEmpty)
+                            announced: isActive && !alertable.isEmpty,
+                            notified: !isActive && !alertable.isEmpty)
     }
 
-    guard !announceable.isEmpty else { return }
-    Announcer.shared.enqueue(announceable)
+    guard !alertable.isEmpty else { return }
+    if isActive {
+      Announcer.shared.enqueue(alertable)
+    } else {
+      // Backgrounded. watchOS will wake this app to receive but will not let it make
+      // a sound, so the only way to reach the operator is a notification — haptic,
+      // tone and the text, one tap from being read aloud.
+      for m in alertable { Notifier.alert(m) }
+    }
   }
 
   // ── state from the phone ────────────────────────────────────────────────────

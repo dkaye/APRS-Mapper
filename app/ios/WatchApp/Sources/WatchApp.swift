@@ -35,6 +35,7 @@ struct WatchApp: App {
         // Ask the phone to re-push: while we were away its token, destination or
         // conversation list may all have moved on.
         WatchSession.shared.hello()
+        Notifier.refreshCapability()
       case .background:
         // Now nothing can be heard, and a half-spoken queue resuming minutes later
         // would be worse than silence.
@@ -54,5 +55,8 @@ final class WatchAppDelegate: NSObject, WKApplicationDelegate {
     // watermark, so nothing already on disk gets announced.
     _ = AppState.shared
     WatchSession.shared.activate()
+    // At launch, because the prompt cannot appear while backgrounded — which is
+    // exactly when the first message the watch needs to raise is likely to arrive.
+    Notifier.requestAuthorization()
   }
 }
