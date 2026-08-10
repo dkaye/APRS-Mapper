@@ -20,20 +20,27 @@ struct WatchApp: App {
         .environment(AppState.shared)
     }
     .onChange(of: scenePhase) { _, phase in
-      let active = phase == .active
-      AppState.shared.isActive = active
+      // `.inactive` is not "gone". watchOS reports it while the app is still
+      // frontmost but dimmed — the always-on display settling, a notification banner
+      // sliding over, the wrist tilting away for a moment. Treating that as
+      // backgrounded cut messages off mid-sentence a few seconds in, which is most
+      // of them. Only `.background` is really gone.
+      AppState.shared.isActive = phase != .background
       // Polling on our own is a foreground-only activity: watchOS would not run the
       // timer in the background, and an app that cannot make a sound has nothing to
       // do with the result.
       DirectPoller.shared.evaluate()
-      if active {
+      switch phase {
+      case .active:
         // Ask the phone to re-push: while we were away its token, destination or
         // conversation list may all have moved on.
         WatchSession.shared.hello()
-      } else {
-        // Nothing can be heard once we leave the foreground, and a half-spoken
-        // queue resuming minutes later would be worse than silence.
+      case .background:
+        // Now nothing can be heard, and a half-spoken queue resuming minutes later
+        // would be worse than silence.
         Announcer.shared.stop()
+      default:
+        break
       }
     }
   }
