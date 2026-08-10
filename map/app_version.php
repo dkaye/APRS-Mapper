@@ -20,14 +20,14 @@ echo json_encode([
         // silent no-op while it is empty, so this number cannot prompt anyone before
         // the build is actually live on the App Store.
         'latest'    => '1.22.1',
-        'build'     => 40,
+        'build'     => 42,
         'store_url' => '',   // e.g. https://apps.apple.com/app/id0000000000
     ],
     'android' => [
         // Must match what download.php actually serves, or the prompt sends people to
         // fetch a build they already have and never stops asking.
         'latest'  => '1.22.1',
-        'build'   => 40,
+        'build'   => 42,
         'apk_url' => 'https://marsaprs.org/android/download.php',
     ],
     'notes' => '',           // optional short "what's new" line shown in the prompt

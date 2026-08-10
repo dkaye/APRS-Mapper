@@ -17,6 +17,7 @@ This document is a guide for users of the MARS APRS system. For technical detail
   - [Reload Tiles](#reload-tiles)
   - [Share Location in the App](#share-location-in-the-app)
   - [Limitations](#limitations)
+  - [Apple Watch (iPhone only)](#apple-watch-iphone-only)
 - [Main Map](#main-map)
   - [Sidebar (L)](#sidebar-l)
   - [Sidebar (S)](#sidebar-s)
@@ -233,6 +234,26 @@ The native app does not include every feature available in the browser. The foll
 | Kiosk Mode | Web map footer |
 | Origin marker (distance & bearing) | Right-click on the web map |
 | Clients panel | Web map sidebar footer |
+
+### Apple Watch (iPhone only)
+
+The iPhone app includes an **Apple Watch** companion. Install it from the iPhone's **Watch** app if it does not appear by itself: **My Watch → APRS Map → Show App on Apple Watch**.
+
+The watch does **messaging only**. It never shares your position and never beacons — that stays with the phone.
+
+**What each device does.** The phone is the loudspeaker and the watch is the microphone. Your phone announces arriving messages aloud even from a pocket, so you hear who is calling without looking at anything; the watch's job is to let you answer. If the watch app happens to be on screen when a message arrives, it reads it out instead — only one of them ever speaks.
+
+**Answering.** Press and hold the **Talk** button, speak, and let go. Releasing sends it — there is no confirmation step to find and no button to hunt for afterwards. The name above the button is where your reply is going.
+
+**Where your reply goes.** The destination follows the traffic: whoever last messaged you becomes the target, so the announcement you just heard is also a statement of who you are about to answer. Swipe to the **Reply to** page to aim somewhere else. Answering a message sent to All Trackers goes back to the station that called, not to the whole net — broadcasting stays deliberate.
+
+**Four pages**, swiped sideways: **Talk**, **Messages** (what has arrived), **Reply to** (choose a destination), and **Settings**.
+
+**If a reply does not go out** — the phone is off, out of range, or the destination has gone — a small orange warning appears at the top of the Talk page with a count. Tap it to open the **Outbox**: it shows what you said, and offers **Retry** (which sends it to your current destination) or **Discard**. Nothing you speak is thrown away silently.
+
+**When the phone is away.** The watch keeps working on its own over WiFi or cellular, polling for messages and sending replies directly. The status line tells you which is happening: *Phone linked*, *Direct — phone away*, or *Phone unreachable*.
+
+**One limitation worth knowing.** watchOS only lets an app make sound while it is actually on screen. With your phone switched off or out of range **and** the watch app not showing, nothing will reach you until you raise your wrist — at which point the watch catches up and reads out what it missed. Whenever the phone is alive, it covers this.
 
 ---
 
