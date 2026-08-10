@@ -28,6 +28,7 @@
 		D0C4A700000000000000001A /* WatchApp.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000001 /* WatchApp.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		D0C4A7000000000000000043 /* Outbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000042 /* Outbox.swift */; };
 		D0C4A7000000000000000045 /* PTTView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000044 /* PTTView.swift */; };
+		D0C4A7000000000000000081 /* OutboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000080 /* OutboxView.swift */; };
 		D0C4A7000000000000000049 /* DestinationPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000048 /* DestinationPickerView.swift */; };
 		D0C4A7000000000000000051 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000050 /* AudioRecorder.swift */; };
 		D0C4A7000000000000000053 /* TalkSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0C4A7000000000000000052 /* TalkSession.swift */; };
@@ -124,6 +125,7 @@
 		D0C4A7000000000000000013 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		D0C4A7000000000000000042 /* Outbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Outbox.swift; sourceTree = "<group>"; };
 		D0C4A7000000000000000044 /* PTTView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PTTView.swift; sourceTree = "<group>"; };
+		D0C4A7000000000000000080 /* OutboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboxView.swift; sourceTree = "<group>"; };
 		D0C4A7000000000000000048 /* DestinationPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DestinationPickerView.swift; sourceTree = "<group>"; };
 		D0C4A7000000000000000050 /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
 		D0C4A7000000000000000052 /* TalkSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TalkSession.swift; sourceTree = "<group>"; };
@@ -295,6 +297,7 @@
 				D0C4A7000000000000000038 /* MessageListView.swift */,
 				D0C4A7000000000000000013 /* RootView.swift */,
 				D0C4A700000000000000003C /* SettingsView.swift */,
+				D0C4A7000000000000000080 /* OutboxView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -582,6 +585,7 @@
 				D0C4A7000000000000000043 /* Outbox.swift in Sources */,
 				D0C4A7000000000000000045 /* PTTView.swift in Sources */,
 				D0C4A7000000000000000049 /* DestinationPickerView.swift in Sources */,
+				D0C4A7000000000000000081 /* OutboxView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

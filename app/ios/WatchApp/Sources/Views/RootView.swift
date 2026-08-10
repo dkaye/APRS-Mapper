@@ -62,6 +62,11 @@ struct StatusLine: View {
 /// Shown only when a reply has not been confirmed yet. A message spoken into the
 /// wrist and then silently lost is the worst failure this app has, so an unresolved
 /// send stays visible rather than disappearing optimistically.
+///
+/// It is a link, not a label. The badge is deliberately persistent, and a warning with
+/// nowhere to go is one the operator learns to ignore — which costs more than the
+/// warning was worth. Tapping it opens the Outbox, where the reply can be sent again
+/// or thrown away.
 struct OutboxBadge: View {
   private var outbox: Outbox { Outbox.shared }
 
@@ -69,12 +74,20 @@ struct OutboxBadge: View {
     let pending = outbox.pending
     if !pending.isEmpty {
       let failed = pending.filter { $0.state == .failed }.count
-      HStack(spacing: 2) {
-        Image(systemName: failed > 0 ? "exclamationmark.triangle.fill" : "arrow.up.circle")
-        Text("\(failed > 0 ? failed : pending.count)")
+      NavigationLink {
+        OutboxView()
+      } label: {
+        HStack(spacing: 2) {
+          Image(systemName: failed > 0 ? "exclamationmark.triangle.fill" : "arrow.up.circle")
+          Text("\(failed > 0 ? failed : pending.count)")
+        }
+        .font(.caption2)
+        .foregroundStyle(failed > 0 ? .orange : .secondary)
       }
-      .font(.caption2)
-      .foregroundStyle(failed > 0 ? .orange : .secondary)
+      // Plain, and sized to its content: the default link chrome would put a full-width
+      // rounded button in a status line that is otherwise one small line of text.
+      .buttonStyle(.plain)
+      .fixedSize()
     }
   }
 }

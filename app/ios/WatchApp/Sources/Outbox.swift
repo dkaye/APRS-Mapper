@@ -77,6 +77,32 @@ final class Outbox {
     return pending.filter { $0.state != .failed && $0.createdAt < cutoff }
   }
 
+  /// Replace a failed entry with a fresh attempt aimed at wherever the reply is
+  /// pointed *now*, and return it for the caller to submit.
+  ///
+  /// Deliberately not its original target. An entry usually failed because that
+  /// target had gone — a thread from a previous event, a device that left the net —
+  /// so repeating it verbatim would fail in exactly the same way. The current aim is
+  /// the one the operator can see on the Talk page, which makes the retry's
+  /// destination predictable rather than hidden in a saved record.
+  ///
+  /// A new id, not the old one: `?messaging=send` carries no client id, so the server
+  /// cannot dedupe, and reusing the id would let one delivered-but-unacknowledged
+  /// message and its retry both resolve the same row.
+  func retry(_ id: String, aimedAt destination: Destination) -> PendingSend? {
+    guard let old = pending.first(where: { $0.id == id }) else { return nil }
+    remove(id)
+    let fresh = PendingSend(id: UUID().uuidString,
+                            text: old.text,
+                            conversationId: destination.conversationId,
+                            recipients: destination.recipients,
+                            destinationLabel: destination.label,
+                            createdAt: Date(),
+                            state: .sending)
+    add(fresh)
+    return fresh
+  }
+
   private func persist() {
     if let raw = try? JSONEncoder().encode(pending) {
       UserDefaults.standard.set(raw, forKey: Self.key)
