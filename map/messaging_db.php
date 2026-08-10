@@ -580,6 +580,9 @@ class MessagingDb
             : $p['display_name'];
         foreach ($msgs as &$m) {
             if ($kind === 'broadcast' || !empty($m['broadcast'])) { $m['to_label'] = 'All Trackers'; continue; }
+            // The log is where it went, and it is the only honest answer: the thread
+            // has no members, so deriving a recipient the usual way yields nothing.
+            if ($kind === 'log') { $m['to_label'] = 'Log'; continue; }
             if ($kind === 'entity' || $kind === 'entity_multi') {
                 $m['to_label'] = (string)($conv['title'] ?? '');
                 continue;
@@ -612,6 +615,7 @@ class MessagingDb
         foreach ($msgs as &$msg) {
             $cid = $msg['conversation_id'];
             if (($kind[$cid] ?? '') === 'broadcast' || $msg['broadcast']) { $msg['to_label'] = 'All Trackers'; continue; }
+            if (($kind[$cid] ?? '') === 'log') { $msg['to_label'] = 'Log'; continue; }
             $others = array_filter($members[$cid] ?? [], fn($p) => (int)$p['id'] !== $msg['from_id']);
             $msg['to_label'] = implode(', ', array_map($label, $others));
         }
@@ -619,8 +623,9 @@ class MessagingDb
     }
 
     /** Conversation list for a participant: last message + unread count + the other
-     *  members (for labelling) per thread, plus a preview of the latest message. */
-    /** $includeLog is the caller asserting this participant is an operator. The log
+     *  members (for labelling) per thread, plus a preview of the latest message.
+     *
+     *  $includeLog is the caller asserting this participant is an operator. The log
      *  thread has no members, so without it there is nothing to join against and a
      *  mobile would see the event's log listed in its conversation list. */
     public function conversationsFor(string $event, int $participantId, bool $includeLog = false): array

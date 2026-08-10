@@ -2052,6 +2052,11 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
 .msg-bubble-foot { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
 .msg-bubble-time { font-size: 10px; color: #aaa; font-variant-numeric: tabular-nums; }
 .msg-bubble-row.me .msg-bubble-time { color: #d6e6f2; }
+/* Your own bubbles are solid blue, and the sender line only appears on them for log
+   entries — its default near-black blue would be unreadable there. */
+.msg-bubble-row.me .msg-bubble-sender { color: #eaf3fa; }
+.msg-bubble-row.me .msg-bubble-to { color: #c3dcee; }
+.msg-bubble-row.me .msg-bubble-sender .sid { color: #c3dcee; }
 .msg-bubble-ack { font-size: 10px; color: #cfe0ec; margin-left: auto; }
 .msg-bubble-img { display: block; max-width: 220px; max-height: 260px; width: auto; height: auto; border-radius: 8px; margin-bottom: 4px; cursor: zoom-in; object-fit: cover; }
 .msg-photo-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; z-index: 12000; cursor: zoom-out; }
@@ -6074,8 +6079,13 @@ function _bubbleHtml(m, c) {
 	// On a received message show who it went TO as well as who it came from: that is
 	// what distinguishes a note addressed to you alone from one that also reached a
 	// whole station or every tracker.
-	const toTxt = me ? '' : (m.to_label || '');
-	const sender = me ? '' : '<div class="msg-bubble-sender">' + _senderLabelHtml(m) +
+	// A log entry always names who wrote it, your own included. The log is shared and
+	// outlives the shift that made it, so an unattributed entry is worth less than an
+	// attributed one -- which is the opposite of the rule for ordinary traffic, where
+	// your own name on your own message is just noise.
+	const isLog = !!(c && c.kind === 'log') || m.to_label === 'Log';
+	const toTxt = isLog ? 'Log' : (me ? '' : (m.to_label || ''));
+	const sender = (me && !isLog) ? '' : '<div class="msg-bubble-sender">' + _senderLabelHtml(m) +
 		(toTxt ? '<span class="msg-bubble-to"> → ' + _esc(toTxt) + '</span>' : '') + '</div>';
 	const photo = m.photo
 		? '<img class="msg-bubble-img" data-mid="' + m.id + '" src="index.php?messaging=photo&id=' + m.id + '&token=' + encodeURIComponent(_msgToken || '') + '" alt="Attached photo" loading="lazy">'

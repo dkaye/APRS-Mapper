@@ -220,6 +220,21 @@ class MessagingWatchShapeTest extends TestCase
         $this->assertSame(['0930 net opened'], $texts);
     }
 
+    /** An entry reads "<who wrote it> → Log". The thread has no members, so deriving a
+     *  recipient the usual way produces an empty label and the entry looks addressed to
+     *  nobody rather than filed somewhere. Both views have to agree. */
+    public function testLogEntryIsLabelledAsGoingToTheLog(): void
+    {
+        $conv = $this->db->resolveLogConversation($this->ev);
+        $this->db->insertMessage($this->ev, $conv, $this->op, '0930 net opened', [], false);
+
+        $this->assertSame('Log', $this->db->thread($conv, 0)[0]['to_label']);
+
+        $hist = array_values(array_filter($this->db->history($this->ev),
+                                          fn($m) => (int)$m['conversation_id'] === $conv));
+        $this->assertSame('Log', $hist[0]['to_label'], 'the all-messages view agrees');
+    }
+
     /** One log per event, however many operators write to it and whoever writes first
      *  — a second thread would silently split the running log in half. */
     public function testLogConversationIsASingleton(): void
