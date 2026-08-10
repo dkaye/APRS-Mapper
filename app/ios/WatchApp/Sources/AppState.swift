@@ -20,17 +20,19 @@ final class AppState {
   private(set) var conversations: [WatchConversation] = []
   private(set) var destination: Destination?
 
-  var speakEnabled = true
-  var announceBroadcasts = true
-
   /// Say the words back after a reply goes out.
   ///
-  /// This is the only verification of a transcription that survives the use case.
-  /// The confirm screen it replaced showed the text before sending, which protects
-  /// nobody whose eyes are where they should be — on the road. Hearing what actually
-  /// went out costs nothing in the send path, since it happens afterwards, and gives
-  /// the operator a second to send a correction.
-  var readBackSent = true
+  /// The one thing left to choose. It is the only verification of a transcription
+  /// that survives the use case — the confirm screen it replaced showed the text
+  /// before sending, which protects nobody whose eyes are on the road — but it is
+  /// also the operator's own words taking up airtime they were not listening for.
+  /// Off by default; the send is still confirmed either way.
+  ///
+  /// Everything else that used to be optional is not. Messages are always announced,
+  /// always read aloud, and always announced the same way, broadcasts included: a
+  /// watch that might or might not tell you something, depending on switches set
+  /// hours earlier, is worse than no watch at all during a net.
+  var readBackSent = false
 
   /// What went out last, shown on the Talk page for a glance down.
   var lastSentText = ""
@@ -124,8 +126,6 @@ final class AppState {
     static let messages = "watch.messages"
     static let lastId = "watch.lastId"
     static let seenIds = "watch.seenIds"
-    static let speak = "watch.speak"
-    static let broadcasts = "watch.announceBroadcasts"
     static let readBack = "watch.readBackSent"
     static let destination = "watch.destination"
   }
@@ -135,9 +135,7 @@ final class AppState {
     let d = UserDefaults.standard
     lastId = d.integer(forKey: Key.lastId)
     launchWatermark = lastId
-    speakEnabled = d.object(forKey: Key.speak) as? Bool ?? true
-    announceBroadcasts = d.object(forKey: Key.broadcasts) as? Bool ?? true
-    readBackSent = d.object(forKey: Key.readBack) as? Bool ?? true
+    readBackSent = d.object(forKey: Key.readBack) as? Bool ?? false
     if let raw = d.data(forKey: Key.messages),
        let saved = try? JSONDecoder().decode([WatchMessage].self, from: raw) {
       messages = saved
@@ -180,7 +178,6 @@ final class AppState {
         && m.id > launchWatermark
         && now - TimeInterval(m.ts) <= Self.maxAnnounceAge
         && !m.isSelf
-        && (announceBroadcasts || !m.broadcast)
     }
     if source != .context {
       lastArrival = Arrival(at: Date(), live: source == .relayLive,
@@ -188,14 +185,13 @@ final class AppState {
     }
 
     guard !announceable.isEmpty else { return }
-    Announcer.shared.enqueue(announceable, speak: speakEnabled)
+    Announcer.shared.enqueue(announceable)
   }
 
   // ── state from the phone ────────────────────────────────────────────────────
 
   @MainActor
   func apply(context: [String: Any]) {
-    if let s = context["speak"] as? Bool { speakEnabled = s }
     if let c = context["callsign"] as? String { callsign = c }
     if let b = context["serverBase"] as? String, !b.isEmpty { serverBase = b }
     sharing = context["sharing"] as? Bool ?? false
@@ -240,20 +236,6 @@ final class AppState {
     if let raw = context["recent"] as? [[String: Any]] {
       ingest(raw.compactMap(WatchMessage.init(wire:)), source: .context)
     }
-    persist()
-  }
-
-  @MainActor
-  func setSpeak(_ on: Bool) {
-    speakEnabled = on
-    if !on { Announcer.shared.stop() }
-    persist()
-    WatchSession.shared.send(["type": "speak", "enabled": on])
-  }
-
-  @MainActor
-  func setAnnounceBroadcasts(_ on: Bool) {
-    announceBroadcasts = on
     persist()
   }
 
@@ -305,7 +287,7 @@ final class AppState {
   @MainActor
   func speakAgain(_ m: WatchMessage) {
     Announcer.shared.stop()
-    Announcer.shared.enqueue([m], speak: true)
+    Announcer.shared.enqueue([m])
   }
 
   // ── persistence ─────────────────────────────────────────────────────────────
@@ -319,8 +301,6 @@ final class AppState {
   private func persist() {
     let d = UserDefaults.standard
     d.set(lastId, forKey: Key.lastId)
-    d.set(speakEnabled, forKey: Key.speak)
-    d.set(announceBroadcasts, forKey: Key.broadcasts)
     d.set(readBackSent, forKey: Key.readBack)
     d.set(Array(seenIds), forKey: Key.seenIds)
     if let raw = try? JSONEncoder().encode(messages) { d.set(raw, forKey: Key.messages) }

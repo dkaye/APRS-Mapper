@@ -25,10 +25,13 @@ struct WatchMessage: Identifiable, Codable, Equatable {
   /// (messaging_screen.dart `_speakMessage`). Said as one phrase the name blurs into
   /// the opening words and the listener loses both halves; the gap gives them a beat
   /// to register who is calling before the content starts.
+  ///
+  /// Identical for every message, broadcasts included. Who is calling is the thing an
+  /// operator needs first and it should sound the same every time; a net-wide call is
+  /// still distinguished, by a double buzz, which costs no airtime.
   var announcementPhrase: String {
     let who = senderLabel.trimmingCharacters(in: .whitespaces)
-    if who.isEmpty { return broadcast ? "Message to all trackers." : "Message." }
-    return broadcast ? "Message from \(who), to all trackers." : "Message from \(who)."
+    return who.isEmpty ? "Message." : "Message from \(who)."
   }
 
   /// The content half. A photo with no caption still deserves a sentence, or the

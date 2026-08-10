@@ -53,7 +53,7 @@ final class Announcer {
 
   // ── entry point ─────────────────────────────────────────────────────────────
 
-  func enqueue(_ messages: [WatchMessage], speak: Bool) {
+  func enqueue(_ messages: [WatchMessage]) {
     guard !messages.isEmpty else { return }
     let ordered = messages.sorted { $0.id < $1.id }
 
@@ -61,17 +61,15 @@ final class Announcer {
     // operator whether something was addressed to them.
     let doubleHaptic = ordered.contains(where: \.broadcast)
 
-    var utterances: [String] = []
-    if speak {
-      if ordered.count > Self.summarizeAbove {
-        let newest = ordered.suffix(2)
-        utterances.append("\(ordered.count) new messages.")
-        utterances.append(contentsOf: newest.flatMap(Self.phrases))
-        let rest = ordered.count - newest.count
-        if rest > 0 { utterances.append("and \(rest) more.") }
-      } else {
-        utterances = ordered.flatMap(Self.phrases)
-      }
+    var utterances: [String]
+    if ordered.count > Self.summarizeAbove {
+      let newest = ordered.suffix(2)
+      utterances = ["\(ordered.count) new messages."]
+      utterances.append(contentsOf: newest.flatMap(Self.phrases))
+      let rest = ordered.count - newest.count
+      if rest > 0 { utterances.append("and \(rest) more.") }
+    } else {
+      utterances = ordered.flatMap(Self.phrases)
     }
 
     queue.append(Announcement(doubleHaptic: doubleHaptic, utterances: utterances))
@@ -99,7 +97,7 @@ final class Announcer {
   /// operator is not looking at it — a checkmark they never see confirms nothing.
   /// The wording matches the phone's ack label, including the "N of M" form for a
   /// group, so the two devices never disagree about what "delivered" means.
-  func announceReceipt(stage: String, count: Int, total: Int, speak: Bool) {
+  func announceReceipt(stage: String, count: Int, total: Int) {
     let phrase: String
     switch stage {
     case "sent":
@@ -112,7 +110,6 @@ final class Announcer {
       return
     }
     WKInterfaceDevice.current().play(stage == "read" ? .success : .click)
-    guard speak else { return } // haptic still lands with read-aloud off
     queue.append(Announcement(doubleHaptic: false, utterances: [phrase], tone: false))
     drain()
   }

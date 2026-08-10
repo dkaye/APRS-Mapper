@@ -178,9 +178,7 @@ final class WatchSession: NSObject {
       Outbox.shared.remove(id)
       AppState.shared.lastSentText = sent
       WKInterfaceDevice.current().play(.success)
-      if AppState.shared.speakEnabled {
-        Announcer.shared.announceSent(sent, repeatingWords: AppState.shared.readBackSent)
-      }
+      Announcer.shared.announceSent(sent, repeatingWords: AppState.shared.readBackSent)
     } else {
       Outbox.shared.mark(id, .failed)
       WKInterfaceDevice.current().play(.failure)
@@ -214,8 +212,7 @@ final class WatchSession: NSObject {
         Announcer.shared.announceReceipt(
           stage: payload["stage"] as? String ?? "",
           count: payload["count"] as? Int ?? 0,
-          total: payload["total"] as? Int ?? 0,
-          speak: AppState.shared.speakEnabled)
+          total: payload["total"] as? Int ?? 0)
         return
       default:
         break
