@@ -192,8 +192,51 @@ class WatchBridge {
     while (_recent.length > _kRecentCap) {
       _recent.removeAt(0);
     }
+    _aimAt(dict);
     unawaited(_invoke('pushMessage', dict));
     _scheduleContext();
+  }
+
+  /// Point the next reply at whoever just called.
+  ///
+  /// This is what makes the watch behave like a radio rather than a form: the
+  /// announcement the operator just heard — "Message from Net Control" — is also a
+  /// statement of where their reply will go. Replying into the thread reaches the
+  /// original sender and everyone else it was addressed to, which is what a net
+  /// expects of a group call.
+  ///
+  /// Called from `_relay`, the one point both inbound paths converge on, so it cannot
+  /// be wired to one and forgotten on the other. It therefore fires twice per message
+  /// — `setDestination` ignores an unchanged value.
+  void _aimAt(Map<String, dynamic> dict) {
+    if (dict['self'] == true) return; // our own traffic, echoed back to us
+
+    if (dict['broadcast'] == true) {
+      // Answer the calling station, not the whole net. A spoken "copy that" reaching
+      // every tracker is a worse default than one that reaches Net Control, and
+      // broadcasting stays available deliberately through Reply to → All Trackers.
+      final key = dict['fromKey'] as String?;
+      if (dict['fromKind'] == 'operator' && key != null && key.isNotEmpty) {
+        setDestination(recipients: [key], label: dict['senderLabel'] as String? ?? key);
+      }
+      // A broadcast from a mobile has no addressable key here; leave the aim alone
+      // rather than guess.
+      return;
+    }
+
+    final cid = dict['conversationId'] as int? ?? 0;
+    if (cid <= 0) return;
+    setDestination(conversationId: cid, label: _labelFor(cid, dict));
+  }
+
+  /// The thread's own name where we know it, the sender's otherwise. A conversation
+  /// outside the top-10 list still gets replied to correctly; only the label shown on
+  /// the wrist is less precise.
+  String _labelFor(int conversationId, Map<String, dynamic> dict) {
+    for (final c in _conversations) {
+      if (c['id'] == conversationId) return c['label'] as String? ?? '';
+    }
+    return dict['senderLabel'] as String? ?? 'Conversation';
   }
 
   /// Mirror the phone's read-aloud setting. The watch has the same toggle and the
@@ -204,19 +247,37 @@ class WatchBridge {
     _scheduleContext();
   }
 
-  /// The sticky destination. Opening a thread on the phone is what makes it the
-  /// watch's reply target, which is why this is called from the chat screen rather
-  /// than being a separate setting.
+  /// Where the next spoken reply goes. Set by an arriving message (`_aimAt`), by the
+  /// phone's recipient picker, or by the watch's Reply to page — whichever happened
+  /// most recently wins, and `chosenAt` is what lets the watch decide that.
+  ///
+  /// Unchanged values are ignored: `_relay` calls this twice for every message,
+  /// because both inbound paths feed it, and a prefs write plus a context push per
+  /// duplicate would be pure waste.
   void setDestination({int? conversationId, List<String>? recipients, required String label}) {
     if (!Platform.isIOS || !_started) return;
-    _destination = {
+    final next = <String, dynamic>{
       if (conversationId != null) 'conversationId': conversationId,
       if (recipients != null) 'recipients': recipients,
       'label': label,
     };
+    if (_sameTarget(_destination, next)) return;
+    next['chosenAt'] = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    _destination = next;
     unawaited(SharedPreferences.getInstance()
         .then((p) => p.setString(_kWatchDestination, jsonEncode(_destination))));
     _scheduleContext();
+  }
+
+  /// Same place, ignoring the label and the timestamp — a thread that has been
+  /// renamed is still the same thread.
+  bool _sameTarget(Map<String, dynamic>? a, Map<String, dynamic> b) {
+    if (a == null) return false;
+    if (a['conversationId'] != b['conversationId']) return false;
+    final ar = (a['recipients'] as List?)?.cast<String>();
+    final br = (b['recipients'] as List?)?.cast<String>();
+    if (ar == null || br == null) return ar == br;
+    return ar.length == br.length && !ar.asMap().entries.any((e) => br[e.key] != e.value);
   }
 
   /// The short recent-conversation list the watch offers as switch targets.
@@ -321,6 +382,10 @@ class WatchBridge {
           if (e['conversationId'] != null) 'conversationId': (e['conversationId'] as num).toInt(),
           if (e['recipients'] != null) 'recipients': List<String>.from(e['recipients'] as List),
           'label': e['label'] as String? ?? '',
+          // The wrist's own timestamp, not ours: it is what decides whether this or a
+          // message arriving at the same moment is the newer decision.
+          'chosenAt': (e['chosenAt'] as num?)?.toInt() ??
+              DateTime.now().millisecondsSinceEpoch ~/ 1000,
         };
         unawaited(SharedPreferences.getInstance()
             .then((p) => p.setString(_kWatchDestination, jsonEncode(_destination))));
@@ -497,6 +562,7 @@ class WatchBridge {
         'senderLabel': m.senderLabel,
         if (m.fromKind != null) 'fromKind': m.fromKind,
         if (m.fromShort != null) 'fromShort': m.fromShort,
+        if (m.fromKey != null) 'fromKey': m.fromKey,
         'broadcast': m.broadcast,
         'hasPhoto': false,
         'self': false,
@@ -510,6 +576,7 @@ class WatchBridge {
         'senderLabel': m.senderLabel,
         if (m.fromKind != null) 'fromKind': m.fromKind,
         if (m.fromShort != null) 'fromShort': m.fromShort,
+        if (m.fromKey != null) 'fromKey': m.fromKey,
         'broadcast': m.broadcast,
         'hasPhoto': m.hasPhoto,
         'self': isSelf,

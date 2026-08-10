@@ -12,16 +12,19 @@ struct SettingsView: View {
   var body: some View {
     List {
       Section {
-        Toggle("Repeat my words", isOn: Binding(
+        // "Readback" is the term on the air; the UserDefaults key stays
+        // watch.readBackSent so an existing setting survives the rename.
+        Toggle("Readback my words", isOn: Binding(
           get: { state.readBackSent },
           set: { state.setReadBackSent($0) }
         ))
       } footer: {
         Text("""
-        Says a reply back after sending, so you can hear what was transcribed. \
+        Reads a reply back after sending, so you can hear what was transcribed. \
         Off still confirms with "Message sent".
 
-        Every message is read aloud, All Trackers calls included.
+        Every message is read aloud, All Trackers calls included. Replies go to \
+        whoever last called you.
         """)
           .font(.caption2)
       }

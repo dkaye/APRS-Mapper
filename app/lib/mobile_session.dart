@@ -23,6 +23,11 @@ class InboundMessage {
   final int conversationId;
   final String? fromShort; // M0xx, for the "M141 Dirck" label
   final String? fromKind; // 'mobile' | 'operator'
+
+  /// The sender's addressable identity — an operator's name, a mobile's callsign.
+  /// Used to answer a broadcast, which goes back to the calling station rather than
+  /// out to the whole net.
+  final String? fromKey;
   final bool broadcast; // an All Trackers call, announced differently on the watch
 
   const InboundMessage({
@@ -33,6 +38,7 @@ class InboundMessage {
     this.conversationId = 0,
     this.fromShort,
     this.fromKind,
+    this.fromKey,
     this.broadcast = false,
   });
   factory InboundMessage.fromJson(Map<String, dynamic> j) => InboundMessage(
@@ -43,6 +49,7 @@ class InboundMessage {
     conversationId: (j['conversation_id'] as num?)?.toInt() ?? 0,
     fromShort: j['from_short'] as String?,
     fromKind: j['from_kind'] as String?,
+    fromKey: j['from_key'] as String?,
     broadcast: j['broadcast'] as bool? ?? false,
   );
 

@@ -57,12 +57,6 @@ final class AppState {
   /// a broken link from a quiet net, and without it both just look like a dead app.
   var lastContextAt: Date?
 
-  /// Set when this watch chose a destination and cleared when the phone echoes that
-  /// choice back. See `apply(context:)`.
-  private var destinationDirty = false
-  private var destinationChosenAt = Date.distantPast
-  private static let echoTimeout: TimeInterval = 30
-
   private(set) var lastId = 0
 
   /// Ids already seen, so the same message arriving over two transports is one
@@ -212,18 +206,17 @@ final class AppState {
     // phone can express "no destination".
     let incoming = (context["destination"] as? [String: Any]).flatMap(Destination.init(wire:))
 
-    // A choice made here outranks a context that was already in flight when it was
-    // made. Without this the wrist silently re-aims itself: the operator picks Net
-    // Control, a context sent moments earlier arrives carrying the previous thread,
-    // and the next thing they say goes somewhere they never chose. The phone stays
-    // authoritative -- we simply wait for it to echo our choice back before trusting
-    // it again, and give up waiting so a lost echo cannot freeze the destination.
-    if destinationDirty {
-      if incoming == destination || Date().timeIntervalSince(destinationChosenAt) > Self.echoTimeout {
-        destinationDirty = false
-      }
-    } else {
+    // The newer decision wins, whoever made it. An arriving message re-aims the reply
+    // at whoever just called; a pick on this wrist re-aims it deliberately; and a
+    // context that was already in flight when the wrist chose is simply older and
+    // loses. Timestamps decide it, because "which of these two happened last" is the
+    // actual question and nothing else answers it.
+    if let incoming, incoming.chosenAt >= (destination?.chosenAt ?? 0) {
       destination = incoming
+    } else if incoming == nil, destination != nil, context.keys.contains("sharing"),
+              !(context["sharing"] as? Bool ?? false) {
+      // Sharing stopped: there is nowhere to reply to any more.
+      destination = nil
     }
     lastContextAt = Date()
 
@@ -271,12 +264,17 @@ final class AppState {
   /// echoes the choice back in the next context, which is what confirms it landed.
   @MainActor
   func chooseDestination(conversationId: Int?, recipients: [String]?, label: String) {
-    var wire: [String: Any] = ["type": "destination", "label": label]
+    // Stamped here and sent with the choice, so the phone echoes our timestamp rather
+    // than minting a newer one — otherwise the echo would always look like the more
+    // recent decision and this pick could never be superseded correctly.
+    var wire: [String: Any] = [
+      "type": "destination",
+      "label": label,
+      "chosenAt": Int(Date().timeIntervalSince1970),
+    ]
     if let c = conversationId { wire["conversationId"] = c }
     if let r = recipients { wire["recipients"] = r }
     destination = Destination(wire: wire)
-    destinationDirty = true
-    destinationChosenAt = Date()
     persist()
     WKInterfaceDevice.current().play(.click)
     WatchSession.shared.send(wire)

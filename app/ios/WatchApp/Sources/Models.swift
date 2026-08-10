@@ -101,10 +101,23 @@ struct Destination: Codable, Equatable {
   let recipients: [String]?
   let label: String
 
+  /// When this aim was decided, unix seconds. Both devices set it, and the newer one
+  /// wins — which is the whole conflict-resolution rule. It replaced a "dirty" flag
+  /// that could not tell a stale echo of an old value from a genuinely newer decision
+  /// arriving from the phone, and so blocked both for thirty seconds.
+  let chosenAt: Int
+
   init?(wire d: [String: Any]) {
     label = d["label"] as? String ?? ""
     conversationId = d["conversationId"] as? Int
     recipients = d["recipients"] as? [String]
+    chosenAt = d["chosenAt"] as? Int ?? 0
     if conversationId == nil && (recipients?.isEmpty ?? true) { return nil }
+  }
+
+  /// Same place, ignoring when it was chosen and what it is called.
+  func sameTarget(as other: Destination?) -> Bool {
+    guard let other else { return false }
+    return conversationId == other.conversationId && recipients == other.recipients
   }
 }

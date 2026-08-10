@@ -142,6 +142,55 @@ class MessagingWatchShapeTest extends TestCase
         $this->assertSame(array_column($phoneSaw, 'id'), array_column($watchSaw, 'id'));
     }
 
+    // ── replying into an entity thread ────────────────────────────────────────
+
+    /** The watch aims at the thread a message arrived on, and an operator addressing
+     *  a mobile from the picker uses an `ent:` row — so that thread is very often an
+     *  entity conversation, and a reply into it has to reach the operator.
+     *
+     *  These pin the invariant the send path depends on. The gate itself lives in
+     *  messaging.php's send handler, which echoes JSON and exits, so it cannot be
+     *  exercised from here; what can be pinned is that plain conversationRecipients
+     *  gives a mobile sender the right answer, which is what the gate falls through
+     *  to. */
+    public function testMobileReplyingIntoAnEntityThreadReachesTheOperator(): void
+    {
+        $phone2 = $this->db->upsertParticipant($this->ev, 'mobile', 'MARSQ-016', 'Doug', 'M142', null);
+        $conv = $this->db->resolveEntityConversation($this->ev, $this->op, 'DRK', 'Doug',
+                                                     [$this->phone, $phone2]);
+
+        $to = $this->db->conversationRecipients($this->ev, $conv, false, $this->phone);
+
+        $this->assertContains($this->op, $to, 'the operator being answered must receive the reply');
+        $this->assertNotContains($this->phone, $to, 'the sender never receives their own message');
+    }
+
+    /** The operator is a member, which is the whole reason the fall-through works. */
+    public function testEntityThreadIncludesTheOperator(): void
+    {
+        $conv = $this->db->resolveEntityConversation($this->ev, $this->op, 'DRK', 'Doug', [$this->phone]);
+
+        $members = $this->db->conversationRecipients($this->ev, $conv, false, 0);
+
+        $this->assertContains($this->op, $members);
+        $this->assertContains($this->phone, $members);
+    }
+
+    /** The behaviour the gate protects: an operator replying into an entity thread
+     *  still addresses the devices, not themselves. */
+    public function testOperatorReplyingIntoAnEntityThreadAddressesTheDevices(): void
+    {
+        $phone2 = $this->db->upsertParticipant($this->ev, 'mobile', 'MARSQ-016', 'Doug', 'M142', null);
+        $conv = $this->db->resolveEntityConversation($this->ev, $this->op, 'DRK', 'Doug',
+                                                     [$this->phone, $phone2]);
+
+        $to = $this->db->conversationRecipients($this->ev, $conv, false, $this->op);
+
+        $this->assertNotContains($this->op, $to);
+        $this->assertContains($this->phone, $to);
+        $this->assertContains($phone2, $to);
+    }
+
     /** Ordering is by id, never ts — the watch sorts the same way, and a device
      *  with a skewed clock must not be able to reorder a net's traffic. */
     public function testPollForOrdersById(): void

@@ -333,10 +333,20 @@ function messaging_handle(string $action, array $body, array $ctx): void
             // A broadcast reaches every registered mobile, so make sure they all exist.
             if ($kind === 'broadcast') _msg_ensure_all_mobiles($db, $ctx);
             $deliverTo = $db->conversationRecipients($event, $conv, $kind === 'broadcast', (int)$me['id']);
-            // Replying into an entity thread: recompute from who is in the entity NOW,
-            // so a device whose display_id moved elsewhere stops receiving even though
-            // it remains a historical member of the thread.
-            if (($kind === 'entity' || $kind === 'entity_multi') && ($ent = $db->entityOfConversation($conv))) {
+            // An OPERATOR replying into an entity thread: recompute from who is in the
+            // entity NOW, so a device whose display_id moved elsewhere stops receiving
+            // even though it remains a historical member of the thread.
+            //
+            // Only for an operator. The entity is the set of the *mobile's* devices, so
+            // when the mobile itself replies, that set minus the sender is its own
+            // sibling phones — and the operator, the one person it is answering, is
+            // dropped entirely. The message stored fine, reported recipients: 0, and
+            // reached nobody. resolveEntityConversation puts the operator in
+            // conversation_members, so falling through to conversationRecipients below
+            // already gives a mobile the right answer.
+            if ($me['kind'] === 'operator'
+                && ($kind === 'entity' || $kind === 'entity_multi')
+                && ($ent = $db->entityOfConversation($conv))) {
                 $key   = $ent[1] === '*' ? 'mult:' . $ent[0] : 'ent:' . $ent[0] . '|' . $ent[1];
                 $live  = _msg_resolve_recipients($db, $ctx, [$key]);
                 if ($live) $deliverTo = array_values(array_filter($live, fn($id) => (int)$id !== (int)$me['id']));
@@ -478,12 +488,13 @@ function messaging_ctx_event(array $mcfg): string { return trim($mcfg['event'] ?
 
 /** Reduce a hydrated message row to the legacy {id,from_label,text,ts} shape.
  *
- *  The four extra keys are additive and older app builds ignore them. They exist
- *  for the Apple Watch relay: the watch replies into the thread a message arrived
- *  on, so conversation_id has to survive this shim, and it announces a broadcast
- *  differently from a message addressed to the operator alone. from_short/from_kind
- *  let the phone build the same "M141 Dirck" label the new API produces, so the
- *  watch never has to re-implement the labelling rules. */
+ *  The extra keys are additive and older app builds ignore them. They exist for the
+ *  Apple Watch relay, which aims the next reply at the thread a message arrived on:
+ *  conversation_id has to survive this shim for that to be possible at all.
+ *  from_short/from_kind let the phone build the same "M141 Dirck" label the new API
+ *  produces, so the watch never re-implements the labelling rules. from_key is the
+ *  addressable identity of the sender, needed to answer a broadcast — which goes back
+ *  to the calling station rather than out to the whole net. */
 function _msg_legacy_shape(array $m): array
 {
     return ['id'=>$m['id'], 'from_label'=>($m['from_name'] !== '' ? $m['from_name'] : ($m['from_key'] ?? '')),
@@ -491,6 +502,7 @@ function _msg_legacy_shape(array $m): array
             'conversation_id'=>(int)($m['conversation_id'] ?? 0),
             'from_short'=>$m['from_short'] ?? null,
             'from_kind'=>$m['from_kind'] ?? null,
+            'from_key'=>$m['from_key'] ?? null,
             'broadcast'=>(bool)($m['broadcast'] ?? false)];
 }
 
