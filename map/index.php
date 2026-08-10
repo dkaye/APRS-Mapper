@@ -2051,6 +2051,13 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
 .msg-bubble-locbtn { background: none; border: none; padding: 0; cursor: pointer; color: #b0b6bb; line-height: 0; }
 .msg-bubble-locbtn:hover { color: #c0392b; }
 .msg-bubble-row.me .msg-bubble-locbtn { color: #cfe0ec; }
+.msg-bubble-copybtn { background: none; border: none; padding: 0; cursor: pointer; color: #b0b6bb; line-height: 0; }
+.msg-bubble-copybtn:hover { color: #2980b9; }
+.msg-bubble-row.me .msg-bubble-copybtn { color: #cfe0ec; }
+/* Held for a beat after a copy. Clipboard writes are silent, so without this there
+   is no way to tell a successful copy from a click that did nothing. */
+.msg-bubble-copybtn.copied,
+.msg-bubble-row.me .msg-bubble-copybtn.copied { color: #27ae60; }
 .msg-receipt { font-size: 10px; color: #d6e6f2; }
 #msg-thread-empty { text-align: center; color: #999; font-size: 13px; padding: 30px 20px; }
 
@@ -6058,10 +6065,14 @@ function _bubbleHtml(m, c) {
 	const textHtml = m.text ? '<div class="msg-bubble-text">' + _esc(m.text) + '</div>' : '';
 	const loc = (typeof m.lat === 'number' && typeof m.lon === 'number')
 		? '<button class="msg-bubble-locbtn" data-mid="' + m.id + '" title="Show where this was sent from">' + MSG_PIN_SVG + '</button>' : '';
+	// Carries the id, not the text: the message is looked up at click time, so nothing
+	// has to be escaped into an attribute. A photo with no caption has nothing to copy.
+	const copy = m.text
+		? '<button class="msg-bubble-copybtn" data-mid="' + m.id + '" title="Copy message text">' + MSG_COPY_SVG + '</button>' : '';
 	const ack = me ? '<span class="msg-bubble-ack">' + _ackLabel(_msgReceipts.get(m.id), _ackSingle(m.conversation_id)) + '</span>' : '';
 	return '<div class="msg-bubble-row ' + (me ? 'me' : 'them') + '">' +
 		'<div class="msg-bubble">' + sender + photo + textHtml +
-		'<div class="msg-bubble-foot">' + loc + '<span class="msg-bubble-time">' + _msgClockTime(m.ts) + '</span>' + ack + '</div>' +
+		'<div class="msg-bubble-foot">' + loc + copy + '<span class="msg-bubble-time">' + _msgClockTime(m.ts) + '</span>' + ack + '</div>' +
 		'</div></div>';
 }
 // Full-size photo lightbox (tap the thumbnail; tap anywhere to close).
@@ -6095,6 +6106,14 @@ function _wireLocButtons(root) {
 	root.querySelectorAll('.msg-bubble-locbtn').forEach(b => {
 		if (b._wired) return; b._wired = true;
 		b.addEventListener('click', e => { e.stopPropagation(); _showMsgLocation(_msgFindById(+b.dataset.mid)); });
+	});
+	root.querySelectorAll('.msg-bubble-copybtn').forEach(b => {
+		if (b._wired) return; b._wired = true;
+		b.addEventListener('click', e => {
+			e.stopPropagation();
+			const m = _msgFindById(+b.dataset.mid);
+			if (m && m.text) _copyMsgText(m.text, b);
+		});
 	});
 	root.querySelectorAll('.msg-bubble-img').forEach(img => {
 		if (img._wired) return; img._wired = true;
@@ -6684,6 +6703,47 @@ function _msgFmtStampFull(ts) { return new Date(ts * 1000).getFullYear() + '-' +
 
 const MSG_PIN_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">' +
 	'<path fill="currentColor" d="M12 2c-3.87 0-7 3.13-7 7 0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"/></svg>';
+const MSG_COPY_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">' +
+	'<path fill="currentColor" d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>';
+const MSG_TICK_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">' +
+	'<path fill="currentColor" d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>';
+
+/** Copy a message's text and nothing else -- no sender, no timestamp, no receipt.
+ *  What gets pasted into a log or an email is the words that were sent.
+ *
+ *  navigator.clipboard needs a secure context, which the public site has and a
+ *  plain-HTTP LAN or NetBird address does not, so the old execCommand path stays as
+ *  the fallback rather than letting the button quietly do nothing on the Pi. */
+async function _copyMsgText(text, btn) {
+	let ok = false;
+	try {
+		if (navigator.clipboard && window.isSecureContext) {
+			await navigator.clipboard.writeText(text);
+			ok = true;
+		}
+	} catch {}
+	if (!ok) {
+		const ta = document.createElement('textarea');
+		ta.value = text;
+		ta.setAttribute('readonly', '');
+		// Off-screen rather than hidden: a display:none textarea cannot be selected.
+		ta.style.cssText = 'position:fixed;top:-1000px;opacity:0;';
+		document.body.appendChild(ta);
+		ta.select();
+		try { ok = document.execCommand('copy'); } catch {}
+		ta.remove();
+	}
+	if (!btn) return;
+	btn.innerHTML = ok ? MSG_TICK_SVG : MSG_COPY_SVG;
+	btn.classList.toggle('copied', ok);
+	btn.title = ok ? 'Copied' : 'Copy failed';
+	clearTimeout(btn._copyTimer);
+	btn._copyTimer = setTimeout(() => {
+		btn.innerHTML = MSG_COPY_SVG;
+		btn.classList.remove('copied');
+		btn.title = 'Copy message text';
+	}, 1400);
+}
 
 // Map pin — drop a marker where a message was sent from (mobiles only).
 let _msgLocMarker = null;
