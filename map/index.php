@@ -2018,11 +2018,19 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
     text-align: center;
 }
 #msg-conv-empty { padding: 28px 20px; text-align: center; color: #999; font-size: 13px; }
+#msg-list-actions { display: flex; gap: 8px; margin: 10px 12px; flex: 0 0 auto; }
 #msg-new-btn {
-    margin: 10px 12px; padding: 9px; background: #2980b9; color: #fff; border: none;
-    border-radius: 6px; font-size: 14px; cursor: pointer; font-family: inherit; flex: 0 0 auto;
+    flex: 1 1 auto; padding: 9px; background: #2980b9; color: #fff; border: none;
+    border-radius: 6px; font-size: 14px; cursor: pointer; font-family: inherit;
 }
 #msg-new-btn:hover { background: #2471a3; }
+/* Muted against New message: logging is the routine bookkeeping action, not the
+   one an operator is usually reaching for. */
+#msg-log-btn {
+    flex: 0 0 auto; padding: 9px 12px; background: #7f8c8d; color: #fff; border: none;
+    border-radius: 6px; font-size: 14px; cursor: pointer; font-family: inherit;
+}
+#msg-log-btn:hover { background: #6c7a7b; }
 #msg-conv-footer { flex: 0 0 auto; padding: 8px 12px; border-top: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
 .msg-link { background: none; border: none; color: #2980b9; font-size: 12px; cursor: pointer; padding: 2px; font-family: inherit; }
 .msg-link:hover { text-decoration: underline; }
@@ -2505,7 +2513,10 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
 	<div id="msg-panel-body">
 		<!-- Conversation list -->
 		<div id="msg-list-view" class="msg-view">
-			<button id="msg-new-btn">✏️ New message</button>
+			<div id="msg-list-actions">
+				<button id="msg-new-btn">✏️ New message</button>
+				<button id="msg-log-btn" title="Write a log entry (Ctrl+L)">📋 Log</button>
+			</div>
 			<div id="msg-conv-scroll"><div id="msg-conv-empty">No conversations yet.</div></div>
 			<div id="msg-conv-footer">
 				<span style="font-size:11px;color:#999">MARS Messaging</span>
@@ -5995,16 +6006,17 @@ function _renderConvList() {
 	// left the event yesterday is not that. Kept regardless: anything unread, and
 	// whatever is open, so the panel cannot empty out under someone mid-read.
 	const items = [..._convs.values()]
-		.filter(c => c.last_id > 0 && c.kind !== 'broadcast'
+		.filter(c => c.last_id > 0 && c.kind !== 'broadcast' && c.kind !== 'log'
 			&& (!c.stale || c.unread > 0 || c.id === _openConvId))
 		.sort((a, b) => b.last_id - a.last_id);
 
-	const row = (c, name, sub, cid) => {
+	const row = (c, name, sub, cid, pin) => {
 		const pv = c && c.preview;
 		const prev = pv ? ((pv.self ? 'You: ' : '') + pv.text) : sub;
 		const badge = c && c.unread > 0 ? '<span class="msg-badge">' + c.unread + '</span>' : '';
 		const sel = cid != null && cid === _openConvId ? ' sel' : '';
-		return '<div class="msg-conv-item' + sel + '" data-cid="' + (cid == null ? '' : cid) + '">' +
+		return '<div class="msg-conv-item' + sel + '" data-cid="' + (cid == null ? '' : cid) + '"' +
+			(pin ? ' data-pin="' + pin + '"' : '') + '>' +
 			'<div class="msg-conv-main"><div class="msg-conv-name">' + _esc(name) + '</div>' +
 			'<div class="msg-conv-preview">' + _esc(prev) + '</div></div>' +
 			'<div class="msg-conv-meta"><span class="msg-conv-time">' + (pv ? _msgShortTime(pv.ts) : '') + '</span>' + badge + '</div></div>';
@@ -6014,8 +6026,12 @@ function _renderConvList() {
 	// New message picker. It is the one destination that always exists, and an
 	// operator needing to reach the whole net should not have to compose their way to
 	// it — nor scroll for it once ordinary traffic has pushed it down.
+	// The Event Log is pinned beside it for the same reason: it always exists, it is
+	// reached constantly during a net, and it must not drift down the list.
 	const bc = [..._convs.values()].find(c => c.kind === 'broadcast');
-	const head = row(bc, 'All Trackers', 'Broadcast to everyone', bc ? bc.id : null);
+	const lg = [..._convs.values()].find(c => c.kind === 'log');
+	const head = row(bc, 'All Trackers', 'Broadcast to everyone', bc ? bc.id : null, 'broadcast')
+		+ row(lg, '📋 Event Log', 'Written to the log, sent to no one', lg ? lg.id : null, 'log');
 
 	scroll.innerHTML = head + (items.length
 		? items.map(c => row(c, _convLabel(c), '', c.id)).join('')
@@ -6024,9 +6040,10 @@ function _renderConvList() {
 	scroll.querySelectorAll('.msg-conv-item').forEach(el =>
 		el.addEventListener('click', () => {
 			const cid = el.dataset.cid;
-			// The pinned row before anyone has broadcast has no thread behind it yet;
-			// _openBroadcast composes one rather than opening nothing.
-			if (cid === '') _openBroadcast(); else _openConversation(+cid);
+			// A pinned row has no thread behind it until something has been put in it,
+			// so which opener to call is decided by the pin, not by the missing id.
+			if (cid === '') { if (el.dataset.pin === 'log') _openLog(); else _openBroadcast(); }
+			else _openConversation(+cid);
 		}));
 }
 
@@ -6049,6 +6066,7 @@ async function _openConversation(cid) {
 	} catch {}
 	_markConvRead(cid);
 	if (_openConvId === cid) _speakDeferred(cid);   // read anything that arrived while this wasn't active
+	_syncComposerMode();
 	setTimeout(() => document.getElementById('msg-compose-text').focus(), 60);
 }
 function _bubbleHtml(m, c) {
@@ -6135,21 +6153,27 @@ async function _sendCurrent() {
 	if (!text) return;
 	const btn = document.getElementById('msg-send-btn');
 	btn.disabled = true;
+	// A log entry is written, not sent: a different endpoint, no recipients, and no
+	// receipt to wait on. The response carries the same {conversation_id, kind} shape
+	// as a send, so everything after this point is common to both.
+	const openC = _openConvId != null ? _convs.get(_openConvId) : null;
+	const isLog = _pendingLog || (openC && openC.kind === 'log');
 	const body = {text};
-	if (_pendingConv) {
+	if (isLog) {
+		// nothing to address
+	} else if (_pendingConv) {
 		body.recipients = _pendingConv.recipients;
 	} else if (_openConvId != null) {
-		const c = _convs.get(_openConvId);
-		if (c && c.kind === 'broadcast') body.recipients = 'all';
+		if (openC && openC.kind === 'broadcast') body.recipients = 'all';
 		else body.conversation_id = _openConvId;
 	} else { btn.disabled = false; return; }
 	try {
-		const d = await _msgApi('send', {body});
+		const d = await _msgApi(isLog ? 'log' : 'send', {body});
 		if (d.error) { errEl.textContent = d.error; errEl.style.display = 'block'; return; }
 		_stopMic();                 // mic goes off on send; also clears the dictation buffer
 		ta.value = ''; _autoGrow(ta);
 		const cid = d.conversation_id;
-		_pendingConv = null; _openConvId = cid;
+		_pendingConv = null; _pendingLog = false; _openConvId = cid;
 		await _refreshConversations();
 		const d2 = await _msgApi('thread', {body:{conversation_id: cid}});
 		const c = _convs.get(cid) || {id:cid, kind:d.kind, members:[], messages:[]};
@@ -6437,6 +6461,37 @@ function _startFromPicker() {
 	document.getElementById('msg-compose-text').value = ''; _autoGrow(document.getElementById('msg-compose-text'));
 	setTimeout(() => document.getElementById('msg-compose-text').focus(), 60);
 }
+// True while the Event Log is open but no log thread exists on the server yet — the
+// same role _pendingConv plays for a conversation that has not had its first message.
+let _pendingLog = false;
+
+// The composer writes to the log instead of sending when the log thread is open, so
+// it says so. Nothing else about the thread view differs.
+function _syncComposerMode() {
+	const c = _openConvId != null ? _convs.get(_openConvId) : null;
+	const isLog = _pendingLog || (c && c.kind === 'log');
+	document.getElementById('msg-compose-text').placeholder = isLog ? 'Write a log entry…' : 'Type a message…';
+	document.getElementById('msg-send-btn').title = isLog ? 'Save log entry' : 'Send';
+}
+
+/** Open the event's running log. Entries go in the archive and nowhere else: no
+ *  recipients, no delivery, no alert on anyone's phone. */
+function _openLog() {
+	const lg = [..._convs.values()].find(c => c.kind === 'log');
+	_pendingConv = null;
+	if (lg) {
+		_pendingLog = false;
+		_openConversation(lg.id);
+		return;
+	}
+	_pendingLog = true; _openConvId = null;
+	_showThreadView('Event Log', 'Written to the log, sent to no one');
+	document.getElementById('msg-thread-scroll').innerHTML =
+		'<div id="msg-thread-empty">Nothing logged yet — type an entry below.</div>';
+	_syncComposerMode();
+	setTimeout(() => document.getElementById('msg-compose-text').focus(), 60);
+}
+
 function _openBroadcast() {
 	const bc = [..._convs.values()].find(c => c.kind === 'broadcast');
 	if (bc) { _openConversation(bc.id); return; }
@@ -6546,6 +6601,18 @@ function _wireMsgUI() {
 
 	// New message / list footer
 	document.getElementById('msg-new-btn').addEventListener('click', _openPicker);
+	document.getElementById('msg-log-btn').addEventListener('click', () => { _openPanel(); _openLog(); });
+	// Ctrl+L / Cmd+L opens the log from anywhere, with the cursor already in it, so an
+	// entry can be made mid-net without reaching for the mouse. It overrides the
+	// browser's focus-the-address-bar binding, which is the trade the shortcut is for.
+	document.addEventListener('keydown', e => {
+		if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+		if ((e.key || '').toLowerCase() !== 'l') return;
+		if (!_msgIsSubscribed()) return;   // no operator session, nothing to log into
+		e.preventDefault();
+		_openPanel();
+		_openLog();
+	});
 	document.getElementById('msg-all-link').addEventListener('click', () => { _closeSettings(); if (!_msgViewAll) _toggleViewAll(); });
 	document.getElementById('msg-mi-all').addEventListener('click', () => { _closeSettings(); if (!_msgViewAll) _toggleViewAll(); });
 	document.getElementById('msg-mi-operators').addEventListener('click', _openManageOperators);

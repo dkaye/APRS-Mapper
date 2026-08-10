@@ -193,6 +193,79 @@ class MessagingWatchShapeTest extends TestCase
         $this->fail("conversation $conversationId not returned");
     }
 
+    // ── the event log ─────────────────────────────────────────────────────────
+
+    /** A log entry is written, not sent. No deliveries means nothing is queued for
+     *  anyone to poll, nothing reaches a phone or a watch, and no receipt can come
+     *  back — which is the entire distinction between logging and messaging. */
+    public function testLogEntryIsDeliveredToNobody(): void
+    {
+        $conv = $this->db->resolveLogConversation($this->ev);
+
+        $this->db->insertMessage($this->ev, $conv, $this->op, '0930 net opened', [], false);
+
+        $this->assertCount(0, $this->db->pendingFor($this->phone));
+        $this->assertCount(0, $this->db->pendingFor($this->op));
+        $this->assertCount(0, $this->db->receiptsForSender($this->op, 0));
+    }
+
+    /** It is still archived — the point of writing it down. */
+    public function testLogEntryIsStoredInTheThread(): void
+    {
+        $conv = $this->db->resolveLogConversation($this->ev);
+        $this->db->insertMessage($this->ev, $conv, $this->op, '0930 net opened', [], false);
+
+        $texts = array_column($this->db->thread($conv, 0), 'text');
+
+        $this->assertSame(['0930 net opened'], $texts);
+    }
+
+    /** One log per event, however many operators write to it and whoever writes first
+     *  — a second thread would silently split the running log in half. */
+    public function testLogConversationIsASingleton(): void
+    {
+        $other = $this->db->upsertParticipant($this->ev, 'operator', 'Shadow', 'Shadow', null, null);
+
+        $a = $this->db->resolveLogConversation($this->ev);
+        $this->db->insertMessage($this->ev, $a, $this->op, 'first', [], false);
+        $b = $this->db->resolveLogConversation($this->ev);
+        $this->db->insertMessage($this->ev, $b, $other, 'second', [], false);
+
+        $this->assertSame($a, $b);
+        $this->assertCount(2, $this->db->thread($a, 0), 'both operators wrote to one log');
+    }
+
+    /** Operators see the log listed; mobiles must not. It has no members, so there is
+     *  nothing to join against and the flag is the only thing keeping it off a
+     *  tracker's conversation list. */
+    public function testLogIsListedForOperatorsOnly(): void
+    {
+        $conv = $this->db->resolveLogConversation($this->ev);
+        $this->db->insertMessage($this->ev, $conv, $this->op, '0930 net opened', [], false);
+
+        $opKinds     = array_column($this->db->conversationsFor($this->ev, $this->op, true), 'kind');
+        $mobileKinds = array_column($this->db->conversationsFor($this->ev, $this->phone, false), 'kind');
+
+        $this->assertContains('log', $opKinds);
+        $this->assertNotContains('log', $mobileKinds);
+    }
+
+    /** Nobody is at the other end of the log, so the 24-hour staleness rule — which
+     *  asks when the other end was last seen — must not hide it. */
+    public function testLogIsNeverStale(): void
+    {
+        $conv = $this->db->resolveLogConversation($this->ev);
+        $this->db->insertMessage($this->ev, $conv, $this->op, '0930 net opened', [], false);
+
+        $log = null;
+        foreach ($this->db->conversationsFor($this->ev, $this->op, true) as $c) {
+            if ($c['kind'] === 'log') $log = $c;
+        }
+
+        $this->assertNotNull($log);
+        $this->assertFalse($log['stale']);
+    }
+
     // ── delivered is not read ─────────────────────────────────────────────────
 
     /** A device acking a message means it has it, not that anyone has looked at it.

@@ -409,9 +409,24 @@ function messaging_handle(string $action, array $body, array $ctx): void
         exit;
     }
 
+    case 'log': {   // an entry written to the event's log, addressed to nobody
+        if (($me['kind'] ?? '') !== 'operator') _msg_fail(403, 'Operators only');
+        $text = trim((string)($body['text'] ?? ''));
+        if ($text === '') _msg_fail(400, 'text required');
+        if (mb_strlen($text) > 280) $text = mb_substr($text, 0, 280);
+        // No recipients, so insertMessage writes no deliveries: nothing is queued for
+        // anyone to poll, nothing is announced, and no receipt can come back. The entry
+        // exists only as history, which is the whole point of it.
+        $conv = $db->resolveLogConversation($event);
+        $id   = $db->insertMessage($event, $conv, (int)$me['id'], $text, [], false);
+        echo json_encode(['ok'=>true, 'id'=>$id, 'conversation_id'=>$conv, 'kind'=>'log']);
+        exit;
+    }
+
     case 'conversations': {   // the caller's conversation list (unread + last msg)
         echo json_encode([
-            'conversations' => _msg_mark_stale($db->conversationsFor($event, (int)$me['id']), $ctx),
+            'conversations' => _msg_mark_stale(
+                $db->conversationsFor($event, (int)$me['id'], ($me['kind'] ?? '') === 'operator'), $ctx),
             'can_manage'    => (bool)($ctx['authPerm']('messages.manage')),
         ]);
         exit;
@@ -508,7 +523,7 @@ function _msg_mark_stale(array $rows, array $ctx): array
         if (!empty($t['callsign'])) $seen[$t['callsign']] = (int)($t['lastUpdate'] ?? 0);
     }
     foreach ($rows as &$r) {
-        if (($r['kind'] ?? '') === 'broadcast') { $r['stale'] = false; continue; }
+        if (in_array($r['kind'] ?? '', ['broadcast', 'log'], true)) { $r['stale'] = false; continue; }
         $r['stale'] = true;
         foreach ($r['members'] ?? [] as $m) {
             $last = ($m['kind'] ?? '') === 'mobile'

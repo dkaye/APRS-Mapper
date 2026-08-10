@@ -290,6 +290,17 @@ class MessagingDb
         return [$this->findOrCreateConversation($event, $kind, $hash, $members, $title), $kind];
     }
 
+    /** The event's running log: one thread per event holding entries that were written
+     *  rather than sent. Memberless for the same reason broadcast is -- it belongs to
+     *  the event, not to whoever happened to make the first entry -- and access is
+     *  decided by kind. Only operators ever see it: the thread handler already lets an
+     *  operator read any thread and refuses a non-member anything else, so a memberless
+     *  log is operator-only without a rule of its own. */
+    public function resolveLogConversation(string $event): int
+    {
+        return $this->findOrCreateConversation($event, 'log', 'log:*', [], 'Event Log');
+    }
+
     /** Canonical key for a multi-device entity: everyone sharing BOTH display_id and
      *  name is one person. display_id is operator-editable in the Admin UI and is
      *  deliberately used to merge devices, so it is the grouping key by design; the
@@ -609,7 +620,10 @@ class MessagingDb
 
     /** Conversation list for a participant: last message + unread count + the other
      *  members (for labelling) per thread, plus a preview of the latest message. */
-    public function conversationsFor(string $event, int $participantId): array
+    /** $includeLog is the caller asserting this participant is an operator. The log
+     *  thread has no members, so without it there is nothing to join against and a
+     *  mobile would see the event's log listed in its conversation list. */
+    public function conversationsFor(string $event, int $participantId, bool $includeLog = false): array
     {
         $rows = $this->all(
             'SELECT c.id, c.kind, c.title,
@@ -620,14 +634,16 @@ class MessagingDb
              LEFT JOIN conversation_members cm
                     ON cm.conversation_id=c.id AND cm.participant_id=:p
              WHERE c.event=:e
-               AND (cm.participant_id IS NOT NULL OR c.kind = \'broadcast\')
+               AND (cm.participant_id IS NOT NULL OR c.kind = \'broadcast\'
+                    OR (c.kind = \'log\' AND :log = 1))
                -- Hide threads with no messages. Conversations are only created when
                -- something is sent, so an empty one means every message was migrated
                -- into an entity thread; showing it is the stale duplicate that
                -- merging exists to remove. Keeping the row (rather than deleting it)
                -- is what lets undoMerge put the history back somewhere real.
                AND EXISTS (SELECT 1 FROM messages mx WHERE mx.conversation_id = c.id)
-             ORDER BY last_id DESC', [':e'=>$event, ':p'=>$participantId]);
+             ORDER BY last_id DESC',
+            [':e'=>$event, ':p'=>$participantId, ':log'=>$includeLog ? 1 : 0]);
         foreach ($rows as &$r) {
             $r['unread']  = (int)$r['unread'];
             $r['last_id'] = (int)($r['last_id'] ?? 0);
@@ -644,8 +660,10 @@ class MessagingDb
             // inbox may reasonably keep history a client offering reply targets would
             // hide. Broadcast threads have no members and are never stale — "All
             // Trackers" outlives everyone in it.
+            // The log outlives its members the same way "All Trackers" does -- it is
+            // the event's own thread and nobody is at the other end of it.
             $cutoff = time() - 86400;
-            $r['stale'] = $r['kind'] !== 'broadcast'
+            $r['stale'] = $r['kind'] !== 'broadcast' && $r['kind'] !== 'log'
                 && !array_filter($mem, fn($m) => (int)($m['last_seen'] ?? 0) > $cutoff);
             // Latest-message preview (sender + text).
             $last = $r['last_id'] ? $this->one(
