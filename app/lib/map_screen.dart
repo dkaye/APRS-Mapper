@@ -433,8 +433,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         // says a message arrived; this says what it was, which is the difference
         // between a driver having to stop and a driver carrying on. Needs the `audio`
         // background mode, without which iOS refuses the session off-screen.
-        unawaited(Speaker.instance
-            .speakMessage(senderLabel: msg.senderLabel, text: msg.text));
+        //
+        // After the notification, and after a beat: the notification's own sound is
+        // the alert tone, and speech starting underneath it would talk over the very
+        // thing that made the operator listen.
+        unawaited(Future.delayed(const Duration(milliseconds: 900), () {
+          Speaker.instance.speakMessage(senderLabel: msg.senderLabel, text: msg.text);
+        }));
         unawaited(_notifPlugin.show(
           id: msg.id & 0x7FFFFFFF,
           title: '📨 ${msg.fromLabel}',

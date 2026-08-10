@@ -38,12 +38,15 @@ class Speaker {
       // playback + duckOthers is what allows audio to start while backgrounded and
       // makes navigation or music dip rather than stop. Without the playback
       // category iOS refuses the session outright once the app leaves the screen.
+      //
+      // No defaultToSpeaker here, however obviously useful it sounds: it is valid
+      // only with playAndRecord, and setting it alongside playback makes the whole
+      // category call fail — leaving the session unconfigured and the app silent in
+      // the background, which is the one case this exists for. playback already
+      // routes to the speaker.
       await _tts.setIosAudioCategory(
         IosTextToSpeechAudioCategory.playback,
-        [
-          IosTextToSpeechAudioCategoryOptions.duckOthers,
-          IosTextToSpeechAudioCategoryOptions.defaultToSpeaker,
-        ],
+        [IosTextToSpeechAudioCategoryOptions.duckOthers],
         IosTextToSpeechAudioMode.spokenAudio,
       );
     }
