@@ -5958,12 +5958,22 @@ async function _refreshConversations() {
 	try {
 		const d = await _msgApi('conversations');
 		if (!d || !d.conversations) return;
+		const live = new Set();
 		for (const c of d.conversations) {
+			live.add(c.id);
 			const ex = _convs.get(c.id) || {messages:[], loaded:false};
 			_convs.set(c.id, Object.assign(ex, {
 				id:c.id, kind:c.kind, title:c.title, members:c.members || [],
 				unread:c.unread || 0, last_id:c.last_id || 0, preview:c.preview || null,
 			}));
+		}
+		// Drop what the server no longer lists. It hides threads whose messages have
+		// all been migrated into an entity thread, but this map only ever grew — so
+		// the emptied original stayed on screen beside its replacement, showing the
+		// same person twice. That duplicate is exactly what merging exists to remove.
+		// The open thread is spared so the view under the operator cannot vanish.
+		for (const id of [..._convs.keys()]) {
+			if (!live.has(id) && id !== _openConvId) _convs.delete(id);
 		}
 		if (_msgPanelOpen) _renderConvList();
 		_updateTotalUnread();

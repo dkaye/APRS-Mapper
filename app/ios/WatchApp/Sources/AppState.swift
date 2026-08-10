@@ -184,6 +184,10 @@ final class AppState {
         && m.id > launchWatermark
         && now - TimeInterval(m.ts) <= Self.maxAnnounceAge
         && !m.isSelf
+        // Already announced by the phone. Queued transfers flush the moment this app
+        // comes forward, so without this the operator raises their wrist and hears a
+        // rerun of everything they just heard from their pocket.
+        && !m.phoneAnnounced
     }
     if source != .context {
       lastArrival = Arrival(at: Date(), live: source == .relayLive,
@@ -195,14 +199,12 @@ final class AppState {
     if isActive {
       Announcer.shared.enqueue(alertable)
     } else {
-      // Backgrounded, so nothing can be spoken here. Raise a notification only for
-      // messages the phone did not handle: ones we fetched ourselves because it was
-      // unreachable, and ones it deliberately left to us on the strength of a
-      // capability report we have since invalidated by going quiet. Notifying for
-      // anything else would be a second buzz for a message already announced better.
-      for m in alertable where source == .directPoll || !m.phoneAnnounced {
-        Notifier.alert(m)
-      }
+      // Backgrounded, so nothing can be spoken here. Everything still in `alertable`
+      // is a message the phone did not announce — either we fetched it ourselves
+      // because the phone was unreachable, or it deliberately left it to us on the
+      // strength of a promise we have since invalidated by going quiet. A
+      // notification is all that is left, and better than silence.
+      for m in alertable { Notifier.alert(m) }
     }
   }
 
