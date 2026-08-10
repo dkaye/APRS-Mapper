@@ -32,6 +32,51 @@ class MessagingEntityTest extends TestCase
         return $this->db->insertMessage($this->ev, $conv, $from, $text, $to, false);
     }
 
+    // ── finding a person's thread from one of their devices ───────────────────
+
+    /** Addressing a device by callsign — what right-clicking a tracker does — must land
+     *  in that person's existing entity thread. A direct thread beside it renders from
+     *  the same display_id and name, so the operator sees one person listed twice with
+     *  their history split between the rows. */
+    public function testFindsTheEntityThreadFromOneOfItsDevices(): void
+    {
+        $ent = $this->db->resolveEntityConversation($this->ev, $this->op, 'CRD', 'Stanton',
+                                                    [$this->d1, $this->d2]);
+
+        $this->assertSame($ent, $this->db->entityConversationForDevice($this->ev, $this->op, $this->d1));
+        $this->assertSame($ent, $this->db->entityConversationForDevice($this->ev, $this->op, $this->d2),
+                          'either phone finds the same person');
+    }
+
+    /** A device with no entity thread has nothing to find, and must not be dragged into
+     *  somebody else's. */
+    public function testDeviceWithNoEntityThreadFindsNothing(): void
+    {
+        $this->db->resolveEntityConversation($this->ev, $this->op, 'CRD', 'Stanton', [$this->d1, $this->d2]);
+
+        $this->assertNull($this->db->entityConversationForDevice($this->ev, $this->op, $this->other));
+    }
+
+    /** The guard that matters most: a "(multiple)" thread is a station's whole group, so
+     *  routing one person's message into it would put a private reply in front of
+     *  everyone at that station. */
+    public function testMultipleThreadIsNeverTreatedAsAPersonsThread(): void
+    {
+        $this->db->resolveEntityConversation($this->ev, $this->op, 'CRD', '*', [$this->d1, $this->d2]);
+
+        $this->assertNull($this->db->entityConversationForDevice($this->ev, $this->op, $this->d1));
+    }
+
+    /** One operator's entity thread is not another's — threads are keyed per operator,
+     *  and a second operator must not be dropped into the first one's conversation. */
+    public function testAnotherOperatorDoesNotInheritTheThread(): void
+    {
+        $this->db->resolveEntityConversation($this->ev, $this->op, 'CRD', 'Stanton', [$this->d1]);
+        $op2 = $this->db->upsertParticipant($this->ev, 'operator', 'Shadow', 'Shadow', null, null);
+
+        $this->assertNull($this->db->entityConversationForDevice($this->ev, $op2, $this->d1));
+    }
+
     // ── entity key ────────────────────────────────────────────────────────────
 
     public function testEntityHashIgnoresSurroundingWhitespace(): void

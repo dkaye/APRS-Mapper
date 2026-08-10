@@ -301,6 +301,30 @@ class MessagingDb
         return $this->findOrCreateConversation($event, 'log', 'log:*', [], 'Event Log');
     }
 
+    /** This operator's entity thread for one device, if there is one.
+     *
+     *  Addressing a device by callsign — what right-clicking a tracker does — otherwise
+     *  opens a direct thread beside that person's entity thread. Both render from the
+     *  same display_id and name, so the operator sees the same label twice and traffic
+     *  splits between them, which is what migrateThreadsIntoEntity exists to clean up
+     *  after the fact. Finding the entity thread first avoids making the mess.
+     *
+     *  kind = 'entity' only, never 'entity_multi': a "(multiple)" thread is a station's
+     *  whole group, and routing one person's message into it would put a private reply
+     *  in front of everyone at that station. */
+    public function entityConversationForDevice(string $event, int $operatorId, int $deviceId): ?int
+    {
+        $r = $this->one(
+            "SELECT c.id FROM conversations c
+               JOIN conversation_members cd ON cd.conversation_id = c.id AND cd.participant_id = :dev
+               JOIN conversation_members co ON co.conversation_id = c.id AND co.participant_id = :op
+               JOIN participants p ON p.id = cd.participant_id AND p.kind = 'mobile'
+              WHERE c.event = :e AND c.kind = 'entity'
+              ORDER BY c.id DESC LIMIT 1",
+            [':e'=>$event, ':dev'=>$deviceId, ':op'=>$operatorId]);
+        return $r ? (int)$r['id'] : null;
+    }
+
     /** Canonical key for a multi-device entity: everyone sharing BOTH display_id and
      *  name is one person. display_id is operator-editable in the Admin UI and is
      *  deliberately used to merge devices, so it is the grouping key by design; the

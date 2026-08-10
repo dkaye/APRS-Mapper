@@ -329,7 +329,25 @@ function messaging_handle(string $action, array $body, array $ctx): void
             if (!$isMult) $db->migrateThreadsIntoEntity($event, $conv, (int)$me['id'], $rIds);
             $deliverTo = array_values(array_filter($rIds, fn($id) => (int)$id !== (int)$me['id']));
         } else {
-            [$conv, $kind] = $db->resolveConversation($event, (int)$me['id'], $rIds, $broadcast, $convId, $title);
+            // An operator addressing one device by callsign — the sidebar right-click —
+            // lands in that person's existing entity thread rather than opening a
+            // parallel direct one. The two render identically, since both take their
+            // label from the same display_id and name, so the operator sees the same
+            // person listed twice with their history split down the middle.
+            //
+            // This is what the system already believes: migrateThreadsIntoEntity folds
+            // direct history *into* the entity thread, treating it as the canonical
+            // place for a person. It just ran only when sending via an `ent:` picker
+            // row, so every right-click afterwards undid the tidying.
+            $entConv = (!$broadcast && !$convId && ($me['kind'] ?? '') === 'operator' && count($rIds) === 1)
+                ? $db->entityConversationForDevice($event, (int)$me['id'], (int)$rIds[0])
+                : null;
+            if ($entConv !== null) {
+                $conv = $entConv;
+                $kind = 'entity';
+            } else {
+                [$conv, $kind] = $db->resolveConversation($event, (int)$me['id'], $rIds, $broadcast, $convId, $title);
+            }
             // A broadcast reaches every registered mobile, so make sure they all exist.
             if ($kind === 'broadcast') _msg_ensure_all_mobiles($db, $ctx);
             $deliverTo = $db->conversationRecipients($event, $conv, $kind === 'broadcast', (int)$me['id']);
