@@ -195,6 +195,24 @@ final class AppState {
                             notified: !isActive && !alertable.isEmpty)
     }
 
+    // Aim the reply at whoever just called — but only for messages this watch fetched
+    // itself. The phone re-aims whenever it relays (WatchBridge._aimAt), and a message
+    // that arrived by direct poll never passed through the phone, so nothing aimed at
+    // all: the reply still pointed wherever it last pointed. After an event change that
+    // is a thread which no longer exists, leaving the operator hearing a call they have
+    // no way to answer.
+    //
+    // Broadcasts are deliberately left alone. WatchMessage carries no sender key, so
+    // the only thing available to aim at is the broadcast thread itself, and a spoken
+    // "copy that" going to every tracker is a worse default than not moving the aim —
+    // the same conservative choice the phone makes when it has no key either.
+    if source == .directPoll,
+       let call = fresh.last(where: { !$0.isSelf && !$0.broadcast && $0.conversationId > 0 }),
+       destination?.conversationId != call.conversationId {
+      chooseDestination(conversationId: call.conversationId, recipients: nil,
+                        label: call.senderLabel)
+    }
+
     guard !alertable.isEmpty else { return }
     if isActive {
       Announcer.shared.enqueue(alertable)

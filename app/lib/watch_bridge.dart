@@ -187,7 +187,19 @@ class WatchBridge {
     if (list.isEmpty) return;
     pushConversations(list);
 
-    // No destination yet, but there is somewhere obvious to reply to. Adopt the most
+    // A destination saved during a previous event points at a conversation that no
+    // longer exists, and nothing used to clear it: the adopt-a-thread rule below only
+    // fires when there is no destination at all, so a stale one survived indefinitely.
+    // The watch then showed a reply target from the last event and replying went
+    // nowhere. conversations() returns every thread in the current event, so absence
+    // from it is a reliable staleness test rather than a guess.
+    final aimed = _destination?['conversationId'] as int?;
+    if (aimed != null && !list.any((c) => c.id == aimed)) {
+      _destination = null;
+      unawaited(SharedPreferences.getInstance().then((p) => p.remove(_kWatchDestination)));
+    }
+
+    // No destination, but there is somewhere obvious to reply to. Adopt the most
     // recent thread rather than leaving Talk disabled -- the server orders these by
     // last activity, so it is the conversation the operator is already in.
     if (_destination == null) {
