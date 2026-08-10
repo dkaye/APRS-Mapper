@@ -78,6 +78,16 @@ final class Announcer {
     drain()
   }
 
+  /// Says back what actually went out.
+  ///
+  /// The only transcription check that works with eyes on the road. No tone: this
+  /// answers something the operator just did rather than interrupting them with
+  /// something new.
+  func announceSent(_ text: String) {
+    queue.append(Announcement(doubleHaptic: false, utterances: ["Sent. \(text)"], tone: false))
+    drain()
+  }
+
   /// Confirms the fate of a reply the user just spoke: sent, delivered, read.
   ///
   /// Announced aloud because the whole point of talking into the wrist is that the

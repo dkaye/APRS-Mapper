@@ -1,8 +1,10 @@
 /// Talk — press and hold to reply.
 ///
 /// Hold the button, speak, let go. The clip goes to the iPhone, which transcribes it
-/// and sends the words back; the transcript then gets the same countdown as any other
-/// reply and sends itself. From the wrist it is one press and nothing else.
+/// and sends it. There is no confirm step: a countdown showing the transcription only
+/// protects an operator who is looking at their wrist, which is the opposite of the
+/// situation push-to-talk exists for. Verification happens afterwards instead — the
+/// watch says back what it sent, which works with eyes on the road.
 ///
 /// The gesture is a `DragGesture` with zero minimum distance rather than a
 /// `LongPressGesture`. A long press fires once after its threshold and reports
@@ -21,9 +23,6 @@ struct PTTView: View {
   @Environment(AppState.self) private var state
   private var recorder: AudioRecorder { AudioRecorder.shared }
   private var talk: TalkSession { TalkSession.shared }
-
-  @State private var captured = ""
-  @State private var showConfirm = false
 
   private var hasDestination: Bool { state.sharing && state.destination != nil }
 
@@ -50,9 +49,6 @@ struct PTTView: View {
         .multilineTextAlignment(.center)
     }
     .padding(.horizontal, 4)
-    .sheet(isPresented: $showConfirm) {
-      ConfirmSendView(text: $captured, isPresented: $showConfirm)
-    }
     .navigationTitle("Talk")
     .task {
       if !recorder.permissionKnown { await recorder.requestPermission() }
@@ -61,8 +57,7 @@ struct PTTView: View {
     .onChange(of: talk.pendingTranscript) { _, text in
       guard let text, !text.isEmpty else { return }
       talk.pendingTranscript = nil
-      captured = text
-      showConfirm = true
+      state.sendReply(text)
     }
   }
 
@@ -78,14 +73,12 @@ struct PTTView: View {
         )
     } else if hasDestination {
       // No phone, or no microphone permission — fall back to the system dictation
-      // screen, which does not need either.
+      // screen, which needs neither. Its Done button is the confirmation, so this
+      // sends straight out too.
       TextFieldLink(prompt: Text("Reply")) {
         face
       } onSubmit: { text in
-        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !body.isEmpty else { return }
-        captured = body
-        showConfirm = true
+        state.sendReply(text)
       }
       .buttonStyle(.plain)
     } else {
@@ -156,8 +149,8 @@ struct PTTView: View {
     }
   }
 
-  /// Says what is happening, or why the button is dead — never a dim circle with no
-  /// explanation.
+  /// Says what is happening, what just went out, or why the button is dead — never a
+  /// dim circle with no explanation.
   private var prompt: String {
     if !state.sharing { return "Start sharing on iPhone" }
     if state.destination == nil { return "Swipe to Reply to and pick one" }
@@ -165,6 +158,7 @@ struct PTTView: View {
     if recorder.isRecording { return "Release to send" }
     if recorder.granted == false { return "Allow Microphone in Settings" }
     if !state.phoneReachable { return "iPhone away — tap to dictate" }
+    if !state.lastSentText.isEmpty { return "Sent: \(state.lastSentText)" }
     return "Hold to talk"
   }
 }

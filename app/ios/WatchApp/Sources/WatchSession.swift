@@ -170,8 +170,17 @@ final class WatchSession: NSObject {
       return
     }
     if reply["ok"] as? Bool == true {
+      // Read the words back before the entry goes, since it is the only copy of what
+      // was actually sent. This is the verification that replaced the confirm
+      // countdown: after the fact and audible, rather than before and on a screen
+      // nobody hands-free is looking at.
+      let sent = Outbox.shared.entry(id)?.text ?? ""
       Outbox.shared.remove(id)
+      AppState.shared.lastSentText = sent
       WKInterfaceDevice.current().play(.success)
+      if AppState.shared.readBackSent, AppState.shared.speakEnabled, !sent.isEmpty {
+        Announcer.shared.announceSent(sent)
+      }
     } else {
       Outbox.shared.mark(id, .failed)
       WKInterfaceDevice.current().play(.failure)
@@ -197,6 +206,11 @@ final class WatchSession: NSObject {
       case "receipt":
         // Must be matched before the message decode below: a receipt carries a
         // messageId, and anything with an id would otherwise parse as a message.
+        //
+        // "sent" is skipped: the watch already said so itself, with the words it
+        // sent, the moment the phone confirmed. Announcing it again from the receipt
+        // feed would be the same news twice.
+        guard payload["stage"] as? String != "sent" else { return }
         Announcer.shared.announceReceipt(
           stage: payload["stage"] as? String ?? "",
           count: payload["count"] as? Int ?? 0,

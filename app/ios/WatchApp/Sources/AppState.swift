@@ -23,6 +23,18 @@ final class AppState {
   var speakEnabled = true
   var announceBroadcasts = true
 
+  /// Say the words back after a reply goes out.
+  ///
+  /// This is the only verification of a transcription that survives the use case.
+  /// The confirm screen it replaced showed the text before sending, which protects
+  /// nobody whose eyes are where they should be — on the road. Hearing what actually
+  /// went out costs nothing in the send path, since it happens afterwards, and gives
+  /// the operator a second to send a correction.
+  var readBackSent = true
+
+  /// What went out last, shown on the Talk page for a glance down.
+  var lastSentText = ""
+
   /// Link + session state, shown in Settings so a user can tell "the watch is not
   /// alerting" apart from "nothing has been sent".
   var phoneReachable = false
@@ -114,6 +126,7 @@ final class AppState {
     static let seenIds = "watch.seenIds"
     static let speak = "watch.speak"
     static let broadcasts = "watch.announceBroadcasts"
+    static let readBack = "watch.readBackSent"
     static let destination = "watch.destination"
   }
 
@@ -124,6 +137,7 @@ final class AppState {
     launchWatermark = lastId
     speakEnabled = d.object(forKey: Key.speak) as? Bool ?? true
     announceBroadcasts = d.object(forKey: Key.broadcasts) as? Bool ?? true
+    readBackSent = d.object(forKey: Key.readBack) as? Bool ?? true
     if let raw = d.data(forKey: Key.messages),
        let saved = try? JSONDecoder().decode([WatchMessage].self, from: raw) {
       messages = saved
@@ -243,6 +257,33 @@ final class AppState {
     persist()
   }
 
+  @MainActor
+  func setReadBackSent(_ on: Bool) {
+    readBackSent = on
+    persist()
+  }
+
+  /// Send a reply straight out. There is no confirm step: a countdown showing the
+  /// transcription protects only an operator who is looking at their wrist, which is
+  /// the opposite of the situation push-to-talk exists for. Verification happens
+  /// afterwards instead, by saying the words back.
+  @MainActor
+  func sendReply(_ text: String) {
+    let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !body.isEmpty, let destination else { return }
+    let entry = PendingSend(
+      id: UUID().uuidString,
+      text: body,
+      conversationId: destination.conversationId,
+      recipients: destination.recipients,
+      destinationLabel: destination.label,
+      createdAt: Date(),
+      state: .sending
+    )
+    Outbox.shared.add(entry)
+    WatchSession.shared.submit(entry)
+  }
+
   /// Change the sticky destination from the wrist and tell the phone, so the two
   /// agree about where the next reply goes. The phone remains authoritative — it
   /// echoes the choice back in the next context, which is what confirms it landed.
@@ -280,6 +321,7 @@ final class AppState {
     d.set(lastId, forKey: Key.lastId)
     d.set(speakEnabled, forKey: Key.speak)
     d.set(announceBroadcasts, forKey: Key.broadcasts)
+    d.set(readBackSent, forKey: Key.readBack)
     d.set(Array(seenIds), forKey: Key.seenIds)
     if let raw = try? JSONEncoder().encode(messages) { d.set(raw, forKey: Key.messages) }
     if let dest = destination, let raw = try? JSONEncoder().encode(dest) {

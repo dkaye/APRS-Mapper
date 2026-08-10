@@ -20,6 +20,10 @@ struct SettingsView: View {
           get: { state.announceBroadcasts },
           set: { state.setAnnounceBroadcasts($0) }
         ))
+        Toggle("Read back sent", isOn: Binding(
+          get: { state.readBackSent },
+          set: { state.setReadBackSent($0) }
+        ))
       } footer: {
         Text("Alerts buzz and play a tone even with read aloud off. Wear headphones for reliable speech.")
           .font(.caption2)
