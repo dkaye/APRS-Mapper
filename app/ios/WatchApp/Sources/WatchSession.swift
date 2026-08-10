@@ -116,6 +116,11 @@ final class WatchSession: NSObject {
   /// payload, and the transfer is durable, so a clip survives the second or two it
   /// takes to walk back into range. The phone deletes the file after transcribing;
   /// audio is never stored on either device and never reaches the server.
+  /// Cap on sending a clip inline. WatchConnectivity's message payload limit is
+  /// around 64 KB; at AAC 16 kHz mono this is roughly twenty seconds of speech,
+  /// which covers ordinary net traffic.
+  private static let maxInlineAudio = 48 * 1024
+
   func transferAudio(_ url: URL, clientId: String) -> Bool {
     // No isPaired check: that property is iOS-only, and from this side a session
     // that has activated is as much assurance as watchOS offers.
@@ -123,6 +128,26 @@ final class WatchSession: NSObject {
       try? FileManager.default.removeItem(at: url)
       return false
     }
+
+    // Inline when we can. transferFile is durable but opportunistic -- the system
+    // decides when it is worth waking the link, and the wait between releasing the
+    // button and seeing words was mostly that queue rather than the recogniser.
+    // sendMessage goes now, which is what a push-to-talk key has to feel like.
+    if s.isReachable,
+       let data = try? Data(contentsOf: url),
+       data.count <= Self.maxInlineAudio {
+      s.sendMessage(["type": "talkAudio", "clientId": clientId, "audio": data],
+                    replyHandler: { _ in
+                      try? FileManager.default.removeItem(at: url)
+                    },
+                    errorHandler: { _ in
+                      // Keep the clip and fall back to the durable path rather than
+                      // making the operator say it again.
+                      s.transferFile(url, metadata: ["type": "talkAudio", "clientId": clientId])
+                    })
+      return true
+    }
+
     s.transferFile(url, metadata: ["type": "talkAudio", "clientId": clientId])
     return true
   }

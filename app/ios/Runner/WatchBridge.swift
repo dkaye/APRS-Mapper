@@ -210,6 +210,18 @@ final class WatchBridge: NSObject {
   /// Route an inbound watch payload to Dart, holding `reply` open until Dart answers
   /// or the watchdog fires — whichever comes first.
   private func route(_ payload: [String: Any], reply: (([String: Any]) -> Void)?) {
+    // A push-to-talk clip sent inline rather than as a file transfer. Handled here
+    // and never forwarded to Dart: turning audio into text is this side's job and
+    // needs no Flutter engine, which matters because this can arrive while the app
+    // is still starting in the background.
+    if payload["type"] as? String == "talkAudio",
+       let audio = payload["audio"] as? Data,
+       let id = payload["clientId"] as? String {
+      reply?(["received": true])
+      receiveInlineAudio(audio, clientId: id)
+      return
+    }
+
     var event = payload
     let clientId = payload["clientId"] as? String
 
@@ -316,6 +328,20 @@ extension WatchBridge: WCSessionDelegate {
 
 extension WatchBridge {
   private static let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+
+  /// A clip that arrived in a message payload rather than as a file.
+  func receiveInlineAudio(_ audio: Data, clientId: String) {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("talk-\(clientId).m4a")
+    do {
+      try audio.write(to: url)
+    } catch {
+      replyTranscript(clientId: clientId, text: nil, error: "Audio lost in transfer")
+      return
+    }
+    _ = push(message: ["type": "audioReceived", "clientId": clientId])
+    transcribe(url, clientId: clientId)
+  }
 
   private func transcribe(_ url: URL, clientId: String) {
     let finish: (String?, String?) -> Void = { [weak self] text, error in
