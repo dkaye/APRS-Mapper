@@ -6112,8 +6112,17 @@ async function _sendCurrent() {
 }
 
 // ── Live poll ────────────────────────────────────────────────────────────────
+// True for the first poll after subscribing. Subscribing resets _msgLastId to 0 and
+// a reloaded page starts with an empty _msgSeen, so that first poll returns the whole
+// history — every message of it "new". Without this the panel reads the entire
+// backlog aloud on every sign-in, which is what happens when an operator signs out
+// and reloads. The messages are still ingested, counted as unread and shown; they
+// are simply not announced, on the grounds that they are history rather than news.
+// The watch app applies the same rule at launch for the same reason.
+let _msgPriming = false;
 function _startPoll() {
 	if (_msgPollTimer) return;
+	_msgPriming = true;
 	_msgPollTimer = setInterval(_poll, 5000);
 	_poll();
 }
@@ -6139,6 +6148,7 @@ async function _poll() {
 			if (c) _renderThread(c);
 		}
 	} catch {}
+	finally { _msgPriming = false; }
 }
 // Delivery acknowledgement for one of MY sent messages. For a 1:1, "Pending" =
 // queued because the recipient is offline; "Sent" = queued while they're online
@@ -6176,7 +6186,7 @@ function _ingestIncoming(m) {
 	const isOpen = (_openConvId === cid) && _msgPanelOpen;
 	if (isOpen) { if (isNew) _appendBubble(c, m); _markConvRead(cid); }
 	else if (isNew) { c.unread = (c.unread || 0) + 1; }
-	if (isNew) {
+	if (isNew && !_msgPriming) {
 		// Speaker on + this message is in the thread you're viewing → read it aloud,
 		// no tone. Otherwise play the alert tone (speaker off, OR the message is in
 		// a thread that isn't currently showing) and defer any read until its thread
