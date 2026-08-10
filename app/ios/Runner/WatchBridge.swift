@@ -313,7 +313,7 @@ extension WatchBridge: WCSessionDelegate {
     do {
       try FileManager.default.copyItem(at: file.fileURL, to: copy)
     } catch {
-      replyTranscript(clientId: clientId, text: nil, error: "Audio lost in transfer")
+      replyTranscript(clientId: clientId, text: nil, error: "Audio lost in transfer", ms: 0, onDevice: false)
       return
     }
 
@@ -336,50 +336,69 @@ extension WatchBridge {
     do {
       try audio.write(to: url)
     } catch {
-      replyTranscript(clientId: clientId, text: nil, error: "Audio lost in transfer")
+      replyTranscript(clientId: clientId, text: nil, error: "Audio lost in transfer", ms: 0, onDevice: false)
       return
     }
     _ = push(message: ["type": "audioReceived", "clientId": clientId])
     transcribe(url, clientId: clientId)
   }
 
+  /// Ask once, at launch, rather than per clip. `requestAuthorization` is cheap after
+  /// the first grant but not free, and it sat in the path between the operator
+  /// releasing the button and seeing words.
+  func primeSpeechAuthorization() {
+    guard SFSpeechRecognizer.authorizationStatus() == .notDetermined else { return }
+    SFSpeechRecognizer.requestAuthorization { _ in }
+  }
+
   private func transcribe(_ url: URL, clientId: String) {
-    let finish: (String?, String?) -> Void = { [weak self] text, error in
+    let startedAt = Date()
+    let finish: (String?, String?, Bool) -> Void = { [weak self] text, error, onDevice in
       try? FileManager.default.removeItem(at: url) // audio is never kept
-      self?.replyTranscript(clientId: clientId, text: text, error: error)
+      let ms = Int(Date().timeIntervalSince(startedAt) * 1000)
+      NSLog("[watch] transcribe \(clientId) took \(ms)ms onDevice=\(onDevice) error=\(error ?? "-")")
+      self?.replyTranscript(clientId: clientId, text: text, error: error, ms: ms, onDevice: onDevice)
     }
 
-    SFSpeechRecognizer.requestAuthorization { status in
-      DispatchQueue.main.async {
-        guard status == .authorized else {
-          finish(nil, "Speech recognition not allowed")
-          return
-        }
-        guard let recognizer = Self.recognizer, recognizer.isAvailable else {
-          finish(nil, "Recognizer unavailable")
-          return
-        }
-        let request = SFSpeechURLRecognitionRequest(url: url)
-        // Keep the audio on this device when the model is present. It is a ham
-        // operator's traffic; there is no reason to hand it to Apple if the phone
-        // can do the work itself.
-        request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
-        request.taskHint = .dictation
-
-        recognizer.recognitionTask(with: request) { result, error in
-          guard let result else {
-            if error != nil { finish(nil, "Didn't catch that") }
-            return
-          }
-          guard result.isFinal else { return }
-          finish(result.bestTranscription.formattedString, nil)
+    guard SFSpeechRecognizer.authorizationStatus() == .authorized else {
+      // Only ask here if it was never asked — the prompt cannot appear while
+      // backgrounded, so failing fast beats hanging on a sheet nobody can see.
+      SFSpeechRecognizer.requestAuthorization { status in
+        DispatchQueue.main.async {
+          if status == .authorized { self.transcribe(url, clientId: clientId) }
+          else { finish(nil, "Speech recognition not allowed", false) }
         }
       }
+      return
+    }
+    guard let recognizer = Self.recognizer, recognizer.isAvailable else {
+      finish(nil, "Recognizer unavailable", false)
+      return
+    }
+
+    // Keep the audio on this device when the model is present. It is a ham
+    // operator's traffic; there is no reason to hand it to Apple if the phone can do
+    // the work itself — and a network round trip is the slower of the two.
+    let onDevice = recognizer.supportsOnDeviceRecognition
+    let request = SFSpeechURLRecognitionRequest(url: url)
+    request.requiresOnDeviceRecognition = onDevice
+    request.taskHint = .dictation
+    request.shouldReportPartialResults = false // we only ever use the final text
+
+    recognizer.recognitionTask(with: request) { result, error in
+      guard let result else {
+        if error != nil { finish(nil, "Didn't catch that", onDevice) }
+        return
+      }
+      guard result.isFinal else { return }
+      finish(result.bestTranscription.formattedString, nil, onDevice)
     }
   }
 
-  private func replyTranscript(clientId: String, text: String?, error: String?) {
-    var payload: [String: Any] = ["type": "transcript", "clientId": clientId]
+  private func replyTranscript(clientId: String, text: String?, error: String?,
+                               ms: Int, onDevice: Bool) {
+    var payload: [String: Any] = ["type": "transcript", "clientId": clientId,
+                                  "ms": ms, "onDevice": onDevice]
     if let text { payload["text"] = text }
     if let error { payload["error"] = error }
     _ = push(message: payload)

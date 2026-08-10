@@ -69,12 +69,22 @@ final class TalkSession {
   /// Words the phone sent back, waiting for the confirm screen to pick them up.
   var pendingTranscript: String?
 
+  /// How long the phone's recogniser took, and whether it ran on-device. Shown in
+  /// Settings: a second on-device and eight over the network feel like the same
+  /// unexplained wait from the wrist, and only one of them is worth doing anything
+  /// about.
+  private(set) var lastTranscribeMs: Int?
+  private(set) var lastTranscribeOnDevice = false
+
   /// The phone's answer. Ignored unless it belongs to the attempt in flight — a
   /// slow transcript from an abandoned press must not hijack a later one.
-  func deliver(clientId id: String, text: String?, error: String?) {
+  func deliver(clientId id: String, text: String?, error: String?,
+               ms: Int? = nil, onDevice: Bool = false) {
     guard clientId == id else { return }
     watchdog?.cancel()
     clientId = nil
+    if let ms { lastTranscribeMs = ms }
+    lastTranscribeOnDevice = onDevice
 
     if let error {
       fail(error)

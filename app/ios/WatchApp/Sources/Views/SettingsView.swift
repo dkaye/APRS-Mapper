@@ -43,6 +43,11 @@ struct SettingsView: View {
           LabeledContent("Reply to", value: d.label)
         }
         LabeledContent("Messages", value: "\(state.messages.count)")
+        if let ms = TalkSession.shared.lastTranscribeMs {
+          LabeledContent("Transcribe",
+                         value: String(format: "%.1fs %@", Double(ms) / 1000,
+                                       TalkSession.shared.lastTranscribeOnDevice ? "on-device" : "network"))
+        }
         // Deliberately not LabeledContent: on watchOS its trailing view is squeezed
         // onto one line and a second line of detail is clipped away entirely.
         VStack(alignment: .leading, spacing: 1) {

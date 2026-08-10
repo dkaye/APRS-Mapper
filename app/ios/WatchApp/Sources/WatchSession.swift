@@ -157,7 +157,9 @@ final class WatchSession: NSObject {
     guard let id = payload["clientId"] as? String else { return }
     TalkSession.shared.deliver(clientId: id,
                                text: payload["text"] as? String,
-                               error: payload["error"] as? String)
+                               error: payload["error"] as? String,
+                               ms: payload["ms"] as? Int,
+                               onDevice: payload["onDevice"] as? Bool ?? false)
   }
 
   @MainActor
