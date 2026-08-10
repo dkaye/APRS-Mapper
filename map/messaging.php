@@ -411,7 +411,7 @@ function messaging_handle(string $action, array $body, array $ctx): void
 
     case 'conversations': {   // the caller's conversation list (unread + last msg)
         echo json_encode([
-            'conversations' => $db->conversationsFor($event, (int)$me['id']),
+            'conversations' => _msg_mark_stale($db->conversationsFor($event, (int)$me['id']), $ctx),
             'can_manage'    => (bool)($ctx['authPerm']('messages.manage')),
         ]);
         exit;
@@ -485,6 +485,40 @@ function messaging_handle(string $action, array $body, array $ctx): void
 
 /** Current event for a parsed config (blank between events → 'default'). */
 function messaging_ctx_event(array $mcfg): string { return trim($mcfg['event'] ?? '') ?: 'default'; }
+
+/** Re-decide each conversation's `stale` flag from the tracker feed.
+ *
+ *  conversationsFor answers it from participants.last_seen, which is the right
+ *  question asked of the wrong column: upsertParticipant sets last_seen on every
+ *  write, and it is written in bulk by paths that say nothing about anyone being
+ *  active — _msg_ensure_all_mobiles touches every tracker on each broadcast, and
+ *  resolving a recipient touches whoever it resolved. A station that left the event
+ *  weeks ago therefore looks freshly seen the moment somebody else broadcasts, and
+ *  its thread never ages out.
+ *
+ *  A mobile's real freshness is its tracker lastUpdate, which is what the recipient
+ *  picker has always used (_msg_addressable) and why the picker was right while the
+ *  conversation list was not. Operators have no tracker record and keep last_seen,
+ *  which for them is only ever written by touchParticipant and so means what it says. */
+function _msg_mark_stale(array $rows, array $ctx): array
+{
+    $now  = time();
+    $seen = [];
+    foreach (_msg_load_trackers($ctx['mobileFile']) as $t) {
+        if (!empty($t['callsign'])) $seen[$t['callsign']] = (int)($t['lastUpdate'] ?? 0);
+    }
+    foreach ($rows as &$r) {
+        if (($r['kind'] ?? '') === 'broadcast') { $r['stale'] = false; continue; }
+        $r['stale'] = true;
+        foreach ($r['members'] ?? [] as $m) {
+            $last = ($m['kind'] ?? '') === 'mobile'
+                  ? ($seen[$m['key']] ?? 0)
+                  : (int)($m['last_seen'] ?? 0);
+            if ($last > 0 && ($now - $last) <= 86400) { $r['stale'] = false; break; }
+        }
+    }
+    return $rows;
+}
 
 /** Reduce a hydrated message row to the legacy {id,from_label,text,ts} shape.
  *

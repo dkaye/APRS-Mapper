@@ -147,7 +147,14 @@ class MessagingWatchShapeTest extends TestCase
     /** An operator scanning the inbox is looking for someone to talk to, so a thread
      *  whose other end has not been seen in 24 hours is reported stale — the same
      *  window the recipient picker uses to decide who is addressable. The flag is
-     *  reported, not acted on here: the panel hides them, an inbox may not. */
+     *  reported, not acted on here: the panel hides them, an inbox may not.
+     *
+     *  These cover the operator side, where participants.last_seen is written only by
+     *  touchParticipant and so means what it says. A mobile's freshness is taken from
+     *  its tracker lastUpdate instead — see _msg_mark_stale in messaging.php — because
+     *  bulk upserts stamp last_seen on stations that have not been near the event for
+     *  weeks. That override needs the tracker file and so lives in the handler, which
+     *  echoes and exits and cannot be reached from here. */
     public function testConversationWithALongGoneMemberIsStale(): void
     {
         $conv = $this->direct($this->op, $this->phone);
