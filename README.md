@@ -1037,7 +1037,11 @@ Samsung One UI is particularly aggressive — users must also set the app to **U
 
 ### Apple Watch Companion ("Watch")
 
-A watchOS companion that makes the wrist a nearly hands-free extension of the phone's microphone and speaker: an inbound message buzzes, plays a tone, is read aloud, and appears on the watch screen; a reply is a press-and-hold push-to-talk. It does **messaging only** — it never beacons position.
+A watchOS companion that makes the wrist a nearly hands-free extension of the phone: a reply is a press-and-hold push-to-talk. It does **messaging only** — it never beacons position.
+
+**The phone is the loudspeaker; the watch is the microphone.** That is the opposite of how this was first built, and the inversion came from field testing. watchOS lets an app play audio only while it is frontmost, so a watch on a lowered wrist cannot alert anybody — while the phone, in a pocket, can both chime and read a message aloud. So the phone announces everything unless the watch app is genuinely on screen, and the watch's job the rest of the time is to be ready to take a reply.
+
+**Who announces an arriving message** is decided by the watch and obeyed by the phone. The watch publishes `canAnnounce` whenever its scene phase changes; the phone suppresses its own alert only while that is true. It is reported rather than inferred because the two devices had different notions of "awake": a dimmed watch is unreachable over WatchConnectivity yet still frontmost, so each assumed the other had it and messages were announced twice or not at all. Every relayed message also carries `phoneAnnounced`, which stops the watch re-reading a backlog when queued transfers flush on waking, and lets it raise a notification if it went quiet after promising to speak.
 
 **Why it is native Swift.** Flutter does not target watchOS, so the watch app cannot be Dart. It is a native SwiftUI target (`WatchApp`) inside the same `app/ios/Runner.xcodeproj`, bridged to the Flutter app over WatchConnectivity plus a Flutter method/event channel.
 
@@ -1055,7 +1059,9 @@ A watchOS companion that makes the wrist a nearly hands-free extension of the ph
 
 **Do not move the "Embed Watch Content" build phase.** It sits immediately after `Resources` in the Runner target, and it has to stay before `Thin Binary`. `Thin Binary` runs `xcode_backend.sh embed_and_thin` and declares `${TARGET_BUILD_DIR}/${INFOPLIST_PATH}` as an input, which makes Xcode take a directory-tree signature of the whole of `Runner.app`. Scheduling a copy *into* `Runner.app/Watch/` after that closes a dependency loop and the build dies with `Cycle inside Runner`. The watch target also sets `SKIP_INSTALL = YES` so the archive contains only `Runner.app`, with the watch app nested inside it.
 
-**The limitation to know.** watchOS only lets an app play audio or speak while it is frontmost. Tone and read-aloud work with the watch app on screen. Backgrounded, message data still arrives silently and the phone's local notification mirrors to the wrist (haptic + long look) when the iPhone is locked. With the watch app closed **and** the phone off or out of range, nothing reaches the wrist — no mechanism exists.
+**Reading aloud on the phone needs `UIBackgroundModes: audio`.** Without it iOS refuses to start an audio session once the app leaves the screen, which is the situation the feature exists for. One shared `Speaker` (`app/lib/speaker.dart`) owns the app's only text-to-speech engine — the chat screen used to own a second, and two contend for the same audio session and cut each other off mid-sentence. Note that `defaultToSpeaker` must not be passed with the `playback` category: it is valid only with `playAndRecord`, and including it fails the whole category call, leaving the app silent in the background with no error anywhere obvious.
+
+**The limitation accepted.** watchOS only lets an app play audio while frontmost, and will not run a timer for a backgrounded one. So with the phone off or out of range **and** the watch app backgrounded, nothing reaches the operator until they raise their wrist — at which point the watch polls and announces what it missed. The only mechanism that would change this is a `WKExtendedRuntimeSession`, which costs heavy battery and a background-mode declaration App Review may query; the deliberate decision is to live without it, since the phone covers every case in which it is alive.
 
 ---
 
