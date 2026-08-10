@@ -37,6 +37,7 @@ import 'tracker_data.dart';
 import 'tracker_layer.dart';
 import 'messaging_client.dart';
 import 'messaging_screen.dart';
+import 'speaker.dart';
 import 'watch_bridge.dart';
 import 'widgets/mode_indicator.dart';
 import 'widgets/offline_banner.dart';
@@ -239,6 +240,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     // Hand the bridge the live session so it prefers the in-memory token over the
     // persisted one it started with.
     WatchBridge.instance.attachSession(_bgLocation);
+    // Three separate polls read the same feed and the first to arrive marks a message
+    // delivered, so any of them can be the only one that sees it. The alert hangs off
+    // all of them rather than off the background session alone.
+    WatchBridge.instance.onInboundSeen = (msg) {
+      if (!mounted) return;
+      _handleInboundMessage(msg);
+    };
     _config = widget.config;
     // Base layer follows the server's offline-map tile source, so it matches the
     // offline download URL (shared FMTC cache) and an event can retarget both by
@@ -415,13 +423,18 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           ),
         ));
       } else if (Platform.isIOS) {
-        // A paired watch running our app raises its own notification the moment the
-        // message reaches it, so this one would be a second buzz for the same event.
-        // iOS only mirrors this to the wrist while the phone is locked, and the user
-        // can turn mirroring off entirely, so the watch's own alert is both the more
-        // reliable and the more informative of the two — it opens straight into the
-        // message. The phone stays the only alert when no watch is there to speak.
-        if (WatchBridge.instance.canAlertOnWrist) return;
+        // The phone alerts for everything unless the watch app is actually on screen,
+        // in which case the wrist is already speaking the message to a user who is
+        // looking at it. A backgrounded watch is not an alerting device — watchOS
+        // will not let it make a sound — so treating "a watch exists" as "the wrist
+        // will handle it" left both devices silent.
+        if (WatchBridge.instance.watchAppFrontmost) return;
+        // Read it out as well as raising the notification. The notification sound
+        // says a message arrived; this says what it was, which is the difference
+        // between a driver having to stop and a driver carrying on. Needs the `audio`
+        // background mode, without which iOS refuses the session off-screen.
+        unawaited(Speaker.instance
+            .speakMessage(senderLabel: msg.senderLabel, text: msg.text));
         unawaited(_notifPlugin.show(
           id: msg.id & 0x7FFFFFFF,
           title: '📨 ${msg.fromLabel}',
@@ -441,12 +454,14 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       }
       return;
     }
-    // Foreground: play the alert tone and offer a tap-to-open banner. The full
+    // Foreground: tone, then read it aloud, and offer a tap-to-open banner. The full
     // conversation lives in the chat screen, reachable from the Messages button.
     try {
       await _audioPlayer.setAudioSource(AudioSource.asset('assets/sounds/message.wav'));
       unawaited(_audioPlayer.play());
     } catch (_) {}
+    unawaited(Speaker.instance
+        .speakMessage(senderLabel: msg.senderLabel, text: msg.text));
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     messenger.clearSnackBars();

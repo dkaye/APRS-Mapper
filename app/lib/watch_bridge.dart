@@ -67,18 +67,31 @@ class WatchBridge {
   bool appInstalled = false;
   bool reachable = false;
 
-  /// Reported by the watch itself, not assumed. False until it says otherwise, so a
-  /// denied notification permission on the wrist leaves the phone alerting rather
-  /// than both devices staying quiet.
-  bool _watchCanAlert = false;
+  /// The watch app is on screen in front of the operator, which on watchOS is the
+  /// only state in which it can make a sound. The phone stays quiet only then — the
+  /// watch is an extension of the phone, not a replacement for it, so the phone
+  /// alerts for everything else including a backgrounded watch.
+  bool get watchAppFrontmost => Platform.isIOS && paired && appInstalled && reachable;
 
-  /// Whether the wrist can raise its own alert for an inbound message, in which case
-  /// the phone should not also raise one for the same event. Reachability is
-  /// deliberately not part of this: an unreachable watch is simply one whose app is
-  /// backgrounded, which is exactly when its own notification matters most — the
-  /// message still reaches it by durable transfer and it alerts from there.
-  bool get canAlertOnWrist =>
-      Platform.isIOS && paired && appInstalled && _watchCanAlert;
+  /// Alert the phone raises for a message, whichever path saw it first. Registered by
+  /// MapScreen.
+  ///
+  /// This exists because there is no longer a single path. The background session,
+  /// the chat screen and the receipt poll all read the same feed, and the first to
+  /// poll marks the message delivered, so any of them can be the only one to see it.
+  /// Hanging the alert off one of them left the phone silent whenever another got
+  /// there first.
+  void Function(InboundMessage)? onInboundSeen;
+
+  /// Ids already handed to `onInboundSeen`, so a message reaching us down two paths
+  /// alerts once.
+  final Set<int> _alerted = {};
+
+  void _alertOnce(InboundMessage m) {
+    if (!_alerted.add(m.id)) return;
+    if (_alerted.length > 500) _alerted.remove(_alerted.first);
+    onInboundSeen?.call(m);
+  }
 
   /// Highest message id we have handed to the watch.
   ///
@@ -184,7 +197,13 @@ class WatchBridge {
   // ── phone → watch ───────────────────────────────────────────────────────────
 
   /// Relay a message seen by the background session (legacy `?mobile=poll`).
-  void pushInbound(InboundMessage m) => _relay(_messageDict(m));
+  ///
+  /// MapScreen alerts for this one itself, so it is only recorded here — claiming the
+  /// id stops a later path re-alerting for the same message.
+  void pushInbound(InboundMessage m) {
+    _alerted.add(m.id);
+    _relay(_messageDict(m));
+  }
 
   /// Relay a message seen by the chat screen's own poll loop (`?messaging=poll`).
   ///
@@ -370,10 +389,6 @@ class WatchBridge {
         if (!wasReachable && reachable) pushContextNow();
         break;
 
-      case 'canAlert':
-        _watchCanAlert = e['enabled'] as bool? ?? false;
-        break;
-
       case 'hello':
         // The watch has just come forward and may have been away for hours.
         unawaited(_refreshConversations());
@@ -529,6 +544,7 @@ class WatchBridge {
     if (result.messages.isNotEmpty) {
       for (final m in result.messages) {
         _advanceWatermark(m.id);
+        _alertOnce(_inboundFrom(m));
       }
       await _invoke('pushMessages', {'messages': result.messages.map(_msgMessageDict).toList()});
     }
@@ -542,8 +558,9 @@ class WatchBridge {
     final result = await _client.poll(sinceId);
     if (result.messages.isEmpty) return;
     final dicts = result.messages.map(_msgMessageDict).toList();
-    for (final d in dicts) {
-      _advanceWatermark(d['id'] as int);
+    for (final m in result.messages) {
+      _advanceWatermark(m.id);
+      _alertOnce(_inboundFrom(m));
     }
     await _invoke('pushMessages', {'messages': dicts});
     _scheduleContext();
@@ -571,6 +588,21 @@ class WatchBridge {
 
   /// The one shape a message takes on the wire. Labels are computed here, on the
   /// phone, so the watch never re-implements the mobile/operator/short-id rules.
+  /// The phone's alert path speaks InboundMessage; the messaging API speaks
+  /// MsgMessage. Same message, two shapes, because the legacy and modern feeds were
+  /// never unified.
+  InboundMessage _inboundFrom(MsgMessage m) => InboundMessage(
+        id: m.id,
+        fromLabel: m.fromName,
+        text: m.text,
+        ts: m.ts,
+        conversationId: m.conversationId,
+        fromShort: m.fromShort,
+        fromKind: m.fromKind,
+        fromKey: m.fromKey,
+        broadcast: m.broadcast,
+      );
+
   Map<String, dynamic> _messageDict(InboundMessage m) => {
         'id': m.id,
         'conversationId': m.conversationId,

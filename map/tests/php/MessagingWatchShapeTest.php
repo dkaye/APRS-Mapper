@@ -142,6 +142,36 @@ class MessagingWatchShapeTest extends TestCase
         $this->assertSame(array_column($phoneSaw, 'id'), array_column($watchSaw, 'id'));
     }
 
+    // ── delivered is not read ─────────────────────────────────────────────────
+
+    /** A device acking a message means it has it, not that anyone has looked at it.
+     *  The ack used to call markRead, so an operator's panel showed "Read ✓✓" the
+     *  moment a phone polled — for a message still sitting unseen on a lock screen. */
+    public function testAckMarksDeliveredNotRead(): void
+    {
+        $conv = $this->direct($this->op, $this->phone);
+        $id   = $this->db->insertMessage($this->ev, $conv, $this->op, 'Radio check', [$this->phone], false);
+
+        $this->db->markDelivered($this->phone, [$id]);
+        $r = $this->db->receiptsForSender($this->op, 0)[0];
+
+        $this->assertSame(1, (int)$r['delivered']);
+        $this->assertSame(0, (int)$r['read'], 'nobody has opened it');
+    }
+
+    /** And having been delivered is what stops it being sent again — that was the
+     *  only reason the ack ever had to claim it was read. */
+    public function testDeliveredStopsRedelivery(): void
+    {
+        $conv = $this->direct($this->op, $this->phone);
+        $id   = $this->db->insertMessage($this->ev, $conv, $this->op, 'Once only', [$this->phone], false);
+
+        $this->assertCount(1, $this->db->pendingFor($this->phone));
+        $this->db->markDelivered($this->phone, [$id]);
+
+        $this->assertCount(0, $this->db->pendingFor($this->phone), 'already handed over');
+    }
+
     // ── replying into an entity thread ────────────────────────────────────────
 
     /** The watch aims at the thread a message arrived on, and an operator addressing

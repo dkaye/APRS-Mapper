@@ -514,7 +514,10 @@ function messaging_legacy_pending(array $ctx, string $token, array $ackIds): ?ar
     $me = _msg_resolve_sender($db, $ctx, $token);
     if (!$me) return null;
     $db->touchParticipant((int)$me['id']);
-    if ($ackIds) $db->markRead((int)$me['id'], $ackIds);
+    // Delivered, not read. The ack means the device has it and should stop being
+    // sent it again; whether a human has seen it is a different question, answered
+    // by the explicit `read` action when a thread is opened.
+    if ($ackIds) $db->markDelivered((int)$me['id'], $ackIds);
     return array_map('_msg_legacy_shape', $db->pendingFor((int)$me['id']));
 }
 

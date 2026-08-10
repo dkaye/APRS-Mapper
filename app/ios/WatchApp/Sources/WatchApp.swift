@@ -6,6 +6,7 @@
 /// WatchConnectivity, and (Phase 3) directly over HTTPS when the phone is unreachable.
 /// See README.md ("Apple Watch Companion") for the whole design.
 import SwiftUI
+import WatchKit
 
 @main
 struct WatchApp: App {
@@ -35,7 +36,6 @@ struct WatchApp: App {
         // Ask the phone to re-push: while we were away its token, destination or
         // conversation list may all have moved on.
         WatchSession.shared.hello()
-        Notifier.refreshCapability()
       case .background:
         // Now nothing can be heard, and a half-spoken queue resuming minutes later
         // would be worse than silence.
@@ -54,6 +54,11 @@ final class WatchAppDelegate: NSObject, WKApplicationDelegate {
     // delegate is lost. Touching AppState here is also what snapshots the launch
     // watermark, so nothing already on disk gets announced.
     _ = AppState.shared
+    // From the actual state, not from onChange: SwiftUI's onChange does not fire for
+    // the value a scene launches with, so this stayed false through an entire
+    // foreground session until the app was first backgrounded — and a message
+    // arriving before that was never spoken.
+    AppState.shared.isActive = WKApplication.shared().applicationState == .active
     WatchSession.shared.activate()
     // At launch, because the prompt cannot appear while backgrounded — which is
     // exactly when the first message the watch needs to raise is likely to arrive.

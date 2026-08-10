@@ -696,12 +696,30 @@ class MessagingDb
 
     // ── legacy mobile-app compat (old ?mobile=… protocol over the new core) ─────
     /** Un-acked messages delivered to $recipientId (read_ts IS NULL); marks delivered. */
+    /** Mark deliveries handed to a device. The legacy ack means "I have it, stop
+     *  resending" — which is delivery, not reading. It used to call markRead, so a
+     *  phone reported a message read the instant it arrived and the operator's panel
+     *  showed "Read ✓✓" for something nobody had looked at. Read is now set only when
+     *  a human actually opens the thread. */
+    public function markDelivered(int $recipientId, array $messageIds): void
+    {
+        $now = time();
+        foreach ($messageIds as $mid) {
+            $this->run('UPDATE deliveries SET delivered_ts=:n
+                        WHERE message_id=:m AND recipient_id=:r AND delivered_ts IS NULL',
+                       [':n'=>$now, ':m'=>(int)$mid, ':r'=>$recipientId]);
+        }
+    }
+
     public function pendingFor(int $recipientId): array
     {
+        // Keyed on delivered_ts, not read_ts: "still owed to this device" is a
+        // delivery question. Keying it on read meant the only way to stop redelivery
+        // was to claim the operator had read it.
         $rows = $this->all(
             'SELECT m.* FROM messages m
                JOIN deliveries d ON d.message_id = m.id
-             WHERE d.recipient_id = :r AND d.read_ts IS NULL
+             WHERE d.recipient_id = :r AND d.delivered_ts IS NULL
              ORDER BY m.id', [':r'=>$recipientId]);
         if ($rows) {
             $now = time();

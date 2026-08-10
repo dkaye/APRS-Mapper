@@ -185,10 +185,14 @@ final class AppState {
     guard !alertable.isEmpty else { return }
     if isActive {
       Announcer.shared.enqueue(alertable)
-    } else {
-      // Backgrounded. watchOS will wake this app to receive but will not let it make
-      // a sound, so the only way to reach the operator is a notification — haptic,
-      // tone and the text, one tap from being read aloud.
+    } else if source == .directPoll {
+      // Backgrounded, and we fetched this ourselves because the phone was
+      // unreachable — so the phone cannot have alerted and a notification here is the
+      // only thing that will reach the operator.
+      //
+      // Deliberately not for relayed messages: the phone saw those, and it alerts for
+      // everything unless this app is on screen. Notifying here too would be a second
+      // buzz for one message, and the phone's is the better one — it can speak.
       for m in alertable { Notifier.alert(m) }
     }
   }

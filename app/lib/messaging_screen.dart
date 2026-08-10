@@ -7,16 +7,14 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:just_audio/just_audio.dart';
-import 'package:flutter_tts/flutter_tts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'messaging_client.dart';
+import 'speaker.dart';
 import 'watch_bridge.dart';
 
 const _kBlue = Color(0xFF2980B9);
 const _kLastRecipients = 'aprs_msg_last_recipients';
 const _kDark = Color(0xFF1A5276);
-/// Pause between the spoken sender announcement and the message text.
-const _kSpeakGap = Duration(milliseconds: 500);
 
 class MessagingScreen extends StatefulWidget {
   final MessagingClient client;
@@ -46,18 +44,15 @@ class _MessagingScreenState extends State<MessagingScreen> {
   final _composeCtl = TextEditingController();
   final _scrollCtl = ScrollController();
   final _player = AudioPlayer();
-  final _tts = FlutterTts();
   final _picker = ImagePicker();
   String? _pendingPhotoPath; // photo staged in the composer, not yet sent
   bool _speak = false;
   List<String> _lastRecipients = const [];
-  Future<void> _speakQueue = Future.value();
 
   @override
   void initState() {
     super.initState();
     MessagingScreen.isOpen = true;
-    _tts.awaitSpeakCompletion(true);
     _restoreSpeak();
     _bootstrap();
     _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) => _poll());
@@ -70,7 +65,7 @@ class _MessagingScreenState extends State<MessagingScreen> {
     _composeCtl.dispose();
     _scrollCtl.dispose();
     _player.dispose();
-    _tts.stop();
+    Speaker.instance.stop();
     super.dispose();
   }
 
@@ -133,29 +128,12 @@ class _MessagingScreenState extends State<MessagingScreen> {
   /// is not looking at the screen, so the text alone leaves them without a caller.
   /// senderLabel resolves a mobile through its display_id, giving "CRD Stanton".
   ///
-  /// The announcement and the text are separate utterances with a real pause
-  /// between them: run together, the name blurs into the first words and the
-  /// listener loses both. Chained through _speakQueue so two messages arriving
-  /// close together cannot interleave their halves.
+  /// Through the shared Speaker, which owns the app's only text-to-speech engine.
+  /// This screen used to own a second one; both would have contended for the same
+  /// audio session now that the map screen speaks messages from the background.
   Future<void> _speakMessage(MsgMessage m) {
-    final who = m.senderLabel.trim();
-    if (who.isEmpty) return _speakText(m.text);
-    _speakQueue = _speakQueue.then((_) async {
-      await _speakText('Message from $who.');
-      await Future.delayed(_kSpeakGap);
-      await _speakText(m.text);
-    }).catchError((_) {});
-    return _speakQueue;
-  }
-
-  Future<void> _speakText(String text) async {
-    if (!_speak || text.trim().isEmpty) return;
-    try {
-      await _tts.setSpeechRate(0.5);
-      // awaitSpeakCompletion (set in initState) makes this resolve when the phrase
-      // finishes, which is what lets the pause below actually land between them.
-      await _tts.speak(text);
-    } catch (_) {}
+    if (!_speak) return Future.value();
+    return Speaker.instance.speakMessage(senderLabel: m.senderLabel, text: m.text);
   }
 
   void _speakDeferred(int convId) {
@@ -187,10 +165,9 @@ class _MessagingScreenState extends State<MessagingScreen> {
     final isNew = _seen.add(m.id);
     if (!isNew) return;
     // The watch is a separate device and must see every message the phone does.
-    // This path is not interchangeable with the background session's: _markRead
-    // below sets read_ts, and the legacy feed that drives the other path only
-    // returns messages where read_ts IS NULL -- so anything this screen sees first,
-    // it sees exclusively.
+    // This path is not interchangeable with the background session's: polling here
+    // marks the message delivered, and the legacy feed only returns what is still
+    // undelivered -- so anything this screen sees first, it sees exclusively.
     WatchBridge.instance.pushSeenInChat(m, isSelf: m.fromId == _myId);
     final inOpen = _open != null && _open!.id == m.conversationId;
     if (inOpen) {
@@ -310,7 +287,7 @@ class _MessagingScreenState extends State<MessagingScreen> {
     WatchBridge.instance.pushSpeak(_speak);
     if (!_speak) {
       _deferredSpeak.clear();
-      _tts.stop();
+      Speaker.instance.stop();
     }
   }
 

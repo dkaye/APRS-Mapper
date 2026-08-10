@@ -74,6 +74,11 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
+		<!-- Speaks incoming net traffic aloud while the app is in a pocket. Without
+		     this iOS refuses to start an audio session in the background, so a
+		     message could be announced by a notification sound but never read out —
+		     which is the whole point when the operator is driving. -->
+		<string>audio</string>
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>

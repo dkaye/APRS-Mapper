@@ -18,30 +18,10 @@ enum Notifier {
   static let category = "APRS_MSG"
 
   /// Ask at launch. The prompt cannot appear while backgrounded, which is exactly
-  /// when the first message is likely to arrive.
-  ///
-  /// The answer is reported to the phone, which stops raising its own notification
-  /// only once the wrist has said it can raise one. Assuming rather than asking would
-  /// mean a denied permission here leaves the operator with no alert on either
-  /// device — silently, and only discovered during a net.
+  /// when a message the watch has to raise itself is likely to arrive.
   static func requestAuthorization() {
     UNUserNotificationCenter.current()
-      .requestAuthorization(options: [.alert, .sound]) { granted, _ in
-        reportCapability(granted)
-      }
-  }
-
-  /// Re-check on every foreground: permission can be revoked in Settings long after
-  /// it was granted, and the phone would otherwise stay quiet on its behalf forever.
-  static func refreshCapability() {
-    UNUserNotificationCenter.current().getNotificationSettings { settings in
-      reportCapability(settings.authorizationStatus == .authorized
-                        || settings.authorizationStatus == .provisional)
-    }
-  }
-
-  private static func reportCapability(_ canAlert: Bool) {
-    WatchSession.shared.send(["type": "canAlert", "enabled": canAlert])
+      .requestAuthorization(options: [.alert, .sound]) { _, _ in }
   }
 
   /// Raise one alert per message.
