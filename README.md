@@ -923,7 +923,21 @@ keyAlias=<alias>
 storeFile=<absolute path to .jks or .p12>
 ```
 
-`android/app/build.gradle.kts` reads this file automatically. If absent, the release build falls back to debug signing.
+`android/app/build.gradle.kts` reads this file automatically. If it is absent or incomplete, a **release build fails** rather than falling back to debug signing — an APK signed with the wrong key installs fine on a clean device and is rejected as an update for every existing user, who would have to uninstall (losing their tracker token and registration) to take it. Debug builds are unaffected and need no keystore.
+
+The canonical copy predates the merge of the standalone `aprs-map` repo into this one and, being gitignored, did not travel with it:
+
+```bash
+cp ~/aprs-map/android/key.properties app/android/key.properties
+```
+
+Always verify a release before publishing it — the certificate is the only thing that distinguishes a correct APK from a broken one:
+
+```bash
+apksigner verify --print-certs <apk> | grep SHA-256
+# expected: 0d30a9f258e1330cb22a092ca6df65af5d3bf085905fb9bc01d74e54c866da57
+#           CN=Doug Kaye, OU=MARS, O=W6SG, L=Marin, ST=CA, C=US
+```
 
 **`compileSdk` note:** `objectbox_flutter_libs` in `~/.pub-cache` may hardcode `compileSdkVersion 31`. Patch it to `36` to match `build.gradle.kts`.
 
