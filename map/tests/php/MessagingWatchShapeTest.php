@@ -142,6 +142,50 @@ class MessagingWatchShapeTest extends TestCase
         $this->assertSame(array_column($phoneSaw, 'id'), array_column($watchSaw, 'id'));
     }
 
+    // ── stale threads ─────────────────────────────────────────────────────────
+
+    /** An operator scanning the inbox is looking for someone to talk to, so a thread
+     *  whose other end has not been seen in 24 hours is reported stale — the same
+     *  window the recipient picker uses to decide who is addressable. The flag is
+     *  reported, not acted on here: the panel hides them, an inbox may not. */
+    public function testConversationWithALongGoneMemberIsStale(): void
+    {
+        $conv = $this->direct($this->op, $this->phone);
+        $this->db->insertMessage($this->ev, $conv, $this->phone, 'Hello', [$this->op], false);
+
+        // The operator has gone: disconnect zeroes last_seen, which is the same
+        // condition as never having been seen inside the window.
+        $this->db->disconnectParticipant($this->op);
+
+        $this->assertTrue($this->conversationById($this->phone, $conv)['stale']);
+    }
+
+    public function testConversationWithARecentMemberIsNotStale(): void
+    {
+        $conv = $this->direct($this->op, $this->phone);
+        $this->db->insertMessage($this->ev, $conv, $this->phone, 'Hello', [$this->op], false);
+        $this->db->touchParticipant($this->op);
+
+        $this->assertFalse($this->conversationById($this->phone, $conv)['stale']);
+    }
+
+    /** "All Trackers" has no members and outlives everyone in it. */
+    public function testBroadcastIsNeverStale(): void
+    {
+        [$conv, ] = $this->db->resolveConversation($this->ev, $this->op, [], true, null);
+        $this->db->insertMessage($this->ev, $conv, $this->op, 'All stations', [$this->phone], true);
+
+        $this->assertFalse($this->conversationById($this->phone, $conv)['stale']);
+    }
+
+    private function conversationById(int $me, int $conversationId): array
+    {
+        foreach ($this->db->conversationsFor($this->ev, $me) as $c) {
+            if ((int)$c['id'] === $conversationId) return $c;
+        }
+        $this->fail("conversation $conversationId not returned");
+    }
+
     // ── delivered is not read ─────────────────────────────────────────────────
 
     /** A device acking a message means it has it, not that anyone has looked at it.

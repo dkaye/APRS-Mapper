@@ -633,11 +633,20 @@ class MessagingDb
             $r['last_id'] = (int)($r['last_id'] ?? 0);
             // Other members (excludes the caller) for the thread label.
             $mem = $this->all(
-                'SELECT p.id,p.kind,p.key,p.short_id,p.display_name
+                'SELECT p.id,p.kind,p.key,p.short_id,p.display_name,p.last_seen
                    FROM conversation_members cm JOIN participants p ON p.id=cm.participant_id
                   WHERE cm.conversation_id=:c AND p.id<>:me
                   ORDER BY p.kind, p.display_name', [':c'=>$r['id'], ':me'=>$participantId]);
             $r['members'] = $mem;
+            // Whether anyone on the other end has been seen lately, on the same
+            // 24-hour window the recipient picker uses to decide who is addressable
+            // (_msg_addressable). Reported rather than acted on: a client showing an
+            // inbox may reasonably keep history a client offering reply targets would
+            // hide. Broadcast threads have no members and are never stale — "All
+            // Trackers" outlives everyone in it.
+            $cutoff = time() - 86400;
+            $r['stale'] = $r['kind'] !== 'broadcast'
+                && !array_filter($mem, fn($m) => (int)($m['last_seen'] ?? 0) > $cutoff);
             // Latest-message preview (sender + text).
             $last = $r['last_id'] ? $this->one(
                 'SELECT sender_id, text, ts FROM messages WHERE id=:i', [':i'=>$r['last_id']]) : null;

@@ -5965,6 +5965,7 @@ async function _refreshConversations() {
 			_convs.set(c.id, Object.assign(ex, {
 				id:c.id, kind:c.kind, title:c.title, members:c.members || [],
 				unread:c.unread || 0, last_id:c.last_id || 0, preview:c.preview || null,
+				stale: !!c.stale,
 			}));
 		}
 		// Drop what the server no longer lists. It hides threads whose messages have
@@ -5981,7 +5982,14 @@ async function _refreshConversations() {
 }
 function _renderConvList() {
 	const scroll = document.getElementById('msg-conv-scroll');
-	const items = [..._convs.values()].filter(c => c.last_id > 0).sort((a, b) => b.last_id - a.last_id);
+	// Hide threads whose other end has not been seen in 24 hours, matching the window
+	// the recipient picker uses to decide who is addressable — an operator scanning
+	// this list is looking for someone to talk to, and a thread with a station that
+	// left the event yesterday is not that. Kept regardless: anything unread, and
+	// whatever is open, so the panel cannot empty out under someone mid-read.
+	const items = [..._convs.values()]
+		.filter(c => c.last_id > 0 && (!c.stale || c.unread > 0 || c.id === _openConvId))
+		.sort((a, b) => b.last_id - a.last_id);
 	if (!items.length) {
 		scroll.innerHTML = '<div id="msg-conv-empty">No conversations yet.<br>Tap “New message” to start one.</div>';
 		return;
