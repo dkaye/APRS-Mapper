@@ -30,6 +30,7 @@ import 'messaging_client.dart';
 /// existing conversation_id, which a list of recipient keys cannot express.
 const _kWatchDestination = 'aprs_watch_destination';
 const _kSpeakPref = 'aprs_msg_speak';
+const _kWatchLastId = 'aprs_watch_last_id';
 
 /// Newest-first cap on the history handed to a watch that has just launched.
 const _kRecentCap = 20;
@@ -67,6 +68,12 @@ class WatchBridge {
   bool reachable = false;
 
   /// Highest message id we have handed to the watch.
+  ///
+  /// Persisted. It used to reset to 0 on every launch of the phone app, which turned
+  /// the next receipt poll into `poll(since_id: 0)` — the server obligingly returned
+  /// the participant's entire history and the bridge relayed all of it to the wrist.
+  /// The watch dedupes by id so most of it was discarded, but anything recent enough
+  /// to pass the announce window was read out a second time.
   int _lastId = 0;
 
   /// Recently relayed messages, oldest first. Given to a watch that has just
@@ -109,6 +116,7 @@ class WatchBridge {
     _prefToken = p.getString(BackgroundLocationService.kPrefToken);
     _prefSharing = p.getBool(BackgroundLocationService.kPrefActive) ?? false;
     _speak = p.getBool(_kSpeakPref) ?? true;
+    _lastId = p.getInt(_kWatchLastId) ?? 0;
     final saved = p.getString(_kWatchDestination);
     if (saved != null && saved.isNotEmpty) {
       try {
@@ -179,8 +187,7 @@ class WatchBridge {
 
   void _relay(Map<String, dynamic> dict) {
     if (!Platform.isIOS || !_started) return;
-    final id = dict['id'] as int;
-    if (id > _lastId) _lastId = id;
+    _advanceWatermark(dict['id'] as int);
     _recent.add(dict);
     while (_recent.length > _kRecentCap) {
       _recent.removeAt(0);
@@ -237,6 +244,14 @@ class WatchBridge {
     if (!Platform.isIOS || !_started) return;
     _contextTimer?.cancel();
     unawaited(_sendContext());
+  }
+
+  /// The only place the watermark moves, so persisting it cannot be forgotten at a
+  /// call site. Losing it means re-fetching a participant's whole history.
+  void _advanceWatermark(int id) {
+    if (id <= _lastId) return;
+    _lastId = id;
+    unawaited(SharedPreferences.getInstance().then((p) => p.setInt(_kWatchLastId, id)));
   }
 
   void _scheduleContext() {
@@ -431,7 +446,7 @@ class WatchBridge {
     // first path to see a reply.
     if (result.messages.isNotEmpty) {
       for (final m in result.messages) {
-        if (m.id > _lastId) _lastId = m.id;
+        _advanceWatermark(m.id);
       }
       await _invoke('pushMessages', {'messages': result.messages.map(_msgMessageDict).toList()});
     }
@@ -446,8 +461,7 @@ class WatchBridge {
     if (result.messages.isEmpty) return;
     final dicts = result.messages.map(_msgMessageDict).toList();
     for (final d in dicts) {
-      final id = d['id'] as int;
-      if (id > _lastId) _lastId = id;
+      _advanceWatermark(d['id'] as int);
     }
     await _invoke('pushMessages', {'messages': dicts});
     _scheduleContext();
