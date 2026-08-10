@@ -21,12 +21,19 @@ struct WatchApp: App {
         .environment(AppState.shared)
     }
     .onChange(of: scenePhase) { _, phase in
-      // `.inactive` is not "gone". watchOS reports it while the app is still
-      // frontmost but dimmed — the always-on display settling, a notification banner
-      // sliding over, the wrist tilting away for a moment. Treating that as
-      // backgrounded cut messages off mid-sentence a few seconds in, which is most
-      // of them. Only `.background` is really gone.
-      AppState.shared.isActive = phase != .background
+      // Only `.active` counts as able to speak, and the distinction matters because
+      // two different questions were being answered by one flag.
+      //
+      // "May I START announcing?" — only when genuinely on screen. `.inactive` covers
+      // a dimmed always-on display and a lowered wrist alike, and watchOS refuses the
+      // audio session for the latter. Claiming otherwise made the watch promise to
+      // speak, fail silently, and leave the phone deferring to it: a message that
+      // reached neither device.
+      //
+      // "Must I ABANDON one already speaking?" — only on `.background`, handled
+      // below. A message that began while the operator was looking finishes even as
+      // the screen dims, which is what stopped them being cut off mid-sentence.
+      AppState.shared.isActive = phase == .active
       // Polling on our own is a foreground-only activity: watchOS would not run the
       // timer in the background, and an app that cannot make a sound has nothing to
       // do with the result.
