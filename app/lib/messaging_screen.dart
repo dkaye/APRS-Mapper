@@ -169,17 +169,25 @@ class _MessagingScreenState extends State<MessagingScreen> {
     // marks the message delivered, and the legacy feed only returns what is still
     // undelivered -- so anything this screen sees first, it sees exclusively.
     WatchBridge.instance.pushSeenInChat(m, isSelf: m.fromId == _myId);
+    // The wrist announces when it can, and this screen is no exception. It is a
+    // third place the phone can make a sound, and it was the one that had not been
+    // told — so with the chat open and the watch awake, the same message was read
+    // aloud twice. The message is on screen here anyway; the operator loses nothing
+    // by hearing it from their arm.
+    final wristHasIt = WatchBridge.instance.watchWillAnnounce;
     final inOpen = _open != null && _open!.id == m.conversationId;
     if (inOpen) {
       setState(() => _messages.add(m));
       _markRead([m.id]);
       _scrollToEnd();
+      if (wristHasIt) return;
       if (_speak) {
         _speakMessage(m);
       } else {
         _playTone();
       }
     } else {
+      if (wristHasIt) return;
       if (_speak) _deferredSpeak.add(m.id);
       _playTone();
     }
