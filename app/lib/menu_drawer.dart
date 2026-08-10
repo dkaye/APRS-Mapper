@@ -439,12 +439,11 @@ class _MenuDrawerState extends State<MenuDrawer> {
     // Dimmed rather than dropped, matching the web sidebar: hiding a tracker takes
     // it off the map, but an operator still needs to see that it exists and how
     // long ago it reported.
-    if (t.hidden) {
-      return Tooltip(
-        message: 'Hidden from map — listed here only',
-        child: Opacity(opacity: 0.5, child: _trackerRow(t, color, opacity)),
-      );
-    }
+    // Dimming only, no Tooltip. The web sidebar explains itself on hover, which costs
+    // nothing there, but a Tooltip on touch claims the long-press for itself -- and
+    // long-press on a row is how you centre and zoom to it. An explanation is not worth
+    // taking a gesture away from a hidden tracker that every other row still has.
+    if (t.hidden) return Opacity(opacity: 0.5, child: _trackerRow(t, color, opacity));
     return _trackerRow(t, color, opacity);
   }
 

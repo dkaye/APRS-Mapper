@@ -1463,6 +1463,21 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     });
   }
 
+  /// Zoom for a long-press — "go there and get close".
+  ///
+  /// The old rule raised the zoom to a floor of 14, so once the map was already at 14
+  /// or closer a long-press computed exactly the zoom a tap does and the two gestures
+  /// became indistinguishable. That is the normal state after any tap, and it is where
+  /// an iPad starts: a larger viewport fits the event at a higher zoom than a phone,
+  /// so the floor was never reached and the gestures were identical from launch.
+  ///
+  /// Going in from wherever the map already is keeps them distinct at every zoom, and
+  /// the floor still guarantees a real close-up when starting from a wide view.
+  double _closeUpZoom() {
+    final z = _mapController.camera.zoom;
+    return (z + 2 > 16.0 ? z + 2 : 16.0).clamp(MapConfig.minZoom, MapConfig.maxZoom);
+  }
+
   void _selectTracker(TrackerData t, {bool zoom = false}) {
     if (!t.hasPosition) {
       showDialog<void>(
@@ -1491,9 +1506,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       _radioTrailPts = [];
     });
     _selectionClickCount = 1;
-    final newZoom = zoom
-        ? _mapController.camera.zoom.clamp(14.0, MapConfig.maxZoom)
-        : _mapController.camera.zoom;
+    final newZoom = zoom ? _closeUpZoom() : _mapController.camera.zoom;
     _mapController.move(t.latLng, newZoom);
     _triggerBlink({t.callsign});   // callsign, to blink just this device
     _fetchTrail(t);
@@ -1509,9 +1522,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       _radioTrailPts = [];
     });
     _selectionClickCount = 1;
-    final newZoom = zoom
-        ? _mapController.camera.zoom.clamp(14.0, MapConfig.maxZoom)
-        : _mapController.camera.zoom;
+    final newZoom = zoom ? _closeUpZoom() : _mapController.camera.zoom;
     _mapController.move(LatLng(m.lat, m.lon), newZoom);
     _triggerBlink({m.name});
   }
