@@ -52,6 +52,51 @@ def test_worth_logging():
         check(f"keeps {real[:24]!r}", transcriber.worth_logging(real), True)
 
 
+# ── capture must not wait for transcription ──────────────────────────────────
+
+def test_transcription_runs_off_the_capture_thread():
+    """A slow model must cost latency, not transmissions.
+
+    While whisper ran inline, nothing drained rtl_fm's pipe — 64 KB, about two seconds
+    of audio — after which rtl_fm blocks on write, stops reading the SDR, and the
+    samples are gone. The careful model runs slower than real time, so it would have
+    lost overs outright rather than merely lagging.
+
+    Here the "transcription" sleeps far longer than the clips take to arrive. What
+    matters is that enqueueing never blocks and everything is eventually processed.
+    """
+    print("capture vs transcription")
+    import queue as _q, threading as _t
+    work, stopping, done = _q.Queue(), _t.Event(), []
+
+    def slow(channel, path, whisper, model, outbox):
+        __import__("time").sleep(0.15)      # far slower than clips arrive
+        done.append(path)
+
+    real, transcriber.handle_clip = transcriber.handle_clip, slow
+    try:
+        worker = _t.Thread(target=transcriber.transcribe_loop,
+                           args=(work, None, None, None, _FakeOutbox(), stopping),
+                           daemon=True)
+        worker.start()
+        t0 = __import__("time").time()
+        for i in range(10):
+            work.put(f"clip_{i}.wav")       # capture keeps going regardless
+        enqueue_time = __import__("time").time() - t0
+        check("enqueueing 10 clips is instant", enqueue_time < 0.05, True)
+        work.join()
+        check("all ten are transcribed", len(done), 10)
+        check("and in order", done, [f"clip_{i}.wav" for i in range(10)])
+        stopping.set(); worker.join(timeout=5)
+    finally:
+        transcriber.handle_clip = real
+
+
+class _FakeOutbox:
+    def flush(self, post):
+        return True
+
+
 # ── squelch calibration ──────────────────────────────────────────────────────
 
 def site(floor, busy_at=None):
@@ -510,6 +555,7 @@ if __name__ == "__main__":
     for fn in [
         test_worth_logging, test_clean_strips_sound_effects, test_clip_seconds,
         test_block_rms, test_squelch_finds_its_own_floor,
+        test_transcription_runs_off_the_capture_thread,
         test_calibration_finds_the_lowest_level_that_gates,
         test_calibration_is_not_fooled_by_a_transmission,
         test_calibration_gives_up_rather_than_guessing,

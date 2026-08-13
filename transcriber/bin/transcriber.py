@@ -31,12 +31,14 @@ import json
 import logging
 import math
 import os
+import queue
 import re
 import select
 import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -63,6 +65,10 @@ MIN_CLIP_SECONDS = 1.2
 # Longer than this and it is almost certainly an open carrier rather than a
 # transmission; transcribe what we have rather than growing a file forever.
 MAX_CLIP_SECONDS = 120
+# How far transcription may fall behind before clips start being dropped. At a
+# transmission every few seconds this is minutes of backlog — far more than the careful
+# model needs to catch up between overs.
+CLIP_BACKLOG_CAP = 100
 
 # whisper does not return nothing when it hears nothing. Fed static or silence it
 # produces these with complete confidence, and a log quietly filling with "Thank you."
@@ -584,6 +590,36 @@ def settled_clips(spool, quiet_for=1.0):
 
 # ── main loop ────────────────────────────────────────────────────────────────
 
+def transcribe_loop(work, channel, whisper, model, outbox, stopping):
+    """Transcribe and post, off the capture thread.
+
+    This has to be its own thread. whisper is blocking and posting has a fifteen-second
+    timeout, and while either ran inline nothing was draining rtl_fm's pipe — which
+    holds 64 KB, about two seconds of audio, after which rtl_fm blocks on write, stops
+    reading the SDR, and the samples are gone. A ten-second over takes four seconds to
+    transcribe on the fast model, so a second over arriving behind the first was already
+    being clipped; on the careful model, which runs slower than real time, it would be
+    lost outright.
+
+    Separated, a slow model or a slow server only makes the log arrive later. The
+    backlog waits on disk, where it costs nothing.
+    """
+    while True:
+        try:
+            path = work.get(timeout=0.5)
+        except queue.Empty:
+            if stopping.is_set():
+                return
+            continue
+        try:
+            handle_clip(channel, path, whisper, model, outbox)
+            outbox.flush(lambda t: post_log_entry(channel, t))
+        except Exception:                       # noqa: BLE001 - one bad clip must not
+            log.exception("transcription failed")   # stop the channel transcribing
+        finally:
+            work.task_done()
+
+
 def handle_clip(channel, path, whisper, model, outbox):
     seconds = clip_seconds(path)
     if seconds < MIN_CLIP_SECONDS:
@@ -693,6 +729,28 @@ def main(argv=None):
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
 
+    # Transcription and posting run on their own thread; this one does nothing but read
+    # the radio. See transcribe_loop for why that separation is not optional.
+    work = queue.Queue()
+    stopping = threading.Event()
+    worker = threading.Thread(
+        target=transcribe_loop, args=(work, channel, whisper, model, outbox, stopping),
+        daemon=True, name="transcribe")
+    worker.start()
+
+    def enqueue(path):
+        # Clips wait on disk, which is free, but not without limit: if transcription
+        # cannot keep up for long enough to reach this, the oldest are the least worth
+        # keeping and dropping them loudly beats filling the card silently.
+        if work.qsize() > CLIP_BACKLOG_CAP:
+            log.error("transcription is %s clips behind; dropping the oldest", work.qsize())
+            try:
+                os.unlink(work.get_nowait())
+                work.task_done()
+            except (queue.Empty, OSError):
+                pass
+        work.put(path)
+
     squelch = Squelch()
     pending = bytearray()        # bytes not yet split into whole blocks
     audio = bytearray()          # the transmission currently being received
@@ -726,13 +784,11 @@ def main(argv=None):
                         preroll.append(block)
                         if was_open and audio:
                             seq += 1
-                            handle_clip(channel, write_clip(spool, bytes(audio), seq),
-                                        whisper, model, outbox)
+                            enqueue(write_clip(spool, bytes(audio), seq))
                             audio.clear()
                     if len(audio) >= max_bytes:
                         seq += 1
-                        handle_clip(channel, write_clip(spool, bytes(audio), seq),
-                                    whisper, model, outbox)
+                        enqueue(write_clip(spool, bytes(audio), seq))
                         audio.clear()
 
                 # The floor is the one number worth seeing when a channel looks deaf:
@@ -746,9 +802,11 @@ def main(argv=None):
 
             # --spool-only: wavs are already on disk, put there by a test or by hand.
             for path in settled_clips(spool):
-                handle_clip(channel, path, whisper, model, outbox)
-
-            outbox.flush(lambda t: post_log_entry(channel, t))
+                if args.once:
+                    handle_clip(channel, path, whisper, model, outbox)
+                    outbox.flush(lambda t: post_log_entry(channel, t))
+                else:
+                    enqueue(path)
             if args.once:
                 break
             # A dead radio must not look like a quiet frequency. systemd restarts us,
@@ -759,8 +817,14 @@ def main(argv=None):
             if rtl is None:
                 time.sleep(0.5)
     finally:
+        # Stop listening first, then let the backlog finish: a transmission already
+        # recorded should still reach the log, and systemd allows time for it.
         if rtl is not None and rtl.poll() is None:
             rtl.terminate()
+        stopping.set()
+        worker.join(timeout=30)
+        if work.qsize():
+            log.warning("%s clips left untranscribed", work.qsize())
     return 0
 
 

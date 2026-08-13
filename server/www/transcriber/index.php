@@ -191,7 +191,7 @@ input[type=text], input[type=number], select {
     width: 100%; min-width: 80px; padding: 5px 7px; border: 1px solid #d1d5db; border-radius: 5px;
     font-family: inherit; font-size: 14px; background: #fff; }
 input:focus, select:focus { outline: 2px solid #2563eb; outline-offset: -1px; border-color: #2563eb; }
-input:disabled, select:disabled { background: #f9fafb; color: #6b7280; }
+.ro { color: #374151; }                  /* read-only: plain text, never an empty box */
 .tok { font-size: 12px; white-space: nowrap; }
 .tok.set { color: #16a34a; } .tok.unset { color: #dc2626; font-weight: 600; }
 .derived { font-size: 11px; color: #9ca3af; margin-top: 2px; font-family: ui-monospace, monospace; }
@@ -360,9 +360,15 @@ async function rotate(kind, id) {
     await load();
 }
 
+/* A box you cannot type in still looks like a box, and the only way to discover it is
+   read-only is to try. Without edit rights this is a report, so it is rendered as one. */
+function ro(text) {
+    return `<span class="ro">${esc(text) || '—'}</span>`;
+}
+
 function field(group, i, key, value, type) {
-    const dis = CAN_EDIT ? '' : ' disabled';
-    return `<input type="${type || 'text'}" value="${esc(value)}"${dis}
+    if (!CAN_EDIT) return ro(value);
+    return `<input type="${type || 'text'}" value="${esc(value)}"
              oninput="data.${group}[${i}].${key} = this.value; save()">`;
 }
 
@@ -379,17 +385,23 @@ function render() {
     const hosts = data.devices.map(d => d.host);
     const ch = $('channels');
     ch.innerHTML = data.channels.map((c, i) => `<tr>
-        <td><select ${CAN_EDIT ? '' : 'disabled'} onchange="data.channels[${i}].device = this.value; save()">
-              ${hosts.map(h => `<option${h === c.device ? ' selected' : ''}>${esc(h)}</option>`).join('')}
-            </select></td>
+        <td>${CAN_EDIT
+              ? `<select onchange="data.channels[${i}].device = this.value; save()">
+                   ${hosts.map(h => `<option${h === c.device ? ' selected' : ''}>${esc(h)}</option>`).join('')}
+                 </select>`
+              : ro(c.device)}</td>
         <td>${field('channels', i, 'mhz', c.mhz)}<div class="derived">${esc(c.id || '')}</div></td>
         <td>${field('channels', i, 'label', c.label)}</td>
         <td>${field('channels', i, 'serial', c.serial)}</td>
-        <td><select ${CAN_EDIT ? '' : 'disabled'} onchange="data.channels[${i}].model = this.value; save()">
-              ${MODELS.map(m => `<option value="${m.file}"${m.file === c.model ? ' selected' : ''}>${m.name}</option>`).join('')}
-            </select></td>
-        <td><input type="checkbox" ${c.enabled ? 'checked' : ''} ${CAN_EDIT ? '' : 'disabled'}
-                   onchange="data.channels[${i}].enabled = this.checked; save()"></td>
+        <td>${CAN_EDIT
+              ? `<select onchange="data.channels[${i}].model = this.value; save()">
+                   ${MODELS.map(m => `<option value="${m.file}"${m.file === c.model ? ' selected' : ''}>${m.name}</option>`).join('')}
+                 </select>`
+              : ro((MODELS.find(m => m.file === c.model) || {}).name || c.model)}</td>
+        <td>${CAN_EDIT
+              ? `<input type="checkbox" ${c.enabled ? 'checked' : ''}
+                        onchange="data.channels[${i}].enabled = this.checked; save()">`
+              : ro(c.enabled ? 'On' : 'Off')}</td>
         <td>${tokenCell(c, 'channel', c.id)}</td>
         <td>${CAN_EDIT ? `<button class="row-btn danger" onclick="delChannel(${i})">Remove</button>` : ''}</td>
     </tr>`).join('');
