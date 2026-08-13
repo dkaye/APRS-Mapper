@@ -164,10 +164,13 @@ def post_log_entry(channel, text, timeout=15):
 # ── transcription ────────────────────────────────────────────────────────────
 
 def clip_seconds(path):
+    # EOFError as well as wave.Error: a file containing only a WAV header — which is
+    # what sox leaves while it waits for audio — raises EOFError rather than wave.Error,
+    # and an uncaught one took the whole channel down on the first idle frequency.
     try:
         with wave.open(path) as w:
             return w.getnframes() / float(w.getframerate() or 1)
-    except (wave.Error, OSError):
+    except (wave.Error, OSError, EOFError):
         return 0.0
 
 
@@ -219,9 +222,22 @@ def start_capture(channel, spool):
     # "serial=" form is not one of them, and it fails in the worst possible way: the
     # device is listed and then not selected, so rtl_fm exits without ever tuning and
     # the channel looks like a dead frequency.
+    # Oversample and resample: "-s 200000 -r 24000", never "-s 24000" directly.
+    #
+    # The RTL2832U cannot sample below about 225 kHz, so asking for 24 kHz makes rtl_fm
+    # decimate internally and the audio comes out mangled. It is not obviously broken to
+    # look at — the recording had a healthy 0.10 RMS and a clean waveform — but it is
+    # unintelligible, and whisper answers unintelligible audio by inventing something.
+    # On a 30-second recording of a station reading out temperatures it produced
+    # "(I'm not a fan)" and nothing else. The same 30 seconds captured this way
+    # transcribed every place name and number correctly.
+    #
+    # -E deemp applies FM de-emphasis, which voice needs and without which the high end
+    # is harsh enough to cost accuracy.
     rtl = subprocess.Popen(
         ["rtl_fm", "-d", channel.serial, "-f", channel.frequency,
-         "-M", "fm", "-s", "24000", "-l", str(channel.squelch), "-g", "40"],
+         "-M", "fm", "-s", "200000", "-r", "24000", "-E", "deemp",
+         "-l", str(channel.squelch), "-g", "40"],
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
     )
     sox = subprocess.Popen(
@@ -251,6 +267,14 @@ def settled_clips(spool, quiet_for=1.0):
             continue
         path = os.path.join(spool, name)
         try:
+            # A bare WAV header and nothing else. sox creates its next output file the
+            # moment it opens one and then waits, so on an idle frequency — which is
+            # most frequencies most of the time — there is always exactly one of these
+            # sitting in the spool. It is not a finished clip; it is the one sox is
+            # about to write into, and taking it would mean deleting the recording of
+            # the next transmission before it happened.
+            if os.path.getsize(path) <= 44:
+                continue
             if now - os.path.getmtime(path) >= quiet_for:
                 out.append(path)
         except OSError:

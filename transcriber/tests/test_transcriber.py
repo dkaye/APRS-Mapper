@@ -257,6 +257,32 @@ def test_pipeline_discards_short_clip():
         check("nothing logged", sent, [])
 
 
+def test_an_idle_frequency_is_not_fatal():
+    """sox creates its output file the instant it opens one and then waits, so on a
+    quiet frequency there is always a 44-byte header sitting in the spool. Reading it
+    raises EOFError, not wave.Error, and an uncaught one took the channel down within
+    seconds of pointing it at an idle repeater — which is what a repeater is, most of
+    the time. The empty file must be left alone: sox is about to write the next
+    transmission into it."""
+    print("idle frequency")
+    with tempfile.TemporaryDirectory() as spool:
+        header_only = os.path.join(spool, "clip_001.wav")
+        with wave.open(header_only, "w") as w:      # opened, no frames written
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+        old = os.path.getmtime(header_only) - 5
+        os.utime(header_only, (old, old))
+
+        check("header-only file measures 0s", transcriber.clip_seconds(header_only), 0.0)
+        check("and is not harvested", transcriber.settled_clips(spool), [])
+        check("and is left for sox to fill", os.path.exists(header_only), True)
+
+        # A real clip beside it still gets picked up.
+        real = os.path.join(spool, "clip_002.wav")
+        write_wav(real, 3.0)
+        os.utime(real, (old, old))
+        check("a real clip is still harvested", transcriber.settled_clips(spool), [real])
+
+
 def test_a_broken_whisper_is_fatal_not_silent():
     """The failure this guards against actually happened on the first real install:
     whisper-cli was present and executable but missing libwhisper.so.1, so every
@@ -332,6 +358,7 @@ if __name__ == "__main__":
         test_posting, test_unreachable_server_is_retried,
         test_pipeline_logs_speech, test_pipeline_discards_hallucination,
         test_pipeline_discards_short_clip, test_pipeline_discards_open_carrier,
+        test_an_idle_frequency_is_not_fatal,
         test_a_broken_whisper_is_fatal_not_silent,
         test_disabled_channel_does_nothing, test_unknown_channel_is_fatal,
     ]:
