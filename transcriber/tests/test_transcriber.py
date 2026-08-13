@@ -52,6 +52,51 @@ def test_worth_logging():
         check(f"keeps {real[:24]!r}", transcriber.worth_logging(real), True)
 
 
+# ── squelch calibration ──────────────────────────────────────────────────────
+
+def site(floor, busy_at=None):
+    """A fake receiver whose noise stops getting through above `floor`.
+
+    busy_at: a level during whose FIRST sample a transmission arrives, so the
+    confirmation pass is what has to catch it.
+    """
+    full = transcriber.SAMPLE_RATE * 2
+    state = {"seen": set()}
+
+    def sample(level, seconds):
+        first = level not in state["seen"]
+        state["seen"].add(level)
+        if busy_at is not None and level == busy_at and first:
+            return int(full * seconds)          # somebody transmitting
+        return int(full * seconds) if level < floor else 0
+    return sample
+
+
+def test_calibration_finds_the_lowest_level_that_gates():
+    """Lowest, not safest. Picking a high level would gate reliably and leave the
+    receiver deaf to anything quiet — the failure nobody notices."""
+    print("calibration")
+    check("quiet site", transcriber.choose_squelch(site(floor=15)), 20)
+    check("noisier site", transcriber.choose_squelch(site(floor=95)), 100)
+    check("very quiet site", transcriber.choose_squelch(site(floor=1)), 10)
+
+
+def test_calibration_is_not_fooled_by_a_transmission():
+    """A transmission during the measurement looks exactly like a level that is too
+    low. Without the confirmation pass it would push the answer up and quietly cost
+    sensitivity for as long as the cache lasts."""
+    print("calibration — someone transmits mid-measurement")
+    chosen = transcriber.choose_squelch(site(floor=15, busy_at=20))
+    check("still picks the right level", chosen, 20)
+
+
+def test_calibration_gives_up_rather_than_guessing():
+    """If nothing shuts it up, say so — the caller falls back to the default instead of
+    returning a made-up number."""
+    print("calibration — nothing works")
+    check("returns None", transcriber.choose_squelch(site(floor=10_000)), None)
+
+
 # ── the adaptive squelch ─────────────────────────────────────────────────────
 
 def noise_block(level, seed=[0]):
@@ -465,6 +510,9 @@ if __name__ == "__main__":
     for fn in [
         test_worth_logging, test_clean_strips_sound_effects, test_clip_seconds,
         test_block_rms, test_squelch_finds_its_own_floor,
+        test_calibration_finds_the_lowest_level_that_gates,
+        test_calibration_is_not_fooled_by_a_transmission,
+        test_calibration_gives_up_rather_than_guessing,
         test_squelch_ignores_a_brief_pause, test_squelch_waits_before_judging,
         test_outbox_order_and_retry, test_outbox_drops_corrupt_entries,
         test_posting, test_unreachable_server_is_retried,

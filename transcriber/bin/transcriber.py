@@ -382,6 +382,113 @@ def write_clip(spool, audio, seq):
     return path
 
 
+# Calibration. Ascending, so the winner is the LOWEST level that shuts out this site's
+# noise — the most sensitive setting that still gates, rather than a safe-but-deaf one.
+# The step is the margin: landing on 30 means 20 let noise through, so the true edge is
+# between them and there is up to a step of headroom against drift.
+SQUELCH_CANDIDATES = list(range(0, 201, 10))
+QUIET_FRACTION = 0.05        # under 5% of the full sample rate counts as "shut"
+CALIBRATION_MAX_AGE = 86400  # re-measure daily; a site does not change hour to hour
+
+
+def choose_squelch(sample, candidates=SQUELCH_CANDIDATES, quiet=QUIET_FRACTION):
+    """Lowest squelch level at which an idle channel goes quiet.
+
+    `sample(level, seconds) -> bytes observed`, injected so this can be tested without
+    a radio.
+
+    Two passes at each candidate. rtl_fm only emits samples while its squelch is open,
+    so "no bytes" means "nothing is getting through" — but a transmission arriving
+    mid-measurement looks identical to a level that is too low, and would push the
+    answer upwards, leaving the receiver deaf to anything quieter. Confirming with a
+    longer second look costs a few seconds and makes that need two coincidences rather
+    than one.
+    """
+    expected = SAMPLE_RATE * 2
+
+    def shut(level):
+        # Twice, because a level that looks quiet for two seconds and is not would be
+        # cached for a day.
+        return (sample(level, 2.0) < expected * 2.0 * quiet
+                and sample(level, 3.0) < expected * 3.0 * quiet)
+
+    for i, level in enumerate(candidates):
+        if not shut(level):
+            continue
+        # Walk back down. A transmission during an earlier sample is indistinguishable
+        # from a level that was too low, so it pushes the scan past the right answer —
+        # and the result is a receiver that gates reliably and hears less than it could,
+        # which nobody would notice. Stepping down while the level below also proves
+        # quiet undoes that, and costs nothing when the scan was clean.
+        while i > 0 and shut(candidates[i - 1]):
+            i -= 1
+        return candidates[i]
+    return None
+
+
+def _sample_rtl(channel, level, seconds):
+    """Bytes rtl_fm emits at this squelch level over `seconds`."""
+    p = subprocess.Popen(
+        ["rtl_fm", "-d", channel.serial, "-f", channel.frequency,
+         "-M", "fm", "-s", "200000", "-r", str(SAMPLE_RATE), "-E", "deemp", "-l", str(level)]
+        + ([] if channel.gain is None else ["-g", str(channel.gain)]),
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        # Opening the device and settling the tuner produces a burst that says nothing
+        # about the noise floor. Discard it before counting.
+        warmup = time.time() + 1.5
+        while time.time() < warmup:
+            if select.select([p.stdout], [], [], 0.2)[0]:
+                os.read(p.stdout.fileno(), 65536)
+        total = 0
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            if select.select([p.stdout], [], [], 0.2)[0]:
+                total += len(os.read(p.stdout.fileno(), 65536))
+        return total
+    finally:
+        p.terminate()
+        try:
+            p.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            p.kill()
+
+
+def calibrated_squelch(channel, spool):
+    """The squelch level to use, measured if need be and remembered afterwards.
+
+    Measuring takes the better part of a minute and holds the dongle, so the answer is
+    cached: a site's noise floor is a property of where the receiver is, not of when it
+    was last restarted, and a channel that restarts should be listening again in seconds.
+    """
+    cache = os.path.join(spool, "squelch.json")
+    try:
+        with open(cache, encoding="utf-8") as fh:
+            saved = json.load(fh)
+        if time.time() - saved["when"] < CALIBRATION_MAX_AGE:
+            log.info("squelch %s (measured %.1f hours ago)",
+                     saved["squelch"], (time.time() - saved["when"]) / 3600)
+            return saved["squelch"]
+    except (OSError, ValueError, KeyError):
+        pass
+
+    log.info("calibrating squelch — listening for this site's noise floor")
+    level = choose_squelch(lambda lv, secs: _sample_rtl(channel, lv, secs))
+    if level is None:
+        # Nothing shut it up, so either the band is genuinely busy or something is
+        # wrong. Carry on at the default rather than refusing to listen at all.
+        log.warning("could not find a quiet squelch level; using %s", DEFAULT_SQUELCH)
+        return DEFAULT_SQUELCH
+
+    log.info("squelch %s — measured", level)
+    try:
+        with open(cache, "w", encoding="utf-8") as fh:
+            json.dump({"squelch": level, "when": time.time(), "frequency": channel.frequency}, fh)
+    except OSError:
+        pass
+    return level
+
+
 def start_capture(channel, spool):
     """rtl_fm, squelched, writing raw 16 kHz samples for the main loop to segment.
 
@@ -435,9 +542,12 @@ def start_capture(channel, spool):
     # So the RF gate decides whether there is a signal, and Squelch decides where the
     # transmission starts and stops within it — which is also what keeps the boundaries
     # sane, since rtl_fm emits nothing at all while closed.
+    # A value set in the manager is an override and is obeyed; otherwise it is measured
+    # for this site and cached.
+    level = channel.squelch or calibrated_squelch(channel, spool)
     argv = ["rtl_fm", "-d", channel.serial, "-f", channel.frequency,
             "-M", "fm", "-s", "200000", "-r", str(SAMPLE_RATE), "-E", "deemp",
-            "-l", str(channel.squelch or DEFAULT_SQUELCH)]
+            "-l", str(level)]
     if channel.gain is not None:
         argv += ["-g", str(channel.gain)]     # otherwise rtl_fm uses automatic gain
     return subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
@@ -509,6 +619,8 @@ def main(argv=None):
     p.add_argument("--once", action="store_true", help="process what is waiting, then exit")
     p.add_argument("-v", "--verbose", action="store_true")
     p.add_argument("--version", action="version", version=f"transcriber {VERSION}")
+    p.add_argument("--calibrate", action="store_true",
+                   help="re-measure the squelch for this site now, ignoring the cache")
     args = p.parse_args(argv)
 
     logging.basicConfig(
@@ -523,6 +635,11 @@ def main(argv=None):
 
     spool = args.spool or os.path.join(SPOOL, re.sub(r"[^\w.-]", "_", channel.id))
     os.makedirs(spool, exist_ok=True)
+    if args.calibrate:
+        try:
+            os.unlink(os.path.join(spool, "squelch.json"))
+        except OSError:
+            pass
     outbox = Outbox(os.path.join(spool, "outbox"))
 
     whisper = shutil.which(args.whisper) or args.whisper

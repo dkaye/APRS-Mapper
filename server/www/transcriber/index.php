@@ -58,7 +58,14 @@ function redact(array $data): array {
 }
 
 if (isset($_GET['load'])) {
-    jsonOut(redact(transcriber_load()));
+    $data = redact(transcriber_load());
+    // The UI works in MHz throughout; Hz is storage, and nobody reads a frequency
+    // that way. Sent alongside rather than instead, so the page never has to convert.
+    foreach ($data['channels'] as &$c) {
+        $c['mhz'] = transcriber_mhz($c['frequency'] ?? 0);
+    }
+    unset($c);
+    jsonOut($data);
 }
 
 if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -90,16 +97,21 @@ if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $channels = [];
     $seen = [];
     foreach ($body['channels'] as $c) {
-        // No '@': it is systemd's instance separator, and the id names the unit
-        // (transcriber@rx1-146520.service).
-        $id = substr(preg_replace('/[^A-Za-z0-9_.-]/', '-', trim($c['id'] ?? '')), 0, 64);
-        if ($id === '' || isset($seen[$id])) continue;   // ids are unit names; must be unique
+        $device = substr(trim($c['device'] ?? ''), 0, 64);
+        $hz     = transcriber_hz($c['frequency'] ?? '');
+        // Derived, not typed. The id names the systemd unit and identifies the author
+        // of every entry, but it is fully determined by which receiver is on which
+        // frequency — so asking for it was asking the operator to invent a value whose
+        // rules ("must be unique", "no @, it is systemd's instance separator") only
+        // make sense if you know how the device is built.
+        $id = transcriber_channel_id($device, $hz);
+        if ($id === '' || isset($seen[$id])) continue;
         $seen[$id] = true;
         $channels[] = [
             'id'        => $id,
-            'device'    => substr(trim($c['device'] ?? ''), 0, 64),
+            'device'    => $device,
             'label'     => substr(trim($c['label'] ?? ''), 0, 40) ?: $id,
-            'frequency' => transcriber_hz($c['frequency'] ?? ''),
+            'frequency' => $hz,
             'serial'    => substr(preg_replace('/[^A-Za-z0-9]/', '', (string)($c['serial'] ?? '')), 0, 32),
             'squelch'   => max(0, min(1000, (int)($c['squelch'] ?? 0))),
             'model'     => in_array($c['model'] ?? '', ['ggml-tiny.en.bin', 'ggml-base.en.bin'], true)
@@ -182,6 +194,14 @@ input:focus, select:focus { outline: 2px solid #2563eb; outline-offset: -1px; bo
 input:disabled, select:disabled { background: #f9fafb; color: #6b7280; }
 .tok { font-size: 12px; white-space: nowrap; }
 .tok.set { color: #16a34a; } .tok.unset { color: #dc2626; font-weight: 600; }
+.derived { font-size: 11px; color: #9ca3af; margin-top: 2px; font-family: ui-monospace, monospace; }
+.panel { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 14px;
+         font-size: 13px; line-height: 1.55; margin-bottom: 6px; }
+.panel p { margin-top: 6px; color: #374151; }
+table.explain { border-collapse: collapse; font-size: 13px; margin-bottom: 12px; max-width: 900px; }
+table.explain th { text-align: left; vertical-align: top; padding: 4px 12px 4px 0; white-space: nowrap;
+                   color: #111827; font-weight: 600; }
+table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-height: 1.5; }
 .row-btn { background: none; border: none; cursor: pointer; font-size: 13px; color: #6b7280;
            padding: 3px 6px; border-radius: 4px; font-family: inherit; }
 .row-btn:hover { background: #f3f4f6; color: #111827; }
@@ -208,30 +228,59 @@ input:disabled, select:disabled { background: #f9fafb; color: #6b7280; }
 </header>
 
 <main>
-  <h2>Devices</h2>
-  <p class="hint">One row per Transcriber Pi. <strong>Host</strong> must match its
-     <code>hostname</code> — that is what it identifies itself with when it fetches its
-     channels. Put the token in <code>/home/pi/.transcriber-token</code> on that Pi.</p>
+  <div class="panel">
+    <strong>When do changes take effect?</strong>
+    <p>Edits save here the moment you make them — there is no save button. Reaching the
+       receiver is separate: each Pi collects its settings <strong>nightly at 4:11am</strong>,
+       or immediately if you run <code>sudo /home/pi/auto-update.sh</code> on it.</p>
+    <p>The exception is <strong>On</strong>. Switching a channel off stops it logging at
+       once, because the server stops accepting anything from it without waiting for the
+       device to notice.</p>
+    <p>This page does <strong>not</strong> refresh by itself. It reloads after each of
+       your own edits, so what you see is your work — but if somebody else changes
+       something you will not see it until you reload.</p>
+  </div>
+
+  <h2>Receivers</h2>
+  <p class="hint">One row per Transcriber Pi. <strong>Host</strong> must match what that
+     machine calls itself (<code>hostname</code>) — it is how the Pi identifies itself
+     when it collects its settings. The <strong>config token</strong> goes in
+     <code>/home/pi/.transcriber-token</code> on that Pi and lets it do so.</p>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Host</th><th>Note</th><th>Config token</th><th></th></tr></thead>
+      <thead><tr><th>Host</th><th>Where it is</th><th>Config token</th><th></th></tr></thead>
       <tbody id="devices"></tbody>
     </table>
     <div class="empty" id="devices-empty">No Transcribers yet.</div>
   </div>
 
   <h2>Channels</h2>
-  <p class="hint">One row per frequency. <strong>ID</strong> names the systemd unit
-     (<code>transcriber@rx1-146520</code>) and is the author shown in the event log, so it
-     must be unique across the fleet. <strong>Frequency</strong> may be written either way — <code>147.465</code> or <code>147465000</code>; it is stored in Hz and echoed back so you can see how it was read. <strong>Serial</strong> is the dongle's USB serial,
-     not its index — index order is not stable across reboots, and two channels swapping
-     frequencies is the kind of fault nobody notices until the log is already wrong. Set
-     them with <code>rtl_eeprom -d 0 -s 00000001</code>.</p>
+  <p class="hint">One row per frequency being listened to. A receiver with two dongles
+     can cover two channels at once.</p>
+  <table class="explain">
+    <tr><th>Receiver</th><td>Which Pi does the listening.</td></tr>
+    <tr><th>Frequency</th><td>In <strong>MHz</strong>, as you would read it off a radio —
+        <code>147.465</code>. For a repeater this is the <em>output</em>: the frequency it
+        transmits on, not the one you transmit to it on.</td></tr>
+    <tr><th>Heard as</th><td>The name on every entry this channel writes, so choose what you
+        want to read in the log during an event: <code>West Marin</code> says more than
+        <code>147.465</code>. Cosmetic only — changing it renames nothing else.</td></tr>
+    <tr><th>Dongle serial</th><td>The serial programmed into the SDR stick, not a slot
+        number. Slot order changes when the Pi reboots, and two channels quietly swapping
+        frequencies is a fault nobody notices until the log is already wrong. Read or set
+        one with <code>rtl_eeprom -d 0 -s 00000001</code>.</td></tr>
+    <tr><th>Accuracy</th><td><strong>Fast</strong> keeps up with a busy net in real time and
+        is the right default. <strong>Careful</strong> is better on callsigns and phonetics
+        but runs about three times slower, so on a busy frequency entries arrive behind the
+        traffic. Worth it only if you are reading the log for identifiers rather than for
+        the gist.</td></tr>
+    <tr><th>On</th><td>Off stops it logging at once, without losing the setup.</td></tr>
+  </table>
   <div class="table-wrap">
     <table>
       <thead><tr>
-        <th>ID</th><th>Device</th><th>Label</th><th>Frequency</th><th>Serial</th>
-        <th>Squelch</th><th>Model</th><th>On</th><th>Log token</th><th></th>
+        <th>Receiver</th><th>Frequency (MHz)</th><th>Heard as</th><th>Dongle serial</th>
+        <th>Accuracy</th><th>On</th><th>Log token</th><th></th>
       </tr></thead>
       <tbody id="channels"></tbody>
     </table>
@@ -248,7 +297,8 @@ input:disabled, select:disabled { background: #f9fafb; color: #6b7280; }
 
 <script>
 const CAN_EDIT = <?= $canEdit ? 'true' : 'false' ?>;
-const MODELS = ['ggml-tiny.en.bin', 'ggml-base.en.bin'];
+const MODELS = [{file: 'ggml-tiny.en.bin', name: 'Fast'},
+                {file: 'ggml-base.en.bin', name: 'Careful'}];
 let data = {devices: [], channels: []};
 
 const $ = id => document.getElementById(id);
@@ -273,7 +323,9 @@ function save() {
         try {
             const r = await fetch('?save', {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(data),
+                // The page works in MHz; the server accepts either and stores Hz.
+                body: JSON.stringify({...data, channels: data.channels.map(
+                    c => ({...c, frequency: c.mhz}))}),
             });
             const d = await r.json();
             if (d.error) { status(d.error, 'error'); return; }
@@ -327,16 +379,14 @@ function render() {
     const hosts = data.devices.map(d => d.host);
     const ch = $('channels');
     ch.innerHTML = data.channels.map((c, i) => `<tr>
-        <td>${field('channels', i, 'id', c.id)}</td>
         <td><select ${CAN_EDIT ? '' : 'disabled'} onchange="data.channels[${i}].device = this.value; save()">
               ${hosts.map(h => `<option${h === c.device ? ' selected' : ''}>${esc(h)}</option>`).join('')}
             </select></td>
+        <td>${field('channels', i, 'mhz', c.mhz)}<div class="derived">${esc(c.id || '')}</div></td>
         <td>${field('channels', i, 'label', c.label)}</td>
-        <td>${field('channels', i, 'frequency', c.frequency)}</td>
         <td>${field('channels', i, 'serial', c.serial)}</td>
-        <td>${field('channels', i, 'squelch', c.squelch, 'number')}</td>
         <td><select ${CAN_EDIT ? '' : 'disabled'} onchange="data.channels[${i}].model = this.value; save()">
-              ${MODELS.map(m => `<option value="${m}"${m === c.model ? ' selected' : ''}>${m.replace('ggml-','').replace('.bin','')}</option>`).join('')}
+              ${MODELS.map(m => `<option value="${m.file}"${m.file === c.model ? ' selected' : ''}>${m.name}</option>`).join('')}
             </select></td>
         <td><input type="checkbox" ${c.enabled ? 'checked' : ''} ${CAN_EDIT ? '' : 'disabled'}
                    onchange="data.channels[${i}].enabled = this.checked; save()"></td>
@@ -363,8 +413,8 @@ if (CAN_EDIT) {
     };
     $('add-channel').onclick = () => {
         data.channels.push({id: '', device: data.devices[0]?.host || '', label: '',
-                            frequency: '', serial: '', squelch: 0,
-                            model: MODELS[0], enabled: true, has_token: false});
+                            mhz: '', serial: '', model: MODELS[0].file,
+                            enabled: true, has_token: false});
         render(); save();
     };
 }

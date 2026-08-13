@@ -114,6 +114,24 @@ function transcriber_hz($raw): string
     return (string)(int)round($n);
 }
 
+/** MHz, as a person reads it: 147465000 -> "147.465". */
+function transcriber_mhz($hz): string
+{
+    $hz = (int)$hz;
+    if ($hz <= 0) return '';
+    return rtrim(rtrim(number_format($hz / 1_000_000, 4, '.', ''), '0'), '.');
+}
+
+/** The systemd instance name and log identity for one channel, derived from the two
+ *  things that actually define it. No '@' — that is systemd's instance separator. */
+function transcriber_channel_id(string $device, $hz): string
+{
+    $device = preg_replace('/[^A-Za-z0-9_.-]/', '-', trim($device));
+    $khz    = (int)round(((int)$hz) / 1000);
+    if ($device === '' || $khz <= 0) return '';
+    return substr("$device-$khz", 0, 64);
+}
+
 function transcriber_token(): string
 {
     return bin2hex(random_bytes(16));
