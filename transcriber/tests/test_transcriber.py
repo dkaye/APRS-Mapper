@@ -45,7 +45,11 @@ def test_worth_logging():
                  # whisper describing a sound rather than reporting speech. An open
                  # squelch on a quiet frequency produces these steadily — "(water
                  # splashing)" is a real one, off a real repeater.
-                 "(water splashing)", "[MUSIC]", "(engine noise)", "( silence )"]:
+                 "(water splashing)", "[MUSIC]", "(engine noise)", "( silence )",
+                 # whisper's other house style for the same thing. These reached a real
+                 # event log: a squelch crash as "*BANG*", static as "*gunshot*". Worse
+                 # than a wrong entry, because it reads like something happened.
+                 "*BANG*", "*gunshot*", "*static*", "♪♪♪", "♪ music ♪"]:
         check(f"discards {junk!r}", transcriber.worth_logging(junk), False)
     for real in ["aid three we have a rider down", "copy that sending medical",
                  "net control this is whiskey six sierra golf"]:
@@ -377,6 +381,10 @@ def test_a_single_over_is_one_clip():
 
 def test_clean_strips_sound_effects():
     print("clean")
+    check("asterisks are stripped like brackets",
+          transcriber.clean("*BANG* K6DRK on West Marin *static*"), "K6DRK on West Marin")
+    check("and an entry that is only a sound effect empties out",
+          transcriber.clean("*gunshot*"), "")
     real = "(water splashing) (water splashing) K-6 DRK testing on West Marin K-6 DRK (water splashing)"
     check("keeps the speech, drops the hiss",
           transcriber.clean(real), "K-6 DRK testing on West Marin K-6 DRK")

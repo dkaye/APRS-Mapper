@@ -273,8 +273,16 @@ def clean(text):
     that hiss: a real recording came back as "(water splashing) (water splashing) K-6
     DRK testing on West Marin K-6 DRK (water splashing)". The callsign and the message
     are in there and worth keeping; the rest is the squelch tail described in words.
+
+    Asterisks and music notes as well as brackets. whisper has more than one house style
+    for this and only the bracketed ones were being caught, so a squelch crash arrived in
+    the event log as "*BANG*" and a burst of static as "*gunshot*" — which is a worse
+    entry than a wrong one, because it reads like something happened.
     """
-    return " ".join(re.sub(r"[\(\[\{][^\)\]\}]*[\)\]\}]", " ", text).split()).strip()
+    stripped = re.sub(r"[\(\[\{][^\)\]\}]*[\)\]\}]", " ", text)
+    stripped = re.sub(r"\*[^*]*\*", " ", stripped)
+    stripped = re.sub(r"♪[^♪]*♪", " ", stripped)
+    return " ".join(stripped.split()).strip()
 
 
 def worth_logging(text):
@@ -290,7 +298,7 @@ def worth_logging(text):
     # reporting speech — "(water splashing)", "[MUSIC]", "(engine noise)". There is no
     # useful list of these to keep; the shape is the signal. An open squelch on a quiet
     # frequency produces them steadily.
-    if re.fullmatch(r"[\(\[\{].*[\)\]\}]", text.strip(), re.S):
+    if re.fullmatch(r"[\(\[\{].*[\)\]\}]|\*.*\*|♪.*♪", text.strip(), re.S):
         return False
     bare = re.sub(r"[^\w\s]", "", text).strip().lower()
     if bare in HALLUCINATIONS or text.strip().lower() in HALLUCINATIONS:
@@ -574,6 +582,14 @@ def start_capture(channel, clips, spool):
     # help deciding that.
     # A value set in the manager is an override and is obeyed; otherwise it is measured
     # for this site and cached.
+    #
+    # Say which, either way. The measured path logs its own answer, so an override used
+    # to be the one case where the journal never mentioned the squelch at all — and it is
+    # now the only number that decides what gets recorded, since nothing downstream
+    # second-guesses the RF gate any more. Too low and the Pi spends its afternoon
+    # transcribing static; too high and it is quietly deaf.
+    if channel.squelch:
+        log.info("squelch %s — set in the manager for this channel", channel.squelch)
     level = channel.squelch or calibrated_squelch(channel, spool)
     argv = ["rtl_fm", "-d", channel.serial, "-f", channel.frequency,
             "-M", "fm", "-s", "200000", "-r", str(SAMPLE_RATE), "-E", "deemp",
