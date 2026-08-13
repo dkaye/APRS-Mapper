@@ -1,0 +1,16 @@
+[Unit]
+Description=Collect Transcriber channel settings
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# --channels-only: fetch this device's channels and act on them. No archive download, no
+# self-replacement, no self-noise test — those belong to the nightly run, and the last of
+# them would take the receiver off the air for a minute every minute.
+ExecStart=/home/pi/auto-update.sh --channels-only
+# A poll that hangs must not stack up behind itself.
+TimeoutStartSec=120
+# The server being briefly unreachable is not a failure worth marking; the next minute
+# will do. The script already exits 0 on a failed fetch and keeps what is installed.
+SuccessExitStatus=0

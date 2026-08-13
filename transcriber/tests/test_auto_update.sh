@@ -34,9 +34,11 @@ setup() {
     SANDBOX=$(mktemp -d)
     mkdir -p "$SANDBOX/server/home" "$SANDBOX/pi" "$SANDBOX/log"
 
-    # Cut at the marker: keep the download, the extract, and the re-exec block.
-    sed -n '1,/^# --ignore-times/p' "$SRC/auto-update.sh" \
-        | sed '$d' > "$SANDBOX/pi/auto-update.sh"
+    # Cut at the marker: keep the download, the extract, and the re-exec block. The cut
+    # lands inside the "full update only" conditional, so close it — see TEST-CUT in
+    # auto-update.sh. A mismatch here is a bash syntax error, which is loud.
+    sed -n '1,/^# TEST-CUT/p' "$SRC/auto-update.sh" > "$SANDBOX/pi/auto-update.sh"
+    echo 'fi' >> "$SANDBOX/pi/auto-update.sh"
     # Point it at the fake server and a writable log, and record each run.
     sed -i.bak \
         -e "s|^BASE=.*|BASE=\"file://$SANDBOX/server\"|" \
@@ -203,6 +205,35 @@ echo "reconciliation — nothing to do"
 recon '{"channels":[{"id":"Transcriber-147465","enabled":true}]}' "Transcriber-147465" "Transcriber-147465"
 check "does not disable the channel it should be running" \
       "$(grep -c 'disable' "$SANDBOX/calls.txt")" "0"
+
+echo "reconciliation — the 60-second poll leaves a healthy channel alone"
+# The invariant the poller lives or dies by. Restarting on a schedule would re-measure the
+# squelch and lose whatever was being said, sixty times an hour, forever — a receiver that
+# is never quite listening.
+recon_setup
+echo '{"channels":[{"id":"Transcriber-147465","enabled":true}]}' > "$SANDBOX/etc/channels.json"
+: > "$SANDBOX/wants/transcriber@Transcriber-147465.service"
+{ echo 'CONFIG="'"$SANDBOX"'/etc/channels.json"'
+  echo 'WANTS_DIR="'"$SANDBOX"'/wants"'
+  echo 'CHANNELS_ONLY=1'          # a poll, not a full update
+  echo 'CHANNELS_CHANGED=""'      # and nothing changed
+  echo 'log() { :; }'
+  sed -n '/^# ── restart what is configured/,$p' "$SRC/auto-update.sh"
+} > "$SANDBOX/recon.sh"
+: > "$SANDBOX/calls.txt"
+RUNNING="Transcriber-147465" PATH="$SANDBOX/bin:$PATH" bash "$SANDBOX/recon.sh" >/dev/null 2>&1
+check "does not restart it" "$(grep -c 'restart transcriber@' "$SANDBOX/calls.txt")" "0"
+check "start is a no-op that keeps it enabled" \
+      "$(grep -c 'start transcriber@Transcriber-147465.service' "$SANDBOX/calls.txt")" "1"
+
+# But a poll that DID find a change must restart, or the new setting never takes effect —
+# which is the entire reason the poller exists.
+: > "$SANDBOX/calls.txt"
+sed -i.bak 's/^CHANNELS_CHANGED=""/CHANNELS_CHANGED=1/' "$SANDBOX/recon.sh"
+RUNNING="Transcriber-147465" PATH="$SANDBOX/bin:$PATH" bash "$SANDBOX/recon.sh" >/dev/null 2>&1
+check "a changed channel list does restart it" \
+      "$(grep -c 'restart transcriber@Transcriber-147465.service' "$SANDBOX/calls.txt")" "1"
+teardown
 
 echo "reconciliation — no channels assigned"
 # The state a device lands in after being renamed: the token still works, so the fetch

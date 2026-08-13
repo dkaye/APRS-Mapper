@@ -93,6 +93,9 @@ if [ -z "${TRANSCRIBER_REEXEC:-}" ] && [ -f "$TMP/home/auto-update.sh" ] \
     fi
     log "could not replace $SELF; carrying on with the version already installed"
 fi
+# TEST-CUT — tests/test_auto_update.sh truncates the script here to exercise the
+# hand-over without needing a Pi. It appends the "fi" that closes the CHANNELS_ONLY
+# guard opened above; if this marker moves, move that too.
 
 # --ignore-times, not the default size+mtime comparison: tar restores the archive's
 # timestamps, so a file whose size did not change looks unchanged to rsync and is
@@ -131,22 +134,49 @@ fi   # end of the full-update section, skipped by --channels-only
 # ── channels ─────────────────────────────────────────────────────────────────
 # Written by the channel manager on the server; this device fetches only its own.
 
+CHANNELS_CHANGED=""
 if [ -f "$TOKEN_FILE" ]; then
     HOST=$(hostname)
-    if curl -fsS --max-time 30 -o "$TMP/channels.json" \
+    if curl -fsS --max-time 30 -o "$TMP/response.json" \
             "$BASE/get.php?token=$(cat "$TOKEN_FILE")&device=$HOST&t=$(date +%s)"; then
         # Validate before installing. A truncated or error-page response would
         # otherwise stop every channel on this device at the next restart.
-        if python3 -c "import json,sys; json.load(open(sys.argv[1]))['channels']" \
-                   "$TMP/channels.json" 2>/dev/null; then
+        #
+        # Only the channels are written to $CONFIG. The response also carries the
+        # server's "update requested" stamp, and if that went into the same file then
+        # every press of the button would look like a changed channel list and restart
+        # every receiver on the device for no reason.
+        if python3 - "$TMP/response.json" "$TMP/channels.json" <<'PYEOF' 2>/dev/null
+import json, sys
+r = json.load(open(sys.argv[1]))
+json.dump({"channels": r["channels"]}, open(sys.argv[2], "w"), indent=4, sort_keys=True)
+PYEOF
+        then
             mkdir -p "$(dirname "$CONFIG")"
             if ! cmp -s "$TMP/channels.json" "$CONFIG"; then
                 install -m 640 -o root -g pi "$TMP/channels.json" "$CONFIG"
-                log "channel list updated"
+                FORCE_LOG=1 log "channel list updated"
                 CHANNELS_CHANGED=1
             fi
         else
             log "channel list from server was not valid JSON; keeping the current one"
+        fi
+
+        # "Update devices now", pressed in the manager. The server hands out a timestamp
+        # and each device remembers the last one it acted on, so nothing has to be
+        # written back and a device that was switched off catches up when it returns.
+        REQ=$(python3 -c "import json,sys; print(int(json.load(open(sys.argv[1])).get('update_requested') or 0))" \
+              "$TMP/response.json" 2>/dev/null || echo 0)
+        SEEN=$(cat "$LAST_UPDATE_SEEN" 2>/dev/null || echo 0)
+        if [ "$REQ" -gt "$SEEN" ] 2>/dev/null; then
+            mkdir -p "$(dirname "$LAST_UPDATE_SEEN")"
+            echo "$REQ" > "$LAST_UPDATE_SEEN"
+            if [ -n "$CHANNELS_ONLY" ]; then
+                FORCE_LOG=1 log "full update requested from the manager"
+                # Hand over to a complete run — software as well as configuration — and
+                # let it finish the job rather than doing half of it here.
+                exec "$SELF"
+            fi
         fi
     else
         log "channel list download failed; keeping the current one"
@@ -163,6 +193,14 @@ systemctl daemon-reload
 # what makes a device appear at /netbird/admin.php. Enabled here rather than only in
 # install.sh so devices installed before it existed pick it up on the next update.
 systemctl enable --now stats-listener.service >/dev/null 2>&1 || true
+
+# The 60-second config poll. Enabled here as well as in install.sh so a device deployed
+# before this existed starts collecting settings on its own after one nightly run.
+# Never from the poller itself — restarting the timer that is running you is a good way
+# to have it not run again.
+if [ -z "$CHANNELS_ONLY" ]; then
+    systemctl enable --now transcriber-config.timer >/dev/null 2>&1 || true
+fi
 
 # Enable exactly the channels in the config and stop any that were removed, so a
 # channel deleted in the manager actually stops rather than lingering until reboot.
@@ -196,9 +234,22 @@ for id in $HAVE; do
     esac
 done
 
+# Restart only when there is a reason to. A poller running every minute must leave a
+# working receiver alone; restarting it on a schedule would mean re-measuring the squelch
+# and missing whatever was said during the gap, sixty times an hour, forever.
+#
+# A full update is always a reason, because it may have just replaced the worker itself.
+RESTART=""
+[ -n "$CHANNELS_CHANGED" ] && RESTART=1
+[ -z "$CHANNELS_ONLY" ] && RESTART=1
+
 for id in $WANT; do
     systemctl enable "transcriber@$id.service" >/dev/null 2>&1 || true
-    systemctl restart "transcriber@$id.service" || log "channel $id failed to start"
+    if [ -n "$RESTART" ]; then
+        systemctl restart "transcriber@$id.service" || log "channel $id failed to start"
+    else
+        systemctl start "transcriber@$id.service" 2>/dev/null || true   # no-op if running
+    fi
 done
 
 # "No channels" after a successful fetch is a specific situation, not a vague one: the
@@ -217,10 +268,12 @@ fi
 # about a minute and puts the channels back afterwards, so it runs last, after everything
 # that could leave the device in a worse state has already succeeded. Non-fatal and
 # time-bounded: a receiver must never be off the air because a measurement hung.
-if [ -x /home/pi/sdr-selftest.sh ]; then
+if [ -z "$CHANNELS_ONLY" ] && [ -x /home/pi/sdr-selftest.sh ]; then
     log "Running SDR self-noise test..."
     timeout -k 15 400 /home/pi/sdr-selftest.sh 2>&1 | grep -aiE 'selftest:' \
         | while read -r l; do log "$l"; done || log "self-test skipped (non-fatal)"
 fi
 
-log "update complete: ${WANT:-no channels configured}"
+if [ -z "$CHANNELS_ONLY" ] || [ -n "$CHANNELS_CHANGED" ]; then
+    FORCE_LOG=1 log "update complete: ${WANT:-no channels configured}"
+fi

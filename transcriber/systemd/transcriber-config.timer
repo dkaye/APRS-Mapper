@@ -1,0 +1,17 @@
+[Unit]
+Description=Collect Transcriber channel settings from the manager
+# Without this a change made in the manager waited for the 4:11am update, or for somebody
+# to SSH in and run auto-update by hand — which is not a workflow anyone should have to
+# use to change a squelch level.
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=60s
+# The interval is a compromise, and 60s is where it landed: fast enough that a change
+# feels applied rather than scheduled, slow enough that the fleet is not hammering the
+# server 1440 times a day per device for a file that rarely changes.
+AccuracySec=5s
+Unit=transcriber-config.service
+
+[Install]
+WantedBy=timers.target

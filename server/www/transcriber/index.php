@@ -139,6 +139,11 @@ if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     jsonOut(['ok' => true, 'devices' => count($devices), 'channels' => count($channels)]);
 }
 
+if (isset($_GET['update']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!$canEdit) jsonOut(['error' => 'Missing permission: netbird.admin'], 403);
+    jsonOut(['ok' => true, 'requested' => transcriber_request_update()]);
+}
+
 if (isset($_GET['rotate']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$canEdit) jsonOut(['error' => 'Missing permission: netbird.admin'], 403);
     $body = json_decode(file_get_contents('php://input'), true);
@@ -221,6 +226,10 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
 .row-btn:hover { background: #f3f4f6; color: #111827; }
 .row-btn.danger:hover { background: #fee2e2; color: #b91c1c; }
 .empty { padding: 22px; text-align: center; color: #9ca3af; font-size: 14px; }
+#notice { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none;
+          align-items: center; justify-content: center; z-index: 60; }
+#notice.open { display: flex; }
+#notice .card { background: #fff; border-radius: 10px; padding: 22px 26px; max-width: 460px; }
 #tokenbox { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none;
             align-items: center; justify-content: center; z-index: 50; }
 #tokenbox.open { display: flex; }
@@ -237,6 +246,7 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
     <button class="hdr-btn" id="add-device">+ Device</button>
     <button class="hdr-btn" id="add-channel">+ Channel</button>
     <button class="hdr-btn hdr-btn-primary" id="save-btn" onclick="save()" disabled>Save</button>
+    <button class="hdr-btn" id="update-btn" onclick="requestUpdate()">Update devices</button>
   <?php endif; ?>
   <a class="hdr-btn" href="/netbird/">Devices</a>
   <a class="hdr-btn" href="?logout">Sign out</a>
@@ -245,12 +255,15 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
 <main>
   <div class="panel">
     <strong>When do changes take effect?</strong>
-    <p>Nothing is written until you press <strong>Save</strong>. Reaching the receiver is
-       separate: each Pi collects its settings <strong>nightly at 4:11am</strong>, or
-       immediately if you run <code>sudo /home/pi/auto-update.sh</code> on it.</p>
-    <p>The exception is <strong>On</strong>. Switching a channel off stops it logging at
-       once, because the server stops accepting anything from it without waiting for the
-       device to notice.</p>
+    <p>Nothing is written until you press <strong>Save</strong>. Each Pi then collects
+       its settings <strong>within 60 seconds</strong> — there is nothing to run and
+       nothing to log in to. A change to frequency, accuracy or squelch restarts that
+       channel when it lands; switching a channel <strong>On</strong> or off takes effect
+       at once, because the server stops accepting from it without waiting for the device
+       to notice.</p>
+    <p><strong>Update devices</strong> is for software rather than settings: it asks every
+       Transcriber to pull a new worker at its next check instead of waiting for the
+       nightly run at 4:11am. Settings do not need it.</p>
     <p>This page does <strong>not</strong> refresh by itself, so it can go stale while it
        sits open. It no longer overwrites what it cannot see: if anything changed since
        you loaded, Save is refused and asks you to reload rather than quietly reverting
@@ -311,6 +324,16 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
   </div>
 </main>
 
+<div id="notice">
+  <div class="card">
+    <strong id="notice-title"></strong>
+    <p id="notice-body" style="margin:12px 0 0;line-height:1.55;color:#374151"></p>
+    <div style="margin-top:18px;text-align:right">
+      <button class="hdr-btn hdr-btn-primary" onclick="document.getElementById('notice').classList.remove('open')">OK</button>
+    </div>
+  </div>
+</div>
+
 <div id="tokenbox"><div class="card">
   <strong id="tok-title">New token</strong>
   <p class="hint">Copy it now — it is never shown again.</p>
@@ -329,6 +352,12 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 function status(text, cls) { const s = $('status'); s.textContent = text; s.className = cls || ''; }
+
+function notice(title, body) {
+    $('notice-title').textContent = title;
+    $('notice-body').textContent = body;
+    $('notice').classList.add('open');
+}
 
 async function load() {
     const r = await fetch('?load');
@@ -384,10 +413,36 @@ async function save() {
         const b = $('save-btn');
         if (b) b.disabled = true;
         status('Saved', 'saved');
+        // The gap between "saved" and "in effect" is real and invisible, and somebody
+        // watching the log for a change that has not reached the receiver yet will
+        // reasonably conclude it is broken. Say it once, plainly.
+        notice('Saved — allow up to 60 seconds',
+               'Each Transcriber collects its settings once a minute, so a change can '
+             + 'take up to 60 seconds to reach the receiver. Frequency, accuracy and '
+             + 'squelch changes restart that channel when they land.');
         // Re-read: the server issues tokens for new rows and normalises ids, so the
         // browser must not keep believing what it sent.
         await load();
     } catch { status('Save failed', 'error'); }
+}
+
+/* Asks every Transcriber to do a full update — the worker itself, not just its settings
+ * — at its next check. There is no way to reach into a Pi behind NAT and no wish to open
+ * one, so this leaves a timestamp the devices find when they next look. */
+async function requestUpdate() {
+    if (!CAN_EDIT) return;
+    if (!confirm('Ask every Transcriber to update its software at its next check?\n\n'
+               + 'Each channel restarts as it updates, so a receiver is off the air for '
+               + 'a few seconds.')) return;
+    try {
+        const r = await fetch('?update', {method: 'POST'});
+        const d = await r.json();
+        if (d.error) { status(d.error, 'error'); return; }
+        notice('Update requested — allow up to 60 seconds',
+               'Devices check once a minute, so each Transcriber will begin updating '
+             + 'within 60 seconds. Ones that are switched off will update when they '
+             + 'next come back.');
+    } catch { status('Request failed', 'error'); }
 }
 
 function tokenCell(row, kind, key) {

@@ -136,6 +136,10 @@ udevadm control --reload-rules 2>/dev/null || true
 # configure.sh.
 systemctl enable --now stats-listener.service >/dev/null 2>&1 || true
 
+# Collects channel settings from the manager every 60 seconds, so a change made there
+# reaches the receiver by itself instead of waiting for the nightly run.
+systemctl enable --now transcriber-config.timer >/dev/null 2>&1 || true
+
 echo
 echo "=== Installed ==="
 echo

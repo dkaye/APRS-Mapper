@@ -1242,6 +1242,25 @@ file, two fleets, no drift. The old `aprs_guard_*` output keys are still emitted
 the new generic ones, because every gate's `selftest-history.csv` and the dashboard were
 written against them, and a nightly update cycle means "every deployed device" for a day.
 
+**Settings reach the receiver by themselves, within a minute.** `transcriber-config.timer`
+runs `auto-update.sh --channels-only` every 60 seconds: fetch this device's channels, and
+if they differ from what is installed, apply them and restart the affected channel. No
+archive download, no self-replacement, no self-noise test — those belong to the nightly
+run, and the last of them would take the receiver off the air for a minute every minute.
+
+Two things that sound like details and are not. The poll **never restarts a channel that
+has not changed**: doing so on a schedule would re-measure the squelch and lose whatever
+was being said, sixty times an hour, forever. And the `update_requested` stamp the manager
+sets is kept *out* of the file the device compares against, or pressing "Update devices"
+would look like a changed channel list and restart every receiver for nothing.
+
+The manager saves on an explicit **Save**, not as you type, and carries a fingerprint of
+what the page was loaded from so the server refuses a write made against a stale copy
+rather than silently reverting somebody else's change. **Update devices** is separate and
+is about software: it asks every Transcriber to pull a new worker at its next check
+instead of waiting for 4:11am. Neither can be instant — there is no way into a Pi behind
+NAT and no wish to open one — so both say plainly that it can take up to 60 seconds.
+
 **Two scripts, and the split between them matters.** `install.sh` builds the *machine* —
 packages, `whisper.cpp` compiled for this CPU, the models, the nightly cron — and knows
 nothing about which receiver it is. `configure.sh` makes it a *particular* receiver:
