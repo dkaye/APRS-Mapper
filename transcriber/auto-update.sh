@@ -32,11 +32,30 @@ trap 'rm -rf "$TMP"' EXIT
 # PATH and fail to find it. cron gives an absolute path, a person may not.
 SELF=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
 
-log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" | tee -a /var/log/transcriber/update.log; }
+# --channels-only is the fast path a timer runs every half minute: fetch this device's
+# channels and act on them, skipping the archive, the self-replacement and the self-noise
+# test. It exists so that a change made in the manager reaches the receiver by itself,
+# rather than waiting for 04:11 or for somebody to SSH in and say so.
+CHANNELS_ONLY=""
+[ "${1:-}" = "--channels-only" ] && CHANNELS_ONLY=1
+
+# The quiet path logs only when something actually changed. Forty-eight polls an hour,
+# every hour, would otherwise bury every real line in the update log.
+LAST_UPDATE_SEEN=/etc/transcriber/last-update-request
+
+log() {
+    if [ -n "$CHANNELS_ONLY" ] && [ -z "${FORCE_LOG:-}" ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> /var/log/transcriber/update.log
+    else
+        echo "$(date '+%Y-%m-%d %H:%M:%S') $*" | tee -a /var/log/transcriber/update.log
+    fi
+}
 
 mkdir -p /var/log/transcriber
 
 # ── files ────────────────────────────────────────────────────────────────────
+
+if [ -z "$CHANNELS_ONLY" ]; then
 
 log "Downloading files.tar.gz"
 if ! curl -fsS --max-time 120 -o "$TMP/files.tar.gz" "$BASE/files.tar.gz?t=$(date +%s)"; then
@@ -106,6 +125,8 @@ mkdir -p /etc/transcriber
 /opt/transcriber/bin/transcriber.py --version 2>/dev/null \
     | awk '{print $2}' > /etc/transcriber/version || true
 log "running version $(cat /etc/transcriber/version 2>/dev/null || echo unknown)"
+
+fi   # end of the full-update section, skipped by --channels-only
 
 # ── channels ─────────────────────────────────────────────────────────────────
 # Written by the channel manager on the server; this device fetches only its own.

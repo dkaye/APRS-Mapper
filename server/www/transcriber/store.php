@@ -136,3 +136,64 @@ function transcriber_token(): string
 {
     return bin2hex(random_bytes(16));
 }
+
+/** Per-device state the manager shows and the devices act on.
+ *
+ *  Kept beside the registry rather than inside it: it changes on every device poll, and
+ *  rewriting the file that holds every token that often is a good way to eventually lose
+ *  one to a truncated write. Nothing here is secret.
+ */
+function transcriber_state_path(?string $path = null): string
+{
+    return dirname(transcriber_path($path)) . '/transcriber-state.json';
+}
+
+function transcriber_state_load(?string $path = null): array
+{
+    $f = transcriber_state_path($path);
+    if (!is_readable($f)) return ['devices' => [], 'update_requested' => 0];
+    $raw = json_decode((string)file_get_contents($f), true) ?: [];
+    return ['devices' => $raw['devices'] ?? [], 'update_requested' => (int)($raw['update_requested'] ?? 0)];
+}
+
+function transcriber_state_save(array $s, ?string $path = null): void
+{
+    $f = transcriber_state_path($path);
+    $dir = dirname($f);
+    if (!is_dir($dir)) @mkdir($dir, 0775, true);
+    $tmp = $f . '.tmp';
+    file_put_contents($tmp, json_encode($s, JSON_PRETTY_PRINT) . "\n", LOCK_EX);
+    @chmod($tmp, 0640);
+    rename($tmp, $f);
+}
+
+/** Record that this device just collected its settings. */
+function transcriber_mark_fetch(string $device, ?string $path = null): void
+{
+    $s = transcriber_state_load($path);
+    $s['devices'][$device] = ['last_fetch' => time()];
+    transcriber_state_save($s, $path);
+}
+
+/** Ask every device to do a full update — software as well as configuration — the next
+ *  time it looks. Devices compare this against the last one they honoured, so nothing
+ *  has to be written back and a device that was switched off simply catches up. */
+function transcriber_request_update(?string $path = null): int
+{
+    $s = transcriber_state_load($path);
+    $s['update_requested'] = time();
+    transcriber_state_save($s, $path);
+    return $s['update_requested'];
+}
+
+/** A fingerprint of the registry as it stands, for detecting a stale editor.
+ *
+ *  Over the stored file rather than a version counter: nothing has to be incremented and
+ *  it notices a change made by any route, including a hand edit of the JSON — which is
+ *  precisely how the registry came to differ from an open page in the first place.
+ */
+function transcriber_fingerprint(?string $path = null): string
+{
+    $f = transcriber_path($path);
+    return is_readable($f) ? hash('sha256', (string)file_get_contents($f)) : 'empty';
+}

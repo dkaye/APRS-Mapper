@@ -26,7 +26,19 @@ if (!transcriber_device_ok($device, $given)) {
     exit("Forbidden\n");
 }
 
+// Note when this device last collected its settings, so the manager can show a change
+// landing instead of leaving somebody to guess whether it did.
+transcriber_mark_fetch($device);
+
+// update_requested carries the "Update devices now" button. A device compares it with
+// the last one it honoured and, if this is newer, does a full update — software as well
+// as configuration — instead of only re-reading its channels. Nothing is written back,
+// so a device that was switched off catches up whenever it returns.
+$state = transcriber_state_load();
+
 header('Content-Type: application/json');
 header('Cache-Control: no-store');
-echo json_encode(['channels' => transcriber_channels_for($device)],
-                 JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
+echo json_encode([
+    'channels'         => transcriber_channels_for($device),
+    'update_requested' => $state['update_requested'],
+], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";

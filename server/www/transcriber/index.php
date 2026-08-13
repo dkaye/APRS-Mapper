@@ -58,7 +58,13 @@ function redact(array $data): array {
 }
 
 if (isset($_GET['load'])) {
+    // A fingerprint of exactly what this page is being given. It comes back with the
+    // save, and a mismatch means the registry moved while the page sat open — which is
+    // not hypothetical: a page open from before lunch silently reverted a device rename
+    // and a squelch override the moment somebody changed an unrelated field.
+    $baseline = transcriber_fingerprint();
     $data = redact(transcriber_load());
+    $data['baseline'] = $baseline;
     // The UI works in MHz throughout; Hz is storage, and nobody reads a frequency
     // that way. Sent alongside rather than instead, so the page never has to convert.
     foreach ($data['channels'] as &$c) {
@@ -73,6 +79,14 @@ if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $body = json_decode(file_get_contents('php://input'), true);
     if (!is_array($body['devices'] ?? null) || !is_array($body['channels'] ?? null)) {
         jsonOut(['error' => 'Invalid request body'], 400);
+    }
+
+    // Refuse rather than overwrite. Blank baseline means a page from before this check
+    // existed; those are let through, because refusing every open tab once on upgrade is
+    // its own kind of broken.
+    $sent = (string)($body['baseline'] ?? '');
+    if ($sent !== '' && $sent !== transcriber_fingerprint()) {
+        jsonOut(['error' => 'Someone else changed this since you loaded the page — reload and redo your edit'], 409);
     }
 
     // The browser never sees tokens, so it cannot send them back. Carry the existing
@@ -221,7 +235,8 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
   <span id="status"></span>
   <?php if ($canEdit): ?>
     <button class="hdr-btn" id="add-device">+ Device</button>
-    <button class="hdr-btn hdr-btn-primary" id="add-channel">+ Channel</button>
+    <button class="hdr-btn" id="add-channel">+ Channel</button>
+    <button class="hdr-btn hdr-btn-primary" id="save-btn" onclick="save()" disabled>Save</button>
   <?php endif; ?>
   <a class="hdr-btn" href="/netbird/">Devices</a>
   <a class="hdr-btn" href="?logout">Sign out</a>
@@ -230,15 +245,16 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
 <main>
   <div class="panel">
     <strong>When do changes take effect?</strong>
-    <p>Edits save here the moment you make them — there is no save button. Reaching the
-       receiver is separate: each Pi collects its settings <strong>nightly at 4:11am</strong>,
-       or immediately if you run <code>sudo /home/pi/auto-update.sh</code> on it.</p>
+    <p>Nothing is written until you press <strong>Save</strong>. Reaching the receiver is
+       separate: each Pi collects its settings <strong>nightly at 4:11am</strong>, or
+       immediately if you run <code>sudo /home/pi/auto-update.sh</code> on it.</p>
     <p>The exception is <strong>On</strong>. Switching a channel off stops it logging at
        once, because the server stops accepting anything from it without waiting for the
        device to notice.</p>
-    <p>This page does <strong>not</strong> refresh by itself. It reloads after each of
-       your own edits, so what you see is your work — but if somebody else changes
-       something you will not see it until you reload.</p>
+    <p>This page does <strong>not</strong> refresh by itself, so it can go stale while it
+       sits open. It no longer overwrites what it cannot see: if anything changed since
+       you loaded, Save is refused and asks you to reload rather than quietly reverting
+       somebody else's work.</p>
   </div>
 
   <h2>Receivers</h2>
@@ -317,31 +333,61 @@ function status(text, cls) { const s = $('status'); s.textContent = text; s.clas
 async function load() {
     const r = await fetch('?load');
     data = await r.json();
+    baseline = data.baseline || '';
+    dirty = false;
+    const b = $('save-btn');
+    if (b) b.disabled = true;
     render();
 }
 
-// Auto-saves on every change, like the WiFi Manager — there is no save button to forget.
-let saveTimer = null;
-function save() {
+let baseline = '';
+
+/* Nothing is written until Save is pressed.
+ *
+ * This used to auto-save on every keystroke, copied from the WiFi Manager, on the
+ * reasoning that a save button is one more thing to forget. On a page whose fields are
+ * frequencies and squelch levels that was wrong twice over: pausing while typing "146.7"
+ * saved 146 MHz and renamed a live channel, and a page left open for an hour silently
+ * overwrote everything that had changed underneath it the moment anything was touched.
+ * A receiver's configuration should change when somebody says so, and not before. */
+let dirty = false;
+
+function touch() {
     if (!CAN_EDIT) return;
-    clearTimeout(saveTimer);
+    dirty = true;
+    status('Unsaved changes', 'saving');
+    const b = $('save-btn');
+    if (b) b.disabled = false;
+}
+
+// The browser's own guard against walking away from unsaved work.
+window.addEventListener('beforeunload', e => {
+    if (dirty) { e.preventDefault(); e.returnValue = ''; }
+});
+
+async function save() {
+    if (!CAN_EDIT) return;
     status('Saving…', 'saving');
-    saveTimer = setTimeout(async () => {
-        try {
-            const r = await fetch('?save', {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                // The page works in MHz; the server accepts either and stores Hz.
-                body: JSON.stringify({...data, channels: data.channels.map(
-                    c => ({...c, frequency: c.mhz}))}),
-            });
-            const d = await r.json();
-            if (d.error) { status(d.error, 'error'); return; }
-            status('Saved', 'saved');
-            // Re-read: the server issues tokens for new rows and normalises ids, so the
-            // browser must not keep believing what it sent.
-            await load();
-        } catch { status('Save failed', 'error'); }
-    }, 400);
+    try {
+        const r = await fetch('?save', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            // The page works in MHz; the server accepts either and stores Hz.
+            // `baseline` is what this page was loaded from: the server refuses the write
+            // if the registry has moved on, rather than silently overwriting somebody
+            // else's change — or, as happened here, a change made outside the page.
+            body: JSON.stringify({...data, baseline: baseline, channels: data.channels.map(
+                c => ({...c, frequency: c.mhz}))}),
+        });
+        const d = await r.json();
+        if (d.error) { status(d.error, 'error'); return; }
+        dirty = false;
+        const b = $('save-btn');
+        if (b) b.disabled = true;
+        status('Saved', 'saved');
+        // Re-read: the server issues tokens for new rows and normalises ids, so the
+        // browser must not keep believing what it sent.
+        await load();
+    } catch { status('Save failed', 'error'); }
 }
 
 function tokenCell(row, kind, key) {
@@ -373,13 +419,47 @@ function ro(text) {
     return `<span class="ro">${esc(text) || '—'}</span>`;
 }
 
-function field(group, i, key, value, type) {
+/* commit: 'change' saves when the field is left rather than on every keystroke.
+ *
+ * For a name or a serial, saving as you type is fine — a half-typed one is just a
+ * shorter name. A half-typed NUMBER is a different value: pausing while typing "146.7"
+ * saved 146 MHz, which renamed the channel to -146000, issued it a token under the new
+ * id and would have stopped the running unit at the next poll. The receiver was being
+ * reconfigured, briefly and for real, out of an unfinished keystroke. */
+function field(group, i, key, value, type, commit) {
     if (!CAN_EDIT) return ro(value);
-    return `<input type="${type || 'text'}" value="${esc(value)}"
-             oninput="data.${group}[${i}].${key} = this.value; save()">`;
+    const track = `data.${group}[${i}].${key} = this.value;`;
+    const attrs = `type="${type || 'text'}" value="${esc(value)}" data-k="${group}.${i}.${key}"`;
+    return commit === 'change'
+        ? `<input ${attrs} oninput="${track}" onchange="touch()">`
+        : `<input ${attrs} oninput="${track} touch()">`;
 }
 
 function render() {
+    // A save re-reads from the server and rebuilds this table, which destroys the input
+    // being typed into. Frequency showed it worst: "146." normalises to "146", the box is
+    // replaced with that, the caret is gone, and the decimal point can never be typed at
+    // all. So remember where the cursor was and what was in the box, and put both back.
+    const was = document.activeElement;
+    const key = was && was.dataset ? was.dataset.k : null;
+    const caret = key && was.setSelectionRange ? [was.selectionStart, was.selectionEnd] : null;
+    const typed = key ? was.value : null;
+
+    renderRows();
+
+    if (key) {
+        const el = document.querySelector(`[data-k="${key.replace(/"/g, '')}"]`);
+        if (el) {
+            // The server's normalised value must not overwrite a half-finished number
+            // under the cursor. Whatever is in `data` is already what was sent.
+            if (typed !== null) el.value = typed;
+            el.focus();
+            if (caret) { try { el.setSelectionRange(caret[0], caret[1]); } catch (e) {} }
+        }
+    }
+}
+
+function renderRows() {
     const dev = $('devices');
     dev.innerHTML = data.devices.map((d, i) => `<tr>
         <td>${field('devices', i, 'host', d.host)}</td>
@@ -393,25 +473,27 @@ function render() {
     const ch = $('channels');
     ch.innerHTML = data.channels.map((c, i) => `<tr>
         <td>${CAN_EDIT
-              ? `<select onchange="data.channels[${i}].device = this.value; save()">
+              ? `<select onchange="data.channels[${i}].device = this.value; touch()">
                    ${hosts.map(h => `<option${h === c.device ? ' selected' : ''}>${esc(h)}</option>`).join('')}
                  </select>`
               : ro(c.device)}</td>
-        <td>${field('channels', i, 'mhz', c.mhz)}<div class="derived">${esc(c.id || '')}</div></td>
+        <td>${field('channels', i, 'mhz', c.mhz, 'text', 'change')}<div class="derived">${esc(c.id || '')}</div></td>
         <td>${field('channels', i, 'label', c.label)}</td>
         <td>${field('channels', i, 'serial', c.serial)}</td>
         <td>${CAN_EDIT
               ? `<input type="text" value="${c.squelch ? esc(c.squelch) : ''}" placeholder="auto"
-                        oninput="data.channels[${i}].squelch = this.value; save()">`
+                        data-k="channels.${i}.squelch"
+                        oninput="data.channels[${i}].squelch = this.value"
+                        onchange="touch()">`
               : ro(c.squelch ? c.squelch : 'auto')}</td>
         <td>${CAN_EDIT
-              ? `<select onchange="data.channels[${i}].model = this.value; save()">
+              ? `<select onchange="data.channels[${i}].model = this.value; touch()">
                    ${MODELS.map(m => `<option value="${m.file}"${m.file === c.model ? ' selected' : ''}>${m.name}</option>`).join('')}
                  </select>`
               : ro((MODELS.find(m => m.file === c.model) || {}).name || c.model)}</td>
         <td>${CAN_EDIT
               ? `<input type="checkbox" ${c.enabled ? 'checked' : ''}
-                        onchange="data.channels[${i}].enabled = this.checked; save()">`
+                        onchange="data.channels[${i}].enabled = this.checked; touch()">`
               : ro(c.enabled ? 'On' : 'Off')}</td>
         <td>${tokenCell(c, 'channel', c.id)}</td>
         <td>${CAN_EDIT ? `<button class="row-btn danger" onclick="delChannel(${i})">Remove</button>` : ''}</td>
@@ -423,22 +505,22 @@ function delDevice(i) {
     const host = data.devices[i].host;
     const using = data.channels.filter(c => c.device === host).length;
     if (using && !confirm(`${host} still has ${using} channel(s). Remove it anyway?`)) return;
-    data.devices.splice(i, 1); render(); save();
+    data.devices.splice(i, 1); render(); touch();
 }
 function delChannel(i) {
     if (!confirm(`Remove ${data.channels[i].id}?\n\nIt stops logging at that device's next update.`)) return;
-    data.channels.splice(i, 1); render(); save();
+    data.channels.splice(i, 1); render(); touch();
 }
 
 if (CAN_EDIT) {
     $('add-device').onclick = () => {
-        data.devices.push({host: '', note: '', has_token: false}); render(); save();
+        data.devices.push({host: '', note: '', has_token: false}); render(); touch();
     };
     $('add-channel').onclick = () => {
         data.channels.push({id: '', device: data.devices[0]?.host || '', label: '',
                             mhz: '', serial: '', model: MODELS[0].file,
                             enabled: true, has_token: false});
-        render(); save();
+        render(); touch();
     };
 }
 
