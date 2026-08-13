@@ -1,5 +1,0 @@
-# Deny direct HTTP access to the password file.
-# Requires AllowOverride FileInfo (or All) in the Apache vhost / site config.
-<Files "password.txt">
-    Require all denied
-</Files>

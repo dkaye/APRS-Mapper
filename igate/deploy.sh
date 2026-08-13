@@ -57,8 +57,11 @@ echo "Syncing self-noise dashboard..."
 ssh "$REMOTE" "mkdir -p $REMOTE_DIR/selftest/data"
 rsync -a --exclude=data/ "$IGATE_DIR/www/selftest/" "$REMOTE:$REMOTE_DIR/selftest/"
 
-# .htaccess prevents Cloudflare from caching files.tar.gz and shell scripts
-scp "$IGATE_DIR/www/.htaccess" "$REMOTE:$REMOTE_DIR/.htaccess"
+# No .htaccess is copied here. The server's web root sets no AllowOverride, so Apache
+# never read the one this used to place, and the no-cache headers it appeared to set
+# were in fact coming from a LocationMatch in the vhost all along. Copying it back would
+# only restore the appearance of a rule that does nothing. www/.htaccess stays in the
+# tree because it also ships to each iGate's own Apache, which does read it.
 ssh "$REMOTE" "sudo chown -R pi:www-data $REMOTE_DIR && sudo find $REMOTE_DIR -type d -exec chmod 775 {} + && sudo find $REMOTE_DIR -type f -exec chmod 664 {} + && sudo chmod 775 $REMOTE_DIR/selftest/data"
 
 echo ""
