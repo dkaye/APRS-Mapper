@@ -7,11 +7,12 @@
 # Usage:
 #   curl -fsSL https://marsaprs.org/transcriber/install.sh | sudo bash
 #
+# This script builds the machine and knows nothing about which receiver it is.
+# Everything site-specific — hostname, NetBird, device token, dongle serials — is
+# configure.sh, which this installs and which you run next.
+#
 # Afterwards:
-#   1. Set each dongle's USB serial:  rtl_eeprom -d 0 -s 00000001   (then re-plug)
-#   2. Put the device token in /home/pi/.transcriber-token
-#   3. Add the channels in the manager at marsaprs.org/transcriber/
-#   4. sudo /home/pi/auto-update.sh
+#   sudo /home/pi/configure.sh
 #
 # Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
 # ©2026 Doug Kaye, K6DRK <doug@rds.com>
@@ -105,8 +106,9 @@ chmod +x /opt/transcriber/bin/*.py
                                  /etc/transcriber/channels.json
 
 curl -fsSL --retry 3 -o /home/pi/auto-update.sh "$BASE/auto-update.sh?t=$(date +%s)"
-chmod +x /home/pi/auto-update.sh
-chown pi:pi /home/pi/auto-update.sh
+[ -d "$TMP/home" ] && rsync -a --ignore-times "$TMP/home/" /home/pi/
+chmod +x /home/pi/*.sh
+chown pi:pi /home/pi/*.sh
 
 # ── nightly update ───────────────────────────────────────────────────────────
 # 4:11am — deliberately not 4:01, when every iGate hits the server at once.
@@ -129,15 +131,24 @@ EOF
 systemctl daemon-reload
 udevadm control --reload-rules 2>/dev/null || true
 
+# Answers the NetBird monitor's UDP poll, which is all a device has to do to appear at
+# /netbird/admin.php. Nothing site-specific, so it starts now rather than waiting for
+# configure.sh.
+systemctl enable --now stats-listener.service >/dev/null 2>&1 || true
+
 echo
 echo "=== Installed ==="
 echo
-echo "Next:"
-echo "  1. Set each dongle's serial:   rtl_eeprom -d 0 -s 00000001   (then re-plug)"
-echo "     Serials, not indexes — index order is not stable across reboots."
-echo "  2. echo <device-token> > /home/pi/.transcriber-token"
-echo "  3. Add this device's channels at https://marsaprs.org/transcriber/"
-echo "  4. sudo /home/pi/auto-update.sh"
+echo "This built the machine. Now make it a particular receiver:"
 echo
-echo "Then:  systemctl status 'transcriber@*'"
-echo "       journalctl -u 'transcriber@*' -f"
+echo "  sudo /home/pi/configure.sh"
+echo
+echo "which asks for the hostname, a NetBird setup key, the device token from the"
+echo "manager, and each dongle's serial — then collects this device's channels and"
+echo "starts them."
+echo
+echo "Add the device at https://marsaprs.org/transcriber/ first, so there is a token"
+echo "to paste in."
+echo
+echo "Afterwards:  systemctl status 'transcriber@*'"
+echo "             journalctl -u 'transcriber@*' -f"

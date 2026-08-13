@@ -41,9 +41,16 @@ rsync -az --ignore-times "$SRC_DIR/bin/"    "$REMOTE:$STAGING/bin/"
 rsync -az --ignore-times "$SRC_DIR/systemd/" "$REMOTE:$STAGING/systemd/"
 rsync -az --ignore-times "$SRC_DIR/udev/"    "$REMOTE:$STAGING/udev/"   2>/dev/null || true
 rsync -az --ignore-times "$SRC_DIR/etc/transcriber/" "$REMOTE:$STAGING/etc/transcriber/"
+rsync -az --ignore-times "$SRC_DIR/home/"    "$REMOTE:$STAGING/home/"
+# auto-update.sh goes into the archive as well as being uploaded on its own. install.sh
+# curls the standalone copy onto a bare Pi; the archived copy is how an already-deployed
+# device gets a newer updater, which it otherwise never would — it was fetched once at
+# install and then kept running forever, so no change made here could ever reach it.
+# One source file, delivered two ways, so the two cannot drift.
+rsync -az --ignore-times "$SRC_DIR/auto-update.sh" "$REMOTE:$STAGING/home/"
 
 echo "Building files.tar.gz on aprs-pi..."
-ssh "$REMOTE" "chmod +x $STAGING/bin/*.py && tar -czf $REMOTE_DIR/files.tar.gz -C $STAGING ."
+ssh "$REMOTE" "chmod +x $STAGING/bin/*.py $STAGING/home/*.sh && tar -czf $REMOTE_DIR/files.tar.gz -C $STAGING ."
 
 echo "Uploading installer and updater..."
 rsync -az --ignore-times "$SRC_DIR/install.sh" "$SRC_DIR/auto-update.sh" "$REMOTE:$REMOTE_DIR/"

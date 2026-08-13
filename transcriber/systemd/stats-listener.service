@@ -1,0 +1,13 @@
+[Unit]
+Description=Transcriber health responder (NetBird monitor)
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+ExecStart=/opt/transcriber/bin/stats-listener.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

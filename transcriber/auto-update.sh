@@ -42,6 +42,21 @@ rsync -a --ignore-times "$TMP/systemd/" /etc/systemd/system/
 [ -d "$TMP/udev" ] && rsync -a --ignore-times "$TMP/udev/" /etc/udev/rules.d/ || true
 chmod +x /opt/transcriber/bin/*.py
 
+# configure.sh, kept current so a device that has been in the field for a year still has
+# today's wizard on it when somebody finally SSHes in to move it. Everything it writes
+# lives outside itself — hostname, token, dongle serials — so replacing it is safe.
+#
+# This also replaces auto-update.sh, including the copy currently executing. rsync writes
+# a temp file and renames, so this process keeps reading the inode it started with and
+# finishes the run it is in; the new one takes effect on the NEXT run. Upgrading from an
+# old copy therefore takes two passes, which is worth knowing before concluding that a
+# change did not deploy — the same thing has caught us on the iGates.
+if [ -d "$TMP/home" ]; then
+    rsync -a --ignore-times "$TMP/home/" /home/pi/
+    chmod +x /home/pi/*.sh
+    chown pi:pi /home/pi/*.sh
+fi
+
 # Stamp the running version somewhere greppable, the way an iGate stamps
 # IGATE_VERSION into its dashboard. Read from the worker itself so there is one source
 # of truth and this cannot drift from what is actually installed.
@@ -84,6 +99,11 @@ fi
 # ── restart what is configured ───────────────────────────────────────────────
 
 systemctl daemon-reload
+
+# The health responder answers the NetBird monitor's UDP poll, which is the whole of
+# what makes a device appear at /netbird/admin.php. Enabled here rather than only in
+# install.sh so devices installed before it existed pick it up on the next update.
+systemctl enable --now stats-listener.service >/dev/null 2>&1 || true
 
 # Enable exactly the channels in the config and stop any that were removed, so a
 # channel deleted in the manager actually stops rather than lingering until reboot.

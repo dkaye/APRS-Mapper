@@ -1208,15 +1208,50 @@ left in a shed cannot be used to read the net's traffic. The registry lives at
 a token registry under `/var/www/html` is how `mobile_trackers.json` came to be
 downloadable by anyone.
 
+**Two scripts, and the split between them matters.** `install.sh` builds the *machine* —
+packages, `whisper.cpp` compiled for this CPU, the models, the nightly cron — and knows
+nothing about which receiver it is. `configure.sh` makes it a *particular* receiver:
+hostname, NetBird, device token, dongle serials. Everything in the second is site-specific
+and everything in the first is not, so a Transcriber can be re-sited by re-running
+`configure.sh` alone, and re-running either is safe.
+
+The hostname is the part worth care. It *is* the device's identity: `auto-update.sh`
+fetches with `?device=$(hostname)` and the server matches that against the Host column.
+Get it wrong and nothing reports an error — the device asks for its channels, is told it
+has none, and sits there healthy and deaf.
+
+**NetBird is installed by `configure.sh` and stays up permanently.** The iGates and
+displays toggle theirs from the server every five minutes (`check-netbird.sh`), because
+they go to sites on metered or marginal links where a VPN is worth switching off. A
+Transcriber is remote-managed by definition — its entire configuration arrives over the
+network — so there is no toggle, no `netbird-up.sh`, and no cron entry; just
+`systemctl enable netbird` so it is back after a reboot without anything having to
+notice.
+
+Answering the monitor's health poll is all a device does to appear in `/netbird/admin.php`
+— there is no registration step. `stats-listener.py` is the iGate's `stats-listener.php`
+field for field, in Python because a Transcriber has no PHP on it and adding `php-cli`
+plus `ext-sockets` to run one script on a Pi whose whole worker is stdlib Python is a
+poor trade. The format is what the poller prints verbatim, so the two must change together.
+
 | Path | Purpose |
 |------|---------|
 | `transcriber/bin/transcriber.py` | The per-channel worker (stdlib only, like `isproxy.py`) |
+| `transcriber/bin/stats-listener.py` | Answers the NetBird monitor's UDP:1235 health poll |
 | `transcriber/systemd/transcriber@.service` | Template unit — one instance per channel |
 | `transcriber/install.sh` | One-time build: SDR tools, `whisper.cpp` compiled for this CPU, models |
+| `transcriber/home/configure.sh` | Site setup: hostname, NetBird, device token, dongle serials |
 | `transcriber/auto-update.sh` | Nightly: pulls the archive, fetches this device's channels, starts/stops units to match |
 | `server/www/transcriber/` | The channel manager and the device download |
 | `map/tests/php/TranscriberStoreTest.php` | Registry and token checks |
 | `transcriber/tests/test_transcriber.py` | The worker, with no SDR and no whisper |
+
+`auto-update.sh` now ships inside the archive as well as standing alone, so it can replace
+itself. It could not before: `install.sh` fetched it once and the device ran that copy
+forever, which meant no change to the updater could ever reach a deployed Transcriber.
+The running copy finishes its own run and the new one takes effect on the next, so
+upgrading from an old copy takes two passes — worth knowing before concluding a change
+did not deploy.
 
 ## User Interfaces
 
