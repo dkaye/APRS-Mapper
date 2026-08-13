@@ -1220,6 +1220,21 @@ fetches with `?device=$(hostname)` and the server matches that against the Host 
 Get it wrong and nothing reports an error — the device asks for its channels, is told it
 has none, and sits there healthy and deaf.
 
+**Renaming a device takes three steps in the manager, not one**, and skipping the second
+produces exactly that silent failure:
+
+1. Change the device's **Host**. This issues a **new config token**, because tokens are
+   keyed by host name — the one on the Pi stops working, so rotate and copy the new one.
+2. **Re-pick the Receiver on every channel that device owns.** Channels store the device
+   name as a string and do not follow a rename, so they are left pointing at a host that
+   no longer exists. The channel ID is derived from device and frequency, so this also
+   renames the unit (`transcriber@<host>-<kHz>`); `auto-update.sh` stops the old one.
+3. Run `configure.sh` (or just `auto-update.sh`) on the Pi with the new hostname and token.
+
+When a fetch succeeds but returns no channels, `auto-update.sh` now says so and names step
+2 as the likely cause, because "update complete: no channels configured" is accurate and
+tells you nothing about why a receiver reporting success is deaf.
+
 **NetBird is installed by `configure.sh` and stays up permanently.** The iGates and
 displays toggle theirs from the server every five minutes (`check-netbird.sh`), because
 they go to sites on metered or marginal links where a VPN is worth switching off. A

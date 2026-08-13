@@ -139,6 +139,101 @@ check "leaves the installed updater alone" \
       "$(grep -c '^VERSION_MARKER=' "$SANDBOX/pi/auto-update.sh")" "0"
 teardown
 
+# ── reconciling units against the channel list ───────────────────────────────
+# The second half of the script: enable exactly what the manager says, stop what it no
+# longer says. Driven here by a stub systemctl that records what it was asked to do.
+
+recon_setup() {
+    SANDBOX=$(mktemp -d)
+    mkdir -p "$SANDBOX/bin" "$SANDBOX/wants" "$SANDBOX/etc"
+
+    cat > "$SANDBOX/bin/systemctl" <<STUB
+#!/usr/bin/env bash
+# Records every call. \`list-units\` replies with whatever RUNNING holds.
+if [ "\$1" = "list-units" ]; then
+    for u in \$RUNNING; do
+        echo "transcriber@\$u.service loaded active running Transcriber channel \$u"
+    done
+    exit 0
+fi
+echo "\$*" >> "$SANDBOX/calls.txt"
+exit 0
+STUB
+    chmod +x "$SANDBOX/bin/systemctl"
+    : > "$SANDBOX/calls.txt"
+
+    # Just the reconciliation, with the surrounding script's variables supplied.
+    { echo 'CONFIG="'"$SANDBOX"'/etc/channels.json"'
+      echo 'WANTS_DIR="'"$SANDBOX"'/wants"'
+      echo 'log() { :; }'
+      sed -n '/^# ── restart what is configured/,$p' "$SRC/auto-update.sh"
+    } > "$SANDBOX/recon.sh"
+}
+
+# recon <json channel list> <running instances> <enabled instances>
+recon() {
+    echo "$1" > "$SANDBOX/etc/channels.json"
+    rm -f "$SANDBOX/wants"/*
+    for u in $3; do : > "$SANDBOX/wants/transcriber@$u.service"; done
+    : > "$SANDBOX/calls.txt"
+    RUNNING="$2" PATH="$SANDBOX/bin:$PATH" bash "$SANDBOX/recon.sh" >/dev/null 2>&1
+}
+
+echo "reconciliation — a stopped-but-enabled channel"
+recon_setup
+# The regression. The old unit is NOT running (configure.sh stopped it to write a dongle
+# serial) but is still enabled, so the next boot would start it — and its id is gone from
+# the config, so it would fail every ten seconds until somebody noticed.
+recon '{"channels":[{"id":"Transcriber-147465","enabled":true}]}' "" "transcriberClone-147465"
+check "disables the stale enable" \
+      "$(grep -c 'disable --now transcriber@transcriberClone-147465.service' "$SANDBOX/calls.txt")" "1"
+check "and starts the channel that is configured" \
+      "$(grep -c 'restart transcriber@Transcriber-147465.service' "$SANDBOX/calls.txt")" "1"
+
+echo "reconciliation — a running channel that was removed"
+recon '{"channels":[]}' "old-146700" ""
+check "stops it" "$(grep -c 'disable --now transcriber@old-146700.service' "$SANDBOX/calls.txt")" "1"
+
+echo "reconciliation — running and enabled are the same unit"
+recon '{"channels":[]}' "dup-147465" "dup-147465"
+check "counted once, not twice" \
+      "$(grep -c 'disable --now transcriber@dup-147465.service' "$SANDBOX/calls.txt")" "1"
+
+echo "reconciliation — nothing to do"
+recon '{"channels":[{"id":"Transcriber-147465","enabled":true}]}' "Transcriber-147465" "Transcriber-147465"
+check "does not disable the channel it should be running" \
+      "$(grep -c 'disable' "$SANDBOX/calls.txt")" "0"
+
+echo "reconciliation — no channels assigned"
+# The state a device lands in after being renamed: the token still works, so the fetch
+# succeeds and reports nothing wrong, while the receiver sits there deaf. The log has to
+# name the cause or the next person spends the evening on it, as we did.
+recon_setup
+TOKEN_FILE=$(mktemp); echo tok > "$TOKEN_FILE"
+echo '{"channels":[]}' > "$SANDBOX/etc/channels.json"
+rm -f "$SANDBOX/wants"/*
+{ echo 'CONFIG="'"$SANDBOX"'/etc/channels.json"'
+  echo 'WANTS_DIR="'"$SANDBOX"'/wants"'
+  echo 'TOKEN_FILE="'"$TOKEN_FILE"'"'
+  echo 'log() { echo "$*" >> "'"$SANDBOX"'/log.txt"; }'
+  sed -n '/^# ── restart what is configured/,$p' "$SRC/auto-update.sh"
+} > "$SANDBOX/recon.sh"
+: > "$SANDBOX/log.txt"
+PATH="$SANDBOX/bin:$PATH" bash "$SANDBOX/recon.sh" >/dev/null 2>&1
+check "says which manager column to fix" \
+      "$(grep -c 'Receiver' "$SANDBOX/log.txt")" "1"
+rm -f "$TOKEN_FILE"
+teardown
+
+echo "reconciliation — a channel switched off in the manager"
+recon_setup
+# enabled:false means stop it, not leave it running. It is how the manager takes a
+# receiver off the air without deleting it.
+recon '{"channels":[{"id":"Transcriber-147465","enabled":false}]}' "Transcriber-147465" "Transcriber-147465"
+check "stops a disabled channel" \
+      "$(grep -c 'disable --now transcriber@Transcriber-147465.service' "$SANDBOX/calls.txt")" "1"
+teardown
+
 echo ""
 if [ "$FAILURES" -eq 0 ]; then
     echo "all passed"

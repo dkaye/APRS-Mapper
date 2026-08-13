@@ -21,6 +21,9 @@ set -euo pipefail
 BASE="https://marsaprs.org/transcriber"
 CONFIG="/etc/transcriber/channels.json"
 TOKEN_FILE="/home/pi/.transcriber-token"
+# Where systemd records an enabled unit. Overridable only so the tests can point it at a
+# sandbox; nothing in the field should ever set it.
+WANTS_DIR="${WANTS_DIR:-/etc/systemd/system/multi-user.target.wants}"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
@@ -147,8 +150,22 @@ import json
 print(' '.join(c['id'] for c in json.load(open('$CONFIG'))['channels'] if c.get('enabled', True)))
 " 2>/dev/null || echo "")
 
-HAVE=$(systemctl list-units --plain --no-legend 'transcriber@*.service' 2>/dev/null \
-       | awk '{print $1}' | sed 's/transcriber@\(.*\)\.service/\1/' || true)
+# Running instances AND enabled ones, which are not the same set. A channel that is
+# stopped but still enabled is invisible to `list-units`, so it survived this cleanup and
+# then came back at the next boot — where, its id having been removed from the config, it
+# failed and was restarted every ten seconds forever.
+#
+# Not hypothetical: configure.sh stops the channels before writing a dongle serial, so
+# renaming a device and setting a serial in the same sitting produced exactly this. The
+# unit for the old name outlived the rename, and the reboot at the end of the wizard is
+# what started it failing.
+#
+# Enabled template instances do not appear in `list-unit-files` either — the enable is a
+# symlink in the target's .wants directory, so that is what has to be read.
+HAVE=$( { systemctl list-units --plain --no-legend 'transcriber@*.service' 2>/dev/null \
+            | awk '{print $1}'
+          ls "$WANTS_DIR" 2>/dev/null | grep '^transcriber@' || true
+        } | sed 's/transcriber@\(.*\)\.service/\1/' | sort -u)
 
 for id in $HAVE; do
     case " $WANT " in
@@ -162,5 +179,15 @@ for id in $WANT; do
     systemctl enable "transcriber@$id.service" >/dev/null 2>&1 || true
     systemctl restart "transcriber@$id.service" || log "channel $id failed to start"
 done
+
+# "No channels" after a successful fetch is a specific situation, not a vague one: the
+# token was accepted, so this device exists in the registry — it simply has nothing
+# assigned to it. Renaming a device is how that happens, because the channels store the
+# device name as a string and do not follow the rename. Say so, rather than leaving the
+# reader to work out why a receiver that reports success is deaf.
+if [ -z "$WANT" ] && [ -f "$TOKEN_FILE" ]; then
+    log "the manager lists no channels for '$(hostname)' — if this device was renamed," \
+        "re-pick the Receiver on each channel row at marsaprs.org/transcriber/"
+fi
 
 log "update complete: ${WANT:-no channels configured}"
