@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# Transcriber nightly update.
+#
+# Downloads files.tar.gz and the channel list from marsaprs.org and applies both.
+# Run daily via cron. Safe to run manually at any time.
+#
+# Does NOT touch /opt/transcriber/models — the whisper models are large, rarely
+# change, and are installed once by install.sh.
+#
+# Usage: sudo /home/pi/auto-update.sh
+#
+# Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
+# ©2026 Doug Kaye, K6DRK <doug@rds.com>
+
+set -euo pipefail
+
+BASE="https://marsaprs.org/transcriber"
+CONFIG="/etc/transcriber/channels.json"
+TOKEN_FILE="/home/pi/.transcriber-token"
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" | tee -a /var/log/transcriber/update.log; }
+
+mkdir -p /var/log/transcriber
+
+# ── files ────────────────────────────────────────────────────────────────────
+
+log "Downloading files.tar.gz"
+if ! curl -fsS --max-time 120 -o "$TMP/files.tar.gz" "$BASE/files.tar.gz"; then
+    log "download failed; keeping what is installed"
+    exit 0        # a failed update must never take a working receiver off the air
+fi
+
+tar -xzf "$TMP/files.tar.gz" -C "$TMP"
+
+# --ignore-times, not the default size+mtime comparison: tar restores the archive's
+# timestamps, so a file whose size did not change looks unchanged to rsync and is
+# silently skipped. This has bitten this project before.
+rsync -a --ignore-times "$TMP/bin/"     /opt/transcriber/bin/
+rsync -a --ignore-times "$TMP/systemd/" /etc/systemd/system/
+[ -d "$TMP/udev" ] && rsync -a --ignore-times "$TMP/udev/" /etc/udev/rules.d/ || true
+chmod +x /opt/transcriber/bin/*.py
+
+# ── channels ─────────────────────────────────────────────────────────────────
+# Written by the channel manager on the server; this device fetches only its own.
+
+if [ -f "$TOKEN_FILE" ]; then
+    HOST=$(hostname)
+    if curl -fsS --max-time 30 -o "$TMP/channels.json" \
+            "$BASE/get.php?token=$(cat "$TOKEN_FILE")&device=$HOST"; then
+        # Validate before installing. A truncated or error-page response would
+        # otherwise stop every channel on this device at the next restart.
+        if python3 -c "import json,sys; json.load(open(sys.argv[1]))['channels']" \
+                   "$TMP/channels.json" 2>/dev/null; then
+            mkdir -p "$(dirname "$CONFIG")"
+            if ! cmp -s "$TMP/channels.json" "$CONFIG"; then
+                install -m 640 -o root -g pi "$TMP/channels.json" "$CONFIG"
+                log "channel list updated"
+                CHANNELS_CHANGED=1
+            fi
+        else
+            log "channel list from server was not valid JSON; keeping the current one"
+        fi
+    else
+        log "channel list download failed; keeping the current one"
+    fi
+else
+    log "no $TOKEN_FILE; skipping channel list (set one to manage this device centrally)"
+fi
+
+# ── restart what is configured ───────────────────────────────────────────────
+
+systemctl daemon-reload
+
+# Enable exactly the channels in the config and stop any that were removed, so a
+# channel deleted in the manager actually stops rather than lingering until reboot.
+WANT=$(python3 -c "
+import json
+print(' '.join(c['id'] for c in json.load(open('$CONFIG'))['channels'] if c.get('enabled', True)))
+" 2>/dev/null || echo "")
+
+HAVE=$(systemctl list-units --plain --no-legend 'transcriber@*.service' 2>/dev/null \
+       | awk '{print $1}' | sed 's/transcriber@\(.*\)\.service/\1/' || true)
+
+for id in $HAVE; do
+    case " $WANT " in
+        *" $id "*) ;;
+        *) log "stopping removed channel $id"
+           systemctl disable --now "transcriber@$id.service" || true ;;
+    esac
+done
+
+for id in $WANT; do
+    systemctl enable "transcriber@$id.service" >/dev/null 2>&1 || true
+    systemctl restart "transcriber@$id.service" || log "channel $id failed to start"
+done
+
+log "update complete: ${WANT:-no channels configured}"

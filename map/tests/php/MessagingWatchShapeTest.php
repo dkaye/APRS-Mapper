@@ -248,7 +248,7 @@ class MessagingWatchShapeTest extends TestCase
      *  across, not assume 'operator'. */
     public function testRehomingKeepsTheParticipantKind(): void
     {
-        $this->db->upsertParticipant($this->ev, 'transcriber', '146520@rx1', '146.520', null, 'tok-rx');
+        $this->db->upsertParticipant($this->ev, 'transcriber', 'rx1-146520', '146.520', null, 'tok-rx');
         $old = $this->db->participantByToken('tok-rx');
 
         $id = $this->db->rehomeSession('Next Event', $old, 'tok-rx');
@@ -273,17 +273,17 @@ class MessagingWatchShapeTest extends TestCase
 
     public function testAKnownChannelTokenResolves(): void
     {
-        $ctx = $this->registry([['id'=>'146520@rx1', 'label'=>'146.520', 'token'=>'tok-rx']]);
+        $ctx = $this->registry([['id'=>'rx1-146520', 'label'=>'146.520', 'token'=>'tok-rx']]);
 
         $ch = _msg_find_channel($ctx, 'tok-rx');
 
-        $this->assertSame('146520@rx1', $ch['id']);
+        $this->assertSame('rx1-146520', $ch['id']);
         $this->assertSame('146.520', $ch['label']);
     }
 
     public function testAnUnknownTokenResolvesToNothing(): void
     {
-        $ctx = $this->registry([['id'=>'146520@rx1', 'label'=>'146.520', 'token'=>'tok-rx']]);
+        $ctx = $this->registry([['id'=>'rx1-146520', 'label'=>'146.520', 'token'=>'tok-rx']]);
 
         $this->assertNull(_msg_find_channel($ctx, 'wrong'));
         $this->assertNull(_msg_find_channel($ctx, ''), 'an empty token must never match');
@@ -294,7 +294,7 @@ class MessagingWatchShapeTest extends TestCase
     public function testADisabledChannelIsRefused(): void
     {
         $ctx = $this->registry([
-            ['id'=>'146520@rx1', 'label'=>'146.520', 'token'=>'tok-rx', 'enabled'=>false],
+            ['id'=>'rx1-146520', 'label'=>'146.520', 'token'=>'tok-rx', 'enabled'=>false],
         ]);
 
         $this->assertNull(_msg_find_channel($ctx, 'tok-rx'));
@@ -315,7 +315,7 @@ class MessagingWatchShapeTest extends TestCase
      *  acknowledge — but attributed to the frequency rather than to a person. */
     public function testATranscriberChannelCanWriteToTheLog(): void
     {
-        $rx   = $this->db->upsertParticipant($this->ev, 'transcriber', '146520@rx1', '146.520', null, 'tok-rx');
+        $rx   = $this->db->upsertParticipant($this->ev, 'transcriber', 'rx1-146520', '146.520', null, 'tok-rx');
         $conv = $this->db->resolveLogConversation($this->ev);
 
         $this->db->insertMessage($this->ev, $conv, $rx, 'aid three we have a rider down', [], false);
@@ -331,7 +331,7 @@ class MessagingWatchShapeTest extends TestCase
      *  distinguishable from something net control typed. */
     public function testTheChannelIsTheAuthor(): void
     {
-        $rx   = $this->db->upsertParticipant($this->ev, 'transcriber', '146520@rx1', '146.520', null, 'tok-rx');
+        $rx   = $this->db->upsertParticipant($this->ev, 'transcriber', 'rx1-146520', '146.520', null, 'tok-rx');
         $conv = $this->db->resolveLogConversation($this->ev);
         $this->db->insertMessage($this->ev, $conv, $rx, 'copy that', [], false);
 
@@ -342,7 +342,7 @@ class MessagingWatchShapeTest extends TestCase
      *  cannot be messaged, so it never appears in anyone's conversation list. */
     public function testAChannelIsNotOfferedTheLogToRead(): void
     {
-        $rx   = $this->db->upsertParticipant($this->ev, 'transcriber', '146520@rx1', '146.520', null, 'tok-rx');
+        $rx   = $this->db->upsertParticipant($this->ev, 'transcriber', 'rx1-146520', '146.520', null, 'tok-rx');
         $conv = $this->db->resolveLogConversation($this->ev);
         $this->db->insertMessage($this->ev, $conv, $rx, 'anything', [], false);
 

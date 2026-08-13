@@ -1,0 +1,42 @@
+{
+  "_comment": [
+    "Channels this device listens on. Downloaded from the server by auto-update.sh —",
+    "edit them in the channel manager at marsaprs.org/transcriber/, not here.",
+    "",
+    "id        globally unique; names the systemd instance (transcriber@rx1-146520)",
+    "          and the participant the log entry is attributed to. No '@' — that is",
+    "          systemd's instance separator.",
+    "label     what the log shows as the author: '146.520 -> Log'",
+    "token     issued by the channel manager; how the server knows which channel",
+    "          this is. Treat as a secret.",
+    "serial    the dongle's USB serial, NOT its index. Index order is not stable",
+    "          across reboots, and two channels silently swapping frequencies is the",
+    "          kind of fault nobody notices until the log is wrong. Set them with",
+    "          rtl_eeprom -d 0 -s 00000001",
+    "squelch   rtl_fm squelch level; 0 disables it. Too low and the channel",
+    "          transcribes hiss, too high and it clips the start of every over.",
+    "model     whisper model under /opt/transcriber/models"
+  ],
+  "channels": [
+    {
+      "id": "rx1-146520",
+      "label": "146.520",
+      "token": "REPLACE-ME",
+      "frequency": "146520000",
+      "serial": "00000001",
+      "squelch": 0,
+      "model": "ggml-tiny.en.bin",
+      "enabled": true
+    },
+    {
+      "id": "rx1-445000",
+      "label": "445.000",
+      "token": "REPLACE-ME",
+      "frequency": "445000000",
+      "serial": "00000002",
+      "squelch": 0,
+      "model": "ggml-tiny.en.bin",
+      "enabled": true
+    }
+  ]
+}

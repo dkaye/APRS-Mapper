@@ -1,0 +1,28 @@
+[Unit]
+Description=Transcriber channel %i
+# The channel needs the network to post entries, but must not refuse to start
+# without it: entries queue on disk, so a Pi that boots before its WiFi comes up
+# should listen anyway rather than sit dead until someone restarts it.
+Wants=network-online.target
+After=network-online.target
+# No start rate limit, for the same reason as the iGate's direwolf: an unattended
+# receiver should keep retrying forever rather than give up quietly mid-event.
+# Must be in [Unit] — systemd ignores it under [Service].
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=pi
+ExecStart=/opt/transcriber/bin/transcriber.py --channel %i
+Restart=always
+RestartSec=10
+# ExecStart spawns rtl_fm and sox, so stopping must take down the whole cgroup or
+# they would be left holding the dongle and the next start would find it busy.
+KillMode=control-group
+# Below the iGate's Nice=-5: decoding APRS packets is real-time and must not be
+# starved, while a transcription arriving a second later costs nothing. On a Pi
+# doing both, packets win.
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

@@ -2621,6 +2621,26 @@ Expected output: `OK (90 tests, 159 assertions)`
 
 Test files live in `map/tests/php/`. Fixtures (sample YAML files) are in `map/tests/fixtures/`.
 
+### Running the Python tests
+
+Standalone scripts — no framework, run them directly, exit 0 is a pass:
+
+```bash
+python3 igate/tests/test_isproxy.py          # direwolf gets an upstream on reconnect
+python3 transcriber/tests/test_transcriber.py
+```
+
+The Transcriber suite runs the whole channel pipeline without an SDR and without
+whisper: `rtl_fm` and `sox` are skipped via `--spool-only`, and whisper is a stub script
+whose output the test chooses, so the filters can be driven deliberately. The two that
+earn their keep are the ones guarding what reaches the log — squelch noise transcribed
+as "Thank you." must produce nothing, and a genuine transmission through the same path
+must produce exactly one entry. Without that second test the first passes for free, and
+it did: an early version discarded everything because the clip looked like one sox was
+still writing, and every filter assertion passed without a filter ever running.
+
+`transcriber/deploy.sh` runs this suite and refuses to deploy if it fails.
+
 ### Running the JavaScript tests
 
 From `map/tests/js/`:

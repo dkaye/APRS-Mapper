@@ -1,0 +1,345 @@
+#!/usr/bin/env python3
+# Transcriber channel worker — listens on one frequency and writes what it hears
+# into the event log.
+#
+# One process per channel, started by systemd as transcriber@<channel-id>.service.
+# Several run side by side on one Pi, each bound to its own SDR dongle by USB serial.
+#
+#   rtl_fm -d <serial> -f <freq> -M fm -l <squelch>
+#      | sox … silence … : newfile : restart     → one wav per transmission
+#      → whisper.cpp                             → text
+#      → POST index.php?messaging=log            → "146.520 → Log"
+#
+# Stdlib only, like isproxy.py — nothing to install and nothing to break on a
+# distribution upgrade.
+#
+# Usage:
+#   transcriber.py --channel rx1-146520
+#   transcriber.py --channel rx1-146520 --spool-only DIR   (no radio; see below)
+#
+# Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
+# ©2026 Doug Kaye, K6DRK <doug@rds.com>
+
+import argparse
+import json
+import logging
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+import wave
+
+CONFIG = "/etc/transcriber/channels.json"
+SPOOL = "/var/spool/transcriber"
+SERVER = "https://marsaprs.org"
+
+# A transmission shorter than this is a squelch tail, a key-up, or someone knocking
+# their PTT — never words worth logging, and exactly what whisper invents speech from.
+MIN_CLIP_SECONDS = 1.2
+# Longer than this and it is almost certainly an open carrier rather than a
+# transmission; transcribe what we have rather than growing a file forever.
+MAX_CLIP_SECONDS = 120
+
+# whisper does not return nothing when it hears nothing. Fed static or silence it
+# produces these with complete confidence, and a log quietly filling with "Thank you."
+# is a worse failure than one that misses a transmission, because nobody questions it.
+HALLUCINATIONS = {
+    "", "you", "thank you", "thank you.", "thanks for watching",
+    "thanks for watching!", "bye", "bye.", "[blank_audio]", "(silence)",
+    "[ silence ]", "so", "so.", "uh", "um", ".", "...",
+}
+
+log = logging.getLogger("transcriber")
+
+
+# ── configuration ────────────────────────────────────────────────────────────
+
+class Channel:
+    """One frequency on one device, as the channel manager defined it."""
+
+    def __init__(self, d):
+        self.id = d["id"]
+        self.label = d.get("label") or d["id"]
+        self.token = d.get("token") or ""
+        self.frequency = str(d.get("frequency") or "")
+        self.serial = str(d.get("serial") or "")
+        self.squelch = int(d.get("squelch") or 0)
+        self.model = d.get("model") or "ggml-tiny.en.bin"
+        self.enabled = bool(d.get("enabled", True))
+        self.server = (d.get("server") or SERVER).rstrip("/")
+
+
+def load_channel(path, channel_id):
+    with open(path, encoding="utf-8") as fh:
+        raw = json.load(fh)
+    for entry in raw.get("channels", []):
+        if entry.get("id") == channel_id:
+            return Channel(entry)
+    raise SystemExit(f"channel {channel_id!r} is not in {path}")
+
+
+# ── the outbox ───────────────────────────────────────────────────────────────
+
+class Outbox:
+    """Entries the server has not accepted yet.
+
+    A transmission heard and then dropped because WiFi blinked is indistinguishable,
+    afterwards, from one that never happened — so entries wait on disk and are retried
+    in order. The same reasoning as the watch's Outbox, and the same conclusion.
+    """
+
+    def __init__(self, directory):
+        self.dir = directory
+        os.makedirs(self.dir, exist_ok=True)
+
+    def add(self, text, ts):
+        # Timestamp-named so the flush order is the order things were said.
+        path = os.path.join(self.dir, f"{ts:.6f}.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"text": text, "ts": ts}, fh)
+
+    def pending(self):
+        return sorted(
+            os.path.join(self.dir, f) for f in os.listdir(self.dir) if f.endswith(".json")
+        )
+
+    def flush(self, post):
+        """Send what is waiting, oldest first. Stops at the first failure so ordering
+        survives an outage — a later entry must not overtake an earlier one."""
+        for path in self.pending():
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    entry = json.load(fh)
+            except (OSError, ValueError):
+                os.unlink(path)          # unreadable: nothing to retry forever over
+                continue
+            if not post(entry["text"]):
+                return False
+            os.unlink(path)
+        return True
+
+
+# ── posting ──────────────────────────────────────────────────────────────────
+
+def post_log_entry(channel, text, timeout=15):
+    """One log entry. True if the server took it."""
+    body = json.dumps({"token": channel.token, "text": text}).encode()
+    req = urllib.request.Request(
+        f"{channel.server}/index.php?messaging=log",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            answer = json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        # 4xx is our fault and will not fix itself — a rejected token stays rejected,
+        # so retrying forever would just fill the disk. Drop it and say why.
+        if 400 <= e.code < 500:
+            log.error("server refused the entry (%s); discarding: %s", e.code, text[:60])
+            return True
+        log.warning("server error %s; will retry", e.code)
+        return False
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        log.warning("post failed (%s); will retry", e)
+        return False
+    if answer.get("error"):
+        log.error("server refused the entry (%s); discarding", answer["error"])
+        return True
+    return True
+
+
+# ── transcription ────────────────────────────────────────────────────────────
+
+def clip_seconds(path):
+    try:
+        with wave.open(path) as w:
+            return w.getnframes() / float(w.getframerate() or 1)
+    except (wave.Error, OSError):
+        return 0.0
+
+
+def transcribe(binary, model, path):
+    """Text for one clip, or '' if there is nothing worth saying."""
+    out = subprocess.run(
+        [binary, "-m", model, "-f", path, "--no-timestamps", "--no-prints",
+         "--language", "en", "--threads", str(max(1, (os.cpu_count() or 2) - 1))],
+        capture_output=True, text=True, timeout=300,
+    )
+    if out.returncode != 0:
+        log.error("whisper failed: %s", (out.stderr or "").strip()[:200])
+        return ""
+    return " ".join(out.stdout.split()).strip()
+
+
+def worth_logging(text):
+    """Whether this is speech rather than whisper's imagination.
+
+    Deliberately conservative. Losing a genuine transmission costs the log one line;
+    admitting invented ones costs it credibility, and an operator who stops trusting
+    the log stops reading it.
+    """
+    if not text:
+        return False
+    bare = re.sub(r"[^\w\s]", "", text).strip().lower()
+    if bare in HALLUCINATIONS or text.strip().lower() in HALLUCINATIONS:
+        return False
+    if len(bare) < 3:
+        return False
+    # "you you you you" and friends — whisper looping on noise.
+    words = bare.split()
+    if len(words) >= 4 and len(set(words)) == 1:
+        return False
+    return True
+
+
+# ── capture ──────────────────────────────────────────────────────────────────
+
+def start_capture(channel, spool):
+    """rtl_fm piped into sox, which cuts the stream into one file per transmission.
+
+    The dongle is addressed by USB SERIAL, never by index: index order is not stable
+    across reboots or re-plugs, and two channels silently swapping frequencies is the
+    kind of fault nobody notices until the log is wrong.
+    """
+    rtl = subprocess.Popen(
+        ["rtl_fm", "-d", f"serial={channel.serial}", "-f", channel.frequency,
+         "-M", "fm", "-s", "24000", "-l", str(channel.squelch), "-g", "40"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    )
+    sox = subprocess.Popen(
+        ["sox", "-t", "raw", "-r", "24000", "-e", "signed", "-b", "16", "-c", "1", "-",
+         "-r", "16000", "-t", "wav", os.path.join(spool, "clip_.wav"),
+         # Trim leading silence, then cut when 0.8 s of it appears: one file per
+         # over. 2% rather than 0 because a squelched FM receiver still hisses.
+         "silence", "1", "0.1", "2%", "1", "0.8", "2%",
+         ":", "newfile", ":", "restart"],
+        stdin=rtl.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    rtl.stdout.close()          # sox owns it now; we must not hold the read end open
+    return rtl, sox
+
+
+def settled_clips(spool, quiet_for=1.0):
+    """Clips sox has finished with.
+
+    sox is still appending to the newest file, so a clip counts as complete once it
+    has stopped growing. Cheaper and far more robust than trying to parse sox's
+    progress output.
+    """
+    now = time.time()
+    out = []
+    for name in sorted(os.listdir(spool)):
+        if not name.endswith(".wav"):
+            continue
+        path = os.path.join(spool, name)
+        try:
+            if now - os.path.getmtime(path) >= quiet_for:
+                out.append(path)
+        except OSError:
+            pass
+    return out
+
+
+# ── main loop ────────────────────────────────────────────────────────────────
+
+def handle_clip(channel, path, whisper, model, outbox):
+    seconds = clip_seconds(path)
+    if seconds < MIN_CLIP_SECONDS:
+        log.debug("ignoring %.1fs clip", seconds)
+        os.unlink(path)
+        return
+    if seconds > MAX_CLIP_SECONDS:
+        # A stuck or open carrier, not an over. Transcribing it would occupy the
+        # channel for minutes and queue every real transmission behind it, to
+        # produce a paragraph of noise nobody wants in the log.
+        log.warning("discarding %.0fs clip — open carrier?", seconds)
+        os.unlink(path)
+        return
+    text = transcribe(whisper, model, path)
+    os.unlink(path)
+    if not worth_logging(text):
+        log.info("discarded (%.1fs): %r", seconds, text[:60])
+        return
+    log.info("logging (%.1fs): %s", seconds, text[:80])
+    outbox.add(text, time.time())
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description="Transcribe one radio channel into the event log.")
+    p.add_argument("--channel", required=True, help="channel id, e.g. rx1-146520")
+    p.add_argument("--config", default=CONFIG)
+    p.add_argument("--spool", default=None, help="defaults to %s/<channel>" % SPOOL)
+    p.add_argument("--whisper", default="whisper-cli", help="whisper.cpp binary")
+    p.add_argument("--models", default="/opt/transcriber/models")
+    p.add_argument("--spool-only", action="store_true",
+                   help="do not open the radio; transcribe wavs already in the spool. "
+                        "This is how the pipeline is tested without an SDR.")
+    p.add_argument("--once", action="store_true", help="process what is waiting, then exit")
+    p.add_argument("-v", "--verbose", action="store_true")
+    args = p.parse_args(argv)
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
+
+    channel = load_channel(args.config, args.channel)
+    if not channel.enabled:
+        log.info("channel %s is disabled; nothing to do", channel.id)
+        return 0
+
+    spool = args.spool or os.path.join(SPOOL, re.sub(r"[^\w.-]", "_", channel.id))
+    os.makedirs(spool, exist_ok=True)
+    outbox = Outbox(os.path.join(spool, "outbox"))
+
+    whisper = shutil.which(args.whisper) or args.whisper
+    model = os.path.join(args.models, channel.model)
+    if not os.path.exists(model):
+        raise SystemExit(f"model not found: {model}")
+
+    rtl = sox = None
+    if not args.spool_only:
+        rtl, sox = start_capture(channel, spool)
+        log.info("listening on %s (%s), dongle %s", channel.frequency, channel.label,
+                 channel.serial)
+
+    running = True
+
+    def stop(_signum, _frame):
+        nonlocal running
+        running = False
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+
+    try:
+        while running:
+            for path in settled_clips(spool):
+                handle_clip(channel, path, whisper, model, outbox)
+            outbox.flush(lambda t: post_log_entry(channel, t))
+            if args.once:
+                break
+            # A dead radio must not look like a quiet frequency. systemd restarts us.
+            if rtl and rtl.poll() is not None:
+                log.error("rtl_fm exited (%s)", rtl.returncode)
+                return 1
+            if sox and sox.poll() is not None:
+                log.error("sox exited (%s)", sox.returncode)
+                return 1
+            time.sleep(0.5)
+    finally:
+        for proc in (sox, rtl):
+            if proc and proc.poll() is None:
+                proc.terminate()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -48,7 +48,7 @@ class MessagingDb
             event        TEXT NOT NULL,
             kind         TEXT NOT NULL,            -- 'mobile' | 'operator' | 'transcriber'
             key          TEXT NOT NULL,            -- mobile callsign, operator display name,
-                                                   -- or transcriber channel id ('146520@rx1')
+                                                   -- or transcriber channel id ('rx1-146520')
             display_name TEXT NOT NULL,
             short_id     TEXT,                     -- M0xx for mobiles
             token        TEXT,                     -- current session/auth token
