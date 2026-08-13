@@ -28,6 +28,9 @@ class MessagingWatchShapeTest extends TestCase
         foreach ([$this->dbFile, $this->dbFile . '-wal', $this->dbFile . '-shm'] as $f) {
             if (file_exists($f)) unlink($f);
         }
+        foreach ($this->tmpFiles as $f) {
+            if (file_exists($f)) unlink($f);
+        }
     }
 
     /** A direct thread between two participants. */
@@ -191,6 +194,161 @@ class MessagingWatchShapeTest extends TestCase
             if ((int)$c['id'] === $conversationId) return $c;
         }
         $this->fail("conversation $conversationId not returned");
+    }
+
+    // ── an operator session outliving its event ───────────────────────────────
+
+    /** An operator's token lives in the browser until they sign out, so it outlives the
+     *  event it was issued for. Moving it into the current event is what puts them back
+     *  in the roster mobiles are offered — without it a new event has no operator in it
+     *  and nobody on a phone can address net control at all. */
+    public function testRehomingASessionPutsItInTheCurrentEvent(): void
+    {
+        $next = 'Next Event';
+        $old  = $this->db->participantById($this->op);
+
+        $id = $this->db->rehomeSession($next, $old, 'tok-abc');
+
+        $this->assertNotSame($this->op, $id, 'a different event means a different row');
+        $moved = $this->db->participantById($id);
+        $this->assertSame($next, $moved['event']);
+        $this->assertSame('Net Control', $moved['key']);
+        $this->assertSame('tok-abc', $moved['token']);
+    }
+
+    /** The token moves rather than being copied. Two rows answering to one token would
+     *  make participantByToken's answer depend on row order. */
+    public function testRehomingLeavesTheOldRowUnreachableByToken(): void
+    {
+        $this->db->upsertParticipant($this->ev, 'operator', 'Net Control', 'Net Control', null, 'tok-abc');
+        $old = $this->db->participantByToken('tok-abc');
+        $this->assertSame($this->ev, $old['event']);
+
+        $id = $this->db->rehomeSession('Next Event', $old, 'tok-abc');
+
+        $this->assertSame($id, $this->db->participantByToken('tok-abc')['id'],
+                          'the token now resolves to the new event only');
+        $this->assertNull($this->db->participantById((int)$old['id'])['token']);
+    }
+
+    /** Re-homing within the same event is a no-op that must not blank the live token. */
+    public function testRehomingIntoTheSameEventKeepsTheSession(): void
+    {
+        $this->db->upsertParticipant($this->ev, 'operator', 'Net Control', 'Net Control', null, 'tok-abc');
+        $old = $this->db->participantByToken('tok-abc');
+
+        $id = $this->db->rehomeSession($this->ev, $old, 'tok-abc');
+
+        $this->assertSame((int)$old['id'], $id);
+        $this->assertSame('tok-abc', $this->db->participantById($id)['token']);
+    }
+
+    /** A transcriber channel's token lives in its config file forever, so it hits the
+     *  same trap an operator's browser token does — and rehoming has to carry the kind
+     *  across, not assume 'operator'. */
+    public function testRehomingKeepsTheParticipantKind(): void
+    {
+        $this->db->upsertParticipant($this->ev, 'transcriber', '146520@rx1', '146.520', null, 'tok-rx');
+        $old = $this->db->participantByToken('tok-rx');
+
+        $id = $this->db->rehomeSession('Next Event', $old, 'tok-rx');
+
+        $moved = $this->db->participantById($id);
+        $this->assertSame('transcriber', $moved['kind']);
+        $this->assertSame('146.520', $moved['display_name']);
+        $this->assertSame('Next Event', $moved['event']);
+    }
+
+    // ── the channel registry ──────────────────────────────────────────────────
+
+    /** Writes a channel registry and returns a $ctx pointing at it. */
+    private function registry(array $channels): array
+    {
+        $f = tempnam(sys_get_temp_dir(), 'chan_') . '.json';
+        file_put_contents($f, json_encode(['channels' => $channels]));
+        $this->tmpFiles[] = $f;
+        return ['event' => $this->ev, 'channelFile' => $f];
+    }
+    private array $tmpFiles = [];
+
+    public function testAKnownChannelTokenResolves(): void
+    {
+        $ctx = $this->registry([['id'=>'146520@rx1', 'label'=>'146.520', 'token'=>'tok-rx']]);
+
+        $ch = _msg_find_channel($ctx, 'tok-rx');
+
+        $this->assertSame('146520@rx1', $ch['id']);
+        $this->assertSame('146.520', $ch['label']);
+    }
+
+    public function testAnUnknownTokenResolvesToNothing(): void
+    {
+        $ctx = $this->registry([['id'=>'146520@rx1', 'label'=>'146.520', 'token'=>'tok-rx']]);
+
+        $this->assertNull(_msg_find_channel($ctx, 'wrong'));
+        $this->assertNull(_msg_find_channel($ctx, ''), 'an empty token must never match');
+    }
+
+    /** Switching a channel off in the manager stops it logging immediately, without
+     *  waiting for the device to notice its config changed. */
+    public function testADisabledChannelIsRefused(): void
+    {
+        $ctx = $this->registry([
+            ['id'=>'146520@rx1', 'label'=>'146.520', 'token'=>'tok-rx', 'enabled'=>false],
+        ]);
+
+        $this->assertNull(_msg_find_channel($ctx, 'tok-rx'));
+    }
+
+    /** No registry at all is the normal state until the first Transcriber is deployed,
+     *  and must not be an error on every authenticated request. */
+    public function testAMissingRegistryIsHarmless(): void
+    {
+        $this->assertNull(_msg_find_channel(['channelFile' => '/nonexistent.json'], 'tok-rx'));
+        $this->assertNull(_msg_find_channel([], 'tok-rx'));
+    }
+
+    // ── a transcriber channel writing to the log ──────────────────────────────
+
+    /** A channel posts what it heard on the air. Same mechanism as an operator's own
+     *  entry — no recipients, so no deliveries, nothing announced, nothing to
+     *  acknowledge — but attributed to the frequency rather than to a person. */
+    public function testATranscriberChannelCanWriteToTheLog(): void
+    {
+        $rx   = $this->db->upsertParticipant($this->ev, 'transcriber', '146520@rx1', '146.520', null, 'tok-rx');
+        $conv = $this->db->resolveLogConversation($this->ev);
+
+        $this->db->insertMessage($this->ev, $conv, $rx, 'aid three we have a rider down', [], false);
+
+        $row = $this->db->thread($conv, 0)[0];
+        $this->assertSame('aid three we have a rider down', $row['text']);
+        $this->assertSame('Log', $row['to_label']);
+        $this->assertCount(0, $this->db->pendingFor($this->op), 'heard, not sent');
+        $this->assertCount(0, $this->db->pendingFor($this->phone));
+    }
+
+    /** The log reads "146.520 → Log", which is what keeps a machine-heard line
+     *  distinguishable from something net control typed. */
+    public function testTheChannelIsTheAuthor(): void
+    {
+        $rx   = $this->db->upsertParticipant($this->ev, 'transcriber', '146520@rx1', '146.520', null, 'tok-rx');
+        $conv = $this->db->resolveLogConversation($this->ev);
+        $this->db->insertMessage($this->ev, $conv, $rx, 'copy that', [], false);
+
+        $this->assertSame('146.520', $this->db->thread($conv, 0)[0]['from_name']);
+    }
+
+    /** A channel writes and never reads: it must not be offered the log thread, and
+     *  cannot be messaged, so it never appears in anyone's conversation list. */
+    public function testAChannelIsNotOfferedTheLogToRead(): void
+    {
+        $rx   = $this->db->upsertParticipant($this->ev, 'transcriber', '146520@rx1', '146.520', null, 'tok-rx');
+        $conv = $this->db->resolveLogConversation($this->ev);
+        $this->db->insertMessage($this->ev, $conv, $rx, 'anything', [], false);
+
+        $kinds = array_column($this->db->conversationsFor($this->ev, $rx, false), 'kind');
+
+        $this->assertNotContains('log', $kinds);
     }
 
     // ── the event log ─────────────────────────────────────────────────────────

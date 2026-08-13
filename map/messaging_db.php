@@ -46,8 +46,9 @@ class MessagingDb
         CREATE TABLE IF NOT EXISTS participants (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             event        TEXT NOT NULL,
-            kind         TEXT NOT NULL,            -- 'mobile' | 'operator'
-            key          TEXT NOT NULL,            -- mobile callsign, or operator display name
+            kind         TEXT NOT NULL,            -- 'mobile' | 'operator' | 'transcriber'
+            key          TEXT NOT NULL,            -- mobile callsign, operator display name,
+                                                   -- or transcriber channel id ('146520@rx1')
             display_name TEXT NOT NULL,
             short_id     TEXT,                     -- M0xx for mobiles
             token        TEXT,                     -- current session/auth token
@@ -206,6 +207,33 @@ class MessagingDb
         if ($token === '') return null;
         return $this->one('SELECT * FROM participants WHERE token=:t', [':t'=>$token]);
     }
+    /** Carry a live session into the current event.
+     *
+     *  Participants are per-event, but a long-lived token is not. An operator's lives in
+     *  the browser until they sign out; a transcriber channel's lives in its config file
+     *  indefinitely. Creating a new event therefore left the session pointing at the old
+     *  event's row, where it kept being touched and kept working, while the new event had
+     *  no operator for anyone to address and no channel to log into it.
+     *
+     *  The token moves rather than being copied: two rows answering to one token would
+     *  make participantByToken's answer depend on row order. The old row keeps its name
+     *  and its history, it simply stops being reachable by that token — which is what
+     *  "that session is in this event now" means.
+     *
+     *  History does not follow. Conversations are per-event by design, so the session
+     *  arrives in the new event with a clean list, exactly as a fresh subscribe would
+     *  have given it. */
+    public function rehomeSession(string $event, array $old, string $token): int
+    {
+        $id = $this->upsertParticipant($event, (string)$old['kind'], (string)$old['key'],
+                                       (string)($old['display_name'] ?? $old['key']),
+                                       $old['short_id'] ?? null, $token);
+        if ((int)$old['id'] !== $id) {
+            $this->run('UPDATE participants SET token=NULL WHERE id=:i', [':i'=>(int)$old['id']]);
+        }
+        return $id;
+    }
+
     public function participantById(int $id): ?array
     {
         return $this->one('SELECT * FROM participants WHERE id=:i', [':i'=>$id]);

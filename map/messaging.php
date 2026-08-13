@@ -31,6 +31,32 @@ function _msg_load_trackers(string $file): array
     return isset($raw['trackers']) ? $raw['trackers'] : $raw;
 }
 
+/** A Transcriber channel matching this token, or null.
+ *
+ *  The registry is JSON rather than YAML deliberately: it is read on every authenticated
+ *  request, exactly as mobile_trackers.json is, and that file is the closest analogue —
+ *  a token registry consulted by this same resolver. Keeping the two the same shape
+ *  means no YAML parser in the hot path and none in the tests.
+ *
+ *  Shape: { "channels": [ {"id","label","token","short_id"?,"enabled"?}, … ] }
+ *  A channel with `enabled: false` does not resolve, so switching one off in the
+ *  manager stops it logging even if the device has not picked up its config yet. */
+function _msg_find_channel(array $ctx, string $token): ?array
+{
+    $file = $ctx['channelFile'] ?? null;
+    if (!$file || !is_readable($file) || $token === '') return null;
+    $raw = json_decode((string)file_get_contents($file), true) ?: [];
+    foreach (($raw['channels'] ?? []) as $c) {
+        if (empty($c['token']) || !hash_equals((string)$c['token'], $token)) continue;
+        if (isset($c['enabled']) && !$c['enabled']) return null;
+        if (empty($c['id'])) return null;
+        return ['id'=>(string)$c['id'],
+                'label'=>(string)($c['label'] ?? $c['id']),
+                'short_id'=>isset($c['short_id']) ? (string)$c['short_id'] : null];
+    }
+    return null;
+}
+
 /** Position array [lat,lon,ts] from a tracker record, or null. */
 function _msg_tracker_pos(array $t): ?array
 {
@@ -49,7 +75,29 @@ function _msg_resolve_sender(MessagingDb $db, array $ctx, string $token): ?array
 {
     if ($token === '') return null;
     $p = $db->participantByToken($token);
+    // An operator's token is kept in the browser indefinitely, so it outlives the event
+    // it was issued for. participantByToken matches on the token alone, so after a new
+    // event is created that session went on resolving to its old-event participant: the
+    // operator kept working, but in the previous event's roster. Nothing looked broken
+    // from their side -- messages sent and arrived -- while the new event had no
+    // operator in it at all, so `participants` offered mobiles nobody to write to.
+    //
+    // Mobiles do not have this problem: a session mints a fresh token, the old one stops
+    // matching, and the fallback below registers them in the current event. Only the
+    // operator's long-lived token needs moving across.
+    if ($p && in_array($p['kind'] ?? '', ['operator', 'transcriber'], true)
+        && ($p['event'] ?? '') !== $ctx['event']) {
+        return $db->participantById($db->rehomeSession($ctx['event'], $p, $token));
+    }
     if ($p) return $p;
+    // A transcriber channel, identified the same way a mobile is: its token is not in
+    // the participants table until it first speaks, so an unmatched token is looked up
+    // in the channel registry and the channel registered in the current event.
+    if ($ch = _msg_find_channel($ctx, $token)) {
+        $id = $db->upsertParticipant($ctx['event'], 'transcriber', $ch['id'],
+                                     $ch['label'], $ch['short_id'] ?? null, $token);
+        return $db->participantById($id);
+    }
     foreach (_msg_load_trackers($ctx['mobileFile']) as $t) {
         if (!empty($t['token']) && hash_equals($t['token'], $token)) {
             $cs = $t['callsign'] ?? null;
@@ -428,7 +476,13 @@ function messaging_handle(string $action, array $body, array $ctx): void
     }
 
     case 'log': {   // an entry written to the event's log, addressed to nobody
-        if (($me['kind'] ?? '') !== 'operator') _msg_fail(403, 'Operators only');
+        // Operators write log entries by hand; a Transcriber channel writes what it
+        // heard on the air. Mobiles never do — the log is a net-control record, and a
+        // tracker posting into it would be indistinguishable from net control's own
+        // notes.
+        if (!in_array($me['kind'] ?? '', ['operator', 'transcriber'], true)) {
+            _msg_fail(403, 'Operators and transcribers only');
+        }
         // substr rather than mb_substr: this server has no mbstring, and send bounds
         // its text the same way, so the two cannot disagree about what fits.
         $text = substr(trim((string)($body['text'] ?? '')), 0, 280);

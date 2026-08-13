@@ -515,6 +515,9 @@ if (isset($_GET['messaging'])) {
 		'event'       => messaging_ctx_event($_mcfg),
 		'msgPassword' => trim($_mcfg['messaging_password'] ?? ''),
 		'mobileFile'  => __DIR__ . '/mobile_trackers.json',
+		// Transcriber channels: the registry the channel manager writes and the
+		// messaging resolver reads to identify a channel by its token.
+		'channelFile' => __DIR__ . '/transcriber.json',
 		'authPerm'    => 'msgHasAuthPermission',
 	];
 	// Photo uploads (send with attachment) arrive as multipart/form-data — its
