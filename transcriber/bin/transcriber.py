@@ -5,10 +5,11 @@
 # One process per channel, started by systemd as transcriber@<channel-id>.service.
 # Several run side by side on one Pi, each bound to its own SDR dongle by USB serial.
 #
-#   rtl_fm -d <serial> -f <freq> -M fm -l <squelch>
-#      | sox … silence … : newfile : restart     → one wav per transmission
-#      → whisper.cpp                             → text
-#      → POST index.php?messaging=log            → "146.520 → Log"
+#   rtl_fm -d <serial> -f <freq> -M fm -l <squelch>   → samples only while the
+#                                                        squelch is open
+#      → gaps in that stream are the transmission boundaries
+#      → whisper.cpp                                   → text
+#      → POST index.php?messaging=log                  → "146.520 → Log"
 #
 # Stdlib only, like isproxy.py — nothing to install and nothing to break on a
 # distribution upgrade.
@@ -25,6 +26,7 @@ import json
 import logging
 import os
 import re
+import select
 import shutil
 import signal
 import subprocess
@@ -169,7 +171,16 @@ def post_log_entry(channel, text, timeout=15):
     req = urllib.request.Request(
         f"{channel.server}/index.php?messaging=log",
         data=body,
-        headers={"Content-Type": "application/json"},
+        # Cloudflare blocks urllib's default User-Agent outright — "error code: 1010",
+        # its bot fingerprint rule — and the 403 that produces is indistinguishable
+        # from a rejected token. That cost hours: the same token posted fine from curl
+        # and was refused from the device, which read as an intermittent auth fault
+        # rather than the client being banned for what it was.
+        #
+        # Any explicit agent satisfies it, so this one says what it actually is rather
+        # than impersonating a browser.
+        headers={"Content-Type": "application/json",
+                 "User-Agent": f"MARS-Transcriber/{VERSION} (+https://marsaprs.org)"},
         method="POST",
     )
     try:
@@ -225,6 +236,17 @@ def transcribe(binary, model, path):
     return " ".join(out.stdout.split()).strip()
 
 
+def clean(text):
+    """Drop whisper's bracketed sound descriptions, keeping the speech around them.
+
+    A transmission usually arrives with hiss either side of it, and whisper narrates
+    that hiss: a real recording came back as "(water splashing) (water splashing) K-6
+    DRK testing on West Marin K-6 DRK (water splashing)". The callsign and the message
+    are in there and worth keeping; the rest is the squelch tail described in words.
+    """
+    return " ".join(re.sub(r"[\(\[\{][^\)\]\}]*[\)\]\}]", " ", text).split()).strip()
+
+
 def worth_logging(text):
     """Whether this is speech rather than whisper's imagination.
 
@@ -254,8 +276,23 @@ def worth_logging(text):
 
 # ── capture ──────────────────────────────────────────────────────────────────
 
+SAMPLE_RATE = 16000          # what whisper wants; rtl_fm can produce it directly
+GAP_SECONDS = 0.8            # squelch closed this long ends a transmission
+
+
+def write_clip(spool, audio, seq):
+    """One transmission, as a wav whisper can read."""
+    path = os.path.join(spool, f"clip_{seq:05d}.wav")
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(SAMPLE_RATE)
+        w.writeframes(audio)
+    return path
+
+
 def start_capture(channel, spool):
-    """rtl_fm piped into sox, which cuts the stream into one file per transmission.
+    """rtl_fm, squelched, writing raw 16 kHz samples for the main loop to segment.
 
     The dongle is addressed by USB SERIAL, never by index: index order is not stable
     across reboots or re-plugs, and two channels silently swapping frequencies is the
@@ -278,31 +315,37 @@ def start_capture(channel, spool):
     #
     # -E deemp applies FM de-emphasis, which voice needs and without which the high end
     # is harsh enough to cost accuracy.
-    rtl = subprocess.Popen(
+    # Gate on SIGNAL STRENGTH, not audio level, and cut clips on gaps in the data
+    # rather than on quiet passages in the audio.
+    #
+    # The first version piped rtl_fm into sox and split on silence. That cannot work on
+    # an un-squelched FM receiver: idle hiss and speech sit at similar audio levels
+    # (measured, on a real repeater: hiss at 1.2% of full scale), so an amplitude gate
+    # either treats hiss as sound or never opens at all. Sweeping the threshold showed
+    # a usable window only between 0.5% and 1%, and even inside it the transmission was
+    # not cleanly separated — 90 seconds containing a clear callsign split into an 80s
+    # clip of hiss and a 3.8s clip of hiss.
+    #
+    # Squelch is the mechanism radios use for exactly this, and it works on received
+    # power. With -l set, rtl_fm emits NOTHING while closed rather than emitting silence
+    # — which is why sox could never cut on it either — so the gaps in the byte stream
+    # are the transmission boundaries, and reading the stream directly is both simpler
+    # and correct. -r 16000 gives whisper its rate with no resampling, so sox leaves the
+    # capture path entirely.
+    return subprocess.Popen(
         ["rtl_fm", "-d", channel.serial, "-f", channel.frequency,
-         "-M", "fm", "-s", "200000", "-r", "24000", "-E", "deemp",
-         "-l", str(channel.squelch), "-g", "40"],
+         "-M", "fm", "-s", "200000", "-r", str(SAMPLE_RATE), "-E", "deemp",
+         "-l", str(channel.squelch or 25), "-g", "40"],
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
     )
-    sox = subprocess.Popen(
-        ["sox", "-t", "raw", "-r", "24000", "-e", "signed", "-b", "16", "-c", "1", "-",
-         "-r", "16000", "-t", "wav", os.path.join(spool, "clip_.wav"),
-         # Trim leading silence, then cut when 0.8 s of it appears: one file per
-         # over. 2% rather than 0 because a squelched FM receiver still hisses.
-         "silence", "1", "0.1", "2%", "1", "0.8", "2%",
-         ":", "newfile", ":", "restart"],
-        stdin=rtl.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
-    rtl.stdout.close()          # sox owns it now; we must not hold the read end open
-    return rtl, sox
 
 
 def settled_clips(spool, quiet_for=1.0):
-    """Clips sox has finished with.
+    """Wavs already on disk, for --spool-only.
 
-    sox is still appending to the newest file, so a clip counts as complete once it
-    has stopped growing. Cheaper and far more robust than trying to parse sox's
-    progress output.
+    Only the test and bench paths use this now — with a radio attached the main loop
+    segments the stream itself and writes finished clips directly. A clip counts as
+    complete once it has stopped growing, and empty ones are left alone.
     """
     now = time.time()
     out = []
@@ -341,7 +384,7 @@ def handle_clip(channel, path, whisper, model, outbox):
         log.warning("discarding %.0fs clip — open carrier?", seconds)
         os.unlink(path)
         return
-    text = transcribe(whisper, model, path)
+    text = clean(transcribe(whisper, model, path))
     os.unlink(path)
     if not worth_logging(text):
         log.info("discarded (%.1fs): %r", seconds, text[:60])
@@ -400,9 +443,9 @@ def main(argv=None):
         raise SystemExit(f"{whisper} is not usable: "
                          f"{(probe.stderr or probe.stdout).strip()[:200]}")
 
-    rtl = sox = None
+    rtl = None
     if not args.spool_only:
-        rtl, sox = start_capture(channel, spool)
+        rtl = start_capture(channel, spool)
         # Version first, so `journalctl -u transcriber@… ` answers "what is this running"
         # without anyone having to go and look.
         log.info("transcriber %s — listening on %s (%s), dongle %s, model %s",
@@ -417,25 +460,47 @@ def main(argv=None):
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
 
+    audio = bytearray()          # the transmission currently being received
+    last_data = time.time()
+    seq = 0
+    max_bytes = MAX_CLIP_SECONDS * SAMPLE_RATE * 2
+
     try:
         while running:
+            if rtl is not None:
+                # Squelch closed means no bytes at all, so the read simply times out.
+                # That timeout IS the end-of-transmission signal.
+                ready, _, _ = select.select([rtl.stdout], [], [], 0.2)
+                if ready:
+                    chunk = os.read(rtl.stdout.fileno(), 65536)
+                    if chunk:
+                        audio += chunk
+                        last_data = time.time()
+
+                gap = time.time() - last_data
+                if audio and (gap >= GAP_SECONDS or len(audio) >= max_bytes):
+                    seq += 1
+                    path = write_clip(spool, bytes(audio), seq)
+                    audio.clear()
+                    handle_clip(channel, path, whisper, model, outbox)
+
+            # --spool-only: wavs are already on disk, put there by a test or by hand.
             for path in settled_clips(spool):
                 handle_clip(channel, path, whisper, model, outbox)
+
             outbox.flush(lambda t: post_log_entry(channel, t))
             if args.once:
                 break
-            # A dead radio must not look like a quiet frequency. systemd restarts us.
-            if rtl and rtl.poll() is not None:
+            # A dead radio must not look like a quiet frequency. systemd restarts us,
+            # and a failed unit is a state somebody notices.
+            if rtl is not None and rtl.poll() is not None:
                 log.error("rtl_fm exited (%s)", rtl.returncode)
                 return 1
-            if sox and sox.poll() is not None:
-                log.error("sox exited (%s)", sox.returncode)
-                return 1
-            time.sleep(0.5)
+            if rtl is None:
+                time.sleep(0.5)
     finally:
-        for proc in (sox, rtl):
-            if proc and proc.poll() is None:
-                proc.terminate()
+        if rtl is not None and rtl.poll() is None:
+            rtl.terminate()
     return 0
 
 

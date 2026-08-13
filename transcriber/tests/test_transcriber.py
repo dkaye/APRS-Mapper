@@ -52,6 +52,18 @@ def test_worth_logging():
         check(f"keeps {real[:24]!r}", transcriber.worth_logging(real), True)
 
 
+def test_clean_strips_sound_effects():
+    print("clean")
+    real = "(water splashing) (water splashing) K-6 DRK testing on West Marin K-6 DRK (water splashing)"
+    check("keeps the speech, drops the hiss",
+          transcriber.clean(real), "K-6 DRK testing on West Marin K-6 DRK")
+    check("pure narration becomes nothing", transcriber.clean("(water splashing)"), "")
+    check("plain speech is untouched",
+          transcriber.clean("aid three we have a rider down"), "aid three we have a rider down")
+    check("and nothing left is not worth logging",
+          transcriber.worth_logging(transcriber.clean("[MUSIC]")), False)
+
+
 # ── clip length ──────────────────────────────────────────────────────────────
 
 def write_wav(path, seconds, rate=16000):
@@ -139,7 +151,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         n = int(self.headers.get("Content-Length", 0))
-        Handler.seen.append(json.loads(self.rfile.read(n) or b"{}"))
+        entry = json.loads(self.rfile.read(n) or b"{}")
+        entry["_ua"] = self.headers.get("User-Agent", "")
+        Handler.seen.append(entry)
         self.send_response(Handler.status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(Handler.body)))
@@ -175,6 +189,10 @@ def test_posting():
     check("accepted", transcriber.post_log_entry(ch, "aid three clear"), transcriber.POST_OK)
     check("sent the token", Handler.seen[-1]["token"], "tok-rx")
     check("sent the text", Handler.seen[-1]["text"], "aid three clear")
+    # Cloudflare blocks urllib's default agent with a 403 that looks exactly like a
+    # rejected token. An explicit one is required, not cosmetic.
+    check("identifies itself", Handler.seen[-1]["_ua"].startswith("MARS-Transcriber/"), True)
+    check("is not the urllib default", "Python-urllib" in Handler.seen[-1]["_ua"], False)
 
     # 5xx is the server's problem and may pass; keep the entry and retry.
     Handler.status, Handler.body = 503, b"busy"
@@ -380,7 +398,7 @@ def test_unknown_channel_is_fatal():
 
 if __name__ == "__main__":
     for fn in [
-        test_worth_logging, test_clip_seconds,
+        test_worth_logging, test_clean_strips_sound_effects, test_clip_seconds,
         test_outbox_order_and_retry, test_outbox_drops_corrupt_entries,
         test_posting, test_unreachable_server_is_retried,
         test_pipeline_logs_speech, test_pipeline_discards_hallucination,
