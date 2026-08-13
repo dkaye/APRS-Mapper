@@ -881,8 +881,16 @@ def main(argv=None):
         nonlocal running
         running = False
 
-    signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGINT, stop)
+    # Only the main thread may install these, and in production this is always the main
+    # thread. Tolerating the failure is what lets a test drive main() on a thread of its
+    # own — which is how the capture loop gets exercised at all, since it otherwise needs
+    # a radio. Without this the thread died here, before the loop, and a test written to
+    # watch the loop passed by watching nothing.
+    try:
+        signal.signal(signal.SIGTERM, stop)
+        signal.signal(signal.SIGINT, stop)
+    except ValueError:
+        log.debug("not the main thread; leaving signal handling alone")
 
     # Transcription and posting run on their own thread; this one does nothing but read
     # the radio. See transcribe_loop for why that separation is not optional.
@@ -944,13 +952,28 @@ def main(argv=None):
                              squelch.floor, squelch.floor * squelch.open_ratio,
                              " (receiving)" if squelch.is_open else "")
 
-            # --spool-only: wavs are already on disk, put there by a test or by hand.
-            for path in settled_clips(clips):
-                if args.once:
-                    handle_clip(channel, path, whisper, model, outbox)
-                    outbox.flush(lambda t: post_log_entry(channel, t))
-                else:
-                    enqueue(path)
+            # --spool-only ONLY: wavs already on disk, put there by a test or by hand.
+            #
+            # Never with a radio attached. The capture loop above writes each clip and
+            # enqueues it itself, so scanning the same directory hands the worker a second
+            # reference to a file that is already queued — and then a third, and a fourth,
+            # once per pass through this loop.
+            #
+            # That was survivable while transcription ran inline, because the clip was
+            # unlinked before this scan next ran, which is why it went unnoticed for so
+            # long. With a worker thread the file waits, the duplicates pile up at several
+            # a second, and the backlog cap starts dropping the OLDEST entry — deleting
+            # real clips that had not been transcribed yet. On the air that looked like a
+            # transmission simply never arriving: the first one logged, the second
+            # vanished, and the journal filled with FileNotFoundError from the duplicates
+            # chasing a file the worker had already finished with.
+            if rtl is None:
+                for path in settled_clips(clips):
+                    if args.once:
+                        handle_clip(channel, path, whisper, model, outbox)
+                        outbox.flush(lambda t: post_log_entry(channel, t))
+                    else:
+                        enqueue(path)
             if args.once:
                 break
             # A dead radio must not look like a quiet frequency. systemd restarts us,

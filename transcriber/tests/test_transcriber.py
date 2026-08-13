@@ -551,6 +551,87 @@ def run_pipeline(tmp, says, clip_seconds=3.0):
     return rc, [e["text"] for e in Handler.seen]
 
 
+def test_a_clip_is_queued_once_not_once_per_loop():
+    """With a radio attached, the directory scanner must never run.
+
+    The capture loop writes each clip and queues it itself. Scanning the same directory
+    queues a SECOND reference to a file that is already waiting — then a third, and a
+    fourth, several times a second for as long as it sits there.
+
+    That was invisible while transcription ran inline: the clip was unlinked before the
+    next scan. With a worker thread the file waits, the duplicates pile up, and the
+    backlog cap starts dropping the oldest entry — which deletes real clips nobody has
+    transcribed yet. On the air it looked like the second transmission of the day simply
+    never arriving, with the journal filling with FileNotFoundError from duplicates
+    chasing a file the worker had already finished with.
+    """
+    print("one clip, one queue entry")
+    with tempfile.TemporaryDirectory() as tmp:
+        models = os.path.join(tmp, "models"); os.makedirs(models)
+        open(os.path.join(models, "ggml-tiny.en.bin"), "w").close()
+        clips = os.path.join(tmp, "clips"); os.makedirs(clips)
+        config = os.path.join(tmp, "channels.json")
+        with open(config, "w") as fh:
+            json.dump({"channels": [{"id": "rx1-146520", "token": "t",
+                                     "frequency": "146520000", "serial": "1"}]}, fh)
+
+        # A radio that produces nothing. Enough to make rtl non-None, which is the whole
+        # condition under test; what it emits does not matter.
+        import subprocess as sp
+        fake = [sys.executable, "-c", "import time; time.sleep(30)"]
+        scans, queued = [], []
+
+        def no_capture(channel, clips_dir, spool):
+            return sp.Popen(fake, stdout=sp.PIPE, stderr=sp.DEVNULL)
+
+        real_settled = transcriber.settled_clips
+        real_put = transcriber.ClipQueue.put
+        # Calls through to the real scanner rather than returning nothing, so the
+        # "nothing is queued" check below would actually see the duplicate.
+        transcriber.settled_clips = lambda d, **kw: (scans.append(d),
+                                                     real_settled(d, **kw))[1]
+        transcriber.ClipQueue.put = lambda self, p: queued.append(p)
+        real_capture, transcriber.start_capture = transcriber.start_capture, no_capture
+        died = []
+        try:
+            def run():
+                try:
+                    transcriber.main([
+                        "--channel", "rx1-146520", "--config", config, "--spool", tmp,
+                        "--clips", clips, "--whisper", stub_whisper(tmp, "hello"),
+                        "--models", models])
+                except BaseException as e:                       # noqa: BLE001
+                    died.append(repr(e))
+
+            worker = threading.Thread(target=run, daemon=True)
+            worker.start()
+            __import__("time").sleep(0.4)      # let it sweep and enter the loop
+
+            # Now put a clip where the capture loop would have written one. It has to go
+            # in after startup, because sweep_clips clears the directory first — placing
+            # it earlier is how the previous version of this check came to be testing
+            # nothing at all. Backdate it past the settle window so the scanner, if it
+            # ran, would take it immediately.
+            stray = os.path.join(clips, "clip_00001.wav")
+            write_wav(stray, 3.0)
+            old = os.path.getmtime(stray) - 5
+            os.utime(stray, (old, old))
+            __import__("time").sleep(1.2)      # many passes through the main loop
+            # The assertions below are about something NOT happening, so they pass for
+            # free if the loop never ran. The first version of this test did exactly
+            # that — main() died installing signal handlers off the main thread — and
+            # reported a pass against the very bug it was written for.
+            check("the capture loop is actually running", (worker.is_alive(), died),
+                  (True, []))
+        finally:
+            transcriber.settled_clips = real_settled
+            transcriber.ClipQueue.put = real_put
+            transcriber.start_capture = real_capture
+
+        check("the directory is never scanned with a radio attached", scans, [])
+        check("and nothing is queued from it", queued, [])
+
+
 def test_pipeline_logs_speech():
     print("pipeline — a real transmission")
     with tempfile.TemporaryDirectory() as tmp:
@@ -693,6 +774,7 @@ if __name__ == "__main__":
         test_squelch_ignores_a_brief_pause, test_squelch_waits_before_judging,
         test_outbox_order_and_retry, test_outbox_drops_corrupt_entries,
         test_posting, test_unreachable_server_is_retried,
+        test_a_clip_is_queued_once_not_once_per_loop,
         test_pipeline_logs_speech, test_pipeline_discards_hallucination,
         test_pipeline_discards_short_clip, test_pipeline_discards_open_carrier,
         test_an_idle_frequency_is_not_fatal,
