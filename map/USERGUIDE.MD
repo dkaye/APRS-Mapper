@@ -67,6 +67,7 @@ This document is a guide for users of the MARS APRS system. For technical detail
     - [Enabling and Disabling Devices](#enabling-and-disabling-devices)
     - [Adding, Editing, and Deleting Devices](#adding-editing-and-deleting-devices)
 - [WiFi Manager](#wifi-manager)
+- [Transcriber Channels](#transcriber-channels)
 - [Cloudflare Tunnel](#cloudflare-tunnel)
 - [Troubleshooting](#troubleshooting)
   - [Is my iGate working?](#is-my-igate-working)
@@ -1176,6 +1177,57 @@ It sometimes happens that we show up for an event for which we don't know the Wi
 You will be asked for the Name (pick something like "Stinson Community Center"), the SSID, and the password (8–63 characters). The script will append the hotspot to the end of the list (i.e., at the lowest priority). **Remember to turn off the recovery hotspot** so the device won't reconnect to it when rebooted. Then reboot the device.
 
 **Note that the appended hotspot is temporary. It will be deleted when a new list is downloaded from the server.**
+
+---
+
+## Transcriber Channels
+
+A **Transcriber** is a small computer with a radio receiver that listens to a voice frequency and writes down what it hears. Each transmission appears in the **Event Log** by itself, attributed to the frequency it was heard on:
+
+```
+Net Control  → Log
+  0930 net opened
+
+146.520  → Log
+  "aid three we have a rider down"
+```
+
+You do not have to do anything for this to happen. The page at **marsaprs.org/transcriber/** is where the frequencies are set up, and most of the time it is left alone.
+
+### Setting up a channel
+
+**Devices** are the receivers themselves — one row per box. The **Host** must match that computer's name exactly, because that is how it identifies itself when it asks for its settings.
+
+**Channels** are the frequencies. One row per frequency, and a single receiver can cover several at once.
+
+| Field | What it is |
+|-------|-----------|
+| **ID** | A short unique name, such as `rx1-146520`. It appears in the log and cannot be reused. |
+| **Device** | Which receiver listens on this frequency. |
+| **Label** | What the log shows as the author — `146.520`. Make it something you will recognise mid-event. |
+| **Frequency** | In hertz: 146.520 MHz is `146520000`. |
+| **Serial** | The USB serial of that receiver's radio stick. Not a slot number — the sticks change order when the machine restarts, and two channels swapping frequencies is not something you would notice until the log was already wrong. |
+| **Squelch** | How loud a signal must be before it counts. Too low and it transcribes hiss; too high and it clips the start of every transmission. Start at 0 and raise it only if noise is getting through. |
+| **Model** | `tiny` keeps up in real time; `base` is more accurate but falls behind on a busy frequency. |
+| **On** | Turn a channel off to stop it logging immediately, without deleting its setup. |
+
+Changes save as you make them — there is no save button.
+
+### Tokens
+
+Each row shows whether a token is set. Tokens are never displayed after they are created, so **New…** issues a fresh one and shows it once — copy it then.
+
+There are two kinds, and they do different jobs. A **config token** only lets a receiver collect its settings, and goes in a file on that machine. A **log token** only lets a channel write to the log. Neither can be used to read messages, so a receiver left unattended at an aid station is not a way into the net's traffic.
+
+Issuing a new token stops the old one working straight away.
+
+### What to expect from it
+
+**It will get things wrong.** Radio voice is compressed and noisy, and callsigns and phonetics are exactly what a general-purpose transcriber is worst at — expect the sense of a message to survive and names to come out mangled. It is a record of what was said, not a transcript you would read into evidence.
+
+It is deliberately cautious about what it writes down. Very short transmissions are ignored, and so are the stock phrases these systems produce when fed static — an empty log is more useful than one filling with things nobody said. A frequency with an open or stuck carrier is skipped rather than transcribed.
+
+**Nothing is sent to anyone.** Entries go into the log and no further: no tracker receives them, no phone or watch chimes.
 
 ---
 

@@ -516,8 +516,9 @@ if (isset($_GET['messaging'])) {
 		'msgPassword' => trim($_mcfg['messaging_password'] ?? ''),
 		'mobileFile'  => __DIR__ . '/mobile_trackers.json',
 		// Transcriber channels: the registry the channel manager writes and the
-		// messaging resolver reads to identify a channel by its token.
-		'channelFile' => __DIR__ . '/transcriber.json',
+		// messaging resolver reads to identify a channel by its token. Outside the
+		// web root — see MARSAPRS_CHANNELS.
+		'channelFile' => MARSAPRS_CHANNELS,
 		'authPerm'    => 'msgHasAuthPermission',
 	];
 	// Photo uploads (send with attachment) arrive as multipart/form-data — its

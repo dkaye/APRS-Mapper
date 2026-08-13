@@ -210,6 +210,7 @@
 <li><a href="#running-a-display-pi-on-starlink">Running a display Pi on Starlink</a></li>
 <li><a href="#mobile-apps-v1221">Mobile Apps (v1.22.1)</a></li>
 <li><a href="#app-architecture">Architecture</a> · <a href="#location-sharing-flow">Location Sharing Flow</a> · <a href="#smart-track">Smart Track</a> · <a href="#building-distributing">Building &amp; Distributing</a> · <a href="#background-location">Background Location</a></li>
+<li><a href="#transcribers">Transcribers</a></li>
 <li><a href="#user-interfaces">User Interfaces</a></li>
 <li><a href="#authentication">Authentication</a></li>
 <li><a href="#analyzer">Analyzer</a></li>
@@ -1439,6 +1440,94 @@ storeFile=&lt;absolute path to .jks or .p12&gt;
 <p><strong>Unconfirmed sends are visible and actionable.</strong> <code>Outbox</code> persists every reply until the server confirms it, across app launches and watch reboots — a message spoken into the wrist and silently lost is the worst failure this app has. A badge on the Talk page shows the count, and it is a link: tapping it lists what was said and offers <strong>Retry</strong> or <strong>Discard</strong>. Retry aims at the <em>current</em> destination, not the original, because an entry usually failed precisely because its target had gone; it also takes a fresh client id, since <code>?messaging=send</code> carries none and the server therefore cannot dedupe a retry against a delivered-but-unacknowledged original.</p>
 <p><strong>The limitation accepted.</strong> watchOS only lets an app play audio while frontmost, and will not run a timer for a backgrounded one. So with the phone off or out of range <strong>and</strong> the watch app backgrounded, nothing reaches the operator until they raise their wrist — at which point the watch polls and announces what it missed. The only mechanism that would change this is a <code>WKExtendedRuntimeSession</code>, which costs heavy battery and a background-mode declaration App Review may query; the deliberate decision is to live without it, since the phone covers every case in which it is alive.</p>
 <hr />
+<h2 id="transcribers">Transcribers</h2>
+<p>A Transcriber is a Raspberry Pi 4 with an RTL-SDR that listens on a voice frequency,
+transcribes each transmission with <code>whisper.cpp</code>, and appends it to the event log by
+itself. Net control hears everything on the radio and writes down almost none of it;
+this is the part that writes it down.</p>
+<pre><code>146.520 MHz RF                       rtl_fm -d serial=… -f … -M fm -l &lt;squelch&gt;
+      │                                    │  raw S16LE
+      ▼                                    ▼
+  RTL-SDR ──── Pi 4 ──── transcriber@rx1-146520.service
+                              │  sox … silence … : newfile : restart
+                              ▼  one wav per transmission
+                         whisper.cpp (tiny.en / base.en)
+                              ▼
+                POST index.php?messaging=log   →   &quot;146.520 → Log&quot;
+</code></pre>
+<p><strong>Several channels per Pi</strong>, not one Pi per frequency: <code>transcriber@.service</code> is a
+systemd template, so a second frequency costs one unit instance rather than one more
+device to power and maintain. Each channel is bound to its dongle <strong>by USB serial</strong>
+(<code>rtl_eeprom -d 0 -s 00000001</code>), never by index — index order is not stable across
+reboots or re-plugs, and two channels silently swapping frequencies is the kind of fault
+nobody notices until the log is already wrong.</p>
+<p><strong>Two dongles per Pi 4 is comfortable.</strong> The Pi supplies 1.2 A across all USB ports and
+an RTL-SDR draws roughly 300 mA, so two use about half of it. The real load is
+continuous transcription on four cores, which is a sustained near-peak draw of the kind
+that browned out BigTV — use the official 5.1 V/3 A supply, put the dongles on the
+<strong>USB 2.0</strong> ports (USB 3.0 radiates broadband noise that desenses an RTL-SDR, and
+presents as a deaf receiver rather than a power fault), and cool it actively.</p>
+<p><strong>A channel is a participant.</strong> It is registered as <code>kind = 'transcriber'</code> and identified
+exactly the way a mobile is — a token matching no participant row is looked up in the
+channel registry and registered in the current event (<code>_msg_resolve_sender</code>). <code>?messaging=log</code>
+accepts an operator or a transcriber; nothing else changed, because a log entry was
+already a message with no recipients. Channels write and never read: the log thread is
+listed only for operators, and the recipient pickers list only operators and mobiles, so
+a channel cannot be messaged and sees no traffic. <code>display_name</code> is the channel label,
+which is what makes an entry read <code>146.520 → Log</code> with no client change anywhere.</p>
+<p><strong>Most of the worker is code that refuses to log things.</strong> whisper does not go quiet when
+it hears nothing — fed squelch hiss it produces "Thank you." with complete confidence —
+so clips under 1.2 s never reach it, a denylist catches what it invents anyway, and
+anything over two minutes is treated as a stuck carrier and discarded rather than
+occupying the channel for minutes. A log quietly filling with invented lines is worse
+than one that misses a transmission, because nobody thinks to question it. Entries queue
+on disk and flush in order, stopping at the first failure so a later one cannot overtake
+an earlier.</p>
+<p><strong>Two kinds of token, deliberately.</strong> A <em>device</em> token only fetches configuration
+(<code>/transcriber/get.php?token=…&amp;device=&lt;hostname&gt;</code>, and only that device's channels); a
+<em>channel</em> token only writes log entries. Neither can do the other's job, so a Transcriber
+left in a shed cannot be used to read the net's traffic. The registry lives at
+<code>/var/lib/marsaprs/transcriber.json</code>, beside <code>messages.db</code> and <strong>outside the web root</strong> —
+a token registry under <code>/var/www/html</code> is how <code>mobile_trackers.json</code> came to be
+downloadable by anyone.</p>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>transcriber/bin/transcriber.py</code></td>
+<td>The per-channel worker (stdlib only, like <code>isproxy.py</code>)</td>
+</tr>
+<tr>
+<td><code>transcriber/systemd/transcriber@.service</code></td>
+<td>Template unit — one instance per channel</td>
+</tr>
+<tr>
+<td><code>transcriber/install.sh</code></td>
+<td>One-time build: SDR tools, <code>whisper.cpp</code> compiled for this CPU, models</td>
+</tr>
+<tr>
+<td><code>transcriber/auto-update.sh</code></td>
+<td>Nightly: pulls the archive, fetches this device's channels, starts/stops units to match</td>
+</tr>
+<tr>
+<td><code>server/www/transcriber/</code></td>
+<td>The channel manager and the device download</td>
+</tr>
+<tr>
+<td><code>map/tests/php/TranscriberStoreTest.php</code></td>
+<td>Registry and token checks</td>
+</tr>
+<tr>
+<td><code>transcriber/tests/test_transcriber.py</code></td>
+<td>The worker, with no SDR and no whisper</td>
+</tr>
+</tbody>
+</table>
 <h2 id="user-interfaces">User Interfaces</h2>
 <p>Six browser-based interfaces run on <code>marsaprs.org</code>. All are served by Apache on the server
 Pi, accessible at <code>https://marsaprs.org/&lt;path&gt;</code>.</p>
@@ -1487,6 +1576,12 @@ Pi, accessible at <code>https://marsaprs.org/&lt;path&gt;</code>.</p>
 <td><code>/wifi/</code></td>
 <td>User account</td>
 <td>Edit the shared WiFi credential list distributed to all Pis</td>
+</tr>
+<tr>
+<td><strong>Transcriber Channels</strong></td>
+<td><code>/transcriber/</code></td>
+<td>User account</td>
+<td>Which Pi listens on which frequency, and with which dongle</td>
 </tr>
 <tr>
 <td><strong>Tickets</strong></td>
@@ -3661,6 +3756,20 @@ is <code>require-dev</code> only, so nothing at runtime needs <code>vendor/</cod
 </tbody>
 </table>
 <p>Test files live in <code>map/tests/php/</code>. Fixtures (sample YAML files) are in <code>map/tests/fixtures/</code>.</p>
+<h3 id="running-the-python-tests">Running the Python tests</h3>
+<p>Standalone scripts — no framework, run them directly, exit 0 is a pass:</p>
+<pre><code class="language-bash">python3 igate/tests/test_isproxy.py          # direwolf gets an upstream on reconnect
+python3 transcriber/tests/test_transcriber.py
+</code></pre>
+<p>The Transcriber suite runs the whole channel pipeline without an SDR and without
+whisper: <code>rtl_fm</code> and <code>sox</code> are skipped via <code>--spool-only</code>, and whisper is a stub script
+whose output the test chooses, so the filters can be driven deliberately. The two that
+earn their keep are the ones guarding what reaches the log — squelch noise transcribed
+as "Thank you." must produce nothing, and a genuine transmission through the same path
+must produce exactly one entry. Without that second test the first passes for free, and
+it did: an early version discarded everything because the clip looked like one sox was
+still writing, and every filter assertion passed without a filter ever running.</p>
+<p><code>transcriber/deploy.sh</code> runs this suite and refuses to deploy if it fails.</p>
 <h3 id="running-the-javascript-tests">Running the JavaScript tests</h3>
 <p>From <code>map/tests/js/</code>:</p>
 <pre><code class="language-bash">npx jest

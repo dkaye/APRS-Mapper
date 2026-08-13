@@ -270,6 +270,7 @@
 </ul>
 </li>
 <li><a href="#wifi-manager">WiFi Manager</a></li>
+<li><a href="#transcriber-channels">Transcriber Channels</a></li>
 <li><a href="#cloudflare-tunnel">Cloudflare Tunnel</a></li>
 <li><a href="#troubleshooting">Troubleshooting</a></li>
 <li><a href="#is-my-igate-working">Is my iGate working?</a></li>
@@ -1492,6 +1493,70 @@ nightly at 4 am; to apply immediately on a field device, SSH in and run
 <p><code>/home/pi/add-wifi.php</code></p>
 <p>You will be asked for the Name (pick something like "Stinson Community Center"), the SSID, and the password (8–63 characters). The script will append the hotspot to the end of the list (i.e., at the lowest priority). <strong>Remember to turn off the recovery hotspot</strong> so the device won't reconnect to it when rebooted. Then reboot the device.</p>
 <p><strong>Note that the appended hotspot is temporary. It will be deleted when a new list is downloaded from the server.</strong></p>
+<hr />
+<h2 id="transcriber-channels">Transcriber Channels</h2>
+<p>A <strong>Transcriber</strong> is a small computer with a radio receiver that listens to a voice frequency and writes down what it hears. Each transmission appears in the <strong>Event Log</strong> by itself, attributed to the frequency it was heard on:</p>
+<pre><code>Net Control  → Log
+  0930 net opened
+
+146.520  → Log
+  &quot;aid three we have a rider down&quot;
+</code></pre>
+<p>You do not have to do anything for this to happen. The page at <strong>marsaprs.org/transcriber/</strong> is where the frequencies are set up, and most of the time it is left alone.</p>
+<h3 id="setting-up-a-channel">Setting up a channel</h3>
+<p><strong>Devices</strong> are the receivers themselves — one row per box. The <strong>Host</strong> must match that computer's name exactly, because that is how it identifies itself when it asks for its settings.</p>
+<p><strong>Channels</strong> are the frequencies. One row per frequency, and a single receiver can cover several at once.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>What it is</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>ID</strong></td>
+<td>A short unique name, such as <code>rx1-146520</code>. It appears in the log and cannot be reused.</td>
+</tr>
+<tr>
+<td><strong>Device</strong></td>
+<td>Which receiver listens on this frequency.</td>
+</tr>
+<tr>
+<td><strong>Label</strong></td>
+<td>What the log shows as the author — <code>146.520</code>. Make it something you will recognise mid-event.</td>
+</tr>
+<tr>
+<td><strong>Frequency</strong></td>
+<td>In hertz: 146.520 MHz is <code>146520000</code>.</td>
+</tr>
+<tr>
+<td><strong>Serial</strong></td>
+<td>The USB serial of that receiver's radio stick. Not a slot number — the sticks change order when the machine restarts, and two channels swapping frequencies is not something you would notice until the log was already wrong.</td>
+</tr>
+<tr>
+<td><strong>Squelch</strong></td>
+<td>How loud a signal must be before it counts. Too low and it transcribes hiss; too high and it clips the start of every transmission. Start at 0 and raise it only if noise is getting through.</td>
+</tr>
+<tr>
+<td><strong>Model</strong></td>
+<td><code>tiny</code> keeps up in real time; <code>base</code> is more accurate but falls behind on a busy frequency.</td>
+</tr>
+<tr>
+<td><strong>On</strong></td>
+<td>Turn a channel off to stop it logging immediately, without deleting its setup.</td>
+</tr>
+</tbody>
+</table>
+<p>Changes save as you make them — there is no save button.</p>
+<h3 id="tokens">Tokens</h3>
+<p>Each row shows whether a token is set. Tokens are never displayed after they are created, so <strong>New…</strong> issues a fresh one and shows it once — copy it then.</p>
+<p>There are two kinds, and they do different jobs. A <strong>config token</strong> only lets a receiver collect its settings, and goes in a file on that machine. A <strong>log token</strong> only lets a channel write to the log. Neither can be used to read messages, so a receiver left unattended at an aid station is not a way into the net's traffic.</p>
+<p>Issuing a new token stops the old one working straight away.</p>
+<h3 id="what-to-expect-from-it">What to expect from it</h3>
+<p><strong>It will get things wrong.</strong> Radio voice is compressed and noisy, and callsigns and phonetics are exactly what a general-purpose transcriber is worst at — expect the sense of a message to survive and names to come out mangled. It is a record of what was said, not a transcript you would read into evidence.</p>
+<p>It is deliberately cautious about what it writes down. Very short transmissions are ignored, and so are the stock phrases these systems produce when fed static — an empty log is more useful than one filling with things nobody said. A frequency with an open or stuck carrier is skipped rather than transcribed.</p>
+<p><strong>Nothing is sent to anyone.</strong> Entries go into the log and no further: no tracker receives them, no phone or watch chimes.</p>
 <hr />
 <h2 id="cloudflare-tunnel">Cloudflare Tunnel</h2>
 <p><code>marsaprs.org</code> is published to the internet via a <strong>Cloudflare Tunnel</strong> — a lightweight

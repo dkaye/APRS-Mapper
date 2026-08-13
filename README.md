@@ -21,22 +21,23 @@
    - [Running a display Pi on Starlink](#running-a-display-pi-on-starlink)
 8. [Mobile Apps (v1.22.1)](#mobile-apps-v1221)
    - [Architecture](#app-architecture) · [Location Sharing Flow](#location-sharing-flow) · [Smart Track](#smart-track) · [Building & Distributing](#building-distributing) · [Background Location](#background-location)
-9. [User Interfaces](#user-interfaces)
-10. [Authentication](#authentication)
-11. [Analyzer](#analyzer)
+9. [Transcribers](#transcribers)
+10. [User Interfaces](#user-interfaces)
+11. [Authentication](#authentication)
+12. [Analyzer](#analyzer)
    - [Architecture](#analyzer-architecture) · [Authentication](#analyzer-authentication) · [Beacon Recording](#beacon-recording) · [Map & Controls](#map-controls) · [Key Files](#analyzer-key-files) · [Services](#analyzer-services) · [API Endpoints](#analyzer-api-endpoints)
-12. [Backup, Recovery and Updates](#backup-recovery-and-updates)
+13. [Backup, Recovery and Updates](#backup-recovery-and-updates)
    - [Server Pi](#server-pi) · [Display Pis](#display-pis) · [iGates](#igates)
-13. [Log Rotation](#log-rotation)
-14. [Building & Deploying Devices](#building-deploying-devices)
+14. [Log Rotation](#log-rotation)
+15. [Building & Deploying Devices](#building-deploying-devices)
     - [NetBird Setup Keys](#netbird-setup-keys) · [APRS Server](#aprs-server) · [Display Pis & iGates](#display-pis-igates)
-15. [Creating New Master Images](#creating-new-master-images)
+16. [Creating New Master Images](#creating-new-master-images)
     - [APRS Server](#aprs-server_1) · [Display Pis](#display-pis_1) · [iGates](#igates_1)
-16. [Supporting Systems](#supporting-systems)
+17. [Supporting Systems](#supporting-systems)
     - [NetBird Status Monitor](#netbird-status-monitor) · [WiFi Manager](#wifi-manager)
-17. [Appendix](#appendix)
+18. [Appendix](#appendix)
     - [File Formats](#file-formats) · [Server](#server) · [Display Pi](#display-pi) · [iGate](#igate) · [Pi-Tools](#pi-tools)
-18. [Testing](#testing)
+19. [Testing](#testing)
 
 ---
 
@@ -1085,6 +1086,75 @@ A watchOS companion that makes the wrist a nearly hands-free extension of the ph
 
 ---
 
+## Transcribers
+
+A Transcriber is a Raspberry Pi 4 with an RTL-SDR that listens on a voice frequency,
+transcribes each transmission with `whisper.cpp`, and appends it to the event log by
+itself. Net control hears everything on the radio and writes down almost none of it;
+this is the part that writes it down.
+
+```
+146.520 MHz RF                       rtl_fm -d serial=… -f … -M fm -l <squelch>
+      │                                    │  raw S16LE
+      ▼                                    ▼
+  RTL-SDR ──── Pi 4 ──── transcriber@rx1-146520.service
+                              │  sox … silence … : newfile : restart
+                              ▼  one wav per transmission
+                         whisper.cpp (tiny.en / base.en)
+                              ▼
+                POST index.php?messaging=log   →   "146.520 → Log"
+```
+
+**Several channels per Pi**, not one Pi per frequency: `transcriber@.service` is a
+systemd template, so a second frequency costs one unit instance rather than one more
+device to power and maintain. Each channel is bound to its dongle **by USB serial**
+(`rtl_eeprom -d 0 -s 00000001`), never by index — index order is not stable across
+reboots or re-plugs, and two channels silently swapping frequencies is the kind of fault
+nobody notices until the log is already wrong.
+
+**Two dongles per Pi 4 is comfortable.** The Pi supplies 1.2 A across all USB ports and
+an RTL-SDR draws roughly 300 mA, so two use about half of it. The real load is
+continuous transcription on four cores, which is a sustained near-peak draw of the kind
+that browned out BigTV — use the official 5.1 V/3 A supply, put the dongles on the
+**USB 2.0** ports (USB 3.0 radiates broadband noise that desenses an RTL-SDR, and
+presents as a deaf receiver rather than a power fault), and cool it actively.
+
+**A channel is a participant.** It is registered as `kind = 'transcriber'` and identified
+exactly the way a mobile is — a token matching no participant row is looked up in the
+channel registry and registered in the current event (`_msg_resolve_sender`). `?messaging=log`
+accepts an operator or a transcriber; nothing else changed, because a log entry was
+already a message with no recipients. Channels write and never read: the log thread is
+listed only for operators, and the recipient pickers list only operators and mobiles, so
+a channel cannot be messaged and sees no traffic. `display_name` is the channel label,
+which is what makes an entry read `146.520 → Log` with no client change anywhere.
+
+**Most of the worker is code that refuses to log things.** whisper does not go quiet when
+it hears nothing — fed squelch hiss it produces "Thank you." with complete confidence —
+so clips under 1.2 s never reach it, a denylist catches what it invents anyway, and
+anything over two minutes is treated as a stuck carrier and discarded rather than
+occupying the channel for minutes. A log quietly filling with invented lines is worse
+than one that misses a transmission, because nobody thinks to question it. Entries queue
+on disk and flush in order, stopping at the first failure so a later one cannot overtake
+an earlier.
+
+**Two kinds of token, deliberately.** A *device* token only fetches configuration
+(`/transcriber/get.php?token=…&device=<hostname>`, and only that device's channels); a
+*channel* token only writes log entries. Neither can do the other's job, so a Transcriber
+left in a shed cannot be used to read the net's traffic. The registry lives at
+`/var/lib/marsaprs/transcriber.json`, beside `messages.db` and **outside the web root** —
+a token registry under `/var/www/html` is how `mobile_trackers.json` came to be
+downloadable by anyone.
+
+| Path | Purpose |
+|------|---------|
+| `transcriber/bin/transcriber.py` | The per-channel worker (stdlib only, like `isproxy.py`) |
+| `transcriber/systemd/transcriber@.service` | Template unit — one instance per channel |
+| `transcriber/install.sh` | One-time build: SDR tools, `whisper.cpp` compiled for this CPU, models |
+| `transcriber/auto-update.sh` | Nightly: pulls the archive, fetches this device's channels, starts/stops units to match |
+| `server/www/transcriber/` | The channel manager and the device download |
+| `map/tests/php/TranscriberStoreTest.php` | Registry and token checks |
+| `transcriber/tests/test_transcriber.py` | The worker, with no SDR and no whisper |
+
 ## User Interfaces
 
 Six browser-based interfaces run on `marsaprs.org`. All are served by Apache on the server
@@ -1098,6 +1168,7 @@ Pi, accessible at `https://marsaprs.org/<path>`.
 | **NetBird Monitor** | `/netbird/` | User account | Real-time health status of all Pi devices |
 | **NetBird Admin** | `/netbird/admin.php` | User account | Add/remove devices, enable/disable, SSH terminal |
 | **WiFi Manager** | `/wifi/` | User account | Edit the shared WiFi credential list distributed to all Pis |
+| **Transcriber Channels** | `/transcriber/` | User account | Which Pi listens on which frequency, and with which dongle |
 | **Tickets** | `/tickets/admin.php` | User account | Bug report and suggestion ticket management |
 
 **Map** — Shows tracker positions updated every 5 seconds. Sidebar lists trackers (with

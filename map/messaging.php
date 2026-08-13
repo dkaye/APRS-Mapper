@@ -31,6 +31,13 @@ function _msg_load_trackers(string $file): array
     return isset($raw['trackers']) ? $raw['trackers'] : $raw;
 }
 
+// Beside messages.db, deliberately outside the web root. It holds a token per channel,
+// and a token registry under /var/www/html is how mobile_trackers.json came to be
+// downloadable by anyone who asked. Overridable for tests.
+if (!defined('MARSAPRS_CHANNELS')) {
+    define('MARSAPRS_CHANNELS', getenv('MARSAPRS_CHANNELS') ?: '/var/lib/marsaprs/transcriber.json');
+}
+
 /** A Transcriber channel matching this token, or null.
  *
  *  The registry is JSON rather than YAML deliberately: it is read on every authenticated
