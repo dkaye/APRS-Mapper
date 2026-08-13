@@ -7,6 +7,10 @@
 # Does NOT touch /opt/transcriber/models — the whisper models are large, rarely
 # change, and are installed once by install.sh.
 #
+# Replaces itself and re-execs when a newer copy is published, so a change to this file
+# takes effect on the run that fetched it rather than the one after. See the re-exec
+# block below for why that is not a two-stage loader.
+#
 # Usage: sudo /home/pi/auto-update.sh
 #
 # Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
@@ -19,6 +23,11 @@ CONFIG="/etc/transcriber/channels.json"
 TOKEN_FILE="/home/pi/.transcriber-token"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
+
+# An absolute path to this script, for the self-replacement below. $0 alone is whatever
+# the caller typed: `bash auto-update.sh` leaves it relative, and `exec` would then search
+# PATH and fail to find it. cron gives an absolute path, a person may not.
+SELF=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" | tee -a /var/log/transcriber/update.log; }
 
@@ -34,6 +43,35 @@ fi
 
 tar -xzf "$TMP/files.tar.gz" -C "$TMP"
 
+# ── replace ourselves first, then hand over ──────────────────────────────────
+# Before anything else is touched, so that everything below runs from the version that
+# was just published rather than from whatever this device happened to install months
+# ago. Without this, a change to THIS file took effect only on the following run: the
+# copy already executing finished the run it was in, and the new one waited for the next
+# one. That is invisible and it lies — twice in one afternoon a deploy looked like it had
+# silently done nothing, when it had worked and simply would not take effect until later.
+#
+# exec, not a second download of a stage-2 script. A thin loader that fetches its own
+# logic every run would get the same immediacy at the cost of making every nightly run
+# depend on the network for its code and not just its content — and a device on a
+# marginal link must degrade to "keep running what is installed", which is the one
+# behaviour that must never regress.
+#
+# The guard variable bounds it to a single hand-over: if the comparison were ever wrong
+# this would otherwise re-exec forever, at four in the morning, unattended.
+if [ -z "${TRANSCRIBER_REEXEC:-}" ] && [ -f "$TMP/home/auto-update.sh" ] \
+   && ! cmp -s "$TMP/home/auto-update.sh" "$SELF"; then
+    log "updater changed; installing it and re-running from the new one"
+    # Non-fatal on purpose. Under `set -e` a failure here — an unwritable path, a full
+    # card — would abort the whole run, and refusing to update a receiver because the
+    # updater could not update itself is the wrong way round.
+    if install -m 755 -o pi -g pi "$TMP/home/auto-update.sh" "$SELF"; then
+        rm -rf "$TMP"      # exec replaces this process, so the EXIT trap never fires
+        TRANSCRIBER_REEXEC=1 exec "$SELF" "$@"
+    fi
+    log "could not replace $SELF; carrying on with the version already installed"
+fi
+
 # --ignore-times, not the default size+mtime comparison: tar restores the archive's
 # timestamps, so a file whose size did not change looks unchanged to rsync and is
 # silently skipped. This has bitten this project before.
@@ -46,11 +84,8 @@ chmod +x /opt/transcriber/bin/*.py
 # today's wizard on it when somebody finally SSHes in to move it. Everything it writes
 # lives outside itself — hostname, token, dongle serials — so replacing it is safe.
 #
-# This also replaces auto-update.sh, including the copy currently executing. rsync writes
-# a temp file and renames, so this process keeps reading the inode it started with and
-# finishes the run it is in; the new one takes effect on the NEXT run. Upgrading from an
-# old copy therefore takes two passes, which is worth knowing before concluding that a
-# change did not deploy — the same thing has caught us on the iGates.
+# auto-update.sh is in here too, but by now it is already identical: either it matched to
+# begin with, or the block above installed it and this is the new copy running.
 if [ -d "$TMP/home" ]; then
     rsync -a --ignore-times "$TMP/home/" /home/pi/
     chmod +x /home/pi/*.sh

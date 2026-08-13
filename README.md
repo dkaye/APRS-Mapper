@@ -1245,13 +1245,28 @@ poor trade. The format is what the poller prints verbatim, so the two must chang
 | `server/www/transcriber/` | The channel manager and the device download |
 | `map/tests/php/TranscriberStoreTest.php` | Registry and token checks |
 | `transcriber/tests/test_transcriber.py` | The worker, with no SDR and no whisper |
+| `transcriber/tests/test_auto_update.sh` | The updater's self-replacement, against a fake server |
 
-`auto-update.sh` now ships inside the archive as well as standing alone, so it can replace
+`auto-update.sh` ships inside the archive as well as standing alone, so it can replace
 itself. It could not before: `install.sh` fetched it once and the device ran that copy
 forever, which meant no change to the updater could ever reach a deployed Transcriber.
-The running copy finishes its own run and the new one takes effect on the next, so
-upgrading from an old copy takes two passes — worth knowing before concluding a change
-did not deploy.
+
+**It hands over on the same run rather than the next one.** Immediately after extracting
+the archive — before anything else is touched — it compares the published copy with
+itself, and if they differ it installs the new one and `exec`s it, guarded by an
+environment variable so exactly one hand-over can occur. Without that, a change to the
+updater took effect only on the *following* run, which is invisible and reads as a deploy
+that silently did nothing.
+
+This is deliberately not the two-stage loader pattern — a thin stub that downloads and
+runs its own logic every time. That buys the same immediacy, but it makes every nightly
+run depend on the network for its *code* and not just its content: a device on a marginal
+link must degrade to "keep running what is installed", and a stub that cannot fetch stage
+two cannot do anything at all. It would also mean `cat /home/pi/auto-update.sh` no longer
+tells you what runs tonight, which is exactly the question worth answering when
+reconstructing what a device did last night. `transcriber/tests/test_auto_update.sh`
+covers the hand-over, the loop guard, and the unreachable server, and `deploy.sh` will
+not ship past it.
 
 ## User Interfaces
 

@@ -26,6 +26,13 @@ python3 "$SRC_DIR/tests/test_transcriber.py" >/dev/null || {
     echo "TESTS FAILED — not deploying" >&2
     exit 1
 }
+# The updater replaces itself and re-execs, unattended, at 4:11am. Both ways that can go
+# wrong are silent from here: hand over to the wrong copy and the change never lands,
+# hand over in a loop and the device spends the night re-executing itself.
+"$SRC_DIR/tests/test_auto_update.sh" >/dev/null || {
+    echo "AUTO-UPDATE TESTS FAILED — not deploying" >&2
+    exit 1
+}
 echo "  tests pass"
 
 ssh "$REMOTE" "mkdir -p $REMOTE_DIR"
