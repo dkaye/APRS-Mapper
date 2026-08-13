@@ -167,12 +167,45 @@ function transcriber_state_save(array $s, ?string $path = null): void
     rename($tmp, $f);
 }
 
-/** Record that this device just collected its settings. */
+/** What this device's channels currently amount to.
+ *
+ *  Compared against what it was last served, this answers "has it got the change yet"
+ *  without consulting a clock. It also answers it correctly for a device the change did
+ *  not touch: its fingerprint still matches, so it is up to date rather than pending
+ *  forever on an edit that was never about it.
+ */
+function transcriber_channels_fingerprint(string $device, ?string $path = null): string
+{
+    return hash('sha256', json_encode(transcriber_channels_for($device, $path)));
+}
+
+/** Record that this device just collected its settings, and what it was given. */
 function transcriber_mark_fetch(string $device, ?string $path = null): void
 {
     $s = transcriber_state_load($path);
-    $s['devices'][$device] = ['last_fetch' => time()];
+    $s['devices'][$device] = [
+        'last_fetch' => time(),
+        'served'     => transcriber_channels_fingerprint($device, $path),
+    ];
     transcriber_state_save($s, $path);
+}
+
+/** Per-device: when it last checked in, and whether what it holds is current. */
+function transcriber_device_status(?string $path = null): array
+{
+    $state = transcriber_state_load($path);
+    $out = [];
+    foreach (transcriber_load($path)['devices'] as $d) {
+        $host = (string)($d['host'] ?? '');
+        if ($host === '') continue;
+        $seen = $state['devices'][$host] ?? [];
+        $out[] = [
+            'host'       => $host,
+            'last_fetch' => (int)($seen['last_fetch'] ?? 0),
+            'up_to_date' => (($seen['served'] ?? '') === transcriber_channels_fingerprint($host, $path)),
+        ];
+    }
+    return $out;
 }
 
 /** Ask every device to do a full update — software as well as configuration — the next

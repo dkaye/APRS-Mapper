@@ -1258,8 +1258,13 @@ The manager saves on an explicit **Save**, not as you type, and carries a finger
 what the page was loaded from so the server refuses a write made against a stale copy
 rather than silently reverting somebody else's change. **Update devices** is separate and
 is about software: it asks every Transcriber to pull a new worker at its next check
-instead of waiting for 4:11am. Neither can be instant — there is no way into a Pi behind
-NAT and no wish to open one — so both say plainly that it can take up to 60 seconds.
+instead of waiting for 4:11am. Neither can be instant — there is no way into a Pi behind NAT
+and no wish to open one — so instead of promising a number, the page waits for the
+devices to come and collect. Each Transcriber's fetch is recorded along with a fingerprint
+of what it was given, and the page spins on "Update pending" until every device's
+fingerprint matches what it should now hold, or gives up after 75 seconds and names the
+ones that never answered. A device the edit did not affect is already current, so it does
+not sit pending on somebody else's change.
 
 **Two scripts, and the split between them matters.** `install.sh` builds the *machine* —
 packages, `whisper.cpp` compiled for this CPU, the models, the nightly cron — and knows

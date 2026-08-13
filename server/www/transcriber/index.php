@@ -139,6 +139,12 @@ if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     jsonOut(['ok' => true, 'devices' => count($devices), 'channels' => count($channels)]);
 }
 
+// Polled by the page while it waits for the fleet to check in. Deliberately cheap: two
+// small files and a hash per device, no writes.
+if (isset($_GET['status'])) {
+    jsonOut(['now' => time(), 'devices' => transcriber_device_status()]);
+}
+
 if (isset($_GET['update']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$canEdit) jsonOut(['error' => 'Missing permission: netbird.admin'], 403);
     jsonOut(['ok' => true, 'requested' => transcriber_request_update()]);
@@ -226,6 +232,11 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
 .row-btn:hover { background: #f3f4f6; color: #111827; }
 .row-btn.danger:hover { background: #fee2e2; color: #b91c1c; }
 .empty { padding: 22px; text-align: center; color: #9ca3af; font-size: 14px; }
+#spinner { display: inline-block; width: 12px; height: 12px; margin-right: 7px;
+           border: 2px solid #bfdbfe; border-top-color: #2563eb; border-radius: 50%;
+           animation: spin .7s linear infinite; vertical-align: -1px; }
+#spinner[hidden] { display: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
 #notice { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none;
           align-items: center; justify-content: center; z-index: 60; }
 #notice.open { display: flex; }
@@ -241,7 +252,7 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
 <body>
 <header>
   <h1>Transcriber Channels</h1>
-  <span id="status"></span>
+  <span id="spinner" hidden></span><span id="status"></span>
   <?php if ($canEdit): ?>
     <button class="hdr-btn" id="add-device">+ Device</button>
     <button class="hdr-btn" id="add-channel">+ Channel</button>
@@ -260,7 +271,8 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
        nothing to log in to. A change to frequency, accuracy or squelch restarts that
        channel when it lands; switching a channel <strong>On</strong> or off takes effect
        at once, because the server stops accepting from it without waiting for the device
-       to notice.</p>
+       to notice. The page waits for each Pi to collect and tells you when it has —
+       or which one never answered.</p>
     <p><strong>Update devices</strong> is for software rather than settings: it asks every
        Transcriber to pull a new worker at its next check instead of waiting for the
        nightly run at 4:11am. Settings do not need it.</p>
@@ -353,6 +365,54 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
 
 function status(text, cls) { const s = $('status'); s.textContent = text; s.className = cls || ''; }
 
+/* Wait for the fleet to come and collect, and say so while it happens.
+ *
+ * Devices poll once a minute and nothing can reach into a Pi behind NAT, so a save is
+ * not in effect when it returns. A modal saying "up to 60 seconds" was a promise; this
+ * is the thing itself — every Transcriber reports when it fetches, and the page waits
+ * for that rather than for a clock.
+ *
+ * `ready(d)` decides what counts, because the two cases differ: after a Save a device is
+ * done when what it holds matches what it should hold, and after an update request it is
+ * done when it has checked in at all since the request.
+ *
+ * The timeout has to be longer than the poll interval or it would fire on a device that
+ * is simply forty seconds into its minute. 75s gives a full cycle plus room for a slow
+ * link; past that, the honest answer is that the device is not answering.
+ */
+let waitTimer = null;
+async function waitForDevices(ready, what) {
+    clearInterval(waitTimer);
+    const deadline = Date.now() + 75000;
+    $('spinner').hidden = false;
+    status(what + ' pending…', 'saving');
+
+    const tick = async () => {
+        let d;
+        try { d = await (await fetch('?status')).json(); } catch { return; }
+        const waiting = (d.devices || []).filter(x => !ready(x, d.now));
+        if (!waiting.length) {
+            clearInterval(waitTimer); $('spinner').hidden = true;
+            status(what + ' applied', 'saved');
+            return;
+        }
+        if (Date.now() > deadline) {
+            clearInterval(waitTimer); $('spinner').hidden = true;
+            status('No response from ' + waiting.map(x => x.host).join(', '), 'error');
+            notice(what + ' not confirmed',
+                   'These Transcribers have not checked in: '
+                 + waiting.map(x => x.host).join(', ') + '.\n\n'
+                 + 'The change is saved and they will collect it as soon as they are back. '
+                 + 'A device that is switched off, off the network, or has the wrong '
+                 + 'config token will look exactly like this.');
+            return;
+        }
+        status(what + ' pending — waiting for ' + waiting.map(x => x.host).join(', '), 'saving');
+    };
+    waitTimer = setInterval(tick, 2000);
+    tick();
+}
+
 function notice(title, body) {
     $('notice-title').textContent = title;
     $('notice-body').textContent = body;
@@ -412,17 +472,13 @@ async function save() {
         dirty = false;
         const b = $('save-btn');
         if (b) b.disabled = true;
-        status('Saved', 'saved');
-        // The gap between "saved" and "in effect" is real and invisible, and somebody
-        // watching the log for a change that has not reached the receiver yet will
-        // reasonably conclude it is broken. Say it once, plainly.
-        notice('Saved — allow up to 60 seconds',
-               'Each Transcriber collects its settings once a minute, so a change can '
-             + 'take up to 60 seconds to reach the receiver. Frequency, accuracy and '
-             + 'squelch changes restart that channel when they land.');
         // Re-read: the server issues tokens for new rows and normalises ids, so the
         // browser must not keep believing what it sent.
         await load();
+        // A device is done when what it holds matches what it should hold — which is
+        // already true for one the edit did not touch, so it does not sit pending on
+        // somebody else's change.
+        waitForDevices(x => x.up_to_date, 'Update');
     } catch { status('Save failed', 'error'); }
 }
 
@@ -438,10 +494,8 @@ async function requestUpdate() {
         const r = await fetch('?update', {method: 'POST'});
         const d = await r.json();
         if (d.error) { status(d.error, 'error'); return; }
-        notice('Update requested — allow up to 60 seconds',
-               'Devices check once a minute, so each Transcriber will begin updating '
-             + 'within 60 seconds. Ones that are switched off will update when they '
-             + 'next come back.');
+        const since = d.requested;
+        waitForDevices(x => x.last_fetch >= since, 'Software update');
     } catch { status('Request failed', 'error'); }
 }
 
