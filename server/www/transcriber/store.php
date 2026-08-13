@@ -94,6 +94,26 @@ function transcriber_channels_for(string $device, ?string $path = null): array
     return $out;
 }
 
+/** A frequency in Hz, from whatever a person typed.
+ *
+ *  "147.465" is what anyone actually writes, and the first version of this stripped
+ *  every non-digit — turning it into 1474650, or 1.47 MHz. That is not an error anyone
+ *  sees: it saves, it looks like a number, the receiver tunes to a band it cannot hear
+ *  and the channel simply never logs anything. It happened on the first real edit.
+ *
+ *  So a value under 1000 is read as MHz, which is the only way a human writes a VHF or
+ *  UHF frequency, and anything larger is already Hz. The result is echoed back into the
+ *  field on reload, so the interpretation is visible rather than assumed. */
+function transcriber_hz($raw): string
+{
+    $s = preg_replace('/[^0-9.]/', '', (string)$raw);
+    if ($s === '' || !is_numeric($s)) return '';
+    $n = (float)$s;
+    if ($n <= 0) return '';
+    if ($n < 1000) $n *= 1_000_000;          // MHz
+    return (string)(int)round($n);
+}
+
 function transcriber_token(): string
 {
     return bin2hex(random_bytes(16));

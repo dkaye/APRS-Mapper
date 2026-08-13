@@ -99,7 +99,7 @@ if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
             'id'        => $id,
             'device'    => substr(trim($c['device'] ?? ''), 0, 64),
             'label'     => substr(trim($c['label'] ?? ''), 0, 40) ?: $id,
-            'frequency' => preg_replace('/[^0-9]/', '', (string)($c['frequency'] ?? '')),
+            'frequency' => transcriber_hz($c['frequency'] ?? ''),
             'serial'    => substr(preg_replace('/[^A-Za-z0-9]/', '', (string)($c['serial'] ?? '')), 0, 32),
             'squelch'   => max(0, min(1000, (int)($c['squelch'] ?? 0))),
             'model'     => in_array($c['model'] ?? '', ['ggml-tiny.en.bin', 'ggml-base.en.bin'], true)
@@ -223,14 +223,14 @@ input:disabled, select:disabled { background: #f9fafb; color: #6b7280; }
   <h2>Channels</h2>
   <p class="hint">One row per frequency. <strong>ID</strong> names the systemd unit
      (<code>transcriber@rx1-146520</code>) and is the author shown in the event log, so it
-     must be unique across the fleet. <strong>Serial</strong> is the dongle's USB serial,
+     must be unique across the fleet. <strong>Frequency</strong> may be written either way — <code>147.465</code> or <code>147465000</code>; it is stored in Hz and echoed back so you can see how it was read. <strong>Serial</strong> is the dongle's USB serial,
      not its index — index order is not stable across reboots, and two channels swapping
      frequencies is the kind of fault nobody notices until the log is already wrong. Set
      them with <code>rtl_eeprom -d 0 -s 00000001</code>.</p>
   <div class="table-wrap">
     <table>
       <thead><tr>
-        <th>ID</th><th>Device</th><th>Label</th><th>Frequency (Hz)</th><th>Serial</th>
+        <th>ID</th><th>Device</th><th>Label</th><th>Frequency</th><th>Serial</th>
         <th>Squelch</th><th>Model</th><th>On</th><th>Log token</th><th></th>
       </tr></thead>
       <tbody id="channels"></tbody>

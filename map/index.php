@@ -6304,9 +6304,43 @@ async function _poll() {
 			const c = _convs.get(_openConvId);
 			if (c) _renderThread(c);
 		}
+		await _pollLogThread();
 	} catch {}
 	finally { _msgPriming = false; }
 }
+/** Keep the open Event Log thread current.
+ *
+ *  A log entry is a message with no recipients, so it writes no `deliveries` rows —
+ *  and `pollFor` finds new messages by joining exactly that table. The property that
+ *  makes an entry "written, not sent" is therefore the same one that keeps it out of
+ *  the poll, so the log was the one thread that never updated by itself. Nothing was
+ *  lost; it simply did not appear until the thread was reopened, which is a poor way to
+ *  watch a Transcriber that is logging as it hears.
+ *
+ *  Fetched with since_id so this asks for new entries only, rather than re-pulling the
+ *  whole thread every five seconds — the log is the one conversation that grows all day
+ *  without anyone typing.
+ */
+async function _pollLogThread() {
+	if (_openConvId == null) return;
+	const c = _convs.get(_openConvId);
+	if (!c || c.kind !== 'log') return;
+	const msgs = c.messages || [];
+	const since = msgs.length ? msgs[msgs.length - 1].id : 0;
+	const d = await _msgApi('thread', {body:{conversation_id: _openConvId, since_id: since}});
+	const fresh = (d && d.messages) || [];
+	if (!fresh.length) return;
+	c.messages = msgs.concat(fresh);
+	c.last_id = Math.max(c.last_id || 0, fresh[fresh.length - 1].id);
+	const last = fresh[fresh.length - 1];
+	c.preview = {text: last.text, ts: last.ts, from_id: last.from_id,
+	             from_name: last.from_name, from_short: last.from_short,
+	             self: last.from_id === _msgMeId};
+	_convs.set(_openConvId, c);
+	for (const m of fresh) { _msgSeen.add(m.id); if (_openConvId === c.id) _appendBubble(c, m); }
+	if (_msgPanelOpen) _renderConvList();
+}
+
 // Delivery acknowledgement for one of MY sent messages. For a 1:1, "Pending" =
 // queued because the recipient is offline; "Sent" = queued while they're online
 // (delivers within seconds). Either way it delivers automatically when they next

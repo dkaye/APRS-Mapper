@@ -52,6 +52,71 @@ def test_worth_logging():
         check(f"keeps {real[:24]!r}", transcriber.worth_logging(real), True)
 
 
+# ── the adaptive squelch ─────────────────────────────────────────────────────
+
+def noise_block(level, seed=[0]):
+    """One block of pseudo-random noise at roughly the given RMS."""
+    seed[0] += 1
+    rnd = __import__("random").Random(seed[0])
+    return struct.pack(f"<{transcriber.BLOCK_SAMPLES}h",
+                       *[int(rnd.uniform(-level, level) * 1.73) for _ in range(transcriber.BLOCK_SAMPLES)])
+
+
+def feed_seconds(sq, level, seconds, t0=0.0):
+    """Push `seconds` of audio at `level`, returning when it was open."""
+    opened = []
+    blocks = int(seconds * 1000 / transcriber.BLOCK_MS)
+    for i in range(blocks):
+        now = t0 + i * transcriber.BLOCK_MS / 1000.0
+        opened.append(sq.feed(noise_block(level), now))
+    return opened
+
+
+def test_squelch_finds_its_own_floor():
+    """The whole point: no absolute threshold anywhere. Two receivers with noise floors
+    an order of magnitude apart must both open on speech and stay shut on their own
+    hiss, with nobody tuning a number per site."""
+    print("Squelch — adapts to the site")
+    for quiet, loud, label in [(100, 900, "quiet site"), (1500, 12000, "noisy site")]:
+        sq = transcriber.Squelch()
+        feed_seconds(sq, quiet, 6.0)                       # learn the floor
+        check(f"{label}: shut on its own noise", sq.is_open, False)
+        opened = feed_seconds(sq, loud, 1.0, t0=6.0)
+        check(f"{label}: opens on a transmission", any(opened), True)
+        # And closes again once it stops.
+        feed_seconds(sq, quiet, 3.0, t0=7.0)
+        check(f"{label}: closes afterwards", sq.is_open, False)
+
+
+def test_squelch_ignores_a_brief_pause():
+    """Hysteresis: a gap between words must not end the transmission, or every over
+    arrives as a handful of fragments too short to survive MIN_CLIP_SECONDS."""
+    print("Squelch — hysteresis")
+    sq = transcriber.Squelch()
+    feed_seconds(sq, 100, 6.0)
+    feed_seconds(sq, 900, 1.0, t0=6.0)
+    check("open during speech", sq.is_open, True)
+    feed_seconds(sq, 100, GAP := 0.4, t0=7.0)              # a pause shorter than GAP_SECONDS
+    check("stays open across a short pause", sq.is_open, True)
+
+
+def test_squelch_waits_before_judging():
+    """With no history it must not open on whatever the receiver was doing at startup."""
+    print("Squelch — startup")
+    sq = transcriber.Squelch()
+    opened = feed_seconds(sq, 8000, 0.2)
+    check("silent until it has learned the floor", any(opened), False)
+
+
+def test_block_rms():
+    print("block_rms")
+    quiet = struct.pack(f"<{transcriber.BLOCK_SAMPLES}h", *([0] * transcriber.BLOCK_SAMPLES))
+    loud = struct.pack(f"<{transcriber.BLOCK_SAMPLES}h", *([8000] * transcriber.BLOCK_SAMPLES))
+    check("silence is 0", transcriber.block_rms(quiet), 0.0)
+    check("constant 8000 reads 8000", round(transcriber.block_rms(loud)), 8000)
+    check("an empty block is 0", transcriber.block_rms(b""), 0.0)
+
+
 def test_clean_strips_sound_effects():
     print("clean")
     real = "(water splashing) (water splashing) K-6 DRK testing on West Marin K-6 DRK (water splashing)"
@@ -399,6 +464,8 @@ def test_unknown_channel_is_fatal():
 if __name__ == "__main__":
     for fn in [
         test_worth_logging, test_clean_strips_sound_effects, test_clip_seconds,
+        test_block_rms, test_squelch_finds_its_own_floor,
+        test_squelch_ignores_a_brief_pause, test_squelch_waits_before_judging,
         test_outbox_order_and_retry, test_outbox_drops_corrupt_entries,
         test_posting, test_unreachable_server_is_retried,
         test_pipeline_logs_speech, test_pipeline_discards_hallucination,

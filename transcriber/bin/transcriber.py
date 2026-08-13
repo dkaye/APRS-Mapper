@@ -5,11 +5,14 @@
 # One process per channel, started by systemd as transcriber@<channel-id>.service.
 # Several run side by side on one Pi, each bound to its own SDR dongle by USB serial.
 #
-#   rtl_fm -d <serial> -f <freq> -M fm -l <squelch>   → samples only while the
-#                                                        squelch is open
-#      → gaps in that stream are the transmission boundaries
-#      → whisper.cpp                                   → text
-#      → POST index.php?messaging=log                  → "146.520 → Log"
+#   rtl_fm -d <serial> -f <freq> -M fm -l <squelch>
+#      → RF squelch decides whether anything is transmitting: it gates on received
+#        power, before demodulation, which is the only reliable question to ask —
+#        FM noise is loudest precisely when there is no carrier
+#      → Squelch (software) finds the edges of each over within that, against a
+#        noise floor it measures for itself, so it needs no tuning per site
+#      → whisper.cpp                        → text
+#      → POST index.php?messaging=log       → "146.520 → Log"
 #
 # Stdlib only, like isproxy.py — nothing to install and nothing to break on a
 # distribution upgrade.
@@ -22,8 +25,11 @@
 # ©2026 Doug Kaye, K6DRK <doug@rds.com>
 
 import argparse
+import array
+import collections
 import json
 import logging
+import math
 import os
 import re
 import select
@@ -45,6 +51,11 @@ VERSION = "1.0"
 CONFIG = "/etc/transcriber/channels.json"
 SPOOL = "/var/spool/transcriber"
 SERVER = "https://marsaprs.org"
+
+# rtl_fm's RF squelch — the gate that decides whether anything is transmitting at all.
+# Measured working on a real repeater. A site that needs a different value can set one
+# per channel in the manager.
+DEFAULT_SQUELCH = 25
 
 # A transmission shorter than this is a squelch tail, a key-up, or someone knocking
 # their PTT — never words worth logging, and exactly what whisper invents speech from.
@@ -77,6 +88,10 @@ class Channel:
         self.frequency = str(d.get("frequency") or "")
         self.serial = str(d.get("serial") or "")
         self.squelch = int(d.get("squelch") or 0)
+        # Tuner gain in dB, or None for rtl_fm's automatic. Automatic by default: a
+        # fixed 40 was hardcoded here, which is near this tuner's maximum and overloads
+        # the front end anywhere with a strong signal nearby.
+        self.gain = d.get("gain")
         self.model = d.get("model") or "ggml-tiny.en.bin"
         self.enabled = bool(d.get("enabled", True))
         self.server = (d.get("server") or SERVER).rstrip("/")
@@ -279,6 +294,82 @@ def worth_logging(text):
 SAMPLE_RATE = 16000          # what whisper wants; rtl_fm can produce it directly
 GAP_SECONDS = 0.8            # squelch closed this long ends a transmission
 
+BLOCK_MS = 50                                        # granularity of the squelch
+BLOCK_SAMPLES = SAMPLE_RATE * BLOCK_MS // 1000
+BLOCK_BYTES = BLOCK_SAMPLES * 2
+PREROLL_BLOCKS = 6                                   # ~300ms kept before the opening
+
+
+def block_rms(block):
+    """Loudness of one block, 0-32767.
+
+    array + a sum of squares rather than audioop, which was removed in Python 3.13 and
+    is not coming back. At 20 blocks a second this is arithmetic on 800 integers and
+    does not register beside whisper.
+    """
+    samples = array.array("h")
+    samples.frombytes(block)
+    if not samples:
+        return 0.0
+    return math.sqrt(sum(s * s for s in samples) / len(samples))
+
+
+class Squelch:
+    """Decides when a transmission starts and stops, by measuring rather than guessing.
+
+    rtl_fm's own squelch takes an absolute threshold, which means a number that has to
+    be found by trial at every site and on every frequency — and a wrong one fails
+    silently, either logging hiss or logging nothing. Gain has the same problem, and the
+    two interact, so relocating the receiver meant guessing two numbers and having no
+    way to tell a deaf channel from a quiet one.
+
+    This tracks the noise floor continuously as a low percentile of recent blocks, and
+    opens on a RATIO above it. Because the decision is relative, it recalibrates itself
+    wherever the Pi is put, on whatever frequency, and follows conditions as they change
+    through the day. A percentile rather than a mean so that traffic does not drag the
+    floor up behind it: even on a busy channel, the quietest fifth of the last ten
+    seconds is still the floor.
+    """
+
+    def __init__(self, open_ratio=1.6, close_ratio=1.2, window_seconds=10.0):
+        self.open_ratio = open_ratio          # ~10 dB above the floor to open
+        self.close_ratio = close_ratio        # lower, so a pause mid-word does not cut
+        self.history = collections.deque(maxlen=max(20, int(window_seconds * 1000 / BLOCK_MS)))
+        self.floor = None
+        self.is_open = False
+        self.quiet_since = None
+
+    def _recompute_floor(self):
+        ordered = sorted(self.history)
+        self.floor = max(1.0, ordered[len(ordered) // 5])     # 20th percentile
+
+    def feed(self, block, now):
+        """Update with one block. True while a transmission is in progress."""
+        rms = block_rms(block)
+        self.history.append(rms)
+
+        # Refuse to judge anything until there is enough history to know what quiet
+        # sounds like here. A couple of seconds of not capturing beats opening on
+        # whatever the receiver happened to be doing at start-up.
+        if len(self.history) < self.history.maxlen // 4:
+            return False
+        if self.floor is None or len(self.history) % 20 == 0:
+            self._recompute_floor()
+
+        if not self.is_open:
+            if rms > self.floor * self.open_ratio:
+                self.is_open = True
+                self.quiet_since = None
+        else:
+            if rms > self.floor * self.close_ratio:
+                self.quiet_since = None
+            elif self.quiet_since is None:
+                self.quiet_since = now
+            elif now - self.quiet_since >= GAP_SECONDS:
+                self.is_open = False
+                self.quiet_since = None
+        return self.is_open
+
 
 def write_clip(spool, audio, seq):
     """One transmission, as a wav whisper can read."""
@@ -332,12 +423,24 @@ def start_capture(channel, spool):
     # are the transmission boundaries, and reading the stream directly is both simpler
     # and correct. -r 16000 gives whisper its rate with no resampling, so sox leaves the
     # capture path entirely.
-    return subprocess.Popen(
-        ["rtl_fm", "-d", channel.serial, "-f", channel.frequency,
-         "-M", "fm", "-s", "200000", "-r", str(SAMPLE_RATE), "-E", "deemp",
-         "-l", str(channel.squelch or 25), "-g", "40"],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-    )
+    # Hardware squelch, on by default, with the software Squelch as a second stage.
+    #
+    # rtl_fm's -l gates on RF POWER before demodulation. That is a different and much
+    # better question than "is the audio loud", because FM noise is loud precisely when
+    # there is no carrier — an audio-level gate sees hiss peaking at 0.295 against a
+    # floor of 0.036 and opens on it. Measured on a real repeater, hardware squelch at
+    # 25 produced clean captures and a correct transcription, while audio-level gating
+    # alone filled the spool with ten-second recordings of static.
+    #
+    # So the RF gate decides whether there is a signal, and Squelch decides where the
+    # transmission starts and stops within it — which is also what keeps the boundaries
+    # sane, since rtl_fm emits nothing at all while closed.
+    argv = ["rtl_fm", "-d", channel.serial, "-f", channel.frequency,
+            "-M", "fm", "-s", "200000", "-r", str(SAMPLE_RATE), "-E", "deemp",
+            "-l", str(channel.squelch or DEFAULT_SQUELCH)]
+    if channel.gain is not None:
+        argv += ["-g", str(channel.gain)]     # otherwise rtl_fm uses automatic gain
+    return subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
 
 def settled_clips(spool, quiet_for=1.0):
@@ -427,6 +530,19 @@ def main(argv=None):
     if not os.path.exists(model):
         raise SystemExit(f"model not found: {model}")
 
+    # An RTL-SDR covers roughly 24 MHz to 1.766 GHz. Anything outside that is a typo,
+    # and rtl_fm will happily accept it and tune nowhere useful — a channel that looks
+    # healthy and hears nothing, which is the failure this project keeps producing.
+    # A real one: 147.465 typed into the manager reached the device as 1474650 Hz.
+    try:
+        hz = int(channel.frequency)
+    except (TypeError, ValueError):
+        raise SystemExit(f"frequency is not a number: {channel.frequency!r}")
+    if not 24_000_000 <= hz <= 1_766_000_000:
+        raise SystemExit(
+            f"frequency {hz} Hz ({hz / 1e6:.4f} MHz) is outside what this receiver "
+            f"covers — 147.465 MHz is 147465000, not 1474650")
+
     # Prove whisper actually runs before listening to anything.
     #
     # Without this a broken whisper is invisible: transcribe() returns "", the filters
@@ -460,29 +576,56 @@ def main(argv=None):
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
 
+    squelch = Squelch()
+    pending = bytearray()        # bytes not yet split into whole blocks
     audio = bytearray()          # the transmission currently being received
-    last_data = time.time()
+    preroll = collections.deque(maxlen=PREROLL_BLOCKS)
     seq = 0
     max_bytes = MAX_CLIP_SECONDS * SAMPLE_RATE * 2
+    last_floor_report = 0.0
 
     try:
         while running:
             if rtl is not None:
-                # Squelch closed means no bytes at all, so the read simply times out.
-                # That timeout IS the end-of-transmission signal.
                 ready, _, _ = select.select([rtl.stdout], [], [], 0.2)
                 if ready:
                     chunk = os.read(rtl.stdout.fileno(), 65536)
                     if chunk:
-                        audio += chunk
-                        last_data = time.time()
+                        pending += chunk
 
-                gap = time.time() - last_data
-                if audio and (gap >= GAP_SECONDS or len(audio) >= max_bytes):
-                    seq += 1
-                    path = write_clip(spool, bytes(audio), seq)
-                    audio.clear()
-                    handle_clip(channel, path, whisper, model, outbox)
+                now = time.time()
+                while len(pending) >= BLOCK_BYTES:
+                    block = bytes(pending[:BLOCK_BYTES])
+                    del pending[:BLOCK_BYTES]
+                    was_open = squelch.is_open
+                    if squelch.feed(block, now):
+                        if not was_open:
+                            # Whoever keyed up was already talking by the time the
+                            # level crossed. Without the pre-roll every clip loses its
+                            # first syllable, which is usually the callsign.
+                            audio += b"".join(preroll)
+                        audio += block
+                    else:
+                        preroll.append(block)
+                        if was_open and audio:
+                            seq += 1
+                            handle_clip(channel, write_clip(spool, bytes(audio), seq),
+                                        whisper, model, outbox)
+                            audio.clear()
+                    if len(audio) >= max_bytes:
+                        seq += 1
+                        handle_clip(channel, write_clip(spool, bytes(audio), seq),
+                                    whisper, model, outbox)
+                        audio.clear()
+
+                # The floor is the one number worth seeing when a channel looks deaf:
+                # it distinguishes "hearing nothing" from "hearing so much that nothing
+                # clears the bar".
+                if squelch.floor and now - last_floor_report > 300:
+                    last_floor_report = now
+                    log.info("noise floor %.0f, opens above %.0f%s",
+                             squelch.floor, squelch.floor * squelch.open_ratio,
+                             " (receiving)" if squelch.is_open else "")
 
             # --spool-only: wavs are already on disk, put there by a test or by hand.
             for path in settled_clips(spool):
