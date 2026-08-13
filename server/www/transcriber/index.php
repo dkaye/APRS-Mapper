@@ -269,6 +269,13 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
         number. Slot order changes when the Pi reboots, and two channels quietly swapping
         frequencies is a fault nobody notices until the log is already wrong. Read or set
         one with <code>rtl_eeprom -d 0 -s 00000001</code>.</td></tr>
+    <tr><th>Squelch</th><td>How strong a signal has to be before the receiver records
+        anything. This is the one setting that decides what gets logged: too low and the
+        Pi spends its day transcribing static, too high and it is quietly deaf.
+        <br>Leave it <strong>blank</strong> and each channel measures its own site on
+        first start and remembers the answer — right for almost everywhere. Put a number
+        in only when you have a reason: raise it (30, 40) if the log fills with noise,
+        lower it if weak stations are being missed. Roughly 0–100.</td></tr>
     <tr><th>Accuracy</th><td><strong>Fast</strong> keeps up with a busy net in real time and
         is the right default. <strong>Careful</strong> is better on callsigns and phonetics
         but runs about three times slower, so on a busy frequency entries arrive behind the
@@ -280,7 +287,7 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
     <table>
       <thead><tr>
         <th>Receiver</th><th>Frequency (MHz)</th><th>Heard as</th><th>Dongle serial</th>
-        <th>Accuracy</th><th>On</th><th>Log token</th><th></th>
+        <th>Squelch</th><th>Accuracy</th><th>On</th><th>Log token</th><th></th>
       </tr></thead>
       <tbody id="channels"></tbody>
     </table>
@@ -393,6 +400,10 @@ function render() {
         <td>${field('channels', i, 'mhz', c.mhz)}<div class="derived">${esc(c.id || '')}</div></td>
         <td>${field('channels', i, 'label', c.label)}</td>
         <td>${field('channels', i, 'serial', c.serial)}</td>
+        <td>${CAN_EDIT
+              ? `<input type="text" value="${c.squelch ? esc(c.squelch) : ''}" placeholder="auto"
+                        oninput="data.channels[${i}].squelch = this.value; save()">`
+              : ro(c.squelch ? c.squelch : 'auto')}</td>
         <td>${CAN_EDIT
               ? `<select onchange="data.channels[${i}].model = this.value; save()">
                    ${MODELS.map(m => `<option value="${m.file}"${m.file === c.model ? ' selected' : ''}>${m.name}</option>`).join('')}
