@@ -16,6 +16,12 @@ User=pi
 ExecStart=/opt/transcriber/bin/transcriber.py --channel %i
 Restart=always
 RestartSec=10
+# /run/transcriber/%i on tmpfs, for the audio clips — see clip_dir(). systemd creates it
+# owned by User= and empties it when the unit stops, so clips cannot outlive the process
+# that recorded them the way they used to after a kill. The outbox and the measured
+# squelch stay on the card under /var/spool/transcriber: those exist to survive a reboot.
+RuntimeDirectory=transcriber/%i
+RuntimeDirectoryMode=0750
 # ExecStart spawns rtl_fm and sox, so stopping must take down the whole cgroup or
 # they would be left holding the dongle and the next start would find it busy.
 KillMode=control-group

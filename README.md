@@ -1177,6 +1177,29 @@ than one that misses a transmission, because nobody thinks to question it. Entri
 on disk and flush in order, stopping at the first failure so a later one cannot overtake
 an earlier.
 
+**Transcription runs on its own thread, and the audio never touches the card.** Two
+separate reasons, both about what a Pi in a box somewhere can afford to lose:
+
+- *The thread.* whisper is blocking, and while it ran inline nothing was draining
+  `rtl_fm`'s pipe — 64 KB, about two seconds of audio, after which `rtl_fm` blocks on
+  write, stops reading the SDR, and those samples are gone. Choosing the careful model
+  would have lost transmissions rather than merely running behind. Separated, a slow
+  model or a slow server costs latency and nothing else.
+- *The ramdisk.* A clip is written once, read once, and deleted; at 16 kHz mono that is
+  32 KB per second of audio written to a card with a finite number of erase cycles, and
+  none of it is worth keeping. Clips live on tmpfs under `/run/transcriber/<channel>`,
+  which systemd creates (`RuntimeDirectory=`) and empties when the unit stops — so they
+  also stopped leaking on every kill. `rtl_fm`'s stderr goes there too, and is read back
+  only when it dies: "No supported devices found." is the whole diagnosis when a dongle
+  has fallen off the USB bus, and it used to go to `/dev/null`.
+
+What must survive a reboot stays on the card under `/var/spool/transcriber/<channel>`:
+the outbox, so a transmission heard during an outage is not lost, and the measured
+squelch, so a restart is listening again in seconds instead of deaf for a minute while it
+measures the site again. The backlog is bounded by **both** clip count and total bytes —
+a count alone bounds nothing when one clip can be 4 MB and `/run` is smaller than a
+hundred of them.
+
 **Two kinds of token, deliberately.** A *device* token only fetches configuration
 (`/transcriber/get.php?token=…&device=<hostname>`, and only that device's channels); a
 *channel* token only writes log entries. Neither can do the other's job, so a Transcriber

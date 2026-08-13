@@ -66,25 +66,28 @@ def test_transcription_runs_off_the_capture_thread():
     matters is that enqueueing never blocks and everything is eventually processed.
     """
     print("capture vs transcription")
-    import queue as _q, threading as _t
-    work, stopping, done = _q.Queue(), _t.Event(), []
+    import time as _time
+    work, stopping, done = transcriber.ClipQueue(), threading.Event(), []
 
     def slow(channel, path, whisper, model, outbox):
-        __import__("time").sleep(0.15)      # far slower than clips arrive
+        _time.sleep(0.15)                   # far slower than clips arrive
         done.append(path)
 
     real, transcriber.handle_clip = transcriber.handle_clip, slow
     try:
-        worker = _t.Thread(target=transcriber.transcribe_loop,
-                           args=(work, None, None, None, _FakeOutbox(), stopping),
-                           daemon=True)
+        worker = threading.Thread(target=transcriber.transcribe_loop,
+                                  args=(work, None, None, None, _FakeOutbox(), stopping),
+                                  daemon=True)
         worker.start()
-        t0 = __import__("time").time()
+        t0 = _time.time()
         for i in range(10):
             work.put(f"clip_{i}.wav")       # capture keeps going regardless
-        enqueue_time = __import__("time").time() - t0
+        enqueue_time = _time.time() - t0
         check("enqueueing 10 clips is instant", enqueue_time < 0.05, True)
-        work.join()
+
+        deadline = _time.time() + 10
+        while len(done) < 10 and _time.time() < deadline:
+            _time.sleep(0.02)
         check("all ten are transcribed", len(done), 10)
         check("and in order", done, [f"clip_{i}.wav" for i in range(10)])
         stopping.set(); worker.join(timeout=5)
@@ -95,6 +98,131 @@ def test_transcription_runs_off_the_capture_thread():
 class _FakeOutbox:
     def flush(self, post):
         return True
+
+
+# ── the backlog is in RAM now, so it has to be bounded ───────────────────────
+
+def test_backlog_is_bounded_by_size_not_just_count():
+    """Clips moved to tmpfs, which is RAM. A clip count bounds nothing on its own: at
+    MAX_CLIP_SECONDS one clip is nearly 4 MB, so a hundred would be more than /run holds
+    and the channel would die of ENOSPC instead of merely running behind."""
+    print("clip backlog")
+    with tempfile.TemporaryDirectory() as d:
+        def clip(i, kb):
+            path = os.path.join(d, f"clip_{i:05d}.wav")
+            with open(path, "wb") as fh:
+                fh.write(b"\0" * (kb * 1024))
+            return path
+
+        q = transcriber.ClipQueue(max_clips=100, max_bytes=300 * 1024)
+        paths = [clip(i, 100) for i in range(5)]         # 500 KB against a 300 KB budget
+        for p in paths:
+            q.put(p)
+        check("keeps only what fits", len(q), 3)
+        check("and deletes what it dropped", os.path.exists(paths[0]), False)
+        check("keeping the newest", q.get(0.1), paths[2])
+
+        # The count limit still applies on its own, for many small clips.
+        q = transcriber.ClipQueue(max_clips=3, max_bytes=1 << 30)
+        small = [clip(100 + i, 1) for i in range(6)]
+        for p in small:
+            q.put(p)
+        check("count limit still bites", len(q), 3)
+        check("oldest gone", [os.path.basename(p) for p in small if os.path.exists(p)],
+              ["clip_00103.wav", "clip_00104.wav", "clip_00105.wav"])
+
+        # And a backlog that drains must free its budget again, or the queue would
+        # slowly convince itself it was full and start dropping everything.
+        q = transcriber.ClipQueue(max_clips=100, max_bytes=300 * 1024)
+        for i in range(20):
+            p = clip(200 + i, 100)
+            q.put(p)
+            check_quiet(q.get(0.1) == p)
+        check("draining frees the budget", len(q), 0)
+
+
+def check_quiet(ok):
+    if not ok:
+        FAILURES.append("a drained clip was dropped instead of returned")
+
+
+def test_start_capture_builds_a_command_and_keeps_the_two_directories_straight():
+    """start_capture was the one function no test ever called, because it needs an SDR.
+    It did not need one to catch what actually shipped: a renamed parameter left a stale
+    reference behind, and the channel died with a NameError on the Pi. Stubbing Popen
+    exercises the whole body for the cost of six lines.
+
+    It also pins the split that is easy to get backwards — clips and rtl_fm's chatter in
+    RAM, the measured squelch on the card, where re-measuring costs a minute of deafness.
+    """
+    print("start_capture")
+    with tempfile.TemporaryDirectory() as d:
+        clips, spool = os.path.join(d, "run"), os.path.join(d, "spool")
+        os.makedirs(clips), os.makedirs(spool)
+        with open(os.path.join(spool, "squelch.json"), "w") as fh:
+            json.dump({"squelch": 40, "when": __import__("time").time(),
+                       "frequency": "147465000"}, fh)
+
+        seen = {}
+
+        class FakePopen:
+            def __init__(self, argv, stdout=None, stderr=None):
+                seen["argv"], seen["stderr"] = argv, stderr
+
+        real, transcriber.subprocess.Popen = transcriber.subprocess.Popen, FakePopen
+        try:
+            channel = transcriber.Channel({"id": "rx1-147465", "frequency": "147465000",
+                                           "serial": "56052444", "squelch": 0})
+            transcriber.start_capture(channel, clips, spool)
+        finally:
+            transcriber.subprocess.Popen = real
+
+        argv = seen["argv"]
+        check("addresses the dongle by bare serial", argv[argv.index("-d") + 1], "56052444")
+        check("tunes where it was told", argv[argv.index("-f") + 1], "147465000")
+        # -s 200000 -r 16000, never -s 16000: the RTL2832U cannot sample that low and the
+        # audio comes back mangled but plausible-looking, which whisper answers by
+        # inventing something.
+        check("oversamples", argv[argv.index("-s") + 1], "200000")
+        check("uses the squelch measured for this site", argv[argv.index("-l") + 1], "40")
+        check("rtl_fm's stderr lands in RAM, not on the card",
+              os.path.dirname(seen["stderr"].name), clips)
+        seen["stderr"].close()
+
+
+def test_clips_go_to_ram_but_never_at_the_cost_of_listening():
+    """Clips belong on tmpfs, but not so badly that a channel refuses to run without it.
+
+    Wearing the card is a slow problem; a receiver that will not start is an immediate
+    one, and the device is unattended somewhere nobody wants to drive to."""
+    print("clip directory")
+    with tempfile.TemporaryDirectory() as spool:
+        os.environ["RUNTIME_DIRECTORY"] = os.path.join(spool, "runtime")
+        try:
+            check("uses systemd's tmpfs directory when given one",
+                  transcriber.clip_dir("rx1-146520", fallback=spool),
+                  os.path.join(spool, "runtime"))
+        finally:
+            del os.environ["RUNTIME_DIRECTORY"]
+
+        # /run is root-owned, so a channel run by hand as pi lands here.
+        saved, transcriber.CLIPS = transcriber.CLIPS, "/proc/definitely/not/writable"
+        try:
+            check("falls back to the spool rather than refusing to start",
+                  transcriber.clip_dir("rx1-146520", fallback=spool), spool)
+        finally:
+            transcriber.CLIPS = saved
+
+        # And a run that was killed must not leave its clips behind to be transcribed
+        # again, hours later, as if they had just been heard.
+        keep = os.path.join(spool, "outbox")
+        os.makedirs(keep, exist_ok=True)
+        open(os.path.join(spool, "clip_00001.wav"), "wb").close()
+        open(os.path.join(spool, "squelch.json"), "w").close()
+        transcriber.sweep_clips(spool)
+        check("sweeps stale clips", os.path.exists(os.path.join(spool, "clip_00001.wav")), False)
+        check("but leaves the squelch cache", os.path.exists(os.path.join(spool, "squelch.json")), True)
+        check("and the outbox", os.path.isdir(keep), True)
 
 
 # ── squelch calibration ──────────────────────────────────────────────────────
@@ -556,6 +684,9 @@ if __name__ == "__main__":
         test_worth_logging, test_clean_strips_sound_effects, test_clip_seconds,
         test_block_rms, test_squelch_finds_its_own_floor,
         test_transcription_runs_off_the_capture_thread,
+        test_backlog_is_bounded_by_size_not_just_count,
+        test_start_capture_builds_a_command_and_keeps_the_two_directories_straight,
+        test_clips_go_to_ram_but_never_at_the_cost_of_listening,
         test_calibration_finds_the_lowest_level_that_gates,
         test_calibration_is_not_fooled_by_a_transmission,
         test_calibration_gives_up_rather_than_guessing,

@@ -31,7 +31,6 @@ import json
 import logging
 import math
 import os
-import queue
 import re
 import select
 import shutil
@@ -51,7 +50,13 @@ import wave
 VERSION = "1.0"
 
 CONFIG = "/etc/transcriber/channels.json"
+# What must survive a reboot lives on the card: the outbox, so a transmission heard
+# during an outage is not lost, and the measured squelch, so a restart is listening
+# again in seconds rather than deaf for a minute while it re-measures.
 SPOOL = "/var/spool/transcriber"
+# What must not touch the card lives in RAM. See clip_dir().
+CLIPS = "/run/transcriber"
+RTL_LOG = "rtl_fm.err"
 SERVER = "https://marsaprs.org"
 
 # rtl_fm's RF squelch — the gate that decides whether anything is transmitting at all.
@@ -68,7 +73,13 @@ MAX_CLIP_SECONDS = 120
 # How far transcription may fall behind before clips start being dropped. At a
 # transmission every few seconds this is minutes of backlog — far more than the careful
 # model needs to catch up between overs.
+#
+# Two limits, because the backlog is held in RAM. A count alone does not bound anything:
+# a clip runs to MAX_CLIP_SECONDS, so a hundred of them is nearly 400 MB, and /run is
+# smaller than that. Whichever limit is reached first, the oldest clips go — they are the
+# least worth keeping, and by then the log is minutes behind the radio anyway.
 CLIP_BACKLOG_CAP = 100
+CLIP_BACKLOG_BYTES = 128 * 1024 * 1024
 
 # whisper does not return nothing when it hears nothing. Fed static or silence it
 # produces these with complete confidence, and a log quietly filling with "Thank you."
@@ -377,9 +388,75 @@ class Squelch:
         return self.is_open
 
 
-def write_clip(spool, audio, seq):
+def clip_dir(channel_id, override=None, fallback=None):
+    """Where transmissions are held between capture and transcription — RAM, not the card.
+
+    A clip is written once, read once by whisper, and deleted. At 16 kHz mono that is
+    32 KB per second of audio, so a busy net writes gigabytes a day to a card with a
+    finite number of erase cycles, sitting in a box somewhere nobody wants to drive to.
+    None of it is worth keeping: the text goes to the server and the audio is discarded
+    either way. It is also the one file here whose speed matters, since whisper reads the
+    whole thing back the moment it is written.
+
+    So clips live on tmpfs. Under systemd that is RuntimeDirectory — /run/transcriber/<id>,
+    created with the right ownership and, more usefully, emptied when the unit stops.
+    Clips used to leak on every kill; now they cannot outlive the process that made them.
+
+    Run by hand we make our own, and if /run is not writable we fall back to the spool
+    with a warning rather than refusing to listen. Wearing the card is worth more than
+    silence.
+    """
+    if override:
+        return override
+    runtime = os.environ.get("RUNTIME_DIRECTORY", "").split(":")[0]
+    target = runtime or os.path.join(CLIPS, re.sub(r"[^\w.-]", "_", channel_id))
+    try:
+        os.makedirs(target, exist_ok=True)
+        return target
+    except OSError as e:
+        if not fallback:
+            raise
+        log.warning("cannot use %s for clips (%s); falling back to %s", target, e, fallback)
+        return fallback
+
+
+def rtl_complaint(clips, limit=300):
+    """The last thing rtl_fm said before it died, for the journal.
+
+    It is verbose while running and the useful line is always the last one, so only the
+    tail is worth reporting — "No supported devices found." is the whole diagnosis when a
+    dongle has fallen off the bus, and it is what tells a deaf channel apart from a
+    missing one.
+    """
+    try:
+        with open(os.path.join(clips, RTL_LOG), "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - limit * 4))
+            tail = fh.read().decode("utf-8", "replace")
+    except OSError:
+        return "no output"
+    lines = [ln.strip() for ln in tail.splitlines() if ln.strip()]
+    return " / ".join(lines[-3:])[-limit:] or "no output"
+
+
+def sweep_clips(directory):
+    """Clear anything left from a previous run.
+
+    RuntimeDirectory already does this for us under systemd, which is most of the point
+    of using it. This covers the rest: a run by hand, a --clips override, and the empty
+    44-byte headers that used to accumulate one per killed process.
+    """
+    for name in os.listdir(directory):
+        if name.endswith(".wav"):
+            try:
+                os.unlink(os.path.join(directory, name))
+            except OSError:
+                pass
+
+
+def write_clip(directory, audio, seq):
     """One transmission, as a wav whisper can read."""
-    path = os.path.join(spool, f"clip_{seq:05d}.wav")
+    path = os.path.join(directory, f"clip_{seq:05d}.wav")
     with wave.open(path, "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
@@ -495,8 +572,12 @@ def calibrated_squelch(channel, spool):
     return level
 
 
-def start_capture(channel, spool):
+def start_capture(channel, clips, spool):
     """rtl_fm, squelched, writing raw 16 kHz samples for the main loop to segment.
+
+    Both directories: clips and rtl_fm's own output belong in RAM, while the measured
+    squelch belongs on the card in `spool`, because re-measuring it costs a minute of
+    deafness on every restart.
 
     The dongle is addressed by USB SERIAL, never by index: index order is not stable
     across reboots or re-plugs, and two channels silently swapping frequencies is the
@@ -556,7 +637,15 @@ def start_capture(channel, spool):
             "-l", str(level)]
     if channel.gain is not None:
         argv += ["-g", str(channel.gain)]     # otherwise rtl_fm uses automatic gain
-    return subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    # rtl_fm's stderr went to /dev/null, which threw away the only thing it ever says
+    # that matters. A dongle that has dropped off the USB bus produces "No supported
+    # devices found." and exit 1; all the journal showed was "rtl_fm exited (1)", and
+    # working out which of the several things that could mean took a session. It cannot
+    # be a pipe — rtl_fm chatters about signal level and nothing would be draining it,
+    # which is the same deadlock transcription used to cause on stdout. A file on tmpfs
+    # costs the card nothing and is read back only when rtl_fm dies.
+    return subprocess.Popen(argv, stdout=subprocess.PIPE,
+                            stderr=open(os.path.join(clips, RTL_LOG), "wb"))
 
 
 def settled_clips(spool, quiet_for=1.0):
@@ -590,6 +679,64 @@ def settled_clips(spool, quiet_for=1.0):
 
 # ── main loop ────────────────────────────────────────────────────────────────
 
+class ClipQueue:
+    """The backlog between the radio and whisper, bounded in RAM.
+
+    Bounded in two ways at once, because a clip count says nothing about size: at
+    MAX_CLIP_SECONDS a single clip is nearly 4 MB, so a hundred of them would be more
+    than /run holds. Whichever limit is hit first, the oldest clip is deleted and its
+    space reclaimed — by then the log is minutes behind the radio, and the newest
+    transmission is the one somebody is waiting to read.
+
+    Both threads touch the byte count, so it lives here behind a lock rather than in a
+    closure the capture loop owns and the worker cannot correct.
+    """
+
+    def __init__(self, max_clips=CLIP_BACKLOG_CAP, max_bytes=CLIP_BACKLOG_BYTES):
+        self.max_clips = max_clips
+        self.max_bytes = max_bytes
+        self._items = collections.deque()
+        self._bytes = 0
+        self._cv = threading.Condition()
+
+    def put(self, path):
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            size = 0
+        with self._cv:
+            self._items.append((path, size))
+            self._bytes += size
+            # Never drop the clip just added, even if it alone is over the limit —
+            # keeping the newest is the whole point of dropping the oldest.
+            while len(self._items) > 1 and (
+                    len(self._items) > self.max_clips or self._bytes > self.max_bytes):
+                old, old_size = self._items.popleft()
+                self._bytes -= old_size
+                log.error("transcription is %s clips (%.0f MB) behind; dropped %s",
+                          len(self._items), self._bytes / 1048576, os.path.basename(old))
+                try:
+                    os.unlink(old)
+                except OSError:
+                    pass
+            self._cv.notify()
+
+    def get(self, timeout):
+        """The next clip, or None if none arrived in time."""
+        with self._cv:
+            if not self._items:
+                self._cv.wait(timeout)
+            if not self._items:
+                return None
+            path, size = self._items.popleft()
+            self._bytes -= size
+            return path
+
+    def __len__(self):
+        with self._cv:
+            return len(self._items)
+
+
 def transcribe_loop(work, channel, whisper, model, outbox, stopping):
     """Transcribe and post, off the capture thread.
 
@@ -602,12 +749,11 @@ def transcribe_loop(work, channel, whisper, model, outbox, stopping):
     lost outright.
 
     Separated, a slow model or a slow server only makes the log arrive later. The
-    backlog waits on disk, where it costs nothing.
+    backlog waits in RAM, bounded by ClipQueue.
     """
     while True:
-        try:
-            path = work.get(timeout=0.5)
-        except queue.Empty:
+        path = work.get(timeout=0.5)
+        if path is None:
             if stopping.is_set():
                 return
             continue
@@ -616,8 +762,6 @@ def transcribe_loop(work, channel, whisper, model, outbox, stopping):
             outbox.flush(lambda t: post_log_entry(channel, t))
         except Exception:                       # noqa: BLE001 - one bad clip must not
             log.exception("transcription failed")   # stop the channel transcribing
-        finally:
-            work.task_done()
 
 
 def handle_clip(channel, path, whisper, model, outbox):
@@ -647,6 +791,8 @@ def main(argv=None):
     p.add_argument("--channel", required=True, help="channel id, e.g. rx1-146520")
     p.add_argument("--config", default=CONFIG)
     p.add_argument("--spool", default=None, help="defaults to %s/<channel>" % SPOOL)
+    p.add_argument("--clips", default=None,
+                   help="where clips are held; defaults to tmpfs at %s/<channel>" % CLIPS)
     p.add_argument("--whisper", default="whisper-cli", help="whisper.cpp binary")
     p.add_argument("--models", default="/opt/transcriber/models")
     p.add_argument("--spool-only", action="store_true",
@@ -677,6 +823,15 @@ def main(argv=None):
         except OSError:
             pass
     outbox = Outbox(os.path.join(spool, "outbox"))
+    # --spool-only means clips were put somewhere by hand or by a test; that is where to
+    # read them from, and inventing a second directory would just mean finding nothing.
+    if args.spool_only:
+        clips = spool          # and never swept: those clips are the input
+    else:
+        clips = clip_dir(channel.id, args.clips, fallback=spool)
+        sweep_clips(clips)
+        if clips != spool:
+            sweep_clips(spool)   # wavs from before clips moved off the card
 
     whisper = shutil.which(args.whisper) or args.whisper
     model = os.path.join(args.models, channel.model)
@@ -714,7 +869,7 @@ def main(argv=None):
 
     rtl = None
     if not args.spool_only:
-        rtl = start_capture(channel, spool)
+        rtl = start_capture(channel, clips, spool)
         # Version first, so `journalctl -u transcriber@… ` answers "what is this running"
         # without anyone having to go and look.
         log.info("transcriber %s — listening on %s (%s), dongle %s, model %s",
@@ -731,25 +886,14 @@ def main(argv=None):
 
     # Transcription and posting run on their own thread; this one does nothing but read
     # the radio. See transcribe_loop for why that separation is not optional.
-    work = queue.Queue()
+    work = ClipQueue()
     stopping = threading.Event()
     worker = threading.Thread(
         target=transcribe_loop, args=(work, channel, whisper, model, outbox, stopping),
         daemon=True, name="transcribe")
     worker.start()
 
-    def enqueue(path):
-        # Clips wait on disk, which is free, but not without limit: if transcription
-        # cannot keep up for long enough to reach this, the oldest are the least worth
-        # keeping and dropping them loudly beats filling the card silently.
-        if work.qsize() > CLIP_BACKLOG_CAP:
-            log.error("transcription is %s clips behind; dropping the oldest", work.qsize())
-            try:
-                os.unlink(work.get_nowait())
-                work.task_done()
-            except (queue.Empty, OSError):
-                pass
-        work.put(path)
+    enqueue = work.put
 
     squelch = Squelch()
     pending = bytearray()        # bytes not yet split into whole blocks
@@ -784,11 +928,11 @@ def main(argv=None):
                         preroll.append(block)
                         if was_open and audio:
                             seq += 1
-                            enqueue(write_clip(spool, bytes(audio), seq))
+                            enqueue(write_clip(clips, bytes(audio), seq))
                             audio.clear()
                     if len(audio) >= max_bytes:
                         seq += 1
-                        enqueue(write_clip(spool, bytes(audio), seq))
+                        enqueue(write_clip(clips, bytes(audio), seq))
                         audio.clear()
 
                 # The floor is the one number worth seeing when a channel looks deaf:
@@ -801,7 +945,7 @@ def main(argv=None):
                              " (receiving)" if squelch.is_open else "")
 
             # --spool-only: wavs are already on disk, put there by a test or by hand.
-            for path in settled_clips(spool):
+            for path in settled_clips(clips):
                 if args.once:
                     handle_clip(channel, path, whisper, model, outbox)
                     outbox.flush(lambda t: post_log_entry(channel, t))
@@ -812,7 +956,7 @@ def main(argv=None):
             # A dead radio must not look like a quiet frequency. systemd restarts us,
             # and a failed unit is a state somebody notices.
             if rtl is not None and rtl.poll() is not None:
-                log.error("rtl_fm exited (%s)", rtl.returncode)
+                log.error("rtl_fm exited (%s): %s", rtl.returncode, rtl_complaint(clips))
                 return 1
             if rtl is None:
                 time.sleep(0.5)
@@ -823,8 +967,8 @@ def main(argv=None):
             rtl.terminate()
         stopping.set()
         worker.join(timeout=30)
-        if work.qsize():
-            log.warning("%s clips left untranscribed", work.qsize())
+        if len(work):
+            log.warning("%s clips left untranscribed", len(work))
     return 0
 
 
