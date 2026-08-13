@@ -1223,6 +1223,25 @@ left in a shed cannot be used to read the net's traffic. The registry lives at
 a token registry under `/var/www/html` is how `mobile_trackers.json` came to be
 downloadable by anyone.
 
+**Each channel measures its own receiver nightly.** `sdr-selftest.sh` frees the dongle,
+runs five `rtl_power` sweeps around the channel's frequency, and grades the worst internal
+birdie in the guard band beside it — the fault that quietly deafens a receiver without
+ever looking like a fault. Results go to the same fleet dashboard as the iGates', at
+`/igate/selftest/`, and a history line is appended locally so a slow degradation is
+visible rather than inferred.
+
+It is one report per **channel**, not per device: each channel has its own dongle on its
+own frequency, so they are separate receivers that happen to share a Pi, and a spur that
+deafens one says nothing about the other.
+
+This is the iGates' `igate-selftest.sh`, renamed and generalized. Only four constants were
+ever APRS-specific; the watched frequency is now a parameter, so an iGate asks about
+144.390 and a Transcriber about whatever voice channel it is on. It lives in `sdr/` rather
+than in either device's tree and is copied into both archives at deploy time — one source
+file, two fleets, no drift. The old `aprs_guard_*` output keys are still emitted alongside
+the new generic ones, because every gate's `selftest-history.csv` and the dashboard were
+written against them, and a nightly update cycle means "every deployed device" for a day.
+
 **Two scripts, and the split between them matters.** `install.sh` builds the *machine* —
 packages, `whisper.cpp` compiled for this CPU, the models, the nightly cron — and knows
 nothing about which receiver it is. `configure.sh` makes it a *particular* receiver:
@@ -1276,6 +1295,8 @@ poor trade. The format is what the poller prints verbatim, so the two must chang
 | `map/tests/php/TranscriberStoreTest.php` | Registry and token checks |
 | `transcriber/tests/test_transcriber.py` | The worker, with no SDR and no whisper |
 | `transcriber/tests/test_auto_update.sh` | The updater's self-replacement, against a fake server |
+| `sdr/sdr-selftest.sh` | SDR self-noise test — shared with the iGates |
+| `sdr/sdr-selftest.py` | The spur analyzer behind it |
 
 `auto-update.sh` ships inside the archive as well as standing alone, so it can replace
 itself. It could not before: `install.sh` fetched it once and the device ran that copy

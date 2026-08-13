@@ -33,3 +33,4 @@ display/home/wifi.conf
 # stray artifacts (untracked 2026-08-06 monorepo cleanup)
 staged.patch
 .claude-trace/
+__pycache__/

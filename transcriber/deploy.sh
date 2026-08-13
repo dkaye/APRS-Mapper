@@ -33,6 +33,11 @@ python3 "$SRC_DIR/tests/test_transcriber.py" >/dev/null || {
     echo "AUTO-UPDATE TESTS FAILED — not deploying" >&2
     exit 1
 }
+# Shared with the iGates, so a change here reaches two fleets.
+python3 "$SRC_DIR/../sdr/test_sdr_selftest.py" >/dev/null || {
+    echo "SDR SELFTEST TESTS FAILED — not deploying" >&2
+    exit 1
+}
 echo "  tests pass"
 
 ssh "$REMOTE" "mkdir -p $REMOTE_DIR"
@@ -44,7 +49,7 @@ echo "Syncing files to aprs-pi..."
 ssh "$REMOTE" "sudo chown -R pi:www-data $REMOTE_DIR 2>/dev/null || true
                rm -rf $STAGING && mkdir -p $STAGING/{bin,systemd,etc/transcriber,udev,home}"
 
-rsync -az --ignore-times "$SRC_DIR/bin/"    "$REMOTE:$STAGING/bin/"
+rsync -az --ignore-times --exclude='__pycache__' "$SRC_DIR/bin/" "$REMOTE:$STAGING/bin/"
 rsync -az --ignore-times "$SRC_DIR/systemd/" "$REMOTE:$STAGING/systemd/"
 rsync -az --ignore-times "$SRC_DIR/udev/"    "$REMOTE:$STAGING/udev/"   2>/dev/null || true
 rsync -az --ignore-times "$SRC_DIR/etc/transcriber/" "$REMOTE:$STAGING/etc/transcriber/"
@@ -55,6 +60,8 @@ rsync -az --ignore-times "$SRC_DIR/home/"    "$REMOTE:$STAGING/home/"
 # install and then kept running forever, so no change made here could ever reach it.
 # One source file, delivered two ways, so the two cannot drift.
 rsync -az --ignore-times "$SRC_DIR/auto-update.sh" "$REMOTE:$STAGING/home/"
+# Shared with the iGates — see igate/deploy.sh for why it lives outside both trees.
+rsync -az --ignore-times --exclude='test_*' --exclude='__pycache__' "$SRC_DIR/../sdr/" "$REMOTE:$STAGING/home/"
 
 echo "Building files.tar.gz on aprs-pi..."
 ssh "$REMOTE" "chmod +x $STAGING/bin/*.py $STAGING/home/*.sh && tar -czf $REMOTE_DIR/files.tar.gz -C $STAGING ."

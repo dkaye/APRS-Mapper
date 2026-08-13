@@ -253,9 +253,13 @@ log "Updating WiFi connections..."
 # Measures the internal-birdie level near the APRS channel (see the fleet
 # dashboard at marsaprs.org/igate/selftest/). Frees the SDR for ~1 min; the
 # 04:10 reboot restarts everything anyway. Time-bounded and non-fatal.
-if [ -x /home/pi/igate-selftest.sh ]; then
+# Renamed from igate-selftest.sh: the same measurement now runs on the Transcribers
+# too, from one shared copy, so the name no longer says iGate. Remove the old pair
+# rather than leaving them to be found and run years from now.
+rm -f /home/pi/igate-selftest.sh /home/pi/igate-selftest.py
+if [ -x /home/pi/sdr-selftest.sh ]; then
     log "Running SDR self-noise test..."
-    timeout -k 15 200 /home/pi/igate-selftest.sh 2>&1 | grep -aiE 'selftest:' \
+    timeout -k 15 200 /home/pi/sdr-selftest.sh 2>&1 | grep -aiE 'selftest:' \
         | while read -r l; do log "$l"; done || log "self-test skipped (non-fatal)"
 fi
 

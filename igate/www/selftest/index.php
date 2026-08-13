@@ -25,7 +25,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete'])) {
 $rows = [];
 foreach (glob("$dir/*.json") ?: [] as $f) {
     $d = json_decode(@file_get_contents($f), true);
-    if (is_array($d) && !empty($d['host'])) $rows[] = $d;
+    if (is_array($d) && !empty($d['host'])) $rows[] = normalise($d);
+}
+
+/** Accept both spellings of the guard-band keys.
+ *
+ *  The analyzer was shared with the Transcribers and its keys lost the "aprs_" prefix,
+ *  since a Transcriber's guard band is around whatever voice channel it is on. Reports
+ *  arrive in both spellings for as long as the fleet takes to update — and since that is
+ *  a nightly cycle, for a while it is all of them. Reading either costs four lines;
+ *  getting it wrong blanks the dashboard for a day and looks like the gates went down. */
+function normalise(array $d): array
+{
+    foreach (['spur_db', 'spur_mhz', 'offset_khz', 'duty'] as $k) {
+        if (!isset($d["aprs_guard_$k"]) && isset($d["guard_$k"])) $d["aprs_guard_$k"] = $d["guard_$k"];
+        if (!isset($d["guard_$k"]) && isset($d["aprs_guard_$k"])) $d["guard_$k"] = $d["aprs_guard_$k"];
+    }
+    return $d;
 }
 
 function g($d, $k, $def = null) { return array_key_exists($k, $d) ? $d[$k] : $def; }

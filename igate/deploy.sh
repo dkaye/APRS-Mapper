@@ -19,6 +19,13 @@ trap 'rm -rf "$TMP"' EXIT
 
 echo "=== iGate deploy to marsaprs.org ==="
 
+# The self-noise analyzer is shared with the Transcribers, so a change here reaches two
+# fleets at once and the grades it produces drive real decisions about hardware.
+python3 "$IGATE_DIR/../sdr/test_sdr_selftest.py" >/dev/null || {
+    echo "SDR SELFTEST TESTS FAILED — not deploying" >&2
+    exit 1
+}
+
 # Create remote directory if needed
 ssh "$REMOTE" "mkdir -p $REMOTE_DIR"
 
@@ -29,6 +36,10 @@ STAGING="/home/pi/.marsaprs-staging/igate"
 echo "Syncing files to aprs-pi..."
 ssh "$REMOTE" "sudo chown -R pi:www-data $REMOTE_DIR 2>/dev/null || true && mkdir -p $STAGING/home $STAGING/direwatch $STAGING/www $STAGING/systemd $STAGING/etc/logrotate.d"
 rsync -a --delete "$IGATE_DIR/home/"      "$REMOTE:$STAGING/home/"
+# The self-noise test is shared with the Transcribers, so it lives in sdr/ rather than
+# in either device's tree. Copied in at deploy time: one source file, two archives, and
+# no chance of the two fleets drifting onto different versions of the same measurement.
+rsync -a --exclude='test_*' --exclude='__pycache__' "$IGATE_DIR/../sdr/" "$REMOTE:$STAGING/home/"
 rsync -a --delete "$IGATE_DIR/direwatch/" "$REMOTE:$STAGING/direwatch/"
 rsync -a --delete "$IGATE_DIR/www/"       "$REMOTE:$STAGING/www/"
 rsync -a --delete "$IGATE_DIR/systemd/"   "$REMOTE:$STAGING/systemd/"

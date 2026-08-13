@@ -190,4 +190,16 @@ if [ -z "$WANT" ] && [ -f "$TOKEN_FILE" ]; then
         "re-pick the Receiver on each channel row at marsaprs.org/transcriber/"
 fi
 
+# ── SDR self-noise test ──────────────────────────────────────────────────────
+# Measures the internal-birdie level near each channel's own frequency — the thing that
+# quietly deafens a receiver without ever looking like a fault. Frees each dongle for
+# about a minute and puts the channels back afterwards, so it runs last, after everything
+# that could leave the device in a worse state has already succeeded. Non-fatal and
+# time-bounded: a receiver must never be off the air because a measurement hung.
+if [ -x /home/pi/sdr-selftest.sh ]; then
+    log "Running SDR self-noise test..."
+    timeout -k 15 400 /home/pi/sdr-selftest.sh 2>&1 | grep -aiE 'selftest:' \
+        | while read -r l; do log "$l"; done || log "self-test skipped (non-fatal)"
+fi
+
 log "update complete: ${WANT:-no channels configured}"
