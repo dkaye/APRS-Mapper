@@ -47,15 +47,30 @@ EOF
 # Built here rather than shipped: it wants the host's NEON support, and a binary
 # compiled elsewhere is the sort of thing that runs at a third of the speed for
 # reasons nobody thinks to check.
-if [ ! -x /opt/transcriber/bin/whisper-cli ]; then
+if ! /usr/local/bin/whisper-cli -h >/dev/null 2>&1; then
     echo "Building whisper.cpp (several minutes)..."
     git clone --depth 1 https://github.com/ggerganov/whisper.cpp "$TMP/whisper"
     cmake -S "$TMP/whisper" -B "$TMP/whisper/build" -DCMAKE_BUILD_TYPE=Release >/dev/null
     cmake --build "$TMP/whisper/build" --config Release -j"$(nproc)" >/dev/null
-    mkdir -p /opt/transcriber/bin
-    install -m 755 "$TMP/whisper/build/bin/whisper-cli" /opt/transcriber/bin/
+
+    # `cmake --install`, not a copy of the binary. whisper-cli links against
+    # libwhisper.so and libggml*.so, which the first version of this left behind in a
+    # build tree that the EXIT trap then deleted. The result passed every check anyone
+    # would think to run — the binary was present, executable and the right size — and
+    # failed only at the moment it was asked to transcribe, where the worker treated
+    # the empty output as silence. Installing to /usr/local puts the libraries on the
+    # default loader path, so no LD_LIBRARY_PATH is needed in the unit file.
+    cmake --install "$TMP/whisper/build" --prefix /usr/local >/dev/null
+    ldconfig
+
+    # The binary this replaces, from installs made before the fix.
+    rm -f /opt/transcriber/bin/whisper-cli
+
+    /usr/local/bin/whisper-cli -h >/dev/null 2>&1 \
+        || { echo "whisper.cpp built but will not run — refusing to continue" >&2; exit 1; }
+    echo "  whisper.cpp installed and verified"
 else
-    echo "whisper.cpp already built; leaving it alone"
+    echo "whisper.cpp already installed and working; leaving it alone"
 fi
 
 # ── models ───────────────────────────────────────────────────────────────────
@@ -76,7 +91,7 @@ chown -R pi:pi /var/spool/transcriber /var/log/transcriber
 
 # ── files ────────────────────────────────────────────────────────────────────
 echo "Installing worker and units..."
-curl -fsSL --retry 3 -o "$TMP/files.tar.gz" "$BASE/files.tar.gz"
+curl -fsSL --retry 3 -o "$TMP/files.tar.gz" "$BASE/files.tar.gz?t=$(date +%s)"
 tar -xzf "$TMP/files.tar.gz" -C "$TMP"
 rsync -a --ignore-times "$TMP/bin/"     /opt/transcriber/bin/
 rsync -a --ignore-times "$TMP/systemd/" /etc/systemd/system/
@@ -89,7 +104,7 @@ chmod +x /opt/transcriber/bin/*.py
     install -m 640 -o root -g pi "$TMP/etc/transcriber/channels.json.example" \
                                  /etc/transcriber/channels.json
 
-curl -fsSL --retry 3 -o /home/pi/auto-update.sh "$BASE/auto-update.sh"
+curl -fsSL --retry 3 -o /home/pi/auto-update.sh "$BASE/auto-update.sh?t=$(date +%s)"
 chmod +x /home/pi/auto-update.sh
 chown pi:pi /home/pi/auto-update.sh
 

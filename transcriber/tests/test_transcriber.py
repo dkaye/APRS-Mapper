@@ -257,6 +257,52 @@ def test_pipeline_discards_short_clip():
         check("nothing logged", sent, [])
 
 
+def test_a_broken_whisper_is_fatal_not_silent():
+    """The failure this guards against actually happened on the first real install:
+    whisper-cli was present and executable but missing libwhisper.so.1, so every
+    transcription returned nothing, the filters discarded it exactly as designed, and
+    the channel was indistinguishable from a quiet frequency. Refusing to start makes
+    systemd mark the unit failed, which somebody notices."""
+    print("broken whisper")
+    with tempfile.TemporaryDirectory() as tmp:
+        broken = os.path.join(tmp, "whisper-broken")
+        with open(broken, "w") as fh:
+            fh.write("#!/bin/sh\necho 'error while loading shared libraries' >&2\nexit 127\n")
+        os.chmod(broken, 0o755)
+
+        models = os.path.join(tmp, "models")
+        os.makedirs(models, exist_ok=True)
+        open(os.path.join(models, "ggml-tiny.en.bin"), "w").close()
+        config = os.path.join(tmp, "channels.json")
+        with open(config, "w") as fh:
+            json.dump({"channels": [{"id": "rx1-146520", "label": "146.520",
+                                     "token": "t", "frequency": "1", "serial": "1"}]}, fh)
+        try:
+            transcriber.main(["--channel", "rx1-146520", "--config", config,
+                              "--spool", tmp, "--whisper", broken, "--models", models,
+                              "--spool-only", "--once"])
+            FAILURES.append("broken whisper: expected SystemExit, got a clean start")
+        except SystemExit:
+            print("  ok  refuses to start rather than logging nothing forever")
+
+    # And a missing binary entirely.
+    with tempfile.TemporaryDirectory() as tmp:
+        models = os.path.join(tmp, "models")
+        os.makedirs(models, exist_ok=True)
+        open(os.path.join(models, "ggml-tiny.en.bin"), "w").close()
+        config = os.path.join(tmp, "channels.json")
+        with open(config, "w") as fh:
+            json.dump({"channels": [{"id": "rx1-146520", "label": "146.520",
+                                     "token": "t", "frequency": "1", "serial": "1"}]}, fh)
+        try:
+            transcriber.main(["--channel", "rx1-146520", "--config", config,
+                              "--spool", tmp, "--whisper", "/nonexistent/whisper",
+                              "--models", models, "--spool-only", "--once"])
+            FAILURES.append("missing whisper: expected SystemExit")
+        except SystemExit:
+            print("  ok  a missing binary is fatal too")
+
+
 def test_disabled_channel_does_nothing():
     print("disabled channel")
     with tempfile.TemporaryDirectory() as tmp:
@@ -286,6 +332,7 @@ if __name__ == "__main__":
         test_posting, test_unreachable_server_is_retried,
         test_pipeline_logs_speech, test_pipeline_discards_hallucination,
         test_pipeline_discards_short_clip, test_pipeline_discards_open_carrier,
+        test_a_broken_whisper_is_fatal_not_silent,
         test_disabled_channel_does_nothing, test_unknown_channel_is_fatal,
     ]:
         fn()

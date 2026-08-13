@@ -27,7 +27,7 @@ mkdir -p /var/log/transcriber
 # ── files ────────────────────────────────────────────────────────────────────
 
 log "Downloading files.tar.gz"
-if ! curl -fsS --max-time 120 -o "$TMP/files.tar.gz" "$BASE/files.tar.gz"; then
+if ! curl -fsS --max-time 120 -o "$TMP/files.tar.gz" "$BASE/files.tar.gz?t=$(date +%s)"; then
     log "download failed; keeping what is installed"
     exit 0        # a failed update must never take a working receiver off the air
 fi
@@ -60,7 +60,7 @@ log "running version $(cat /etc/transcriber/version 2>/dev/null || echo unknown)
 if [ -f "$TOKEN_FILE" ]; then
     HOST=$(hostname)
     if curl -fsS --max-time 30 -o "$TMP/channels.json" \
-            "$BASE/get.php?token=$(cat "$TOKEN_FILE")&device=$HOST"; then
+            "$BASE/get.php?token=$(cat "$TOKEN_FILE")&device=$HOST&t=$(date +%s)"; then
         # Validate before installing. A truncated or error-page response would
         # otherwise stop every channel on this device at the next restart.
         if python3 -c "import json,sys; json.load(open(sys.argv[1]))['channels']" \

@@ -214,8 +214,13 @@ def start_capture(channel, spool):
     across reboots or re-plugs, and two channels silently swapping frequencies is the
     kind of fault nobody notices until the log is wrong.
     """
+    # "-d <serial>", not "-d serial=<serial>". rtl_fm's verbose_device_search tries the
+    # argument as an index, then as an exact serial, then as a prefix — the SoapySDR
+    # "serial=" form is not one of them, and it fails in the worst possible way: the
+    # device is listed and then not selected, so rtl_fm exits without ever tuning and
+    # the channel looks like a dead frequency.
     rtl = subprocess.Popen(
-        ["rtl_fm", "-d", f"serial={channel.serial}", "-f", channel.frequency,
+        ["rtl_fm", "-d", channel.serial, "-f", channel.frequency,
          "-M", "fm", "-s", "24000", "-l", str(channel.squelch), "-g", "40"],
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
     )
@@ -310,6 +315,22 @@ def main(argv=None):
     model = os.path.join(args.models, channel.model)
     if not os.path.exists(model):
         raise SystemExit(f"model not found: {model}")
+
+    # Prove whisper actually runs before listening to anything.
+    #
+    # Without this a broken whisper is invisible: transcribe() returns "", the filters
+    # discard it as they should, and the channel looks like a quiet frequency for as
+    # long as nobody checks. That is precisely what a missing libwhisper.so.1 did on the
+    # first real install — the binary was there and executable, and every transmission
+    # went into the void. Failing at startup makes systemd mark the unit failed, which
+    # is a state somebody notices.
+    try:
+        probe = subprocess.run([whisper, "-h"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise SystemExit(f"cannot run {whisper}: {e}")
+    if probe.returncode != 0 and "usage" not in (probe.stdout + probe.stderr).lower():
+        raise SystemExit(f"{whisper} is not usable: "
+                         f"{(probe.stderr or probe.stdout).strip()[:200]}")
 
     rtl = sox = None
     if not args.spool_only:
