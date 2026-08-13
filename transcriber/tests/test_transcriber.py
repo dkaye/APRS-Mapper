@@ -41,7 +41,11 @@ def check(label, got, want):
 def test_worth_logging():
     print("worth_logging")
     for junk in ["", "  ", "you", "Thank you.", "THANK YOU", "thanks for watching!",
-                 "[BLANK_AUDIO]", "Bye.", "...", "uh", "you you you you"]:
+                 "[BLANK_AUDIO]", "Bye.", "...", "uh", "you you you you",
+                 # whisper describing a sound rather than reporting speech. An open
+                 # squelch on a quiet frequency produces these steadily — "(water
+                 # splashing)" is a real one, off a real repeater.
+                 "(water splashing)", "[MUSIC]", "(engine noise)", "( silence )"]:
         check(f"discards {junk!r}", transcriber.worth_logging(junk), False)
     for real in ["aid three we have a rider down", "copy that sending medical",
                  "net control this is whiskey six sierra golf"]:
@@ -69,6 +73,16 @@ def test_clip_seconds():
 
 # ── the outbox ───────────────────────────────────────────────────────────────
 
+def clear_backoff(box):
+    """Pretend the backoff window has elapsed, so a test need not sleep through it."""
+    for path in box.pending():
+        with open(path) as fh:
+            entry = json.load(fh)
+        entry["next_try"] = 0
+        with open(path, "w") as fh:
+            json.dump(entry, fh)
+
+
 def test_outbox_order_and_retry():
     print("Outbox")
     with tempfile.TemporaryDirectory() as d:
@@ -83,14 +97,22 @@ def test_outbox_order_and_retry():
         # overtake an earlier one and the log would be out of order.
         def flaky(text):
             sent.append(text)
-            return text != "second"
+            return transcriber.POST_OK if text != "second" else transcriber.POST_RETRY
 
         check("stops at the failure", box.flush(flaky), False)
         check("sent up to the failure", sent, ["first", "second"])
         check("two still waiting", len(box.pending()), 2)
 
+        # A failure schedules a retry in the future, so an immediate second pass must
+        # not hammer the server — it should decline to send anything at all.
         sent.clear()
-        check("drains on recovery", box.flush(lambda t: (sent.append(t), True)[1]), True)
+        check("backs off rather than retrying at once", box.flush(flaky), False)
+        check("and sent nothing while backing off", sent, [])
+
+        clear_backoff(box)
+        sent.clear()
+        ok = lambda t: (sent.append(t), transcriber.POST_OK)[1]
+        check("drains once the server recovers", box.flush(ok), True)
         check("in order", sent, ["second", "third"])
         check("nothing left", box.pending(), [])
 
@@ -103,7 +125,7 @@ def test_outbox_drops_corrupt_entries():
             fh.write("{not json")
         box.add("good", 1001.0)
         sent = []
-        check("flushes past it", box.flush(lambda t: (sent.append(t), True)[1]), True)
+        check("flushes past it", box.flush(lambda t: (sent.append(t), transcriber.POST_OK)[1]), True)
         check("kept the good one", sent, ["good"])
         check("removed the bad one", box.pending(), [])
 
@@ -150,28 +172,33 @@ def test_posting():
 
     Handler.seen.clear()
     Handler.status, Handler.body = 200, b'{"ok":true}'
-    check("accepted", transcriber.post_log_entry(ch, "aid three clear"), True)
+    check("accepted", transcriber.post_log_entry(ch, "aid three clear"), transcriber.POST_OK)
     check("sent the token", Handler.seen[-1]["token"], "tok-rx")
     check("sent the text", Handler.seen[-1]["text"], "aid three clear")
 
     # 5xx is the server's problem and may pass; keep the entry and retry.
     Handler.status, Handler.body = 503, b"busy"
-    check("retries a 5xx", transcriber.post_log_entry(ch, "x"), False)
+    check("retries a 5xx", transcriber.post_log_entry(ch, "x"), transcriber.POST_RETRY)
 
-    # 4xx will not fix itself — a refused token stays refused, so retrying forever
-    # would just fill the disk. Treated as handled so the entry is dropped.
+    # 403 is kept, not dropped. An auth failure is nearly always a token change still
+    # propagating, and discarding on it lost four real transmissions the first time a
+    # channel was renamed under a running device.
     Handler.status, Handler.body = 403, b"Forbidden"
-    check("drops a 4xx", transcriber.post_log_entry(ch, "x"), True)
+    check("KEEPS a 403 to retry", transcriber.post_log_entry(ch, "x"), transcriber.POST_RETRY)
+
+    # A malformed body stays malformed however many times it is sent.
+    Handler.status, Handler.body = 400, b"Bad Request"
+    check("drops a 400", transcriber.post_log_entry(ch, "x"), transcriber.POST_DROP)
 
     Handler.status, Handler.body = 200, b'{"error":"text required"}'
-    check("drops an application error", transcriber.post_log_entry(ch, "x"), True)
+    check("drops an application error", transcriber.post_log_entry(ch, "x"), transcriber.POST_DROP)
     srv.shutdown()
 
 
 def test_unreachable_server_is_retried():
     print("post_log_entry — server down")
     ch = channel_for(1)          # nothing listening on port 1
-    check("retries", transcriber.post_log_entry(ch, "x", timeout=2), False)
+    check("retries", transcriber.post_log_entry(ch, "x", timeout=2), transcriber.POST_RETRY)
 
 
 # ── the whole pipeline, no radio ─────────────────────────────────────────────

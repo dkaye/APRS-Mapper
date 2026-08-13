@@ -103,11 +103,19 @@ class Outbox:
         self.dir = directory
         os.makedirs(self.dir, exist_ok=True)
 
+    # Retrying forever must not fill the disk. At roughly a transmission every few
+    # seconds this is hours of backlog, far longer than any outage worth surviving.
+    cap = 500
+
     def add(self, text, ts):
         # Timestamp-named so the flush order is the order things were said.
         path = os.path.join(self.dir, f"{ts:.6f}.json")
         with open(path, "w", encoding="utf-8") as fh:
-            json.dump({"text": text, "ts": ts}, fh)
+            json.dump({"text": text, "ts": ts, "attempts": 0, "next_try": 0}, fh)
+        waiting = self.pending()
+        for stale in waiting[:max(0, len(waiting) - self.cap)]:
+            log.error("outbox full; dropping the oldest entry")
+            os.unlink(stale)
 
     def pending(self):
         return sorted(
@@ -115,8 +123,10 @@ class Outbox:
         )
 
     def flush(self, post):
-        """Send what is waiting, oldest first. Stops at the first failure so ordering
-        survives an outage — a later entry must not overtake an earlier one."""
+        """Send what is waiting, oldest first. Stops at the first entry that could not
+        go, so ordering survives an outage — a later entry must not overtake an earlier
+        one, and a log out of order is worse than a log that arrives late."""
+        now = time.time()
         for path in self.pending():
             try:
                 with open(path, encoding="utf-8") as fh:
@@ -124,16 +134,37 @@ class Outbox:
             except (OSError, ValueError):
                 os.unlink(path)          # unreadable: nothing to retry forever over
                 continue
-            if not post(entry["text"]):
-                return False
-            os.unlink(path)
+
+            if entry.get("next_try", 0) > now:
+                return False             # backing off; later entries wait their turn
+
+            result = post(entry["text"])
+            if result == POST_OK or result == POST_DROP:
+                os.unlink(path)
+                continue
+
+            # Back off so a wrong token or a dead server is not hammered every half
+            # second for however long it takes somebody to notice, while a brief blip
+            # still clears on the next pass.
+            entry["attempts"] = entry.get("attempts", 0) + 1
+            entry["next_try"] = now + min(60, 2 ** entry["attempts"])
+            try:
+                with open(path, "w", encoding="utf-8") as fh:
+                    json.dump(entry, fh)
+            except OSError:
+                pass
+            return False
         return True
 
 
 # ── posting ──────────────────────────────────────────────────────────────────
 
+# What to do with an entry after an attempt to post it.
+POST_OK, POST_RETRY, POST_DROP = "ok", "retry", "drop"
+
+
 def post_log_entry(channel, text, timeout=15):
-    """One log entry. True if the server took it."""
+    """One log entry. POST_OK, POST_RETRY or POST_DROP."""
     body = json.dumps({"token": channel.token, "text": text}).encode()
     req = urllib.request.Request(
         f"{channel.server}/index.php?messaging=log",
@@ -145,20 +176,27 @@ def post_log_entry(channel, text, timeout=15):
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             answer = json.loads(resp.read().decode() or "{}")
     except urllib.error.HTTPError as e:
-        # 4xx is our fault and will not fix itself — a rejected token stays rejected,
-        # so retrying forever would just fill the disk. Drop it and say why.
+        # An auth failure is nearly always a token change still propagating — a channel
+        # renamed or a token reissued in the manager, with this device a config poll
+        # behind. That resolves itself, so the entry is kept and retried with backoff.
+        # Discarding on 403 lost four real transmissions the first time this happened.
+        if e.code in (401, 403):
+            log.warning("server rejected our token (%s); keeping the entry to retry", e.code)
+            return POST_RETRY
+        # Other 4xx really are our fault and will not fix themselves — a malformed or
+        # over-long body stays malformed however many times it is sent.
         if 400 <= e.code < 500:
             log.error("server refused the entry (%s); discarding: %s", e.code, text[:60])
-            return True
+            return POST_DROP
         log.warning("server error %s; will retry", e.code)
-        return False
+        return POST_RETRY
     except (urllib.error.URLError, OSError, ValueError) as e:
         log.warning("post failed (%s); will retry", e)
-        return False
+        return POST_RETRY
     if answer.get("error"):
         log.error("server refused the entry (%s); discarding", answer["error"])
-        return True
-    return True
+        return POST_DROP
+    return POST_OK
 
 
 # ── transcription ────────────────────────────────────────────────────────────
@@ -195,6 +233,12 @@ def worth_logging(text):
     the log stops reading it.
     """
     if not text:
+        return False
+    # Anything wholly inside brackets is whisper describing a sound rather than
+    # reporting speech — "(water splashing)", "[MUSIC]", "(engine noise)". There is no
+    # useful list of these to keep; the shape is the signal. An open squelch on a quiet
+    # frequency produces them steadily.
+    if re.fullmatch(r"[\(\[\{].*[\)\]\}]", text.strip(), re.S):
         return False
     bare = re.sub(r"[^\w\s]", "", text).strip().lower()
     if bare in HALLUCINATIONS or text.strip().lower() in HALLUCINATIONS:
