@@ -1,8 +1,11 @@
 <?php
 /**
- * iGate SDR self-noise dashboard.
+ * SDR self-noise dashboard — iGates and Transcribers.
  *
- * Reads the per-host reports uploaded by igate-selftest.sh and ranks the fleet
+ * The URL stays under /igate/ because every deployed gate posts there and the link is in
+ * people's bookmarks; the page is no longer iGate-only.
+ *
+ * Reads the per-host reports uploaded by sdr-selftest.sh and ranks the fleet
  * by the one number that predicts a deaf gate: the worst internal spur in the
  * APRS guard band (144.37-144.42 MHz), in dB over the noise floor. Low is good.
  * Calibration from a Pi Zero 2 W: ~+18 dB with the dongle in the case (deaf),
@@ -84,7 +87,7 @@ $COLOR = ['GOOD' => '#1a7f37', 'MARGINAL' => '#9a6700', 'BAD' => '#c0392b'];
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>iGate SDR Self-Noise — Fleet</title>
+<title>SDR Self-Noise — Fleet</title>
 <style>
   * { box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
@@ -114,7 +117,7 @@ $COLOR = ['GOOD' => '#1a7f37', 'MARGINAL' => '#9a6700', 'BAD' => '#c0392b'];
 </head>
 <body>
 <div class="wrap">
-  <h1>iGate SDR Self-Noise — Fleet</h1>
+  <h1>SDR Self-Noise — Fleet</h1>
   <div class="sub">Lower is better. The headline number is the worst internal spur in the APRS guard band
     (144.37&ndash;144.42&nbsp;MHz), in dB over the noise floor &mdash; that&rsquo;s what deafens a gate.</div>
 
@@ -131,8 +134,8 @@ $COLOR = ['GOOD' => '#1a7f37', 'MARGINAL' => '#9a6700', 'BAD' => '#c0392b'];
 
   <table>
     <thead><tr>
-      <th>Gate</th><th>Grade</th><th>APRS-guard spur</th><th>vs best</th><th>Comb?</th>
-      <th>Floor</th><th>Board</th><th>iGate</th><th>Reported</th><th></th>
+      <th>Receiver</th><th>Grade</th><th>Guard-band spur</th><th>vs best</th><th>Comb?</th>
+      <th>Floor</th><th>Board</th><th>Version</th><th>Reported</th><th></th>
     </tr></thead>
     <tbody>
     <?php foreach ($rows as $r):
@@ -152,7 +155,7 @@ $COLOR = ['GOOD' => '#1a7f37', 'MARGINAL' => '#9a6700', 'BAD' => '#c0392b'];
         <td><?= g($r,'comb_detected') ? '<span style="color:#c0392b">yes</span>' : '<span class="muted">no</span>' ?></td>
         <td class="num muted"><?= htmlspecialchars(g($r,'floor_db','—')) ?></td>
         <td class="muted"><?= htmlspecialchars(str_replace('Raspberry Pi ','',(string)g($r,'pi_model','—'))) ?></td>
-        <td class="muted"><?= htmlspecialchars(g($r,'igate_version','—')) ?></td>
+        <td class="muted"><?= htmlspecialchars(g($r,'device_version', g($r,'igate_version','—'))) ?></td>
 <?php // "Reported" age from _received (server time, TZ-aware). The gate's own ts
       // has no timezone and PHP runs in UTC, so parsing ts directly is off by the
       // gate's UTC offset. ?>
