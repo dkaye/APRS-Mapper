@@ -9,8 +9,8 @@
 #      → RF squelch decides whether anything is transmitting: it gates on received
 #        power, before demodulation, which is the only reliable question to ask —
 #        FM noise is loudest precisely when there is no carrier
-#      → Squelch (software) finds the edges of each over within that, against a
-#        noise floor it measures for itself, so it needs no tuning per site
+#      → gaps in the byte stream are the boundaries between overs: rtl_fm emits
+#        nothing at all while squelched, so samples stopping IS the carrier dropping
 #      → whisper.cpp                        → text
 #      → POST index.php?messaging=log       → "146.520 → Log"
 #
@@ -25,11 +25,9 @@
 # ©2026 Doug Kaye, K6DRK <doug@rds.com>
 
 import argparse
-import array
 import collections
 import json
 import logging
-import math
 import os
 import re
 import select
@@ -309,83 +307,24 @@ def worth_logging(text):
 # ── capture ──────────────────────────────────────────────────────────────────
 
 SAMPLE_RATE = 16000          # what whisper wants; rtl_fm can produce it directly
-GAP_SECONDS = 0.8            # squelch closed this long ends a transmission
 
-BLOCK_MS = 50                                        # granularity of the squelch
+# How long the data has to stop before a transmission counts as over.
+#
+# The gap is the only signal used, and it is a reliable one: rtl_fm's RF squelch gates
+# before demodulation, so while it is closed the process emits nothing at all — measured,
+# on a real receiver, at exactly zero bytes over eight seconds of idle channel. Samples
+# arriving means a carrier is up; samples stopping means it dropped.
+#
+# Long enough to ride out a squelch flicker on a fading signal, short enough that two
+# overs a second apart do not merge into one entry.
+GAP_SECONDS = 0.8
+
+# How often to say whether anything has been heard.
+REPORT_SECONDS = 1800
+
+BLOCK_MS = 50                                        # granularity of the read loop
 BLOCK_SAMPLES = SAMPLE_RATE * BLOCK_MS // 1000
 BLOCK_BYTES = BLOCK_SAMPLES * 2
-PREROLL_BLOCKS = 6                                   # ~300ms kept before the opening
-
-
-def block_rms(block):
-    """Loudness of one block, 0-32767.
-
-    array + a sum of squares rather than audioop, which was removed in Python 3.13 and
-    is not coming back. At 20 blocks a second this is arithmetic on 800 integers and
-    does not register beside whisper.
-    """
-    samples = array.array("h")
-    samples.frombytes(block)
-    if not samples:
-        return 0.0
-    return math.sqrt(sum(s * s for s in samples) / len(samples))
-
-
-class Squelch:
-    """Decides when a transmission starts and stops, by measuring rather than guessing.
-
-    rtl_fm's own squelch takes an absolute threshold, which means a number that has to
-    be found by trial at every site and on every frequency — and a wrong one fails
-    silently, either logging hiss or logging nothing. Gain has the same problem, and the
-    two interact, so relocating the receiver meant guessing two numbers and having no
-    way to tell a deaf channel from a quiet one.
-
-    This tracks the noise floor continuously as a low percentile of recent blocks, and
-    opens on a RATIO above it. Because the decision is relative, it recalibrates itself
-    wherever the Pi is put, on whatever frequency, and follows conditions as they change
-    through the day. A percentile rather than a mean so that traffic does not drag the
-    floor up behind it: even on a busy channel, the quietest fifth of the last ten
-    seconds is still the floor.
-    """
-
-    def __init__(self, open_ratio=1.6, close_ratio=1.2, window_seconds=10.0):
-        self.open_ratio = open_ratio          # ~10 dB above the floor to open
-        self.close_ratio = close_ratio        # lower, so a pause mid-word does not cut
-        self.history = collections.deque(maxlen=max(20, int(window_seconds * 1000 / BLOCK_MS)))
-        self.floor = None
-        self.is_open = False
-        self.quiet_since = None
-
-    def _recompute_floor(self):
-        ordered = sorted(self.history)
-        self.floor = max(1.0, ordered[len(ordered) // 5])     # 20th percentile
-
-    def feed(self, block, now):
-        """Update with one block. True while a transmission is in progress."""
-        rms = block_rms(block)
-        self.history.append(rms)
-
-        # Refuse to judge anything until there is enough history to know what quiet
-        # sounds like here. A couple of seconds of not capturing beats opening on
-        # whatever the receiver happened to be doing at start-up.
-        if len(self.history) < self.history.maxlen // 4:
-            return False
-        if self.floor is None or len(self.history) % 20 == 0:
-            self._recompute_floor()
-
-        if not self.is_open:
-            if rms > self.floor * self.open_ratio:
-                self.is_open = True
-                self.quiet_since = None
-        else:
-            if rms > self.floor * self.close_ratio:
-                self.quiet_since = None
-            elif self.quiet_since is None:
-                self.quiet_since = now
-            elif now - self.quiet_since >= GAP_SECONDS:
-                self.is_open = False
-                self.quiet_since = None
-        return self.is_open
 
 
 def clip_dir(channel_id, override=None, fallback=None):
@@ -617,7 +556,7 @@ def start_capture(channel, clips, spool):
     # are the transmission boundaries, and reading the stream directly is both simpler
     # and correct. -r 16000 gives whisper its rate with no resampling, so sox leaves the
     # capture path entirely.
-    # Hardware squelch, on by default, with the software Squelch as a second stage.
+    # Hardware squelch, and nothing on top of it.
     #
     # rtl_fm's -l gates on RF POWER before demodulation. That is a different and much
     # better question than "is the audio loud", because FM noise is loud precisely when
@@ -626,9 +565,13 @@ def start_capture(channel, clips, spool):
     # 25 produced clean captures and a correct transcription, while audio-level gating
     # alone filled the spool with ten-second recordings of static.
     #
-    # So the RF gate decides whether there is a signal, and Squelch decides where the
-    # transmission starts and stops within it — which is also what keeps the boundaries
-    # sane, since rtl_fm emits nothing at all while closed.
+    # A software squelch ran on top of this for a while, to find the edges of each over.
+    # It could not work, for a reason the measurement above should have made obvious:
+    # rtl_fm emits nothing while closed, so the only audio it ever saw was speech, and
+    # the "noise floor" it computed was a speech level. It then discarded anything
+    # quieter — which is to say the start of every over — and cut overs in half at the
+    # first pause. Gone. The gap in the byte stream is the boundary, and it needs no
+    # help deciding that.
     # A value set in the manager is an override and is obeyed; otherwise it is measured
     # for this site and cached.
     level = channel.squelch or calibrated_squelch(channel, spool)
@@ -903,54 +846,60 @@ def main(argv=None):
 
     enqueue = work.put
 
-    squelch = Squelch()
-    pending = bytearray()        # bytes not yet split into whole blocks
     audio = bytearray()          # the transmission currently being received
-    preroll = collections.deque(maxlen=PREROLL_BLOCKS)
     seq = 0
+    last_data = None             # when samples last arrived; None between overs
     max_bytes = MAX_CLIP_SECONDS * SAMPLE_RATE * 2
-    last_floor_report = 0.0
+    last_report, heard = time.time(), 0
 
     try:
         while running:
             if rtl is not None:
                 ready, _, _ = select.select([rtl.stdout], [], [], 0.2)
+                now = time.time()
                 if ready:
                     chunk = os.read(rtl.stdout.fileno(), 65536)
                     if chunk:
-                        pending += chunk
+                        # Everything that arrives is part of a transmission. rtl_fm is
+                        # already gating on RF power, so there is nothing here to second-
+                        # guess and no audio level worth measuring.
+                        #
+                        # An audio-level squelch used to run on top of this, and it was
+                        # actively destructive for a reason that is obvious in hindsight:
+                        # since rtl_fm emits nothing while squelched, the only audio it
+                        # ever saw was speech. Its "noise floor" was therefore a speech
+                        # level — 98, measured — and it demanded 1.6x that to open and
+                        # dropped out below 1.2x. So the quiet opening syllables of an
+                        # over never cleared the bar and were discarded, and a pause in
+                        # the middle fell through the floor and cut the over in two. On
+                        # the air: an entry beginning "ring channel K6DRK" where the
+                        # station had said "monitoring channel", followed by a 1.2s
+                        # fragment whisper could make nothing of.
+                        audio += chunk
+                        last_data = now
 
-                now = time.time()
-                while len(pending) >= BLOCK_BYTES:
-                    block = bytes(pending[:BLOCK_BYTES])
-                    del pending[:BLOCK_BYTES]
-                    was_open = squelch.is_open
-                    if squelch.feed(block, now):
-                        if not was_open:
-                            # Whoever keyed up was already talking by the time the
-                            # level crossed. Without the pre-roll every clip loses its
-                            # first syllable, which is usually the callsign.
-                            audio += b"".join(preroll)
-                        audio += block
-                    else:
-                        preroll.append(block)
-                        if was_open and audio:
-                            seq += 1
-                            enqueue(write_clip(clips, bytes(audio), seq))
-                            audio.clear()
-                    if len(audio) >= max_bytes:
-                        seq += 1
-                        enqueue(write_clip(clips, bytes(audio), seq))
-                        audio.clear()
+                # The gap IS the end of the transmission.
+                if audio and last_data is not None and now - last_data >= GAP_SECONDS:
+                    seq += 1
+                    heard += 1
+                    enqueue(write_clip(clips, bytes(audio), seq))
+                    audio.clear()
+                    last_data = None
 
-                # The floor is the one number worth seeing when a channel looks deaf:
-                # it distinguishes "hearing nothing" from "hearing so much that nothing
-                # clears the bar".
-                if squelch.floor and now - last_floor_report > 300:
-                    last_floor_report = now
-                    log.info("noise floor %.0f, opens above %.0f%s",
-                             squelch.floor, squelch.floor * squelch.open_ratio,
-                             " (receiving)" if squelch.is_open else "")
+                # A carrier that never drops would otherwise grow one clip forever.
+                if len(audio) >= max_bytes:
+                    seq += 1
+                    enqueue(write_clip(clips, bytes(audio), seq))
+                    audio.clear()
+
+                # A periodic sign of life. With no audio level left to report, the useful
+                # question is whether anything has been heard at all — a channel that has
+                # captured nothing for hours is either on a quiet frequency or deaf, and
+                # only the log's history tells them apart.
+                if now - last_report >= REPORT_SECONDS:
+                    log.info("%s transmissions in the last %d minutes",
+                             heard or "no", REPORT_SECONDS // 60)
+                    last_report, heard = now, 0
 
             # --spool-only ONLY: wavs already on disk, put there by a test or by hand.
             #
@@ -984,6 +933,13 @@ def main(argv=None):
             if rtl is None:
                 time.sleep(0.5)
     finally:
+        # Whatever was mid-transmission when we were told to stop is still a
+        # transmission. Without this it was dropped on the floor — the clip is only
+        # written when the gap arrives, and a shutdown, or rtl_fm dying, arrives first.
+        if audio:
+            seq += 1
+            enqueue(write_clip(clips, bytes(audio), seq))
+            audio.clear()
         # Stop listening first, then let the backlog finish: a transmission already
         # recorded should still reach the log, and systemd allows time for it.
         if rtl is not None and rtl.poll() is None:

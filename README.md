@@ -1177,6 +1177,21 @@ than one that misses a transmission, because nobody thinks to question it. Entri
 on disk and flush in order, stopping at the first failure so a later one cannot overtake
 an earlier.
 
+**A gap in the byte stream is the boundary between transmissions, and that is the whole
+of the segmentation.** `rtl_fm`'s squelch gates on RF power *before* demodulation, so
+while it is closed the process emits nothing at all — measured on a real receiver at
+exactly zero bytes over eight seconds of idle channel. Samples arriving means a carrier
+is up; samples stopping for `GAP_SECONDS` means it dropped.
+
+A software audio-level squelch ran on top of that for a while, meant to find the edges of
+each over. It could not work, for a reason the measurement above makes obvious in
+hindsight: because `rtl_fm` emits nothing while closed, the only audio it ever saw was
+speech, so the "noise floor" it computed was a *speech* level — 98, in the field. It then
+discarded anything quieter, which meant the opening syllables of every over, and cut the
+over in two at the first pause. A station saying "monitoring channel, K6DRK" was logged
+as "ring channel K6DRK." followed by a 1.2 s fragment whisper could make nothing of. It
+is gone; the gap needs no help.
+
 **Transcription runs on its own thread, and the audio never touches the card.** Two
 separate reasons, both about what a Pi in a box somewhere can afford to lose:
 

@@ -270,69 +270,109 @@ def test_calibration_gives_up_rather_than_guessing():
     check("returns None", transcriber.choose_squelch(site(floor=10_000)), None)
 
 
-# ── the adaptive squelch ─────────────────────────────────────────────────────
+# ── where one transmission ends and the next begins ──────────────────────────
 
-def noise_block(level, seed=[0]):
-    """One block of pseudo-random noise at roughly the given RMS."""
-    seed[0] += 1
-    rnd = __import__("random").Random(seed[0])
-    return struct.pack(f"<{transcriber.BLOCK_SAMPLES}h",
-                       *[int(rnd.uniform(-level, level) * 1.73) for _ in range(transcriber.BLOCK_SAMPLES)])
+def emitter(script):
+    """A fake rtl_fm. `script` is [(seconds, emit?), ...] played in real time.
 
-
-def feed_seconds(sq, level, seconds, t0=0.0):
-    """Push `seconds` of audio at `level`, returning when it was open."""
-    opened = []
-    blocks = int(seconds * 1000 / transcriber.BLOCK_MS)
-    for i in range(blocks):
-        now = t0 + i * transcriber.BLOCK_MS / 1000.0
-        opened.append(sq.feed(noise_block(level), now))
-    return opened
-
-
-def test_squelch_finds_its_own_floor():
-    """The whole point: no absolute threshold anywhere. Two receivers with noise floors
-    an order of magnitude apart must both open on speech and stay shut on their own
-    hiss, with nobody tuning a number per site."""
-    print("Squelch — adapts to the site")
-    for quiet, loud, label in [(100, 900, "quiet site"), (1500, 12000, "noisy site")]:
-        sq = transcriber.Squelch()
-        feed_seconds(sq, quiet, 6.0)                       # learn the floor
-        check(f"{label}: shut on its own noise", sq.is_open, False)
-        opened = feed_seconds(sq, loud, 1.0, t0=6.0)
-        check(f"{label}: opens on a transmission", any(opened), True)
-        # And closes again once it stops.
-        feed_seconds(sq, quiet, 3.0, t0=7.0)
-        check(f"{label}: closes afterwards", sq.is_open, False)
+    "emit?" is the whole point. rtl_fm's RF squelch gates before demodulation, so while
+    it is closed the process writes NOTHING — measured on a real receiver at exactly zero
+    bytes over eight seconds of idle channel. A gap in the byte stream is therefore not a
+    quiet passage; it is the carrier dropping.
+    """
+    body = (
+        "import sys, time\n"
+        "w = sys.stdout.buffer\n"
+        "chunk = (%d).to_bytes(2, 'little', signed=True) * %d\n"
+        "for seconds, emit, level in %r:\n"
+        "    end = time.time() + seconds\n"
+        "    while time.time() < end:\n"
+        "        if emit:\n"
+        "            w.write((level).to_bytes(2, 'little', signed=True) * %d); w.flush()\n"
+        "        time.sleep(0.05)\n"
+    ) % (3000, transcriber.BLOCK_SAMPLES, script, transcriber.BLOCK_SAMPLES)
+    return [sys.executable, "-c", body]
 
 
-def test_squelch_ignores_a_brief_pause():
-    """Hysteresis: a gap between words must not end the transmission, or every over
-    arrives as a handful of fragments too short to survive MIN_CLIP_SECONDS."""
-    print("Squelch — hysteresis")
-    sq = transcriber.Squelch()
-    feed_seconds(sq, 100, 6.0)
-    feed_seconds(sq, 900, 1.0, t0=6.0)
-    check("open during speech", sq.is_open, True)
-    feed_seconds(sq, 100, GAP := 0.4, t0=7.0)              # a pause shorter than GAP_SECONDS
-    check("stays open across a short pause", sq.is_open, True)
+def capture_clips(script, seconds):
+    """Run the capture loop against a fake radio; return the clips it wrote, in order."""
+    import subprocess as sp, time as _time
+    with tempfile.TemporaryDirectory() as tmp:
+        models = os.path.join(tmp, "models"); os.makedirs(models)
+        open(os.path.join(models, "ggml-tiny.en.bin"), "w").close()
+        clips = os.path.join(tmp, "clips"); os.makedirs(clips)
+        config = os.path.join(tmp, "channels.json")
+        with open(config, "w") as fh:
+            json.dump({"channels": [{"id": "rx1-146520", "token": "t",
+                                     "frequency": "146520000", "serial": "1"}]}, fh)
+
+        written = []
+        real_put, real_capture = transcriber.ClipQueue.put, transcriber.start_capture
+        transcriber.ClipQueue.put = lambda self, p: written.append(p)
+        transcriber.start_capture = lambda ch, c, sp_: sp.Popen(
+            emitter(script), stdout=sp.PIPE, stderr=sp.DEVNULL)
+        died = []
+        try:
+            def run():
+                try:
+                    transcriber.main(["--channel", "rx1-146520", "--config", config,
+                                      "--spool", tmp, "--clips", clips,
+                                      "--whisper", stub_whisper(tmp, "x"),
+                                      "--models", models])
+                except BaseException as e:                   # noqa: BLE001
+                    died.append(repr(e))
+            t = threading.Thread(target=run, daemon=True); t.start()
+            _time.sleep(seconds)
+            if died:
+                FAILURES.append("capture loop died: %s" % died[0])
+        finally:
+            transcriber.ClipQueue.put = real_put
+            transcriber.start_capture = real_capture
+        return [transcriber.clip_seconds(p) for p in written if os.path.exists(p)]
 
 
-def test_squelch_waits_before_judging():
-    """With no history it must not open on whatever the receiver was doing at startup."""
-    print("Squelch — startup")
-    sq = transcriber.Squelch()
-    opened = feed_seconds(sq, 8000, 0.2)
-    check("silent until it has learned the floor", any(opened), False)
+def test_a_pause_in_speech_does_not_end_the_transmission():
+    """The regression that reached the air.
+
+    An audio-level squelch ran on top of rtl_fm's, and since rtl_fm emits nothing while
+    closed, the only audio it ever saw was speech — so the "noise floor" it computed was
+    a speech level. It then dropped anything quieter, which meant the opening syllables
+    of every over, and cut the over in two at the first pause. A station saying
+    "monitoring channel, K6DRK" was logged as "ring channel K6DRK." followed by a 1.2s
+    fragment whisper could make nothing of.
+
+    So: quiet audio is still audio, and only a gap in the BYTES ends a transmission.
+    """
+    print("segmentation — a quiet passage mid-over")
+    #        (seconds, emitting?, level)
+    got = capture_clips([(1.0, True, 3000),     # speech
+                         (0.6, True, 40),       # a pause — carrier still up, barely audible
+                         (1.0, True, 3000),     # more speech
+                         (1.5, False, 0),       # carrier drops: THIS ends it
+                         (1.0, True, 3000),     # a second over
+                         (1.5, False, 0)],
+                        seconds=7.0)
+    check("two transmissions, not four", len(got), 2)
+    if len(got) == 2:
+        # ~2.6s means the quiet middle survived and nothing was trimmed off the front.
+        check("the first keeps its quiet middle", 2.2 <= got[0] <= 3.0, True)
+        check("and the second stands alone", 0.7 <= got[1] <= 1.5, True)
 
 
-def test_block_rms():
-    print("block_rms")
-    quiet = struct.pack(f"<{transcriber.BLOCK_SAMPLES}h", *([0] * transcriber.BLOCK_SAMPLES))
-    loud = struct.pack(f"<{transcriber.BLOCK_SAMPLES}h", *([8000] * transcriber.BLOCK_SAMPLES))
-    check("silence is 0", transcriber.block_rms(quiet), 0.0)
-    check("constant 8000 reads 8000", round(transcriber.block_rms(loud)), 8000)
-    check("an empty block is 0", transcriber.block_rms(b""), 0.0)
+def test_a_long_gap_separates_two_overs():
+    print("segmentation — two overs")
+    got = capture_clips([(1.0, True, 3000), (1.5, False, 0),
+                         (1.0, True, 3000), (1.5, False, 0)],
+                        seconds=6.0)
+    check("two clips", len(got), 2)
+
+
+def test_a_single_over_is_one_clip():
+    print("segmentation — one over")
+    got = capture_clips([(2.0, True, 3000), (1.5, False, 0)], seconds=4.5)
+    check("one clip", len(got), 1)
+    if got:
+        check("of about the right length", 1.7 <= got[0] <= 2.4, True)
 
 
 def test_clean_strips_sound_effects():
@@ -763,7 +803,6 @@ def test_unknown_channel_is_fatal():
 if __name__ == "__main__":
     for fn in [
         test_worth_logging, test_clean_strips_sound_effects, test_clip_seconds,
-        test_block_rms, test_squelch_finds_its_own_floor,
         test_transcription_runs_off_the_capture_thread,
         test_backlog_is_bounded_by_size_not_just_count,
         test_start_capture_builds_a_command_and_keeps_the_two_directories_straight,
@@ -771,7 +810,9 @@ if __name__ == "__main__":
         test_calibration_finds_the_lowest_level_that_gates,
         test_calibration_is_not_fooled_by_a_transmission,
         test_calibration_gives_up_rather_than_guessing,
-        test_squelch_ignores_a_brief_pause, test_squelch_waits_before_judging,
+        test_a_pause_in_speech_does_not_end_the_transmission,
+        test_a_long_gap_separates_two_overs,
+        test_a_single_over_is_one_clip,
         test_outbox_order_and_retry, test_outbox_drops_corrupt_entries,
         test_posting, test_unreachable_server_is_retried,
         test_a_clip_is_queued_once_not_once_per_loop,
