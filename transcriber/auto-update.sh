@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Transcriber nightly update.
+# Transcriber nightly update — v1.0.
 #
 # Downloads files.tar.gz and the channel list from marsaprs.org and applies both.
 # Run daily via cron. Safe to run manually at any time.
@@ -41,6 +41,18 @@ rsync -a --ignore-times "$TMP/bin/"     /opt/transcriber/bin/
 rsync -a --ignore-times "$TMP/systemd/" /etc/systemd/system/
 [ -d "$TMP/udev" ] && rsync -a --ignore-times "$TMP/udev/" /etc/udev/rules.d/ || true
 chmod +x /opt/transcriber/bin/*.py
+
+# Stamp the running version somewhere greppable, the way an iGate stamps
+# IGATE_VERSION into its dashboard. Read from the worker itself so there is one source
+# of truth and this cannot drift from what is actually installed.
+#
+# mkdir first: with set -e, the redirect below would abort the whole update on a device
+# where install.sh has not run yet, which is precisely the device you would be running
+# this on by hand to fix.
+mkdir -p /etc/transcriber
+/opt/transcriber/bin/transcriber.py --version 2>/dev/null \
+    | awk '{print $2}' > /etc/transcriber/version || true
+log "running version $(cat /etc/transcriber/version 2>/dev/null || echo unknown)"
 
 # ── channels ─────────────────────────────────────────────────────────────────
 # Written by the channel manager on the server; this device fetches only its own.

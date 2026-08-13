@@ -193,11 +193,12 @@
 <div id="content">
 <h1 id="mars-aprs-system">MARS APRS System</h1>
 <p><strong>Author:</strong> Doug Kaye (K6DRK) · <strong>Copyright:</strong> 2026 Doug Kaye. All Rights Reserved.</p>
-<p><strong>Version:</strong> Server &amp; Displays (v1.22.1); Mobile App (v1.22.1); iGates (v5.1)</p>
+<p><strong>Version:</strong> Server &amp; Displays (v1.22.1); Mobile App (v1.22.1); iGates (v5.2); Transcribers (v1.0) — see <a href="#versioning">Versioning</a></p>
 <hr />
 <h2 id="table-of-contents">Table of Contents</h2>
 <ol>
 <li><a href="#overview">Overview</a></li>
+<li><a href="#versioning">Versioning</a></li>
 <li><a href="#system-architecture">System Architecture</a></li>
 <li><a href="#netbird-vpn">NetBird VPN</a></li>
 <li><a href="#igates-v52">iGates (v5.2)</a></li>
@@ -252,6 +253,59 @@ other locations that show the live map in fullscreen. Anyone is free to connect 
 <p>All devices are connected over a NetBird WireGuard VPN, which provides remote SSH access,
 device health monitoring, and nightly configuration distribution — without requiring port
 forwarding or static public IP addresses.</p>
+<h3 id="versioning">Versioning</h3>
+<p>Four version numbers, which look like drift and are not. The rule is that <strong>things
+sharing a number are things that ship together</strong>, and everything else carries its own.</p>
+<table>
+<thead>
+<tr>
+<th>What</th>
+<th>Version</th>
+<th>Cadence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Server, Display Pis, web map, mobile apps</td>
+<td><code>1.22.1+42</code></td>
+<td>One release. They are one API contract and one deploy.</td>
+</tr>
+<tr>
+<td>iGates</td>
+<td><code>5.2</code></td>
+<td>Independent. Its own image, its own nightly update.</td>
+</tr>
+<tr>
+<td>Transcribers</td>
+<td><code>1.0</code></td>
+<td>Independent, and new.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Server, web and mobile share a number</strong> because they genuinely move together: a
+release changes <code>WEB_VERSION</code> in <code>map/index.php</code>, <code>version</code> in <code>app/pubspec.yaml</code>, and
+<code>map/app_version.php</code> in one go. The <code>+N</code> build number is required by App Store Connect
+to increase on every upload, so it advances faster than the marketing version and is
+bumped on every build rather than every release.</p>
+<p><strong>iGates keep their own line, and should not be folded in.</strong> The major version is a
+migration boundary — <code>migrate-to-v5.sh</code> exists because v4→v5 broke the device's on-disk
+layout — and renumbering to match the server would discard that meaning. More
+practically, an iGate does not change when the web app does. Dragging it to 1.23, 1.24,
+1.25 while no iGate file is touched would stop the number answering the only question
+anyone asks of it: which build is on that Pi in the field. <code>IGATE_VERSION</code> in
+<code>igate/auto-update.sh</code> is the source of truth, and each gate stamps it into its own
+dashboard so it reports what it is actually running.</p>
+<p><strong>Transcribers start at 1.0</strong> for the same reason, and because starting a brand-new
+device at 1.22.1 would assert twenty-two releases that never happened. <code>VERSION</code> in
+<code>transcriber/bin/transcriber.py</code> is the source of truth; <code>auto-update.sh</code> writes it to
+<code>/etc/transcriber/version</code> so a device can be identified without running anything.</p>
+<p><strong>None of these govern compatibility.</strong> That is <code>API_VERSION</code> / <code>API_MIN_CLIENT</code> in
+<code>map/index.php:31</code>, which is the wire-format contract and is deliberately decoupled from
+all of the above — a client is supported while the server's <code>min_client</code> is at or below
+the client's built-in version, regardless of what any marketing number says. Bump
+<code>API_VERSION</code> only on a breaking change to a response shape; additive fields do not
+require it. Version numbers are labels for people; this pair is the one the software
+reads.</p>
 <hr />
 <h2 id="system-architecture">System Architecture</h2>
 <pre><code>APRS Radio (144.39 MHz)

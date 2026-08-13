@@ -34,6 +34,12 @@ import urllib.error
 import urllib.request
 import wave
 
+# The Transcriber's own line, independent of the server/app version and of the iGates'
+# 5.x — it is a separate device on its own cadence, and it is new. See Versioning in the
+# README. auto-update.sh copies this to /etc/transcriber/version so a device can be
+# identified without running anything.
+VERSION = "1.0"
+
 CONFIG = "/etc/transcriber/channels.json"
 SPOOL = "/var/spool/transcriber"
 SERVER = "https://marsaprs.org"
@@ -283,6 +289,7 @@ def main(argv=None):
                         "This is how the pipeline is tested without an SDR.")
     p.add_argument("--once", action="store_true", help="process what is waiting, then exit")
     p.add_argument("-v", "--verbose", action="store_true")
+    p.add_argument("--version", action="version", version=f"transcriber {VERSION}")
     args = p.parse_args(argv)
 
     logging.basicConfig(
@@ -307,8 +314,10 @@ def main(argv=None):
     rtl = sox = None
     if not args.spool_only:
         rtl, sox = start_capture(channel, spool)
-        log.info("listening on %s (%s), dongle %s", channel.frequency, channel.label,
-                 channel.serial)
+        # Version first, so `journalctl -u transcriber@… ` answers "what is this running"
+        # without anyone having to go and look.
+        log.info("transcriber %s — listening on %s (%s), dongle %s, model %s",
+                 VERSION, channel.frequency, channel.label, channel.serial, channel.model)
 
     running = True
 

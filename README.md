@@ -2,13 +2,14 @@
 
 **Author:** Doug Kaye (K6DRK) · **Copyright:** 2026 Doug Kaye. All Rights Reserved.
 
-**Version:** Server & Displays (v1.22.1); Mobile App (v1.22.1); iGates (v5.1)
+**Version:** Server & Displays (v1.22.1); Mobile App (v1.22.1); iGates (v5.2); Transcribers (v1.0) — see [Versioning](#versioning)
 
 ---
 
 ## Table of Contents
 
 1. [Overview](#overview)
+   - [Versioning](#versioning)
 2. [System Architecture](#system-architecture)
 3. [NetBird VPN](#netbird-vpn)
 4. [iGates (v5.2)](#igates-v52)
@@ -60,6 +61,45 @@ other locations that show the live map in fullscreen. Anyone is free to connect 
 All devices are connected over a NetBird WireGuard VPN, which provides remote SSH access,
 device health monitoring, and nightly configuration distribution — without requiring port
 forwarding or static public IP addresses.
+
+### Versioning
+
+Four version numbers, which look like drift and are not. The rule is that **things
+sharing a number are things that ship together**, and everything else carries its own.
+
+| What | Version | Cadence |
+|------|---------|---------|
+| Server, Display Pis, web map, mobile apps | `1.22.1+42` | One release. They are one API contract and one deploy. |
+| iGates | `5.2` | Independent. Its own image, its own nightly update. |
+| Transcribers | `1.0` | Independent, and new. |
+
+**Server, web and mobile share a number** because they genuinely move together: a
+release changes `WEB_VERSION` in `map/index.php`, `version` in `app/pubspec.yaml`, and
+`map/app_version.php` in one go. The `+N` build number is required by App Store Connect
+to increase on every upload, so it advances faster than the marketing version and is
+bumped on every build rather than every release.
+
+**iGates keep their own line, and should not be folded in.** The major version is a
+migration boundary — `migrate-to-v5.sh` exists because v4→v5 broke the device's on-disk
+layout — and renumbering to match the server would discard that meaning. More
+practically, an iGate does not change when the web app does. Dragging it to 1.23, 1.24,
+1.25 while no iGate file is touched would stop the number answering the only question
+anyone asks of it: which build is on that Pi in the field. `IGATE_VERSION` in
+`igate/auto-update.sh` is the source of truth, and each gate stamps it into its own
+dashboard so it reports what it is actually running.
+
+**Transcribers start at 1.0** for the same reason, and because starting a brand-new
+device at 1.22.1 would assert twenty-two releases that never happened. `VERSION` in
+`transcriber/bin/transcriber.py` is the source of truth; `auto-update.sh` writes it to
+`/etc/transcriber/version` so a device can be identified without running anything.
+
+**None of these govern compatibility.** That is `API_VERSION` / `API_MIN_CLIENT` in
+`map/index.php:31`, which is the wire-format contract and is deliberately decoupled from
+all of the above — a client is supported while the server's `min_client` is at or below
+the client's built-in version, regardless of what any marketing number says. Bump
+`API_VERSION` only on a breaking change to a response shape; additive fields do not
+require it. Version numbers are labels for people; this pair is the one the software
+reads.
 
 ---
 

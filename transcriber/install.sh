@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Transcriber one-time install — Raspberry Pi 4.
+# Transcriber v1.0 one-time install — Raspberry Pi 4.
 #
 # Turns a fresh Pi OS Lite install into a Transcriber: SDR tools, whisper.cpp built
 # for this CPU, the channel worker, and a nightly update. Idempotent — safe to re-run.
@@ -26,7 +26,7 @@ MODELS="/opt/transcriber/models"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-echo "=== Transcriber install ==="
+echo "=== Transcriber v1.0 install ==="
 
 # ── packages ─────────────────────────────────────────────────────────────────
 # rtl-sdr gives rtl_fm and rtl_eeprom; sox does the silence splitting; the build
