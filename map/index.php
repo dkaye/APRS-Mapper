@@ -15,7 +15,7 @@
  *   ?config  Map/background/course/tracker config from config.yaml (ETag-cached)
  */
 
-define('WEB_VERSION', '1.22.1+42');
+define('WEB_VERSION', '1.22.1+43');
 
 // ── Client/server API contract version ────────────────────────────────────────
 // Advertised in the ?json and ?config responses so mobile apps can detect an
@@ -2349,7 +2349,7 @@ body.msg-window #msg-panel-grip { display: none; }
 			<button id="qs-close">&times;</button>
 		</div>
 		<div id="qs-body">
-			<div class="qs-ver">Version <?= WEB_VERSION ?> &middot; August 10, 2026</div>
+			<div class="qs-ver">Version <?= WEB_VERSION ?> &middot; August 13, 2026</div>
 			<div class="qs-note">You can reopen this guide anytime from <strong>Help &rarr; Quick Start</strong>.</div>
 
 			<div class="qs-sec">
@@ -5959,7 +5959,10 @@ function _toggleViewAll() {
 }
 async function _loadAllView() {
 	const scroll = document.getElementById('msg-allview-scroll');
-	scroll.innerHTML = '<div id="msg-allview-empty">Loading…</div>';
+	// Only on a genuine first load. This now runs whenever a log entry arrives, and
+	// blanking the feed to "Loading…" every time one does would make the view unreadable
+	// on a busy channel.
+	if (!_allViewRows.length) scroll.innerHTML = '<div id="msg-allview-empty">Loading…</div>';
 	try {
 		const d = await _msgApi('history');
 		if (d.error) { scroll.innerHTML = '<div id="msg-allview-empty">' + _esc(d.error) + '</div>'; return; }
@@ -5980,6 +5983,11 @@ function _renderAllView() {
 		document.getElementById('msg-allview-count').textContent = '';
 		return;
 	}
+	// Stick to the bottom only if that is where they already were. Now that entries
+	// arrive on their own, always scrolling would yank somebody reading back through the
+	// morning down to the newest line every time the radio was keyed.
+	const atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 60
+	                 || !scroll.querySelector('.msg-all-item');
 	scroll.innerHTML = rows.map(m => {
 		const to = m.broadcast ? 'All Trackers' : (m.to_label || '');
 		const loc = (typeof m.lat === 'number' && typeof m.lon === 'number')
@@ -6000,7 +6008,7 @@ function _renderAllView() {
 		if (m) _showMsgLocation(m);
 	}));
 	document.getElementById('msg-allview-count').textContent = rows.length + (rows.length === 1 ? ' message' : ' messages') + (q ? ' matching' : '');
-	scroll.scrollTop = scroll.scrollHeight;   // newest at the bottom
+	if (atBottom) scroll.scrollTop = scroll.scrollHeight;   // newest at the bottom
 }
 // Open the conversation a View-All message belongs to, then leave View All so the
 // operator lands in the thread and can reply. If they aren't a member of that
@@ -6322,22 +6330,38 @@ async function _poll() {
  *  without anyone typing.
  */
 async function _pollLogThread() {
-	if (_openConvId == null) return;
-	const c = _convs.get(_openConvId);
-	if (!c || c.kind !== 'log') return;
+	// The log thread, whether or not it is the one on screen. The first version of this
+	// only looked when the log thread was OPEN, which left All Messages — the view most
+	// likely to be up on a second monitor during a net — never updating for a Transcriber
+	// entry at all. Everything arrived; nothing appeared until the panel was reopened.
+	let c = null;
+	for (const v of _convs.values()) if (v.kind === 'log') { c = v; break; }
+	if (!c) return;
+
+	// Only ask when something on screen would show the answer.
+	const open = (_openConvId === c.id);
+	if (!open && !_msgViewAll) return;
+
+	// since_id from what we already hold, so this asks for new entries only. The log is
+	// the one conversation that grows all day without anyone typing, and re-pulling it
+	// every five seconds would be the wrong shape of query entirely. c.last_id covers the
+	// case where the thread has never been opened, so View All does not drag the whole
+	// history down on its first poll.
 	const msgs = c.messages || [];
-	const since = msgs.length ? msgs[msgs.length - 1].id : 0;
-	const d = await _msgApi('thread', {body:{conversation_id: _openConvId, since_id: since}});
+	const since = msgs.length ? msgs[msgs.length - 1].id : (c.last_id || 0);
+	const d = await _msgApi('thread', {body:{conversation_id: c.id, since_id: since}});
 	const fresh = (d && d.messages) || [];
 	if (!fresh.length) return;
-	c.messages = msgs.concat(fresh);
+
+	if (msgs.length || open) c.messages = msgs.concat(fresh);
 	c.last_id = Math.max(c.last_id || 0, fresh[fresh.length - 1].id);
 	const last = fresh[fresh.length - 1];
 	c.preview = {text: last.text, ts: last.ts, from_id: last.from_id,
 	             from_name: last.from_name, from_short: last.from_short,
 	             self: last.from_id === _msgMeId};
-	_convs.set(_openConvId, c);
-	for (const m of fresh) { _msgSeen.add(m.id); if (_openConvId === c.id) _appendBubble(c, m); }
+	_convs.set(c.id, c);
+	for (const m of fresh) { _msgSeen.add(m.id); if (open) _appendBubble(c, m); }
+	if (_msgViewAll) _loadAllView();
 	if (_msgPanelOpen) _renderConvList();
 }
 
