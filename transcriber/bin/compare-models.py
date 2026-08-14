@@ -34,6 +34,12 @@ import transcriber as tr  # noqa: E402
 
 MODELS = [("Fast", "ggml-tiny.en.bin"), ("Careful", "ggml-base.en.bin")]
 
+# While this exists, auto-update leaves the channels alone. Without it the 60-second
+# config poll would start the channel again within a minute of this stopping it, and the
+# two would then fight over the one dongle for the rest of the run. Same idea as the
+# iGate's /tmp/sdr-usb-test.pause, and the same reason.
+PAUSE = "/tmp/transcriber-bench.pause"
+
 
 def unit_for(channel_id):
     return f"transcriber@{channel_id}.service"
@@ -98,6 +104,8 @@ def main():
           f"({int(channel.frequency)/1e6:.4f} MHz)")
     print(f"Stopping {unit} — there is one dongle, so the channel cannot listen "
           f"while this does.")
+    with open(PAUSE, "w") as fh:
+        fh.write(f"{unit}\n")
     systemctl("stop", unit)
     time.sleep(2)
 
@@ -137,6 +145,10 @@ def main():
     except KeyboardInterrupt:
         print("\nstopped")
     finally:
+        try:
+            os.unlink(PAUSE)
+        except OSError:
+            pass
         systemctl("start", unit)
         print(f"{unit} restarted.")
 

@@ -234,6 +234,17 @@ for id in $HAVE; do
     esac
 done
 
+# A bench tool may be holding the dongle on purpose — compare-models.py stops a channel
+# so it can listen with both models. Starting it again underneath would leave the two
+# fighting over one dongle for however long the test runs. The flag is ignored once it is
+# older than eight hours, so a tool that died without cleaning up cannot keep a receiver
+# off the air indefinitely.
+BENCH=/tmp/transcriber-bench.pause
+if [ -f "$BENCH" ] && [ -z "$(find "$BENCH" -mmin +480 2>/dev/null)" ]; then
+    FORCE_LOG=1 log "a bench test is holding the dongle ($(cat "$BENCH" 2>/dev/null)); leaving channels alone"
+    exit 0
+fi
+
 # Restart only when there is a reason to. A poller running every minute must leave a
 # working receiver alone; restarting it on a schedule would mean re-measuring the squelch
 # and missing whatever was said during the gap, sixty times an hour, forever.
