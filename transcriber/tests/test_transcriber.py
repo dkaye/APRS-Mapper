@@ -267,6 +267,24 @@ def test_calibration_is_not_fooled_by_a_transmission():
     check("still picks the right level", chosen, 20)
 
 
+def test_calibration_refuses_to_measure_a_dead_input():
+    """The failure that shipped, and the shape of it is worth remembering: rtl_fm could
+    not open the dongle — a restart raced its release — so every sample came back empty,
+    empty read as "beautifully quiet", and the scan walked the answer down to the lowest
+    candidate. The channel then ran with a squelch of 0, which in rtl_fm is no gate at
+    all, recorded continuous hiss, and filed a steady stream of clips whisper had nothing
+    to say about.
+
+    With the squelch off a working receiver MUST emit at the full rate. If it does not,
+    there is nothing to measure and no answer worth caching."""
+    print("calibration — the receiver is not running")
+    check("returns None rather than a number",
+          transcriber.choose_squelch(lambda level, secs: 0), None)
+
+    # And 0 is not a candidate any more: it is the absence of a squelch, not a setting.
+    check("0 is not offered as an answer", 0 in transcriber.SQUELCH_CANDIDATES, False)
+
+
 def test_calibration_gives_up_rather_than_guessing():
     """If nothing shuts it up, say so — the caller falls back to the default instead of
     returning a made-up number."""
@@ -817,6 +835,7 @@ if __name__ == "__main__":
         test_clips_go_to_ram_but_never_at_the_cost_of_listening,
         test_calibration_finds_the_lowest_level_that_gates,
         test_calibration_is_not_fooled_by_a_transmission,
+        test_calibration_refuses_to_measure_a_dead_input,
         test_calibration_gives_up_rather_than_guessing,
         test_a_pause_in_speech_does_not_end_the_transmission,
         test_a_long_gap_separates_two_overs,

@@ -416,7 +416,9 @@ def write_clip(directory, audio, seq):
 # noise — the most sensitive setting that still gates, rather than a safe-but-deaf one.
 # The step is the margin: landing on 30 means 20 let noise through, so the true edge is
 # between them and there is up to a step of headroom against drift.
-SQUELCH_CANDIDATES = list(range(0, 201, 10))
+# From 10, not 0. Zero is not a squelch level — it is the absence of one, and rtl_fm
+# with -l 0 gates nothing at all. It was in this list, and a measurement returned it.
+SQUELCH_CANDIDATES = list(range(10, 201, 10))
 QUIET_FRACTION = 0.05        # under 5% of the full sample rate counts as "shut"
 CALIBRATION_MAX_AGE = 86400  # re-measure daily; a site does not change hour to hour
 
@@ -441,6 +443,20 @@ def choose_squelch(sample, candidates=SQUELCH_CANDIDATES, quiet=QUIET_FRACTION):
         # cached for a day.
         return (sample(level, 2.0) < expected * 2.0 * quiet
                 and sample(level, 3.0) < expected * 3.0 * quiet)
+
+    # Is the receiver producing anything at all? With the squelch off, rtl_fm cannot gate
+    # and must emit at the full rate; if it does not, it is not running — the dongle is
+    # busy, or has fallen off the USB bus, and every sample below will read as silence.
+    #
+    # Without this check that silence is indistinguishable from a beautifully quiet site,
+    # and the scan walks the answer down to the lowest candidate. It happened: a restart
+    # raced rtl_fm's release of the dongle, every sample came back empty, and the measured
+    # answer was 0 — no gating whatsoever, so the channel then recorded continuous hiss
+    # and filed a steady stream of clips that whisper had nothing to say about.
+    if shut(0):
+        log.warning("receiver produced no audio even with the squelch off — "
+                    "not measuring against a dead input")
+        return None
 
     for i, level in enumerate(candidates):
         if not shut(level):
@@ -505,9 +521,11 @@ def calibrated_squelch(channel, spool):
     log.info("calibrating squelch — listening for this site's noise floor")
     level = choose_squelch(lambda lv, secs: _sample_rtl(channel, lv, secs))
     if level is None:
-        # Nothing shut it up, so either the band is genuinely busy or something is
-        # wrong. Carry on at the default rather than refusing to listen at all.
-        log.warning("could not find a quiet squelch level; using %s", DEFAULT_SQUELCH)
+        # Either nothing shut it up — a genuinely busy band — or the receiver gave us
+        # nothing to measure. Carry on at the default rather than refusing to listen, and
+        # do not cache it: a guess must be re-examined on the next restart, where a
+        # measurement is trusted for a day.
+        log.warning("could not measure a squelch level; using %s for now", DEFAULT_SQUELCH)
         return DEFAULT_SQUELCH
 
     log.info("squelch %s — measured", level)
