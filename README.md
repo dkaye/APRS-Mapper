@@ -1312,6 +1312,7 @@ poor trade. The format is what the poller prints verbatim, so the two must chang
 |------|---------|
 | `transcriber/bin/transcriber.py` | The per-channel worker (stdlib only, like `isproxy.py`) |
 | `transcriber/bin/stats-listener.py` | Answers the NetBird monitor's UDP:1235 health poll |
+| `transcriber/bin/compare-models.py` | Bench tool: Fast vs Careful over identical audio |
 | `transcriber/systemd/transcriber@.service` | Template unit — one instance per channel |
 | `transcriber/install.sh` | One-time build: SDR tools, `whisper.cpp` compiled for this CPU, models |
 | `transcriber/home/configure.sh` | Site setup: hostname, NetBird, device token, dongle serials |
@@ -1438,6 +1439,23 @@ timeout 20 rtl_fm -d <serial> -f <hz> -M fm -s 200000 -r 16000 -E deemp -l 0 - >
 A ratio of loudest to quietest half-second near **1** is steady hiss — nothing is being
 received. Speech gives a ratio of **5 or more**. whisper describing the file as
 `(machine whirring)` or `(buzzing)` is it telling you the same thing.
+
+**Comparing Fast against Careful.** `compare-models.py` captures each transmission once
+and runs both models over that same file:
+
+```
+sudo /opt/transcriber/bin/compare-models.py --channel <id> --clips 10 --minutes 20
+```
+
+One capture, not two channels. Two channels on two dongles hear slightly different
+things, so any difference in the text would be confounded with a difference in what
+arrived — which is the one thing the comparison is supposed to hold constant. It borrows
+the worker's own capture path (same squelch, same gap segmentation, same filters), posts
+nothing to the log, marks which lines the filters would have dropped, and reports each
+model's speed against real time. Above 1.0x a model cannot keep up with a busy net.
+
+It stops the channel while it runs, because there is one dongle per channel, and starts
+it again however it exits.
 
 **Key files on a Transcriber Pi:**
 
