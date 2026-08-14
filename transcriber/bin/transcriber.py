@@ -330,6 +330,16 @@ GAP_SECONDS = 0.8
 # How often to say whether anything has been heard.
 REPORT_SECONDS = 1800
 
+# How long total silence may last before the receiver itself is re-checked.
+#
+# A closed squelch and a wedged tuner produce exactly the same thing — nothing — so
+# silence alone proves neither. After this long with no samples at all, the channel
+# restarts, which re-runs the liveness probe below and turns the question into an answer.
+# An hour, because on a quiet frequency the cost is a three-second gap once an hour, and
+# on a dead receiver it is the difference between finding out today and finding out when
+# somebody asks why the log is empty.
+DEAF_CHECK_SECONDS = 3600
+
 BLOCK_MS = 50                                        # granularity of the read loop
 BLOCK_SAMPLES = SAMPLE_RATE * BLOCK_MS // 1000
 BLOCK_BYTES = BLOCK_SAMPLES * 2
@@ -535,6 +545,25 @@ def calibrated_squelch(channel, spool):
     except OSError:
         pass
     return level
+
+
+def receiver_alive(channel):
+    """Does the dongle actually produce samples?
+
+    With the squelch off rtl_fm cannot gate anything, so a working receiver must emit at
+    close to the full rate. Nothing means the tuner is not delivering — and it does fail
+    this way, silently, while every command still reports success: rtl_fm prints "Tuned
+    to 146700000 Hz", allocates its buffers, announces its sample rate and then produces
+    not one byte. rtl_test says "[R82XX] PLL not locked!" and exits 0.
+
+    Worth two seconds at every start, because the alternative is a channel that sits there
+    logging "no transmissions in the last 30 minutes" on a frequency somebody is listening
+    to on a handheld. That has now happened twice, and both times the receiver looked
+    perfectly healthy from every angle except this one.
+    """
+    got = _sample_rtl(channel, 0, 2.0)
+    want = SAMPLE_RATE * 2 * 2.0 * 0.25       # a quarter of full rate is generous
+    return got >= want
 
 
 def start_capture(channel, clips, spool):
@@ -846,6 +875,14 @@ def main(argv=None):
 
     rtl = None
     if not args.spool_only:
+        # Before anything else, prove the dongle is producing samples. A tuner that has
+        # wedged is indistinguishable from a quiet frequency once capture is running, so
+        # this is the only cheap moment to ask.
+        if not receiver_alive(channel):
+            log.error("the receiver is not producing samples — the tuner has not locked. "
+                      "Power-cycle the dongle (unplug it, or re-bind its USB port) and "
+                      "check it is not overheating or on a long/thin extension lead.")
+            return 1
         rtl = start_capture(channel, clips, spool)
         # Version first, so `journalctl -u transcriber@… ` answers "what is this running"
         # without anyone having to go and look.
@@ -885,6 +922,7 @@ def main(argv=None):
     last_data = None             # when samples last arrived; None between overs
     max_bytes = MAX_CLIP_SECONDS * SAMPLE_RATE * 2
     last_report, heard = time.time(), 0
+    last_any_data = time.time()   # for the deaf-receiver check, not per-transmission
 
     try:
         while running:
@@ -911,6 +949,7 @@ def main(argv=None):
                         # fragment whisper could make nothing of.
                         audio += chunk
                         last_data = now
+                        last_any_data = now
 
                 # The gap IS the end of the transmission.
                 if audio and last_data is not None and now - last_data >= GAP_SECONDS:
@@ -925,6 +964,14 @@ def main(argv=None):
                     seq += 1
                     enqueue(write_clip(clips, bytes(audio), seq))
                     audio.clear()
+
+                # Total silence for long enough is not proof of a quiet frequency — see
+                # DEAF_CHECK_SECONDS. Exit cleanly and let systemd start us again; the
+                # liveness probe at startup is what actually decides.
+                if now - last_any_data > DEAF_CHECK_SECONDS:
+                    log.info("no audio at all for %d minutes — restarting to re-check "
+                             "the receiver", DEAF_CHECK_SECONDS // 60)
+                    return 0
 
                 # A periodic sign of life. With no audio level left to report, the useful
                 # question is whether anything has been heard at all — a channel that has

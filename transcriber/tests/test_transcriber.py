@@ -267,6 +267,39 @@ def test_calibration_is_not_fooled_by_a_transmission():
     check("still picks the right level", chosen, 20)
 
 
+def test_a_wedged_tuner_is_not_mistaken_for_a_quiet_frequency():
+    """The failure that cost two evenings.
+
+    An RTL-SDR's tuner can stop locking while every command still reports success:
+    rtl_fm prints "Tuned to 146700000 Hz", allocates its buffers, announces its sample
+    rate, and then produces not one byte. rtl_test says "[R82XX] PLL not locked!" and
+    exits 0. From the web page, from systemctl, and from the channel's own log it is
+    indistinguishable from a frequency nobody is using — the journal just repeats "no
+    transmissions in the last 30 minutes" while somebody listens to the same repeater on
+    a handheld.
+
+    With the squelch off there is nothing left to gate, so a working receiver must
+    deliver. That is the one question that separates the two, and it costs two seconds.
+    """
+    print("wedged tuner")
+    ch = transcriber.Channel({"id": "rx", "frequency": "146700000", "serial": "1"})
+
+    real = transcriber._sample_rtl
+    try:
+        transcriber._sample_rtl = lambda c, level, secs: 0
+        check("a receiver producing nothing is not alive", transcriber.receiver_alive(ch), False)
+
+        # Full rate at squelch 0 is what a healthy dongle does.
+        transcriber._sample_rtl = lambda c, level, secs: int(transcriber.SAMPLE_RATE * 2 * secs)
+        check("a receiver at full rate is alive", transcriber.receiver_alive(ch), True)
+
+        # A trickle is not enough: a tuner half-working is still a tuner to power-cycle.
+        transcriber._sample_rtl = lambda c, level, secs: int(transcriber.SAMPLE_RATE * 2 * secs * 0.05)
+        check("a trickle does not count", transcriber.receiver_alive(ch), False)
+    finally:
+        transcriber._sample_rtl = real
+
+
 def test_calibration_refuses_to_measure_a_dead_input():
     """The failure that shipped, and the shape of it is worth remembering: rtl_fm could
     not open the dongle — a restart raced its release — so every sample came back empty,
@@ -330,6 +363,9 @@ def capture_clips(script, seconds):
 
         written = []
         real_put, real_capture = transcriber.ClipQueue.put, transcriber.start_capture
+        # The liveness probe opens the real dongle, which these tests do not have. It is
+        # covered on its own in test_a_wedged_tuner_is_not_mistaken_for_a_quiet_frequency.
+        real_alive, transcriber.receiver_alive = transcriber.receiver_alive, lambda ch: True
         transcriber.ClipQueue.put = lambda self, p: written.append(p)
         transcriber.start_capture = lambda ch, c, sp_: sp.Popen(
             emitter(script), stdout=sp.PIPE, stderr=sp.DEVNULL)
@@ -350,6 +386,7 @@ def capture_clips(script, seconds):
         finally:
             transcriber.ClipQueue.put = real_put
             transcriber.start_capture = real_capture
+            transcriber.receiver_alive = real_alive
         return [transcriber.clip_seconds(p) for p in written if os.path.exists(p)]
 
 
@@ -658,6 +695,7 @@ def test_a_clip_is_queued_once_not_once_per_loop():
                                                      real_settled(d, **kw))[1]
         transcriber.ClipQueue.put = lambda self, p: queued.append(p)
         real_capture, transcriber.start_capture = transcriber.start_capture, no_capture
+        real_alive, transcriber.receiver_alive = transcriber.receiver_alive, lambda ch: True
         died = []
         try:
             def run():
@@ -693,6 +731,7 @@ def test_a_clip_is_queued_once_not_once_per_loop():
             transcriber.settled_clips = real_settled
             transcriber.ClipQueue.put = real_put
             transcriber.start_capture = real_capture
+            transcriber.receiver_alive = real_alive
 
         check("the directory is never scanned with a radio attached", scans, [])
         check("and nothing is queued from it", queued, [])
@@ -835,6 +874,7 @@ if __name__ == "__main__":
         test_clips_go_to_ram_but_never_at_the_cost_of_listening,
         test_calibration_finds_the_lowest_level_that_gates,
         test_calibration_is_not_fooled_by_a_transmission,
+        test_a_wedged_tuner_is_not_mistaken_for_a_quiet_frequency,
         test_calibration_refuses_to_measure_a_dead_input,
         test_calibration_gives_up_rather_than_guessing,
         test_a_pause_in_speech_does_not_end_the_transmission,

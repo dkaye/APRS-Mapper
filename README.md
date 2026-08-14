@@ -1390,7 +1390,33 @@ could not measure a squelch level; using 25 for now  ← the receiver gave it no
 An override carried over from a different frequency is a common cause of a deaf channel:
 clear the Squelch box in the manager and let it measure the site it is actually on.
 
-**4. Is a signal reaching the SDR at all?** Two tests, in this order.
+**4. Has the tuner wedged?** An RTL-SDR can stop locking while every command still
+reports success: `rtl_fm` prints "Tuned to 146700000 Hz", allocates its buffers,
+announces its sample rate, and produces not one byte. `rtl_test` says
+`[R82XX] PLL not locked!` and exits 0. From the web page, from `systemctl` and from the
+channel's own log it is identical to a frequency nobody is using.
+
+The channel now probes for this at every start — with the squelch off a working receiver
+must deliver, so nothing means the tuner is not — and says so:
+
+```
+the receiver is not producing samples — the tuner has not locked.
+```
+
+It also restarts itself after an hour of total silence, so a wedge that happens *while*
+running becomes visible within the hour rather than whenever somebody asks why the log is
+empty. To recover, power-cycle the dongle: unplug it, or re-bind its USB port —
+
+```
+echo 1-1.4 | sudo tee /sys/bus/usb/drivers/usb/unbind
+sleep 4
+echo 1-1.4 | sudo tee /sys/bus/usb/drivers/usb/bind
+```
+
+If it recurs, suspect heat or supply: these run hot continuously, and a long or thin USB
+extension drops enough voltage to make the R820T's PLL unstable.
+
+**5. Is a signal reaching the SDR at all?** Two tests, in this order.
 
 *Use broadcast FM as the reference, never a repeater.* A repeater is only strong while
 somebody is transmitting, so comparing a sweep taken during traffic with one taken during
