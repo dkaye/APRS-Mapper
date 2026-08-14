@@ -103,7 +103,6 @@ if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($host === '') continue;
         $devices[] = [
             'host'  => $host,
-            'note'  => substr(trim($d['note'] ?? ''), 0, 120),
             'token' => $devTokens[$host] ?? transcriber_token(),
         ];
     }
@@ -289,7 +288,7 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
      <code>/home/pi/.transcriber-token</code> on that Pi and lets it do so.</p>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Host</th><th>Where it is</th><th>Config token</th><th></th></tr></thead>
+      <thead><tr><th>Host</th><th>Config token</th><th></th></tr></thead>
       <tbody id="devices"></tbody>
     </table>
     <div class="empty" id="devices-empty">No Transcribers yet.</div>
@@ -595,7 +594,6 @@ function renderRows() {
     const dev = $('devices');
     dev.innerHTML = data.devices.map((d, i) => `<tr>
         <td>${field('devices', i, 'host', d.host)}</td>
-        <td>${field('devices', i, 'note', d.note)}</td>
         <td>${tokenCell(d, 'device', d.host)}</td>
         <td>${CAN_EDIT ? `<button class="row-btn danger" onclick="delDevice(${i})">Remove</button>` : ''}</td>
     </tr>`).join('');
@@ -646,7 +644,7 @@ function delChannel(i) {
 
 if (CAN_EDIT) {
     $('add-device').onclick = () => {
-        data.devices.push({host: '', note: '', has_token: false}); render(); touch();
+        data.devices.push({host: '', has_token: false}); render(); touch();
     };
     $('add-channel').onclick = () => {
         data.channels.push({id: '', device: data.devices[0]?.host || '', label: '',

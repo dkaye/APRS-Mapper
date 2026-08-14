@@ -4,7 +4,7 @@
  *
  * One file holds both halves of the fleet:
  *
- *   devices   [{host, token, note}]           a Pi, and the token it fetches config with
+ *   devices   [{host, token}]                 a Pi, and the token it fetches config with
  *   channels  [{id, device, label, frequency, serial, squelch, model, enabled, token}]
  *
  * Two kinds of token, deliberately. A device token only fetches configuration; a

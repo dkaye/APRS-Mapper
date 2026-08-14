@@ -19,9 +19,9 @@ class TranscriberStoreTest extends TestCase
         $this->file = tempnam(sys_get_temp_dir(), 'chanreg_') . '.json';
         transcriber_save([
             'devices' => [
-                ['host' => 'rx1', 'note' => 'net control', 'token' => 'dev-one'],
-                ['host' => 'rx2', 'note' => 'aid 3',       'token' => 'dev-two'],
-                ['host' => 'rx3', 'note' => 'not enrolled', 'token' => ''],
+                ['host' => 'rx1', 'token' => 'dev-one'],
+                ['host' => 'rx2', 'token' => 'dev-two'],
+                ['host' => 'rx3', 'token' => ''],
             ],
             'channels' => [
                 ['id'=>'rx1-146520', 'device'=>'rx1', 'label'=>'146.520', 'token'=>'ch-a',
