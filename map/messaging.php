@@ -96,6 +96,21 @@ function _msg_resolve_sender(MessagingDb $db, array $ctx, string $token): ?array
         && ($p['event'] ?? '') !== $ctx['event']) {
         return $db->participantById($db->rehomeSession($ctx['event'], $p, $token));
     }
+    // A channel's name comes from the manager and the manager can change it. Once a
+    // participant row exists the token matches it directly and everything below is
+    // skipped, so "Heard as" edits were saved, collected by the device, and then had no
+    // effect on a single line in the log — the name was fixed at whatever it had been
+    // the first time that channel spoke.
+    //
+    // Only for transcribers: an operator's display name is their own, not the registry's.
+    if ($p && ($p['kind'] ?? '') === 'transcriber') {
+        $ch = _msg_find_channel($ctx, $token);
+        $label = $ch['label'] ?? '';
+        if ($label !== '' && $label !== ($p['display_name'] ?? '')) {
+            $db->setParticipantName((int)$p['id'], $label);
+            $p['display_name'] = $label;
+        }
+    }
     if ($p) return $p;
     // A transcriber channel, identified the same way a mobile is: its token is not in
     // the participants table until it first speaks, so an unmatched token is looked up

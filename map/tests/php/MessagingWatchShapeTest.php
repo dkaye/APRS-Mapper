@@ -338,6 +338,38 @@ class MessagingWatchShapeTest extends TestCase
         $this->assertSame('146.520', $this->db->thread($conv, 0)[0]['from_name']);
     }
 
+    /** Renaming a channel in the manager renames it in the log, including on entries it
+     *  already wrote. The log joins participants for the name, so this is what "the same
+     *  station under a new label" has to mean — the alternative shows one radio under two
+     *  names with nothing to connect them. */
+    public function testRenamingAChannelRelabelsItsEntries(): void
+    {
+        $rx   = $this->db->upsertParticipant($this->ev, 'transcriber', 'rx1-146520', 'West Marin', null, 'tok-rx');
+        $conv = $this->db->resolveLogConversation($this->ev);
+        $this->db->insertMessage($this->ev, $conv, $rx, 'first over', [], false);
+
+        $this->db->setParticipantName($rx, 'West Marin2');
+        $this->db->insertMessage($this->ev, $conv, $rx, 'second over', [], false);
+
+        $rows = $this->db->thread($conv, 0);
+        $this->assertSame(['West Marin2', 'West Marin2'], array_column($rows, 'from_name'),
+                          'the entry written before the rename is relabelled too');
+    }
+
+    /** setParticipantName, not renameParticipant. The latter sets `key` to the new name
+     *  as well, which for an operator is right — the key IS the name — and for a channel
+     *  is destructive: the key is the channel id the upsert matches on, so the next entry
+     *  would arrive as a brand-new participant and the log would show the channel twice
+     *  under two names. */
+    public function testRenamingAChannelKeepsItsIdentity(): void
+    {
+        $rx   = $this->db->upsertParticipant($this->ev, 'transcriber', 'rx1-146520', 'West Marin', null, 'tok-rx');
+        $this->db->setParticipantName($rx, 'West Marin2');
+
+        $again = $this->db->upsertParticipant($this->ev, 'transcriber', 'rx1-146520', 'West Marin2', null, 'tok-rx');
+        $this->assertSame($rx, $again, 'still the same participant, not a second one');
+    }
+
     /** A channel writes and never reads: it must not be offered the log thread, and
      *  cannot be messaged, so it never appears in anyone's conversation list. */
     public function testAChannelIsNotOfferedTheLogToRead(): void

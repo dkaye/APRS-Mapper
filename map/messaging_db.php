@@ -892,6 +892,25 @@ class MessagingDb
         $this->run('UPDATE participants SET key=:k, display_name=:k WHERE id=:i', [':k'=>$name, ':i'=>$id]);
     }
 
+    /** Change only what a participant is called.
+     *
+     *  Not renameParticipant, which sets `key` to the new name as well. For an operator
+     *  the key IS the name and that is right; for a transcriber the key is the channel
+     *  id, and overwriting it would break the identity the upsert matches on — the next
+     *  entry would arrive as a brand-new participant and the log would show the channel
+     *  twice.
+     *
+     *  Retroactive, because the log joins participants for the name: past entries from
+     *  this channel are relabelled too. That is the right answer for a receiver that was
+     *  renamed — it is the same station and always was — and the alternative would leave
+     *  a log showing two names for one radio with no way to tell they were the same.
+     */
+    public function setParticipantName(int $id, string $displayName): void
+    {
+        $this->run('UPDATE participants SET display_name=:dn WHERE id=:i',
+                   [':dn'=>$displayName, ':i'=>$id]);
+    }
+
     /** Wipe an event's messaging (used by the admin flush). */
     public function flushEvent(string $event): int
     {
