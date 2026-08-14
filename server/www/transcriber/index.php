@@ -381,36 +381,59 @@ function status(text, cls) { const s = $('status'); s.textContent = text; s.clas
  * link; past that, the honest answer is that the device is not answering.
  */
 let waitTimer = null;
+const WAIT_SECONDS = 75;
+
 async function waitForDevices(ready, what) {
     clearInterval(waitTimer);
-    const deadline = Date.now() + 75000;
-    $('spinner').hidden = false;
-    status(what + ' pending…', 'saving');
+    let left = WAIT_SECONDS;
+    let waiting = [];
+    let checking = false;
 
-    const tick = async () => {
-        let d;
-        try { d = await (await fetch('?status')).json(); } catch { return; }
-        const waiting = (d.devices || []).filter(x => !ready(x, d.now));
-        if (!waiting.length) {
-            clearInterval(waitTimer); $('spinner').hidden = true;
-            status(what + ' applied', 'saved');
-            return;
-        }
-        if (Date.now() > deadline) {
-            clearInterval(waitTimer); $('spinner').hidden = true;
-            status('No response from ' + waiting.map(x => x.host).join(', '), 'error');
+    // The countdown ticks every second so it reads as a clock rather than a stalled
+    // number; the server is only asked every other one, because nothing about the answer
+    // changes faster than a device can fetch.
+    const show = () => status(
+        `${what} pending  :${left}` + (waiting.length ? ' — waiting for ' + waiting.join(', ') : ''),
+        'saving');
+
+    const done = (text, cls) => {
+        clearInterval(waitTimer);
+        $('spinner').hidden = true;
+        status(text, cls);
+    };
+
+    const check = async () => {
+        if (checking) return;
+        checking = true;
+        try {
+            const d = await (await fetch('?status')).json();
+            const not = (d.devices || []).filter(x => !ready(x, d.now));
+            waiting = not.map(x => x.host);
+            if (!not.length) done(what + ' applied', 'saved');
+        } catch (e) {
+            // A blip in the page's own connection is not the devices failing to answer.
+            // Say nothing and try again next tick; the countdown still runs out.
+        } finally { checking = false; }
+    };
+
+    $('spinner').hidden = false;
+    show();
+    await check();
+
+    waitTimer = setInterval(() => {
+        if (--left <= 0) {
+            done('No response from ' + (waiting.join(', ') || 'the devices'), 'error');
             notice(what + ' not confirmed',
                    'These Transcribers have not checked in: '
-                 + waiting.map(x => x.host).join(', ') + '.\n\n'
+                 + (waiting.join(', ') || 'none reported') + '.\n\n'
                  + 'The change is saved and they will collect it as soon as they are back. '
                  + 'A device that is switched off, off the network, or has the wrong '
                  + 'config token will look exactly like this.');
             return;
         }
-        status(what + ' pending — waiting for ' + waiting.map(x => x.host).join(', '), 'saving');
-    };
-    waitTimer = setInterval(tick, 2000);
-    tick();
+        show();
+        if (left % 2 === 0) check();
+    }, 1000);
 }
 
 function notice(title, body) {
