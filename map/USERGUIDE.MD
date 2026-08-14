@@ -1196,22 +1196,25 @@ You do not have to do anything for this to happen. The page at **marsaprs.org/tr
 
 ### Setting up a channel
 
-**Devices** are the receivers themselves — one row per box. The **Host** must match that computer's name exactly, because that is how it identifies itself when it asks for its settings.
+**Receivers** are the machines themselves — one row per box. The **Host** must match that computer's name exactly, because that is how it identifies itself when it asks for its settings. Get it wrong and nothing reports an error: the receiver asks for its frequencies, is told it has none, and sits there healthy and deaf.
 
-**Channels** are the frequencies. One row per frequency, and a single receiver can cover several at once.
+**Channels** are the frequencies. One row per frequency, and a single receiver can cover several at once — one radio stick each.
 
 | Field | What it is |
 |-------|-----------|
-| **ID** | A short unique name, such as `rx1-146520`. It appears in the log and cannot be reused. |
-| **Device** | Which receiver listens on this frequency. |
-| **Label** | What the log shows as the author — `146.520`. Make it something you will recognise mid-event. |
-| **Frequency** | In hertz: 146.520 MHz is `146520000`. |
-| **Serial** | The USB serial of that receiver's radio stick. Not a slot number — the sticks change order when the machine restarts, and two channels swapping frequencies is not something you would notice until the log was already wrong. |
-| **Squelch** | How loud a signal must be before it counts. Too low and it transcribes hiss; too high and it clips the start of every transmission. Start at 0 and raise it only if noise is getting through. |
-| **Model** | `tiny` keeps up in real time; `base` is more accurate but falls behind on a busy frequency. |
+| **Receiver** | Which machine listens on this frequency. |
+| **Frequency (MHz)** | As you would read it off a radio: `146.7`, `147.465`. The grey line underneath shows the name this channel is known by, which is worked out from the receiver and the frequency — you never type it. |
+| **Heard as** | What the log shows as the author. Make it something you will recognise mid-event. Changing it renames the channel's earlier entries too: it is the same radio, and a log showing one receiver under two names is worse than one that catches up. |
+| **Dongle serial** | The USB serial of that channel's radio stick. Not a slot number — the sticks change order when the machine restarts, and two channels swapping frequencies is not something you would notice until the log was already wrong. |
+| **Squelch** | How strong a signal must be before anything is recorded. Leave it **blank** and the channel measures its own site the first time it starts and remembers the answer — right almost everywhere. Put a number in only when you have a reason: raise it (30, 40) if the log fills with noise, lower it if weak stations are being missed. |
+| **Accuracy** | **Fast** keeps up with a busy net in real time. **Careful** is more accurate and slower — on a busy frequency the log falls further behind the radio as it goes. |
 | **On** | Turn a channel off to stop it logging immediately, without deleting its setup. |
 
-Changes save as you make them — there is no save button.
+**Nothing is written until you press Save.** After that the page waits, counting down, while each receiver comes and collects — they check once a minute, so it usually lands in well under that. When every receiver has it you get *Update applied*; if one never answers you are told which, and the change stays saved until it comes back.
+
+**Update devices** is a different thing and you will rarely need it: it asks the receivers to fetch new *software*, rather than waiting for the nightly update. Settings do not need it.
+
+If the page has been open a while and somebody else has changed something, Save is refused with a note asking you to reload. It will not quietly overwrite work you cannot see.
 
 ### Tokens
 

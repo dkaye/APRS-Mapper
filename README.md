@@ -23,6 +23,7 @@
 8. [Mobile Apps (v1.22.1)](#mobile-apps-v1221)
    - [Architecture](#app-architecture) · [Location Sharing Flow](#location-sharing-flow) · [Smart Track](#smart-track) · [Building & Distributing](#building-distributing) · [Background Location](#background-location)
 9. [Transcribers](#transcribers)
+   - [Transcriber Diagnostics](#transcriber-diagnostics)
 10. [User Interfaces](#user-interfaces)
 11. [Authentication](#authentication)
 12. [Analyzer](#analyzer)
@@ -225,9 +226,9 @@ Log: `/var/log/direwolf/watchdog.log`
 
 Two tools help keep the fleet's receivers healthy — one automatic, one on demand.
 
-**SDR self-noise self-test (automatic).** `igate-selftest.sh` runs nightly (from
+**SDR self-noise self-test (automatic).** `sdr-selftest.sh` runs nightly (from
 `auto-update.sh`, before the 4:10 am reboot) and can also be run by hand
-(`bash ~/igate-selftest.sh`). It briefly stops direwolf, sweeps 144–148 MHz with
+(`bash ~/sdr-selftest.sh`). It briefly stops direwolf, sweeps 144–148 MHz with
 `rtl_power`, and measures the level of any internal birdie (self-generated spur) in the
 APRS guard band (144.37–144.42 MHz) relative to the surrounding noise floor. It grades the
 receiver **GOOD / MARGINAL / BAD**, writes the result to `~/selftest.json`, and uploads it
@@ -271,7 +272,7 @@ from anywhere. Log: `~/sdr-usb-test.log`.
 | `dw-nosdr.py` | `/home/pi/direwatch/` | "No SDR found" countdown display |
 | `dw-nointernet.py` | `/home/pi/direwatch/` | "No internet" countdown display |
 | `StatsRequestListener.php` | `/home/pi/` | UDP responder for NetBird monitor |
-| `igate-selftest.sh` | `/home/pi/` | Nightly SDR self-noise test → fleet dashboard |
+| `sdr-selftest.sh` | `/home/pi/` | Nightly SDR self-noise test → fleet dashboard (shared with the Transcribers) |
 | `sdr-usb-test.sh` | `/home/pi/` (→ `/usr/local/bin/sdr-usb-test`) | Flaky-USB dongle test (run over SSH) |
 | `isproxy.py` / `isproxy.json` | `/home/pi/` | Local APRS-IS failover proxy for the aggregation relay (ships inert; active only when enabled — see [iGate Aggregation Relay](#igate-aggregation-relay)) |
 | `.isproxy-enabled` | `/home/pi/` | Sentinel file that opts this gate into the aggregation relay |
@@ -1234,7 +1235,7 @@ It is one report per **channel**, not per device: each channel has its own dongl
 own frequency, so they are separate receivers that happen to share a Pi, and a spur that
 deafens one says nothing about the other.
 
-This is the iGates' `igate-selftest.sh`, renamed and generalized. Only four constants were
+This is the iGates' old `igate-selftest.sh`, renamed and generalized. Only four constants were
 ever APRS-specific; the watched frequency is now a parameter, so an iGate asks about
 144.390 and a Transcriber about whatever voice channel it is on. It lives in `sdr/` rather
 than in either device's tree and is copied into both archives at deploy time — one source
@@ -1342,6 +1343,88 @@ tells you what runs tonight, which is exactly the question worth answering when
 reconstructing what a device did last night. `transcriber/tests/test_auto_update.sh`
 covers the hand-over, the loop guard, and the unreachable server, and `deploy.sh` will
 not ship past it.
+
+### Transcriber Diagnostics
+
+**"Nothing is appearing in the log" has four different causes and they look identical
+from the web page.** Ask these in order; an evening was lost to asking them out of order.
+
+**1. Is it capturing, or hearing nothing?** The journal is the only place that
+distinguishes them, and it says so plainly:
+
+```
+journalctl -u 'transcriber@<channel>' -f
+```
+
+| What you see | What it means |
+|---|---|
+| `logging (11.6s): …` | Working. The entry is on its way to the log. |
+| `discarded (12.5s): ''` | It captured audio and whisper found no speech in it. A squelch that is too low does this all day — see 3. |
+| `discarded (1.3s): '…'` | Too short to be words. A key-up or a squelch tail; correct to drop. |
+| `discarding 120s clip — open carrier?` | The carrier never dropped. A stuck transmitter, or no squelch at all. |
+| `N transmissions in the last 30 minutes` | The heartbeat. `no transmissions` on a frequency you can hear means the receiver is not opening — a quiet frequency and a deaf receiver are otherwise indistinguishable, which is the whole reason this line exists. |
+| nothing at all | Not running. Check `systemctl status 'transcriber@*'`. |
+
+**2. Did the entry reach the server?** If the journal says `logging` but the log has
+nothing, the entry is either queued or the display is at fault. The outbox is the
+answer:
+
+```
+ls /var/spool/transcriber/<channel>/outbox/ | wc -l
+```
+
+Empty means the server accepted it, and the problem is on the web side rather than the
+radio side. Entries accumulate there when the server is unreachable and flush in order
+when it returns.
+
+**3. What squelch did it start with?** The first line after a restart says, and it is the
+single number that decides what gets recorded:
+
+```
+squelch 30 — set in the manager for this channel     ← an override you typed
+squelch 20 (measured 0.4 hours ago)                  ← its own measurement, cached
+squelch 20 — measured                                ← measured just now
+could not measure a squelch level; using 25 for now  ← the receiver gave it nothing
+```
+
+An override carried over from a different frequency is a common cause of a deaf channel:
+clear the Squelch box in the manager and let it measure the site it is actually on.
+
+**4. Is a signal reaching the SDR at all?** Two tests, in this order.
+
+*Use broadcast FM as the reference, never a repeater.* A repeater is only strong while
+somebody is transmitting, so comparing a sweep taken during traffic with one taken during
+silence looks exactly like a disconnected antenna. This mistake was made here, confidently,
+and reported as hardware failure. Broadcast stations are always on:
+
+```
+rtl_power -d <serial> -f 88M:108M:20000 -g 40 -i 8 -1 /tmp/fm.csv
+```
+
+Anything above roughly +15 dB over the floor means the antenna and dongle are fine.
+
+*Then listen to the frequency with no gate at all* and look at how much the level moves:
+
+```
+timeout 20 rtl_fm -d <serial> -f <hz> -M fm -s 200000 -r 16000 -E deemp -l 0 - > /tmp/c.raw
+```
+
+A ratio of loudest to quietest half-second near **1** is steady hiss — nothing is being
+received. Speech gives a ratio of **5 or more**. whisper describing the file as
+`(machine whirring)` or `(buzzing)` is it telling you the same thing.
+
+**Key files on a Transcriber Pi:**
+
+| File | Purpose |
+|---|---|
+| `/etc/transcriber/channels.json` | This device's channels, collected from the manager |
+| `/home/pi/.transcriber-token` | Its config token — how it identifies itself |
+| `/var/spool/transcriber/<channel>/outbox/` | Entries the server has not accepted yet |
+| `/var/spool/transcriber/<channel>/squelch.json` | The measured squelch, cached for a day |
+| `/run/transcriber/<channel>/` | Clips in flight, on tmpfs — and `rtl_fm.err`, which is where "No supported devices found." goes |
+| `/var/log/transcriber/update.log` | What the nightly and 60-second updates did |
+
+**SSH:** `ssh pi@<ip>` · Password: `guacamole`
 
 ## User Interfaces
 
