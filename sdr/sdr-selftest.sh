@@ -45,6 +45,25 @@ else
 fi
 echo "selftest: $PROFILE profile"
 
+# Tell this device's supervisor that a diagnostic owns the SDR, so it does not put back
+# the service we are about to stop.
+#
+# Both fleets have something that restarts a stopped receiver within a minute — the
+# iGate's watchdog from cron, the Transcriber's 60-second config poll — and neither knew
+# about this test. So the sweeps ran while the restarted service contended for the one
+# dongle, and the later ones simply could not open it. Every self-noise grade so far was
+# measured on however many sweeps happened to get in first, which is not nothing, but is
+# not what the analyzer thinks it is being given either.
+#
+# Both supervisors already honour these flags for other tools, and both mean the same
+# thing: a diagnostic owns the SDR, leave it alone.
+case "$PROFILE" in
+    igate)       PAUSE=/tmp/sdr-usb-test.pause ;;
+    transcriber) PAUSE=/tmp/transcriber-bench.pause ;;
+    *)           PAUSE=/tmp/sdr-selftest.pause ;;
+esac
+echo "sdr-selftest" > "$PAUSE"
+
 # ── One run: stop the holder, sweep, analyse, upload ─────────────────────────
 # $1 host key (one report per receiver on the dashboard)
 # $2 friendly name   $3 watch Hz   $4 sweep range   $5 dongle serial ("" for default)
@@ -119,7 +138,7 @@ if [ "$PROFILE" = igate ]; then
     # NB: match by exact process name (-x), NOT -f. A -f pattern of "rtl_power" also
     # matches this very "sudo pkill -9 ... rtl_power" command line, so pkill would
     # SIGKILL its own sudo wrapper — which bash then reports as a stray "Killed" line.
-    trap 'sudo pkill -9 -x rtl_power >/dev/null 2>&1; sudo systemctl start direwolf >/dev/null 2>&1 || true' EXIT
+    trap 'rm -f "$PAUSE"; sudo pkill -9 -x rtl_power >/dev/null 2>&1; sudo systemctl start direwolf >/dev/null 2>&1 || true' EXIT
     sudo systemctl stop direwolf >/dev/null 2>&1
     sleep 2
 
@@ -140,7 +159,7 @@ TRVER=$(cat /etc/transcriber/version 2>/dev/null)
 # matches only units systemd already has loaded, and stopping them is what unloads them,
 # so the restore would silently start nothing and leave the receiver off the air.
 RUNNING=$(systemctl list-units --plain --no-legend 'transcriber@*.service' 2>/dev/null | awk '{print $1}')
-trap 'sudo pkill -9 -x rtl_power >/dev/null 2>&1;
+trap 'rm -f "$PAUSE"; sudo pkill -9 -x rtl_power >/dev/null 2>&1;
       for u in $RUNNING; do sudo systemctl start "$u" >/dev/null 2>&1 || true; done' EXIT
 for u in $RUNNING; do sudo systemctl stop "$u" >/dev/null 2>&1; done
 sleep 2
