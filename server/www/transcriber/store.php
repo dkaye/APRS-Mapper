@@ -18,6 +18,13 @@
  * Stored beside messages.db, outside the web root. A registry of tokens under
  * /var/www/html is how mobile_trackers.json came to be downloadable by anyone.
  *
+ * Three more files sit beside it, each holding something written at a moment the manager
+ * did not choose, so that none of them moves the registry's fingerprint and makes an open
+ * page refuse its own Save: transcriber-state.json (device check-ins),
+ * transcriber-calibration.json (what each receiver measured) and transcriber-standing.json
+ * (the standing vocabulary). transcriber-vocabulary.json holds the sheet's lists for the
+ * same reason. None of them holds a token.
+ *
  * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
  * ©2026 Doug Kaye, K6DRK <doug@rds.com>
  */
@@ -433,10 +440,12 @@ function transcriber_record_calibration(string $channel, array $body, ?string $p
  *
  * What a pattern cannot get is place names. Aid stations answer to their own tactical
  * calls — "Windy Gap", "Cardiac", "Bootjack", "Pantoll", "Stinson Beach" — and those are
- * multi-word proper nouns with no shape to them at all. So the sheet gains a section that
- * states them, and the manager gains a box for the same syntax typed mid-event. Both are
- * read by transcriber_vocabulary_lines(); the section is found by
- * transcriber_vocabulary_section(), which also reports whether it was there.
+ * multi-word proper nouns with no shape to them at all. So they are stated, from three
+ * places: a section in the sheet, a box on the manager for the same syntax typed
+ * mid-event, and one standing list shared by every event. All three are read by
+ * transcriber_vocabulary_lines() and folded together by transcriber_vocabulary_merge();
+ * the section is found by transcriber_vocabulary_section(), which also reports whether it
+ * was there.
  *
  * The sheet URL lives here, fleet-wide, because the vocabulary is per-event and there is
  * one live event at a time. It arguably belongs on the event in the map admin instead,
@@ -463,13 +472,29 @@ function transcriber_sheet_export_url(string $raw): string
     return "https://docs.google.com/document/d/$id/export?format=txt";
 }
 
-/** How many terms and corrections are carried, from the sheet and the box together.
+/** How many terms and corrections are carried, from the three sources together.
  *
- *  Bounded for the same reason the callsign list is: this is served to every device on
- *  every poll and turned into a prompt at channel start. A document that somehow matched
- *  thousands of things is a mistake somewhere, and it should not become a mistake on the
- *  air. */
-if (!defined('TRANSCRIBER_MAX_TERMS')) define('TRANSCRIBER_MAX_TERMS', 200);
+ *  This bounds MATCHING, and matching wants as many as it can get. Every term is an exact
+ *  target the worker compares against what whisper produced; one that never comes up on
+ *  the air costs a comparison and nothing else. It does NOT bound the whisper prompt, which
+ *  is where 200 came from — the prompt has a hard ~224-token limit and the worker trims to
+ *  it itself, in Vocabulary.prompt(), dropping whole terms in priority order because only
+ *  the worker knows what whisper's tokenizer will do with "K6DRK". The server owes it a
+ *  list, not a short one.
+ *
+ *  200 applied here was the prompt's number on the wrong list, and it failed the way this
+ *  project keeps failing: 270 lines were pasted into the supplement box, 200 were kept, 70
+ *  were dropped and nothing anywhere said so. The only clue was that the displayed list
+ *  looked short. Whatever is discarded now is counted and reported — see
+ *  transcriber_vocabulary_merge().
+ *
+ *  1000, not unbounded. The cost is not the wire — a thousand terms is about 15 KB per
+ *  device poll — it is resolve() on the receiver, which scores every candidate span against
+ *  every phrase of the same word count, for every clip, on a Pi that has to keep up with a
+ *  net. A finite ceiling also means a hand-edited registry or a runaway paste cannot turn
+ *  into a receiver that falls behind the traffic. 1000 is roughly four times the largest
+ *  list anybody has typed. */
+if (!defined('TRANSCRIBER_MAX_TERMS')) define('TRANSCRIBER_MAX_TERMS', 1000);
 
 /** The longest a term may be. A place name is two or three words; anything past this is a
  *  sentence somebody pasted, and a sentence in a whisper prompt biases the model towards
@@ -489,8 +514,8 @@ function transcriber_correction_key(string $s): string
     return trim(strtolower(preg_replace('/[^0-9A-Za-z]+/', ' ', $s)));
 }
 
-/** One term (or one correction) per line, in the syntax the sheet's section and the
- *  manager's box both use. Returns ['terms' => [...], 'corrections' => [key => written]].
+/** One term (or one correction) per line, in the syntax all three sources use. Returns
+ *  ['terms' => [...], 'corrections' => [key => written], 'dropped' => n].
  *
  *      Windy Gap                 a phrase this event expects to hear
  *      Cardiac Hill = Cardiac    what whisper produced = what it should say
@@ -532,9 +557,18 @@ function transcriber_vocabulary_lines(string $block): array
         }
         $terms[] = $line;
     }
+    $terms = array_values(array_unique($terms));
+    // What the ceiling threw away, counted rather than assumed. One source alone can reach
+    // it, and a list that quietly stops at a round number looks exactly like a list that
+    // was that long. Lines refused for being longer than a term is allowed to be are not
+    // counted here — that is a pasted sentence, not truncation, and folding the two
+    // together would make the number mean nothing.
+    $dropped = max(0, count($terms) - TRANSCRIBER_MAX_TERMS)
+             + max(0, count($corrections) - TRANSCRIBER_MAX_TERMS);
     return [
-        'terms'       => array_slice(array_values(array_unique($terms)), 0, TRANSCRIBER_MAX_TERMS),
+        'terms'       => array_slice($terms, 0, TRANSCRIBER_MAX_TERMS),
         'corrections' => array_slice($corrections, 0, TRANSCRIBER_MAX_TERMS, true),
+        'dropped'     => $dropped,
     ];
 }
 
@@ -574,7 +608,7 @@ function transcriber_vocabulary_section(string $text): array
         $words = preg_split('/[^A-Za-z]+/', $line, -1, PREG_SPLIT_NO_EMPTY);
         if (count($words) <= 5) { $start = $i; break; }
     }
-    if ($start < 0) return ['found' => false, 'terms' => [], 'corrections' => []];
+    if ($start < 0) return ['found' => false, 'terms' => [], 'corrections' => [], 'dropped' => 0];
 
     $block = [];
     for ($i = $start + 1; $i < count($lines); $i++) {
@@ -654,6 +688,10 @@ function transcriber_extract_vocabulary(string $text): array
         'terms'         => $section['terms'],
         'corrections'   => $section['corrections'],
         'section_found' => $section['found'],
+        // Carried with the lists so it survives into the stored vocabulary and reaches the
+        // manager. A sheet that states more terms than the ceiling allows has to say so on
+        // the page, not on the run that read it.
+        'terms_dropped' => $section['dropped'],
     ];
 }
 
@@ -685,6 +723,7 @@ function transcriber_vocabulary_load(?string $path = null): array
         // been renamed away looks exactly like a sheet that never had one, and the whole
         // point of asking is to tell those two apart.
         'section_found' => (bool)($raw['section_found'] ?? false),
+        'terms_dropped' => (int)($raw['terms_dropped'] ?? 0), // over the ceiling, at read time
         'fetched_at'    => (int)($raw['fetched_at'] ?? 0),   // last time it worked
         'checked_at'    => (int)($raw['checked_at'] ?? 0),   // last time it was tried
         'source'        => (string)($raw['source'] ?? ''),
@@ -703,55 +742,273 @@ function transcriber_vocabulary_save(array $v, ?string $path = null): void
     rename($tmp, $f);
 }
 
-/** What the devices are promised, in the shape they are promised it.
+/* ── The standing vocabulary ───────────────────────────────────────────────────
  *
- *  Four lists now. `callsigns` and `tactical` are exactly what they always were, because
- *  the field is never all on one version at once: a device fetches this before its worker
- *  knows what `terms` is, and a worker on new code polls a server that has not been
- *  deployed yet. Both directions are ordinary — extra keys are ignored, absent ones read
- *  as empty — and neither is worth a version number.
+ * The third source, and the only one that is not about a particular event. Most of what a
+ * net says does not change between events: the procedural words, the amateur-radio terms,
+ * and the place names of the region every one of these events happens in. Until now that
+ * had to be retyped into each event's sheet, which meant it was retyped imperfectly or not
+ * at all.
  *
- *  The manager's supplement box is merged in here rather than baked into the stored
- *  vocabulary, and that placement is the whole reason the box is useful. It takes effect
- *  the moment it is saved, with no fetch: the case it exists for is an event already
- *  running, with a shared document that is either unreachable or not yours to edit, and a
- *  correction that had to wait on a successful read of that document would be answering a
- *  different problem. It also survives a failed refresh, which keeps yesterday's sheet
- *  lists — and yesterday's sheet is exactly when you are typing into this box. */
-function transcriber_vocabulary_words(?string $path = null): array
+ * One file, fleet-wide, in its own file beside the registry — and that placement is
+ * decided by the same two facts that put the per-event vocabulary in its own file:
+ *
+ *   - The manager refuses a Save made against a stale registry fingerprint. This list is
+ *     written from its own button, at its own moment, and if it lived in the registry then
+ *     saving it would move that fingerprint and the open page would refuse its own next
+ *     Save — a page that breaks itself, for a reason nobody could see. The same reasoning
+ *     as the calibration file and the vocabulary file, and the same conclusion.
+ *   - It is not in transcriber-vocabulary.json either, which is the file that looks like
+ *     the obvious home. That one is overwritten whole by every sheet refresh, so a standing
+ *     list kept in it would be erased by the next poll — silently, fifteen minutes later,
+ *     with nothing to connect the two.
+ *
+ * Nothing in it is secret, so it has no business in the file that holds every token in the
+ * fleet.
+ *
+ * Precedence on a clash is standing < sheet < box, and it is worth saying why in case
+ * somebody reverses it later. More specific beats more general: the sheet is about THIS
+ * event and the standing list is about all of them, and the box was typed most recently by
+ * somebody watching the log get that exact phrase wrong. The same order decides which
+ * spelling of a repeated term survives, which terms fill the worker's prompt budget first,
+ * and — if a ceiling is ever reached — which are given up first.
+ */
+
+/** Where a standing list that has never been edited starts from.
+ *
+ *  Not an empty box. An empty box teaches nobody what belongs in it, and this list only
+ *  earns its keep if it is populated, so it ships populated.
+ *
+ *  Chosen conservatively, and the rule is the important part: every line here is a match
+ *  target, so a distinctive or multi-word term is close to free and a common English word
+ *  is expensive everywhere. "Runner" and "Bib" in a real list capitalized every mention of
+ *  a runner and a bib, and "Cardiac" turns "cardiac arrest" into "Cardiac arrest". So the
+ *  aid station called Cardiac is deliberately NOT here — an event that wants it puts it on
+ *  its own sheet, where it is worth the cost for that one day.
+ *
+ *  No corrections. A correction is an instruction from somebody who has watched a specific
+ *  mishearing happen, and there is nothing to seed one from. */
+if (!defined('TRANSCRIBER_STANDING_SEED')) define('TRANSCRIBER_STANDING_SEED', <<<TXT
+Net Control
+Amateur Radio
+radio check
+say again
+standing by
+break break
+priority traffic
+emergency traffic
+health and welfare
+simplex
+duplex
+APRS
+iGate
+digipeater
+Winlink
+ARES
+ARRL
+QSL
+QSY
+QTH
+QRZ
+QRM
+Mount Tamalpais
+Mill Valley
+Muir Woods
+Muir Beach
+Stinson Beach
+Panoramic Highway
+Sequoia Valley Road
+Tennessee Valley
+Steep Ravine
+Bolinas Ridge
+Ridgecrest Boulevard
+Rock Spring
+East Peak
+West Point Inn
+Pantoll
+Bootjack
+Windy Gap
+Dipsea
+Marin Headlands
+Point Reyes
+San Rafael
+Sausalito
+Corte Madera
+Larkspur
+Fairfax
+Novato
+Tiburon
+Golden Gate Bridge
+TXT);
+
+/** How much text the standing list may hold. Twice the supplement box's, because this is
+ *  the long list and the box is a handful of lines typed mid-event — and, like the box's,
+ *  set well above the term ceiling on purpose. A byte cap truncates silently and there is
+ *  nowhere sensible to report half a cut line, so the limit anybody actually reaches has to
+ *  be the one that is counted. */
+if (!defined('TRANSCRIBER_STANDING_MAX_BYTES')) define('TRANSCRIBER_STANDING_MAX_BYTES', 40000);
+
+function transcriber_standing_path(?string $path = null): string
+{
+    return dirname(transcriber_path($path)) . '/transcriber-standing.json';
+}
+
+/** The standing list as typed, with a fingerprint for the editor to save against.
+ *
+ *  The seed is used only when the file does not exist. Once it has been saved, whatever it
+ *  says is what it says — including nothing at all. A load that fell back to the seed
+ *  whenever the text was empty would make "delete everything" the one edit that cannot be
+ *  made, and it would make it fail by quietly restoring fifty terms. */
+function transcriber_standing_load(?string $path = null): array
+{
+    $f = transcriber_standing_path($path);
+    if (!is_readable($f)) {
+        return ['text' => TRANSCRIBER_STANDING_SEED, 'updated_at' => 0,
+                'seeded' => true, 'fingerprint' => 'empty'];
+    }
+    $body = (string)file_get_contents($f);
+    $raw  = json_decode($body, true) ?: [];
+    $text = $raw['text'] ?? '';
+    return [
+        'text'        => is_string($text) ? $text : '',
+        'updated_at'  => (int)($raw['updated_at'] ?? 0),
+        'seeded'      => false,
+        'fingerprint' => hash('sha256', $body),
+    ];
+}
+
+function transcriber_standing_save(string $text, ?string $path = null): array
+{
+    if (strlen($text) > TRANSCRIBER_STANDING_MAX_BYTES) {
+        $text = substr($text, 0, TRANSCRIBER_STANDING_MAX_BYTES);
+        // Back to the last complete line. Cutting at a byte can land in the middle of a
+        // UTF-8 character — mb_substr is not available, the Pi's PHP has no mbstring — and
+        // a term with half a character on the end matches nothing while looking like a term
+        // that does.
+        $nl = strrpos($text, "\n");
+        $text = $nl === false ? '' : substr($text, 0, $nl);
+    }
+    $f   = transcriber_standing_path($path);
+    $dir = dirname($f);
+    if (!is_dir($dir)) @mkdir($dir, 0775, true);
+    $tmp = $f . '.tmp';
+    file_put_contents($tmp, json_encode(['text' => $text, 'updated_at' => time()],
+                                        JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n", LOCK_EX);
+    @chmod($tmp, 0640);
+    rename($tmp, $f);
+    return transcriber_standing_load($path);
+}
+
+/** The three sources folded into one vocabulary, with an account of anything discarded.
+ *
+ *  Returns the four lists the devices are promised, plus `dropped` — how many terms and
+ *  corrections each source lost, by name. The count is the whole reason this function
+ *  exists separately from transcriber_vocabulary_words(): the old code sliced the merged
+ *  list and said nothing, so 70 of 270 pasted lines disappeared and the only symptom was
+ *  that the list on the page looked shorter than the one in the clipboard.
+ *
+ *  Sources are taken most specific first — box, then sheet, then standing — and that
+ *  ordering does three jobs at once. The first spelling of a repeated term is the one kept;
+ *  the worker fills its prompt budget from the front of the list; and the ceiling cuts from
+ *  the back. All three should give up the general list before anything typed for this
+ *  event. Corrections follow the same order for the same reason, so the rule that wins a
+ *  clash is also the rule that survives a truncation.
+ *
+ *  The box and the standing list are merged here rather than baked into the stored
+ *  vocabulary, and that placement is the whole reason the box is useful. It takes effect the
+ *  moment it is saved, with no fetch: the case it exists for is an event already running,
+ *  with a shared document that is either unreachable or not yours to edit. Both also survive
+ *  a failed refresh, which keeps yesterday's sheet lists — and yesterday's sheet is exactly
+ *  when somebody is typing into that box. */
+function transcriber_vocabulary_merge(?string $path = null): array
 {
     $v = transcriber_vocabulary_load($path);
     // is_string rather than a cast: the registry can be hand-edited, and casting an array
     // to a string here would put the word "Array" in the fleet's vocabulary — from inside
     // a device poll, where a warning is a receiver that did not get its channels.
-    $raw   = transcriber_load($path)['settings']['vocabulary_extra'] ?? '';
-    $extra = transcriber_vocabulary_lines(is_string($raw) ? $raw : '');
+    $raw      = transcriber_load($path)['settings']['vocabulary_extra'] ?? '';
+    $extra    = transcriber_vocabulary_lines(is_string($raw) ? $raw : '');
+    $standing = transcriber_vocabulary_lines(transcriber_standing_load($path)['text']);
 
-    $terms = array_values(array_unique(array_merge($v['terms'], $extra['terms'])));
-    // The box wins on a clash. It was typed later, and it was typed by somebody watching
-    // the log get it wrong.
-    $corrections = array_merge($v['corrections'], $extra['corrections']);
+    $sources = [
+        'box'      => $extra,
+        'sheet'    => ['terms' => $v['terms'], 'corrections' => $v['corrections'],
+                       'dropped' => $v['terms_dropped']],
+        'standing' => $standing,
+    ];
+
+    // Whatever each source already lost to the per-source ceiling when it was parsed, plus
+    // whatever it loses to the merged ceiling below. Both are truncation and a reader has no
+    // reason to care which happened.
+    $dropped     = [];
+    $terms       = [];
+    $seen        = [];
+    $corrections = [];
+    foreach ($sources as $name => $src) {
+        $dropped[$name] = (int)($src['dropped'] ?? 0);
+        foreach ($src['terms'] as $term) {
+            if (isset($seen[$term])) continue;
+            if (count($terms) >= TRANSCRIBER_MAX_TERMS) { $dropped[$name]++; continue; }
+            $seen[$term] = true;
+            $terms[] = $term;
+        }
+        foreach ($src['corrections'] as $heard => $written) {
+            // A more specific source has already claimed this heard-form. Not a drop: the
+            // rule was overridden, which is what precedence means, and counting it as
+            // truncation would send somebody looking for a limit they have not reached.
+            if (isset($corrections[$heard])) continue;
+            if (count($corrections) >= TRANSCRIBER_MAX_TERMS) { $dropped[$name]++; continue; }
+            $corrections[$heard] = $written;
+        }
+    }
 
     return [
         'callsigns'   => $v['callsigns'],
         'tactical'    => $v['tactical'],
-        'terms'       => array_slice($terms, 0, TRANSCRIBER_MAX_TERMS),
-        'corrections' => array_slice($corrections, 0, TRANSCRIBER_MAX_TERMS, true),
+        'terms'       => $terms,
+        'corrections' => $corrections,
+        'dropped'     => $dropped,
     ];
 }
 
-/** The manager's view: what was read off the sheet, what the supplement box parsed to, and
- *  what is in force once the two are folded together.
+/** What the devices are promised, in the shape they are promised it.
  *
- *  All three, because they answer different questions — "did it read MY sheet", "did it
- *  understand what I typed", and "will the receivers say Cardiac". The counts alone answer
- *  none of them, which is why the page lists the words themselves. */
+ *  Four lists, and exactly four. `callsigns` and `tactical` are exactly what they always
+ *  were, because the field is never all on one version at once: a device fetches this
+ *  before its worker knows what `terms` is, and a worker on new code polls a server that
+ *  has not been deployed yet. Both directions are ordinary — extra keys are ignored, absent
+ *  ones read as empty — and neither is worth a version number. The third source changed
+ *  what goes into `terms`, not what a receiver is handed. */
+function transcriber_vocabulary_words(?string $path = null): array
+{
+    $m = transcriber_vocabulary_merge($path);
+    return ['callsigns'   => $m['callsigns'],
+            'tactical'    => $m['tactical'],
+            'terms'       => $m['terms'],
+            'corrections' => $m['corrections']];
+}
+
+/** The manager's view: what was read off the sheet, what each typed list parsed to, what is
+ *  in force once all three are folded together, and what — if anything — was discarded.
+ *
+ *  All of it, because they answer different questions: "did it read MY sheet", "did it
+ *  understand what I typed", "will the receivers say Cardiac", and "is anything I typed
+ *  simply not there". The counts alone answer none of them, which is why the page lists the
+ *  words themselves and names the source of every dropped term. */
 function transcriber_vocabulary_report(?string $path = null): array
 {
-    $raw = transcriber_load($path)['settings']['vocabulary_extra'] ?? '';
+    $raw      = transcriber_load($path)['settings']['vocabulary_extra'] ?? '';
+    $standing = transcriber_standing_load($path);
+    $merged   = transcriber_vocabulary_merge($path);
     return transcriber_vocabulary_load($path) + [
-        'extra' => transcriber_vocabulary_lines(is_string($raw) ? $raw : ''),
-        'words' => transcriber_vocabulary_words($path),
+        'extra'    => transcriber_vocabulary_lines(is_string($raw) ? $raw : ''),
+        'standing' => $standing + ['lines' => transcriber_vocabulary_lines($standing['text'])],
+        'words'    => ['callsigns'   => $merged['callsigns'],
+                       'tactical'    => $merged['tactical'],
+                       'terms'       => $merged['terms'],
+                       'corrections' => $merged['corrections']],
+        'dropped'  => $merged['dropped'],
+        'ceiling'  => TRANSCRIBER_MAX_TERMS,
     ];
 }
 
@@ -807,8 +1064,8 @@ function transcriber_vocabulary_refresh(?string $path = null, ?callable $fetch =
 
     if ($url === '') {
         $v = ['callsigns' => [], 'tactical' => [], 'terms' => [], 'corrections' => [],
-              'section_found' => false, 'fetched_at' => 0, 'checked_at' => $now,
-              'source' => '', 'error' => ''];
+              'section_found' => false, 'terms_dropped' => 0, 'fetched_at' => 0,
+              'checked_at' => $now, 'source' => '', 'error' => ''];
         transcriber_vocabulary_save($v, $path);
         return $v;
     }

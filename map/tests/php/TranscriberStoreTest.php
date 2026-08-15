@@ -41,6 +41,12 @@ class TranscriberStoreTest extends TestCase
                  'model'=>'ggml-tiny.en.bin', 'enabled'=>true],
             ],
         ], $this->file);
+        // Empty rather than absent. A standing list that has never been edited falls back to
+        // the shipped seed, which is right on a new server and wrong here: it would put
+        // fifty terms into every test that has nothing to do with the standing list, and
+        // "the terms are exactly these two" would stop meaning anything. The seed has a test
+        // of its own, which deletes this file to reach it.
+        transcriber_standing_save('', $this->file);
     }
 
     protected function tearDown(): void
@@ -662,7 +668,11 @@ class TranscriberStoreTest extends TestCase
 
         $this->assertContains('Windy Gap', $words['terms'], 'still what the sheet said');
         $this->assertContains('Pantoll', $words['terms'], 'and what was typed in the box');
-        $this->assertSame(['cardiac hill' => 'Cardiac', 'cardiff' => 'Cardiac'],
+        // The box's rules come first now, because sources are folded in most-specific
+        // first: that is the order they win a clash in, and it is also the order anything
+        // over the ceiling is given up in. Order is cosmetic to the worker, which looks
+        // corrections up by key.
+        $this->assertSame(['cardiff' => 'Cardiac', 'cardiac hill' => 'Cardiac'],
                           $words['corrections']);
     }
 
@@ -731,6 +741,222 @@ class TranscriberStoreTest extends TestCase
 
         transcriber_vocabulary_refresh_if_stale($this->file, $fetch);
         $this->assertSame(2, $calls, 'stale: read it again');
+    }
+
+    // ── the standing vocabulary ───────────────────────────────────────────────
+    //
+    // The third source, and the only one that is not about a particular event. Everything
+    // here is about the two ways a third source can go wrong: getting in the way of what
+    // today's sheet says, and being quietly lost — either to a refresh that rewrites the
+    // wrong file, or to a ceiling that discards without saying so.
+
+    /** All three, folded into one list. The standing list is the words that are true of
+     *  every event, the sheet is today's, and the box is what somebody typed ten minutes
+     *  ago; a receiver is handed the union of them and has no idea which was which. */
+    public function testTheThreeSourcesAreMergedIntoOneVocabulary(): void
+    {
+        $this->setStanding("Mount Tamalpais\nPanoramic Highway\n");
+        $this->setSheet();
+        transcriber_vocabulary_refresh($this->file, fn($u) => [$this->sheetWithSection(), '']);
+        $this->setExtra("Pantoll\n");
+
+        $terms = transcriber_vocabulary_words($this->file)['terms'];
+
+        $this->assertContains('Mount Tamalpais', $terms, 'the standing list');
+        $this->assertContains('Windy Gap', $terms, 'the sheet');
+        $this->assertContains('Pantoll', $terms, 'the box');
+    }
+
+    /** Precedence on a clash: standing < sheet < box. More specific beats more general —
+     *  the sheet is about THIS event and the standing list is about all of them — and the
+     *  box was typed most recently, by somebody watching the log get that exact phrase
+     *  wrong. Three rules for one heard-form, and only the most specific survives. */
+    public function testTheMostSpecificSourceWinsAClash(): void
+    {
+        $this->setStanding("Cardiac Hill = Standing\n");
+        $this->setSheet();
+        transcriber_vocabulary_refresh($this->file, fn($u) => [$this->sheetWithSection(), '']);
+
+        // The sheet says "Cardiac Hill = Cardiac", and it outranks the standing list.
+        $this->assertSame('Cardiac',
+                          transcriber_vocabulary_words($this->file)['corrections']['cardiac hill']);
+
+        $this->setExtra("Cardiac Hill = Pantoll\n");
+
+        $this->assertSame('Pantoll',
+                          transcriber_vocabulary_words($this->file)['corrections']['cardiac hill'],
+                          'and the box outranks the sheet');
+    }
+
+    /** A correction in the standing list is a correction. The same syntax as the other two
+     *  and the same effect — some mishearings are a property of the radios and the band
+     *  rather than of one event, and retyping those into every new sheet is how they end up
+     *  in none of them. */
+    public function testACorrectionInTheStandingListIsInForce(): void
+    {
+        $this->setStanding("Pan Toll = Pantoll\nMount Tam\n");
+
+        $words = transcriber_vocabulary_words($this->file);
+
+        $this->assertSame(['pan toll' => 'Pantoll'], $words['corrections']);
+        // The written form of a correction is a term wherever it was typed.
+        $this->assertContains('Pantoll', $words['terms']);
+        $this->assertContains('Mount Tam', $words['terms']);
+    }
+
+    /** The one that decides which file it lives in. The sheet's lists are rewritten whole
+     *  every quarter of an hour from a device poll, so a standing list kept in that file
+     *  would be erased by a refresh nobody triggered — silently, and fifteen minutes after
+     *  it was typed, with nothing to connect the two. */
+    public function testTheStandingListSurvivesASheetRefresh(): void
+    {
+        $this->setStanding("Mount Tamalpais\n");
+        $this->setSheet();
+
+        transcriber_vocabulary_refresh($this->file, fn($u) => [$this->sheetWithSection(), '']);
+        $this->assertContains('Mount Tamalpais', transcriber_vocabulary_words($this->file)['terms']);
+
+        // And a refresh that finds nothing, which rewrites the vocabulary file with empty
+        // lists, still leaves it alone.
+        transcriber_vocabulary_refresh($this->file, fn($u) => [$this->sheet(), '']);
+        $this->assertContains('Mount Tamalpais', transcriber_vocabulary_words($this->file)['terms']);
+        $this->assertSame("Mount Tamalpais\n", transcriber_standing_load($this->file)['text']);
+    }
+
+    /** The other half of the same choice. The manager refuses a Save made against a stale
+     *  registry fingerprint; if the standing list lived in the registry, editing it would
+     *  move that fingerprint and the page that made the edit would be refused its own next
+     *  Save. Same reasoning as the calibration file, and the same separate file. */
+    public function testTheStandingListDoesNotMoveTheRegistryFingerprint(): void
+    {
+        $before = transcriber_fingerprint($this->file);
+
+        transcriber_standing_save("Mount Tamalpais\nPanoramic Highway\n", $this->file);
+
+        $this->assertSame($before, transcriber_fingerprint($this->file));
+    }
+
+    /** A list nobody has edited starts from the shipped seed, so the feature is useful
+     *  before anybody knows what to type into it. Emptying it deliberately is a different
+     *  thing from never having touched it, and has to stay empty — a load that fell back to
+     *  the seed whenever the text was empty would make "delete everything" the one edit that
+     *  cannot be made, and would fail it by restoring fifty terms. */
+    public function testAnUneditedListUsesTheSeedAndAnEmptiedOneStaysEmpty(): void
+    {
+        unlink(transcriber_standing_path($this->file));
+        $fresh = transcriber_standing_load($this->file);
+
+        $this->assertTrue($fresh['seeded']);
+        $this->assertContains('Mount Tamalpais', transcriber_vocabulary_words($this->file)['terms']);
+
+        transcriber_standing_save('', $this->file);
+        $emptied = transcriber_standing_load($this->file);
+
+        $this->assertFalse($emptied['seeded']);
+        $this->assertSame('', $emptied['text']);
+        $this->assertSame([], transcriber_vocabulary_words($this->file)['terms']);
+    }
+
+    /** The seed is chosen conservatively, and this pins the rule rather than the list.
+     *  Every term is a match target: a distinctive or multi-word phrase is close to free,
+     *  and a common English word is expensive on every event forever. "Runner" and "Bib" in
+     *  a real list capitalized every mention of a runner and a bib, and "Cardiac" turns
+     *  "cardiac arrest" into "Cardiac arrest" — so the aid station called Cardiac is not
+     *  here, and belongs on the one sheet that wants it. */
+    public function testTheSeedPrefersDistinctiveTermsOverCommonWords(): void
+    {
+        $seed = transcriber_vocabulary_lines(TRANSCRIBER_STANDING_SEED)['terms'];
+
+        $this->assertContains('Sequoia Valley Road', $seed);
+        $this->assertContains('Net Control', $seed);
+        foreach (['Cardiac', 'Runner', 'Bib', 'Start', 'Finish', 'Aid', 'Sweep',
+                  'Water', 'Trail', 'Bridge'] as $tooCommon) {
+            $this->assertNotContains($tooCommon, $seed,
+                                     "$tooCommon would be matched in ordinary speech");
+        }
+        // And nothing is seeded as a correction: a correction is an instruction from
+        // somebody who has watched a specific mishearing happen, and there is nothing to
+        // guess one from.
+        $this->assertSame([], transcriber_vocabulary_lines(TRANSCRIBER_STANDING_SEED)['corrections']);
+    }
+
+    // ── the ceiling, and saying when it is reached ────────────────────────────
+
+    /** The cap was in the wrong place. It bounded MATCHING at 200, which is the whisper
+     *  prompt's number: the prompt has a hard ~224-token limit and the worker trims to it
+     *  itself, in priority order, because only the worker knows what the tokenizer will do.
+     *  Matching has no such limit — every term is an exact target and one that never comes
+     *  up costs a comparison.
+     *
+     *  270 lines were pasted into the box, 200 were kept and 70 were dropped. That exact
+     *  list now arrives intact. */
+    public function testAListLongerThanTheOldCapReachesTheDevicesWhole(): void
+    {
+        $this->setExtra(implode("\n", array_map(fn($i) => "Station $i", range(1, 270))));
+
+        $words = transcriber_vocabulary_words($this->file);
+
+        $this->assertCount(270, $words['terms']);
+        $this->assertContains('Station 270', $words['terms']);
+        $this->assertSame([], array_filter(transcriber_vocabulary_merge($this->file)['dropped']),
+                          'and nothing was dropped, so nothing is reported');
+    }
+
+    /** There is still a ceiling, and when it is reached the page is told how many were lost
+     *  and which list lost them. Silent truncation is this project's recurring failure: the
+     *  270-line paste was noticed only because the displayed list looked short, and a third
+     *  source makes reaching the ceiling likelier rather than less.
+     *
+     *  What is given up is the general list before the specific one, which is the same
+     *  order that decides a clash. */
+    public function testTruncationIsReportedRatherThanSilent(): void
+    {
+        $this->setStanding(implode("\n", array_map(fn($i) => "Standing $i", range(1, 300))));
+        $this->setExtra(implode("\n", array_map(fn($i) => "Typed $i",
+                                                range(1, TRANSCRIBER_MAX_TERMS - 100))));
+
+        $merged = transcriber_vocabulary_merge($this->file);
+
+        $this->assertCount(TRANSCRIBER_MAX_TERMS, $merged['terms']);
+        $this->assertSame(['box' => 0, 'sheet' => 0, 'standing' => 200], $merged['dropped'],
+                          'named by source, and counted');
+        $this->assertContains('Typed 1', $merged['terms'], 'the box is kept whole');
+        $this->assertContains('Standing 100', $merged['terms']);
+        $this->assertNotContains('Standing 101', $merged['terms'], 'the general list gives way');
+    }
+
+    /** And the manager is given it in the same call it renders everything else from, beside
+     *  the ceiling it was measured against — so the page can say "70 terms from the box"
+     *  rather than "some words". The vocabulary section already reports "found" rather than
+     *  leaving an empty list to be interpreted; this is the same argument. */
+    public function testTheManagersReportCarriesWhatWasDropped(): void
+    {
+        $this->setExtra(implode("\n", array_map(fn($i) => "Typed $i",
+                                                range(1, TRANSCRIBER_MAX_TERMS + 70))));
+
+        $report = transcriber_vocabulary_report($this->file);
+
+        $this->assertSame(70, $report['dropped']['box']);
+        $this->assertSame(TRANSCRIBER_MAX_TERMS, $report['ceiling']);
+        $this->assertCount(TRANSCRIBER_MAX_TERMS, $report['words']['terms']);
+    }
+
+    /** A rule the box overrode is not a rule the ceiling ate. Counting an override as
+     *  truncation would send somebody looking for a limit they are nowhere near. */
+    public function testAnOverriddenRuleIsNotCountedAsDropped(): void
+    {
+        $this->setStanding("Cardiff = Standing\n");
+        $this->setExtra("Cardiff = Cardiac\n");
+
+        $merged = transcriber_vocabulary_merge($this->file);
+
+        $this->assertSame(['cardiff' => 'Cardiac'], $merged['corrections']);
+        $this->assertSame([], array_filter($merged['dropped']));
+    }
+
+    private function setStanding(string $text): void
+    {
+        transcriber_standing_save($text, $this->file);
     }
 
     private function setSheet(string $url = 'https://docs.google.com/document/d/11V2CoecKBKh9BthIphutW6V8qLZ5FsYKjZpqsR-U1rc/edit'): void

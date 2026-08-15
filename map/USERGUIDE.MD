@@ -1205,7 +1205,7 @@ You do not have to do anything for this to happen. The page at **marsaprs.org/tr
 |-------|-----------|
 | **Receiver** | Which machine listens on this frequency. |
 | **Frequency (MHz)** | As you would read it off a radio: `146.7`, `147.465`. The grey line underneath shows the name this channel is known by, which is worked out from the receiver and the frequency — you never type it. |
-| **Heard as** | What the log shows as the author. Make it something you will recognise mid-event. Changing it renames the channel's earlier entries too: it is the same radio, and a log showing one receiver under two names is worse than one that catches up. |
+| **Heard as** | What the log shows as the author. Make it something you will recognize mid-event. Changing it renames the channel's earlier entries too: it is the same radio, and a log showing one receiver under two names is worse than one that catches up. |
 | **Dongle serial** | The USB serial of that channel's radio stick. Not a slot number — the sticks change order when the machine restarts, and two channels swapping frequencies is not something you would notice until the log was already wrong. |
 | **Squelch** | How strong a signal must be before anything is recorded. Leave it **blank** and the channel measures its own site the first time it starts and remembers the answer — right almost everywhere. Put a number in only when you have a reason: raise it (30, 40) if the log fills with noise, lower it if weak stations are being missed. |
 | **Accuracy** | **Fast** keeps up with a busy net in real time. **Careful** is more accurate and slower — on a busy frequency the log falls further behind the radio as it goes. |
@@ -1232,7 +1232,7 @@ press **Save**, then **Read sheet now**.
 > will read the previous sheet and tell you what was in that one, which looks exactly like
 > the new sheet being wrong.
 
-**Some of it is picked up on its own.** Callsigns are recognisable by their shape, so
+**Some of it is picked up on its own.** Callsigns are recognizable by their shape, so
 every one in the document is found without anyone listing them — 35 of them, on a recent
 Dipsea sheet. Tactical calls like *Sweep 1*, *Hiker 3* and *Net Control* are found the
 same way.
@@ -1271,10 +1271,33 @@ and you would rather not edit a shared document with twenty people in it. Same f
 per line, and it adds to whatever the sheet gave rather than replacing it.
 
 Two things worth knowing when you write the list. A **single common word** — *Runner*,
-*Bib*, *Cardiac* — will be capitalised wherever it appears, so "a cardiac arrest on the
+*Bib*, *Cardiac* — will be capitalized wherever it appears, so "a cardiac arrest on the
 trail" becomes "a Cardiac arrest". Harmless, but it is why longer names behave better.
 And the **spelling in your sheet is the spelling in the log**: write *FInish* and that is
 what the entries will say.
+
+**The standing list is the third place words come from**, at the bottom of the page under
+*Standing vocabulary*. It is one list shared by **every** event, for the words that do not
+change from one to the next: net and radio terms, and the place names of the region all of
+these events happen in. Press **Edit standing list** to open it. Anything already there is
+one less thing to retype into a new sheet, and it comes with a starting list so you can see
+what belongs in it.
+
+The rule for what to put there is the same one as above, only it matters more, because a
+mistake here is a mistake on every event rather than on one. **Long and distinctive names
+are nearly free**: nothing else on the air sounds like *Sequoia Valley Road*, so it either
+matches or it does not. **A single everyday word costs you everywhere** — that is why
+*Cardiac* is deliberately not in the standing list even though it is a real aid station.
+Put a word like that on the one sheet that needs it.
+
+**Where two lists disagree, the more specific one wins.** The box beats the sheet, and the
+sheet beats the standing list. So a standing entry can never get in the way of what today's
+sheet says, and a correction you type into the box mid-event overrules both.
+
+**If you go over the limit you will be told.** There is a ceiling of 1000 terms across all
+three lists together, which is far more than anyone has typed, and if something is dropped
+the page says in red how many and which list they came from. It will not quietly keep the
+first thousand and say nothing.
 
 ### Tokens
 

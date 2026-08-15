@@ -1517,6 +1517,48 @@ takes effect on Save with no fetch at all, and it survives a failed refresh — 
 because a document that cannot be reached is exactly when somebody is typing into that box.
 On the same key, the box wins: it was typed later, by somebody watching the log get it wrong.
 
+**And one standing list, shared by every event.** Much of the vocabulary does not change
+event to event: the procedural words, the amateur-radio terms, and the place names of the
+region all of these events happen in. Retyped into each new sheet, that either does not
+happen or happens imperfectly — so it is typed once, in **Standing vocabulary** in the
+manager, behind a button that opens an editor with room for the whole list. Same syntax as
+the other two.
+
+**Precedence on a clash is standing < sheet < box**, and it is worth stating because it is
+the kind of thing that gets silently reversed. More specific beats more general: the sheet
+is about *this* event and the standing list is about all of them, and the box was typed most
+recently by somebody watching the log get that exact phrase wrong. The same order decides
+which spelling of a repeated term survives, which terms fill the worker's prompt budget
+first, and which are given up if the ceiling below is ever reached.
+
+It ships with a starting list rather than empty, because an empty box teaches nobody what
+belongs in it — and the choice of what is in it *is* the guidance. **Every term is a match
+target, so a distinctive or multi-word phrase is close to free and a common English word is
+expensive on every event forever.** `Runner` and `Bib` in a real list capitalized every
+mention of a runner and a bib; `Cardiac` turns "cardiac arrest" into "Cardiac arrest". So
+`Sequoia Valley Road`, `Panoramic Highway` and `Pantoll` are seeded and `Cardiac` is not —
+an event that wants it puts it on its own sheet, where the cost is one day's. The seed is
+used only while the file does not exist: once it has been saved, whatever it says is what it
+says, including nothing, or "delete everything" would be the one edit that cannot be made.
+Nothing is seeded as a correction, since a correction is an instruction from somebody who
+has watched a specific mishearing happen.
+
+**The ceiling is on matching, and it is 1000 rather than the 200 it was.** 200 was the
+*prompt's* number applied to the wrong list. The prompt has a hard ~224-token limit, and the
+worker already trims to it in `Vocabulary.prompt()`, dropping whole terms in priority order
+— only the worker knows what whisper's tokenizer will do with `K6DRK`, so the server owes it
+a list rather than a short one. Matching has no such limit: every term is an exact target and
+one that never comes up costs a comparison. What bounds it at all is `resolve()` on the
+receiver, which scores every candidate span against every phrase of the same word count for
+every clip, on a Pi that has to keep up with a net.
+
+**And whatever is discarded is counted and named.** 270 lines were pasted into the supplement
+box, 200 were kept, 70 were dropped, and nothing anywhere said so — it was noticed only
+because the list on the page looked shorter than the one in the clipboard. The manager now
+says *over the limit: 90 lines from Standing vocabulary were dropped and the receivers never
+saw them*, by source and with the ceiling it was measured against, for the same reason the
+vocabulary section reports "found" rather than leaving an empty list to be interpreted.
+
 **Where it is refreshed from is the interesting part.** The sheet is edited up to the
 morning of the event, and the person editing it will not be sitting in the channel
 manager. So the refresh runs from the one thing that runs on its own — the devices' own
@@ -1551,6 +1593,18 @@ that is where an operator sets an event up, and where it would survive one event
 the next beginning. That is the right long-term home and this is deliberately not it yet:
 moving it means a schema change to `event.yaml` and a second admin page, for a field that
 is typed once a month.
+
+The standing list is *not* one of them. It lives in `transcriber-standing.json` beside the
+registry, written and read through `?standing` on the manager, and both halves of that are
+decided by the same two facts. It is not in the registry, because the manager refuses a Save
+made against a stale registry fingerprint and a write from the standing editor would move
+that fingerprint — the page that just made the edit would then be refused its own next Save,
+for a reason nobody could see. And it is not in `transcriber-vocabulary.json`, which is the
+file that looks like the obvious home: that one is overwritten whole by every sheet refresh,
+so a standing list kept in it would be erased by a poll nobody triggered, silently, fifteen
+minutes later, with nothing to connect the two. Its editor carries a fingerprint of its own
+file for the same reason the registry does, and more so — this is the long list, and it is
+edited slowly enough for two people to be in it at once.
 
 The manager saves on an explicit **Save**, not as you type, and carries a fingerprint of
 what the page was loaded from so the server refuses a write made against a stale copy

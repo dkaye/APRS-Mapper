@@ -13,6 +13,8 @@ require_once '/var/www/html/track_ip.php'; track_client_ip('transcriber');
  *   ?save       POST — {devices:[…], channels:[…], settings:{…}}, write the registry
  *   ?rotate     POST — {kind:'device'|'channel', id} → issue a fresh token, return it once
  *   ?vocabulary POST — re-read the assignment sheet now, return what it found
+ *   ?standing   GET  — the standing vocabulary as typed, with a fingerprint
+ *   ?standing   POST — {text, fingerprint}, write the standing vocabulary
  *   ?calibrate  POST — {channel} → ask that channel to measure its gain and squelch
  *   ?status     GET  — per-device check-in, and per-channel calibration state
  *   ?logout     GET  — end the session
@@ -165,7 +167,11 @@ if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     // the devices' next poll without anything being fetched from Google — which is the
     // entire point of it, because the case it exists for is a document that is either
     // unreachable or not yours to edit while the event is running.
-    $extra = substr((string)($body['settings']['vocabulary_extra'] ?? ''), 0, 4000);
+    // 20000 rather than the 4000 it was. A byte cap here truncates silently — there is no
+    // sensible place on the page to say "your last line was cut in half" — so it must never
+    // be the limit anybody actually reaches. The limit that binds is the term ceiling, which
+    // is counted and reported; at 20000 bytes this holds well over that many lines.
+    $extra = substr((string)($body['settings']['vocabulary_extra'] ?? ''), 0, 20000);
     $settings = ['sheet_url' => $sheet, 'vocabulary_extra' => $extra];
     $changed  = $sheet !== (string)($old['settings']['sheet_url'] ?? '')
              || $extra !== (string)($old['settings']['vocabulary_extra'] ?? '');
@@ -216,6 +222,34 @@ if (isset($_GET['vocabulary']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$canEdit) jsonOut(['error' => 'Missing permission: netbird.admin'], 403);
     transcriber_vocabulary_refresh();
     jsonOut(transcriber_vocabulary_report());
+}
+
+// The standing vocabulary: one list, shared by every event, edited from its own button.
+//
+// Its own endpoint and its own file rather than a field in the registry, and that is not
+// tidiness. A write through ?save would move the registry's fingerprint, and the page that
+// just made the edit would be refused its own next Save as a stale write — a page that
+// breaks itself for a reason nobody can see. Same reasoning as the calibration and
+// vocabulary files; see the comment in store.php.
+if (isset($_GET['standing'])) {
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        if (!$canEdit) jsonOut(['error' => 'Missing permission: netbird.admin'], 403);
+        $body = json_decode(file_get_contents('php://input'), true);
+        $sent = (string)($body['fingerprint'] ?? '');
+        // The registry's guard, applied to this file for the same reason. This is the long
+        // list and it is edited slowly, so two people with the editor open is exactly the
+        // case where one silently loses everything they typed. A blank fingerprint is a
+        // page from before this check existed and is let through.
+        if ($sent !== '' && $sent !== transcriber_standing_load()['fingerprint']) {
+            jsonOut(['error' => 'Someone else changed the standing list since you opened it'
+                              . ' — close the editor, reopen it and redo your edit'], 409);
+        }
+        $saved = transcriber_standing_save((string)($body['text'] ?? ''));
+        // The whole vocabulary report comes back with it, so the page shows what is now in
+        // force — including anything the ceiling discarded — without a second request.
+        jsonOut($saved + ['ok' => true, 'vocabulary' => transcriber_vocabulary_report()]);
+    }
+    jsonOut(transcriber_standing_load());
 }
 
 if (isset($_GET['rotate']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -341,6 +375,23 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
 #vocab-extra { width: 100%; box-sizing: border-box; resize: vertical;
                font-family: ui-monospace, monospace; font-size: 13px; }
 #vocab-extra-meta { margin: 8px 0 0; }
+/* Anything the ceiling threw away, in the color of the thing it is. A truncated list is
+   not an error the page recovered from — it is words the receivers were never given, and
+   the last time it happened the only symptom was that the list looked short. */
+#vocab-dropped { margin: 8px 0 0; font-weight: 600; color: #b91c1c; }
+#standing-meta { margin: 8px 0 0; }
+/* The standing list is long, so its editor is a wide modal rather than a box in the flow
+   of the page. Same shape as #tokenbox — same overlay, same card — with room to read fifty
+   lines at once and its own scroll, because the help above it is the point. */
+#standingbox { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none;
+               align-items: center; justify-content: center; z-index: 55; padding: 16px; }
+#standingbox.open { display: flex; }
+#standingbox .card { background: #fff; border-radius: 10px; padding: 22px;
+                     width: min(780px, 100%); max-height: 92vh; overflow-y: auto; }
+#standing-text { width: 100%; box-sizing: border-box; resize: vertical;
+                 font-family: ui-monospace, monospace; font-size: 13px; margin-top: 10px; }
+#standing-status { font-size: 13px; color: #6b7280; }
+#standing-status.error { color: #dc2626; }
 .sample { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px;
           padding: 10px 12px; font-size: 13px; line-height: 1.5; overflow-x: auto;
           font-family: ui-monospace, monospace; }
@@ -477,6 +528,9 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
     <p class="hint" id="vocab-meta"></p>
     <p class="hint" id="vocab-section"></p>
     <div id="vocab-lists"></div>
+    <!-- Anything the ceiling discarded, under the list it was discarded from. This is the
+         words the receivers were never given, so it belongs beside the words they were. -->
+    <p class="hint" id="vocab-dropped"></p>
   </div>
 
   <h2>Place names and corrections</h2>
@@ -514,7 +568,45 @@ Cardiac Hill = Cardiac</pre>
     <?php endif; ?>
     <p class="hint" id="vocab-extra-meta"></p>
   </div>
+
+  <h2>Standing vocabulary</h2>
+  <p class="hint">One list, shared by <strong>every</strong> event. Most of what a net says
+     does not change from one event to the next — the procedural words, the amateur-radio
+     terms, and the place names of the region all of these events happen in — and putting
+     them here means nobody retypes them into each new sheet.
+     <br>An event's own sheet and the box above still win on the same term, so a standing
+     entry never gets in the way of what today's sheet says.</p>
+  <div class="box">
+    <?php if ($canEdit): ?>
+      <button class="hdr-btn" id="standing-btn" onclick="openStanding()">Edit standing list…</button>
+    <?php endif; ?>
+    <p class="hint" id="standing-meta"></p>
+  </div>
 </main>
+
+<div id="standingbox"><div class="card">
+  <strong>Standing vocabulary</strong>
+  <p class="hint" style="margin-top:8px">One term per line, or <code>heard = written</code>
+     for a correction — the same format as the sheet and the box above. This list is used by
+     every event, so put here only what is true of all of them.</p>
+  <p class="hint"><strong>Prefer distinctive and multi-word terms.</strong> Every line is
+     something the transcriber will try to match against what it heard, so
+     <em>Sequoia Valley Road</em> and <em>Pantoll</em> cost nothing: nothing else sounds like
+     them, and they are either matched or they are not. A <strong>single common word</strong>
+     is expensive everywhere. <em>Runner</em> and <em>Bib</em> in a real list capitalized
+     every mention of a runner and a bib, and <em>Cardiac</em> turns "cardiac arrest" into
+     "Cardiac arrest" for the rest of the event. If a word is one you would use in an
+     ordinary sentence, leave it out here and put it on the one sheet that needs it.</p>
+  <p class="hint">Corrections are for a mishearing somebody has actually watched happen. A
+     correction is obeyed exactly, so a guess here is wrong on every event rather than one.</p>
+  <textarea id="standing-text" rows="18" spellcheck="false"></textarea>
+  <div style="margin-top:14px;display:flex;align-items:center;gap:12px">
+    <span id="standing-status"></span>
+    <span style="margin-left:auto"></span>
+    <button class="hdr-btn" onclick="closeStanding()">Cancel</button>
+    <button class="hdr-btn hdr-btn-primary" id="standing-save" onclick="saveStanding()">Save standing list</button>
+  </div>
+</div></div>
 
 <div id="notice">
   <div class="card">
@@ -753,6 +845,75 @@ async function refreshVocabulary() {
     renderVocabulary();
 }
 
+/* The standing vocabulary, in a modal of its own.
+ *
+ * It is fetched when the editor opens rather than taken from what ?load gave, and it is
+ * saved through its own endpoint. Both for the same reason: this list is not part of the
+ * page's Save. It lives in its own file so that writing it does not move the registry's
+ * fingerprint — otherwise editing it would make the page refuse its own next Save — and a
+ * page that has been open a while would otherwise offer somebody a stale copy of a long
+ * list to overwrite.
+ *
+ * `standingPrint` is what the editor was opened against. The server refuses a write made
+ * against anything else, which is the same guard the registry has and matters more here:
+ * this is a list somebody spends minutes in. */
+let standingPrint = '';
+
+async function openStanding() {
+    if (!CAN_EDIT) return;
+    const box = $('standingbox'), text = $('standing-text'), st = $('standing-status');
+    st.textContent = 'Loading…';
+    st.className = '';
+    text.value = '';
+    box.classList.add('open');
+    try {
+        const d = await (await fetch('?standing')).json();
+        text.value = d.text || '';
+        standingPrint = d.fingerprint || '';
+        st.textContent = d.seeded
+            ? 'Never edited — this is the list it started with.'
+            : 'Last edited ' + ago(d.updated_at) + '.';
+    } catch {
+        st.textContent = 'Could not read the standing list.';
+        st.className = 'error';
+    }
+}
+
+function closeStanding() { $('standingbox').classList.remove('open'); }
+
+async function saveStanding() {
+    if (!CAN_EDIT) return;
+    const btn = $('standing-save'), st = $('standing-status');
+    btn.disabled = true;
+    st.textContent = 'Saving…';
+    st.className = '';
+    try {
+        const r = await fetch('?standing', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({text: $('standing-text').value, fingerprint: standingPrint}),
+        });
+        const d = await r.json();
+        if (d.error) { st.textContent = d.error; st.className = 'error'; btn.disabled = false; return; }
+        standingPrint = d.fingerprint || '';
+        // What is now in force comes back with the save, so the page below the modal is
+        // right the moment the modal closes rather than a request later.
+        if (d.vocabulary) data.vocabulary = d.vocabulary;
+        renderVocabulary();
+        closeStanding();
+        status('Standing vocabulary saved', 'saved');
+        // The receivers do not have it yet: the vocabulary travels with their channels, at
+        // their next poll. Waited for by check-in rather than by fingerprint, as the
+        // software update is — the channel fingerprint deliberately excludes the vocabulary,
+        // so `up_to_date` is already true here and waiting on it would report "applied"
+        // before any device had looked.
+        waitForDevices(x => x.last_fetch >= d.updated_at, 'Vocabulary update');
+    } catch {
+        st.textContent = 'Save failed.';
+        st.className = 'error';
+    }
+    btn.disabled = false;
+}
+
 function ago(ts) {
     if (!ts) return 'never';
     const s = Math.max(0, Math.floor(Date.now() / 1000) - ts);
@@ -859,6 +1020,50 @@ function renderVocabulary() {
             + (exFixes ? ` and ${plural(exFixes, 'correction')}` : '')
             + " to the event's vocabulary.";
     }
+
+    const st = v.standing || {};
+    const sl = st.lines || {terms: [], corrections: {}};
+    const sTerms = (sl.terms || []).length;
+    const sFixes = Object.keys(sl.corrections || {}).length;
+    const sm = $('standing-meta');
+    if (!sTerms && !sFixes) {
+        sm.textContent = 'Empty. Every event supplies its own words.';
+    } else {
+        sm.textContent = plural(sTerms, 'term')
+            + (sFixes ? ` and ${plural(sFixes, 'correction')}` : '')
+            + ', on every event'
+            + (st.seeded ? ' — never edited, this is the list it started with.' : '.');
+    }
+
+    /* Anything the ceiling threw away, said plainly and by source.
+     *
+     * This is the failure that has already happened: 270 lines were pasted into the box,
+     * 200 were kept, 70 vanished, and nothing anywhere said so. The only symptom was that
+     * the list on the page looked shorter than the one in the clipboard, and it was noticed
+     * by luck. A third source makes reaching the ceiling likelier, so the page says which
+     * list lost words and how many — the same reason the vocabulary section reports "found"
+     * rather than leaving an empty list to be interpreted. */
+    // Named by the heading they are under, not by where they sit relative to this line.
+    // "the box below" was right until this line moved, and a report that sends somebody to
+    // the wrong list is worse than a count on its own.
+    const names = {standing: 'Standing vocabulary', sheet: 'the sheet',
+                   box: 'Place names and corrections'};
+    const lost = Object.keys(v.dropped || {})
+        .filter(k => v.dropped[k] > 0)
+        // "lines" rather than "terms": the count covers corrections too, and a message that
+        // says "terms" about a dropped correction sends somebody to count the wrong list.
+        .map(k => `${plural(v.dropped[k], 'line')} from ${names[k] || k}`);
+    const total = Object.keys(v.dropped || {}).reduce((n, k) => n + v.dropped[k], 0);
+    const dp = $('vocab-dropped');
+    // Agreement on the count of words, not on the count of sources: one source losing 70
+    // terms is still "were dropped".
+    dp.textContent = total
+        ? `Over the limit: ${lost.join(', ')} `
+          + (total === 1 ? 'was dropped and the receivers never saw it.'
+                         : 'were dropped and the receivers never saw them.')
+          + ` The limit is ${v.ceiling || 1000} terms and as many corrections —`
+          + ' shorten one of the lists.'
+        : '';
 }
 
 /* What this channel was measured at, or that it never has been.
