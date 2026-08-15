@@ -2163,6 +2163,15 @@ def test_the_byte_cap_stops_recording_but_not_receiving():
         check("a clip is never half-written to fit",
               [ln for ln in open(os.path.join(keep_dir, "manifest.jsonl"))] != [], True)
 
+        # And the cap survives a restart, which is not a rare thing for a channel to do
+        # — DEAF_CHECK_SECONDS restarts one on purpose. A budget that started again from
+        # zero each time would bound nothing at all over the length of a net.
+        again = transcriber.Retention(keep_dir, time.time() + 3600, max_bytes=40000)
+        again.keep(clip, 1.0, "after a restart", "after a restart",
+                   "after a restart", "")
+        check("what an earlier run kept still counts against it",
+              len([n for n in os.listdir(keep_dir) if n.endswith(".wav")]), 1)
+
     # And the same thing through the channel: recording stops, the log does not.
     with tempfile.TemporaryDirectory() as tmp:
         rc, sent = run_pipeline(tmp, "aid three we have a rider down",
