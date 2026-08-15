@@ -586,19 +586,40 @@ Cardiac Hill = Cardiac</pre>
 
 <div id="standingbox"><div class="card">
   <strong>Standing vocabulary</strong>
-  <p class="hint" style="margin-top:8px">One term per line, or <code>heard = written</code>
-     for a correction — the same format as the sheet and the box above. This list is used by
-     every event, so put here only what is true of all of them.</p>
-  <p class="hint"><strong>Prefer distinctive and multi-word terms.</strong> Every line is
-     something the transcriber will try to match against what it heard, so
-     <em>Sequoia Valley Road</em> and <em>Pantoll</em> cost nothing: nothing else sounds like
-     them, and they are either matched or they are not. A <strong>single common word</strong>
-     is expensive everywhere. <em>Runner</em> and <em>Bib</em> in a real list capitalized
-     every mention of a runner and a bib, and <em>Cardiac</em> turns "cardiac arrest" into
-     "Cardiac arrest" for the rest of the event. If a word is one you would use in an
-     ordinary sentence, leave it out here and put it on the one sheet that needs it.</p>
-  <p class="hint">Corrections are for a mishearing somebody has actually watched happen. A
-     correction is obeyed exactly, so a guess here is wrong on every event rather than one.</p>
+  <p class="hint" style="margin-top:8px">Words this transcriber should expect to hear at
+     <em>every</em> event. The event's own sheet and the box on the page add to this one, so
+     nothing here needs repeating in them.</p>
+
+  <p class="hint"><strong>What a line does.</strong> Each line is a target. When a
+     transcription comes back close to it, it is rewritten to exactly what you typed — so
+     <em>pan toll</em> becomes <em>Pantoll</em>. A line nothing ever comes close to costs
+     nothing.</p>
+
+  <p class="hint"><strong>Capitalization: how you type it is how the log reads.</strong>
+     Matching ignores case completely — <em>net control</em>, <em>Net Control</em> and
+     <em>NET CONTROL</em> are all recognized whichever you write. But the log then copies
+     your spelling exactly, so write it the way you want to read it back. Type
+     <em>FInish</em> and every entry will say <em>FInish</em>.</p>
+
+  <p class="hint"><strong>Long and distinctive is free. Short and ordinary is expensive.</strong>
+     <em>Sequoia Valley Road</em> and <em>Pantoll</em> cost nothing — nothing else sounds like
+     them, so they either match or they do not. A short or everyday word is matched far more
+     loosely than it looks: <em>ARES</em> is close enough to <em>are</em> that "there are
+     several areas" comes back as "there ARES several ARES", and <em>Cardiac</em> turns
+     "cardiac arrest" into "Cardiac arrest" at every event thereafter.
+     <strong>If it is a word you would use in an ordinary sentence, leave it out</strong> — or
+     put it on the one sheet that actually needs it.</p>
+
+  <p class="hint"><strong>Corrections.</strong> Write <code>heard = written</code> when you have
+     watched a particular mishearing happen — <code>Insult Hill = White Gate</code>. The left
+     side is what the transcription produced, and its capitalization is ignored; the right side
+     is what the log will say. A correction is obeyed exactly and never loosely, so a guess
+     here is wrong at every event rather than at one.</p>
+
+  <p class="hint"><strong>If two lists disagree</strong>, the more specific wins: the box on the
+     page beats the event's sheet, and the sheet beats this list.</p>
+
+
   <textarea id="standing-text" rows="18" spellcheck="false"></textarea>
   <div style="margin-top:14px;display:flex;align-items:center;gap:12px">
     <span id="standing-status"></span>
