@@ -8,11 +8,12 @@ require_once '/var/www/html/track_ip.php'; track_client_ip('transcriber');
  * Auth shared with the admin panel (same session, same permissions).
  *
  * Endpoints (query-string routed, as the WiFi Manager does):
- *   (none)    GET  — the UI
- *   ?load     GET  — devices + channels as JSON (tokens redacted)
- *   ?save     POST — {devices:[…], channels:[…]}, write the registry
- *   ?rotate   POST — {kind:'device'|'channel', id} → issue a fresh token, return it once
- *   ?logout   GET  — end the session
+ *   (none)      GET  — the UI
+ *   ?load       GET  — devices + channels + settings + vocabulary (tokens redacted)
+ *   ?save       POST — {devices:[…], channels:[…], settings:{…}}, write the registry
+ *   ?rotate     POST — {kind:'device'|'channel', id} → issue a fresh token, return it once
+ *   ?vocabulary POST — re-read the assignment sheet now, return what it found
+ *   ?logout     GET  — end the session
  *
  * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
  * ©2026 Doug Kaye, K6DRK <doug@rds.com>
@@ -71,6 +72,15 @@ if (isset($_GET['load'])) {
         $c['mhz'] = transcriber_mhz($c['frequency'] ?? 0);
     }
     unset($c);
+    // Given an explicit shape rather than passed through. An empty PHP array encodes as
+    // [] and not {}, and a JSON array that the page then hangs a property on loses it
+    // silently on the way back — the sheet URL would simply never save.
+    $data['settings'] = ['sheet_url' => (string)($data['settings']['sheet_url'] ?? '')];
+    // The lists as they stand, with when and whether the last read worked. Not refetched
+    // here — opening a page is not a reason to make somebody wait on Google, and the
+    // device poll keeps this within a quarter of an hour on its own. The button is there
+    // for the case that matters, which is a sheet edited two minutes ago.
+    $data['vocabulary'] = transcriber_vocabulary_load();
     jsonOut($data);
 }
 
@@ -134,8 +144,17 @@ if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
         ];
     }
 
-    transcriber_save(['devices' => $devices, 'channels' => $channels]);
-    jsonOut(['ok' => true, 'devices' => count($devices), 'channels' => count($channels)]);
+    // Stored as typed, not as derived. The export URL is reconstructed on every use, so
+    // the field can be shown back exactly as it was pasted — an operator checking that
+    // the manager has the right document wants to recognize their own link, not a
+    // rewritten one they have never seen.
+    $sheet = substr(trim((string)($body['settings']['sheet_url'] ?? '')), 0, 300);
+    $settings = ['sheet_url' => $sheet];
+    $changed  = $sheet !== (string)($old['settings']['sheet_url'] ?? '');
+
+    transcriber_save(['devices' => $devices, 'channels' => $channels, 'settings' => $settings]);
+    jsonOut(['ok' => true, 'devices' => count($devices), 'channels' => count($channels),
+             'sheet_changed' => $changed]);
 }
 
 // Polled by the page while it waits for the fleet to check in. Deliberately cheap: two
@@ -147,6 +166,14 @@ if (isset($_GET['status'])) {
 if (isset($_GET['update']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$canEdit) jsonOut(['error' => 'Missing permission: netbird.admin'], 403);
     jsonOut(['ok' => true, 'requested' => transcriber_request_update()]);
+}
+
+// Re-read the assignment sheet now. Unconditional — this is the button somebody presses
+// after editing the sheet at the briefing, and a cache that said "checked four minutes
+// ago, come back later" would be answering a question nobody asked.
+if (isset($_GET['vocabulary']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!$canEdit) jsonOut(['error' => 'Missing permission: netbird.admin'], 403);
+    jsonOut(transcriber_vocabulary_refresh());
 }
 
 if (isset($_GET['rotate']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -246,6 +273,17 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
 #tokenbox .card { background: #fff; border-radius: 10px; padding: 22px; max-width: 540px; }
 #tokenbox code { display: block; background: #f3f4f6; padding: 10px; border-radius: 6px;
                  font-size: 13px; word-break: break-all; margin: 12px 0; }
+.box { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; }
+.vocab-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.vocab-row input { flex: 1; min-width: 260px; }
+.vocab-group { margin-top: 12px; }
+.vocab-group strong { font-size: 12px; font-weight: 600; text-transform: uppercase;
+                      letter-spacing: .05em; color: #9ca3af; }
+.words { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.words span { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 4px;
+              padding: 2px 6px; font-size: 12px; font-family: ui-monospace, monospace; }
+#vocab-meta { margin: 10px 0 0; }
+#vocab-meta.error { color: #dc2626; }
 </style>
 </head>
 <body>
@@ -333,6 +371,32 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
     </table>
     <div class="empty" id="channels-empty">No channels yet.</div>
   </div>
+
+  <h2>Event vocabulary</h2>
+  <p class="hint">The event's <strong>radio assignment sheet</strong> in Google Docs. The
+     callsigns and tactical calls on it are read out of the document and given to every
+     channel as a hint, because they are exactly the words transcription gets wrong:
+     a callsign is letters and digits with no language behind it, and
+     <code>K6DRK</code> comes back as <em>K6 dark</em> often enough to make the log
+     tedious to read. Paste the ordinary <code>/edit</code> link — the document must be
+     shared as <em>Anyone with the link can view</em>, which yours already is if the team
+     can read it.<br>
+     Only callsigns and tactical calls are taken. Names, shift times and phone numbers on
+     the sheet are not read and are never stored. The sheet is re-read every quarter of an
+     hour by itself; press <strong>Read sheet now</strong> if you have just edited it.</p>
+  <div class="box">
+    <div class="vocab-row">
+      <?php if ($canEdit): ?>
+        <input type="text" id="sheet-url" placeholder="https://docs.google.com/document/d/…/edit"
+               oninput="data.settings.sheet_url = this.value; touch()">
+        <button class="hdr-btn" id="vocab-btn" onclick="refreshVocabulary()">Read sheet now</button>
+      <?php else: ?>
+        <span class="ro" id="sheet-url-ro"></span>
+      <?php endif; ?>
+    </div>
+    <p class="hint" id="vocab-meta"></p>
+    <div id="vocab-lists"></div>
+  </div>
 </main>
 
 <div id="notice">
@@ -356,7 +420,7 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
 const CAN_EDIT = <?= $canEdit ? 'true' : 'false' ?>;
 const MODELS = [{file: 'ggml-tiny.en.bin', name: 'Fast'},
                 {file: 'ggml-base.en.bin', name: 'Careful'}];
-let data = {devices: [], channels: []};
+let data = {devices: [], channels: [], settings: {sheet_url: ''}, vocabulary: {}};
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
@@ -497,6 +561,11 @@ async function save() {
         // Re-read: the server issues tokens for new rows and normalises ids, so the
         // browser must not keep believing what it sent.
         await load();
+        // A new sheet URL is worth reading straight away — the alternative is a field
+        // that saves and then appears to do nothing for a quarter of an hour. Not folded
+        // into the save itself: fetching a document from Google can take seconds, and
+        // Save must return as fast as it did before whether or not this field was touched.
+        if (d.sheet_changed) await refreshVocabulary();
         // A device is done when what it holds matches what it should hold — which is
         // already true for one the edit did not touch, so it does not sit pending on
         // somebody else's change.
@@ -519,6 +588,74 @@ async function requestUpdate() {
         const since = d.requested;
         waitForDevices(x => x.last_fetch >= since, 'Software update');
     } catch { status('Request failed', 'error'); }
+}
+
+/* Re-read the assignment sheet, and show what came back.
+ *
+ * The counts alone would not answer the question anybody is actually asking, which is not
+ * "how many" but "did it read MY sheet, the one I edited ten minutes ago". So the words
+ * themselves are listed. Thirty-five callsigns is a number; your own callsign in the list
+ * is an answer, and a callsign that should be there and is not is the only way to notice
+ * that the manager is pointed at last month's document. */
+async function refreshVocabulary() {
+    if (!CAN_EDIT) return;
+    const btn = $('vocab-btn'), meta = $('vocab-meta');
+    if (btn) btn.disabled = true;
+    meta.textContent = 'Reading the sheet…';
+    meta.className = 'hint';
+    try {
+        const v = await (await fetch('?vocabulary', {method: 'POST'})).json();
+        // A failed read keeps the lists it already had, so what comes back is still the
+        // vocabulary in force — it simply carries an error alongside it. A refusal is not
+        // that shape and carries no lists at all, so keep the ones already on the page
+        // rather than making a permission error look like an empty sheet.
+        data.vocabulary = v.callsigns ? v : {...data.vocabulary, error: v.error || 'refused'};
+    } catch {
+        data.vocabulary = {...data.vocabulary, error: 'the server did not answer'};
+    }
+    if (btn) btn.disabled = false;
+    renderVocabulary();
+}
+
+function ago(ts) {
+    if (!ts) return 'never';
+    const s = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+    if (s < 90)     return 'just now';
+    if (s < 5400)   return Math.round(s / 60) + ' minutes ago';
+    if (s < 172800) return Math.round(s / 3600) + ' hours ago';
+    return Math.round(s / 86400) + ' days ago';
+}
+
+function renderVocabulary() {
+    const v = data.vocabulary || {};
+    const url = (data.settings || {}).sheet_url || '';
+    const box = $('sheet-url');
+    // Not while somebody is typing in it: this runs on every render, including the one
+    // that follows a save.
+    if (box && document.activeElement !== box) box.value = url;
+    const readonlyUrl = $('sheet-url-ro');          // shown instead of the box without edit rights
+    if (readonlyUrl) readonlyUrl.textContent = url || 'No sheet set';
+
+    const calls = v.callsigns || [], tac = v.tactical || [];
+    const meta = $('vocab-meta');
+    if (v.error) {
+        meta.textContent = 'Could not read the sheet: ' + v.error
+            + (calls.length ? ' The channels are still using what it read last time.' : '');
+        meta.className = 'hint error';
+    } else if (!url) {
+        meta.textContent = 'No sheet set. Channels transcribe without a vocabulary hint.';
+        meta.className = 'hint';
+    } else {
+        meta.textContent = `${calls.length} callsign${calls.length === 1 ? '' : 's'} and `
+            + `${tac.length} tactical call${tac.length === 1 ? '' : 's'}, read ${ago(v.fetched_at)}.`;
+        meta.className = 'hint';
+    }
+
+    $('vocab-lists').innerHTML = [['Callsigns', calls], ['Tactical calls', tac]]
+        .filter(g => g[1].length)
+        .map(g => `<div class="vocab-group"><strong>${g[0]}</strong>
+                   <div class="words">${g[1].map(w => `<span>${esc(w)}</span>`).join('')}</div>
+                 </div>`).join('');
 }
 
 function tokenCell(row, kind, key) {
@@ -629,6 +766,8 @@ function renderRows() {
         <td>${CAN_EDIT ? `<button class="row-btn danger" onclick="delChannel(${i})">Remove</button>` : ''}</td>
     </tr>`).join('');
     $('channels-empty').style.display = data.channels.length ? 'none' : '';
+
+    renderVocabulary();
 }
 
 function delDevice(i) {

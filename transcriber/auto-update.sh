@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Transcriber nightly update — v1.0.
 #
-# Downloads files.tar.gz and the channel list from marsaprs.org and applies both.
+# Downloads files.tar.gz and this device's configuration — its channels, and the event
+# vocabulary read off the assignment sheet — from marsaprs.org, and applies both.
 # Run daily via cron. Safe to run manually at any time.
 #
 # Does NOT touch /opt/transcriber/models — the whisper models are large, rarely
@@ -142,20 +143,35 @@ if [ -f "$TOKEN_FILE" ]; then
         # Validate before installing. A truncated or error-page response would
         # otherwise stop every channel on this device at the next restart.
         #
-        # Only the channels are written to $CONFIG. The response also carries the
-        # server's "update requested" stamp, and if that went into the same file then
-        # every press of the button would look like a changed channel list and restart
-        # every receiver on the device for no reason.
+        # The channels and the event vocabulary are written to $CONFIG; the "update
+        # requested" stamp the response also carries is deliberately left out. Put that in
+        # the same file and every press of the button looks like a changed channel list
+        # and restarts every receiver on the device for no reason.
+        #
+        # The vocabulary — the callsigns and tactical calls off the event's assignment
+        # sheet — belongs in here precisely because a change to it SHOULD restart the
+        # channels: the worker builds its whisper prompt from it once, at startup, so a
+        # vocabulary it never reloads is a vocabulary it never uses. Unlike the update
+        # stamp, it only changes when the document does.
+        #
+        # sort_keys, and defaults for a key an older server does not send, so the file is
+        # byte-identical run to run and `cmp -s` below stays the change detector. A device
+        # that stopped being able to tell "unchanged" from "changed" would either restart
+        # its receivers every minute or never pick anything up.
         if python3 - "$TMP/response.json" "$TMP/channels.json" <<'PYEOF' 2>/dev/null
 import json, sys
 r = json.load(open(sys.argv[1]))
-json.dump({"channels": r["channels"]}, open(sys.argv[2], "w"), indent=4, sort_keys=True)
+vocab = r.get("vocabulary") or {}
+json.dump({"channels": r["channels"],
+           "vocabulary": {"callsigns": vocab.get("callsigns") or [],
+                          "tactical":  vocab.get("tactical")  or []}},
+          open(sys.argv[2], "w"), indent=4, sort_keys=True)
 PYEOF
         then
             mkdir -p "$(dirname "$CONFIG")"
             if ! cmp -s "$TMP/channels.json" "$CONFIG"; then
                 install -m 640 -o root -g pi "$TMP/channels.json" "$CONFIG"
-                FORCE_LOG=1 log "channel list updated"
+                FORCE_LOG=1 log "configuration updated (channels or vocabulary)"
                 CHANNELS_CHANGED=1
             fi
         else

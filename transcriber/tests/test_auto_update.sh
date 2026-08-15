@@ -265,6 +265,122 @@ check "stops a disabled channel" \
       "$(grep -c 'disable --now transcriber@Transcriber-147465.service' "$SANDBOX/calls.txt")" "1"
 teardown
 
+# ── what a device installs as its configuration ──────────────────────────────
+# /etc/transcriber/channels.json is two things at once: the file the worker reads, and the
+# file `cmp -s` compares to decide whether a receiver restarts. So what goes into it and
+# what stays out of it are the same question, and both have already been got wrong once.
+#
+# Drives the fetch block directly, with the response a real server would have returned.
+# The download is not what is under test; what the device does with the answer is.
+
+cfg_setup() {
+    SANDBOX=$(mktemp -d)
+    mkdir -p "$SANDBOX/tmp" "$SANDBOX/etc"
+    { echo 'TMP="'"$SANDBOX"'/tmp"'
+      echo 'CONFIG="'"$SANDBOX"'/etc/channels.json"'
+      echo 'TOKEN_FILE="'"$SANDBOX"'/token"'
+      echo 'LAST_UPDATE_SEEN="'"$SANDBOX"'/etc/last-update-request"'
+      echo 'CHANNELS_ONLY=""'
+      echo 'SELF=/bin/true'
+      echo 'log() { echo "$*" >> "'"$SANDBOX"'/log.txt"; }'
+      # A shell function beats anything on PATH, so the block under test calls this
+      # instead of reaching for the network.
+      echo 'curl() { cp "$RESPONSE" "'"$SANDBOX"'/tmp/response.json"; }'
+      sed -n '/^# ── channels ─/,/^# ── restart what is configured/p' "$SRC/auto-update.sh" \
+        | sed -e 's/-o root -g pi //'
+      # CHANNELS_CHANGED is what the restart section keys off, so read the variable
+      # itself rather than a log line. A test that watched the wording would pass or fail
+      # on the wording.
+      echo 'echo "${CHANNELS_CHANGED:-no}" > "'"$SANDBOX"'/changed.txt"'
+    } > "$SANDBOX/fetch.sh"
+    echo tok > "$SANDBOX/token"
+    : > "$SANDBOX/log.txt"
+}
+
+# fetch <the JSON the server returned>
+fetch() {
+    echo "$1" > "$SANDBOX/response.json"
+    RESPONSE="$SANDBOX/response.json" bash "$SANDBOX/fetch.sh" >/dev/null 2>&1
+}
+
+# cfg <dotted path into the installed config>
+#
+# Says MISSING rather than nothing when the key is not there. An absent list and an empty
+# one both print as "" otherwise, and a test that cannot tell them apart passes against a
+# device that never got the key at all — which is precisely the state this is here to
+# detect.
+cfg() {
+    python3 -c "
+import json, sys
+d = json.load(open('$SANDBOX/etc/channels.json'))
+try:
+    for k in sys.argv[1].split('.'):
+        d = d[k]
+except (KeyError, TypeError):
+    print('MISSING'); raise SystemExit
+print(','.join(d) if isinstance(d, list) else d)
+" "$1" 2>/dev/null
+}
+
+echo "configuration — the event vocabulary reaches the device"
+cfg_setup
+fetch '{"channels":[{"id":"rx1-147465","enabled":true}],"update_requested":1755000000,
+        "vocabulary":{"callsigns":["K6DRK","NZ6J"],"tactical":["Net Control","Sweep 1"]}}'
+check "callsigns are installed" "$(cfg vocabulary.callsigns)" "K6DRK,NZ6J"
+check "so are the tactical calls" "$(cfg vocabulary.tactical)" "Net Control,Sweep 1"
+check "and the channel list is still there beside them" \
+      "$(python3 -c "import json;print(json.load(open('$SANDBOX/etc/channels.json'))['channels'][0]['id'])")" \
+      "rx1-147465"
+
+# The regression this file exists to prevent, restated for the new key. The update stamp
+# changes every time somebody presses the button; in this file it would read as a changed
+# channel list and restart every receiver on the device for nothing.
+check "the update stamp is not in the file" \
+      "$(grep -c 'update_requested' "$SANDBOX/etc/channels.json")" "0"
+
+echo "configuration — a vocabulary change is a change"
+# It has to be. The worker builds its whisper prompt from this list once, at startup, so a
+# vocabulary it never reloads is a vocabulary it never uses.
+: > "$SANDBOX/log.txt"
+fetch '{"channels":[{"id":"rx1-147465","enabled":true}],"update_requested":1755000000,
+        "vocabulary":{"callsigns":["K6DRK","NZ6J","W6SG"],"tactical":["Net Control","Sweep 1"]}}'
+check "the new callsign is installed" "$(cfg vocabulary.callsigns)" "K6DRK,NZ6J,W6SG"
+check "and the device treats it as a change" "$(cat "$SANDBOX/changed.txt")" "1"
+
+echo "configuration — nothing changed is nothing changed"
+# Same content, different key order in the response, and a different update stamp. The
+# file must come out byte for byte identical or `cmp -s` stops being a change detector and
+# every poll restarts every receiver, sixty times an hour.
+: > "$SANDBOX/log.txt"
+fetch '{"update_requested":1755009999,
+        "vocabulary":{"tactical":["Net Control","Sweep 1"],"callsigns":["K6DRK","NZ6J","W6SG"]},
+        "channels":[{"enabled":true,"id":"rx1-147465"}]}'
+check "nothing is reported as changed" "$(cat "$SANDBOX/changed.txt")" "no"
+
+echo "configuration — a server that sends no vocabulary"
+# A device can be newer than the server for a day: the archive lands on the nightly run
+# and the server is deployed separately. Missing means empty, not broken.
+teardown
+cfg_setup
+fetch '{"channels":[{"id":"rx1-147465","enabled":true}],"update_requested":0}'
+check "installs an empty vocabulary rather than none" "$(cfg vocabulary.callsigns)" ""
+check "the config is still valid" \
+      "$(python3 -c "import json;json.load(open('$SANDBOX/etc/channels.json'));print('yes')" 2>/dev/null)" \
+      "yes"
+
+echo "configuration — a response that is not a config at all"
+# The rule that must never regress, restated for the response rather than the archive: a
+# receiver keeps what it has rather than being taken off the air by a bad answer. An error
+# page from a proxy is the realistic way that arrives.
+: > "$SANDBOX/log.txt"
+fetch '<html><title>502 Bad Gateway</title></html>'
+check "keeps the config it had" "$(cfg vocabulary.callsigns)" ""
+check "the channel list is untouched" \
+      "$(python3 -c "import json;print(json.load(open('$SANDBOX/etc/channels.json'))['channels'][0]['id'])")" \
+      "rx1-147465"
+check "and says so" "$(grep -c 'not valid JSON' "$SANDBOX/log.txt")" "1"
+teardown
+
 echo ""
 if [ "$FAILURES" -eq 0 ]; then
     echo "all passed"

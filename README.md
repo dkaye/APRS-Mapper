@@ -1308,6 +1308,72 @@ was being said, sixty times an hour, forever. And the `update_requested` stamp t
 sets is kept *out* of the file the device compares against, or pressing "Update devices"
 would look like a changed channel list and restart every receiver for nothing.
 
+That file — `/etc/transcriber/channels.json` — is written with sorted keys and holds
+exactly two things, because it is both what the worker reads and what `cmp -s` compares to
+decide whether a receiver restarts:
+
+```json
+{"channels": [ … ], "vocabulary": {"callsigns": [ … ], "tactical": [ … ]}}
+```
+
+**The words that will be said on the air are already written down, on the assignment
+sheet.** Every event has one, in Google Docs: who is where, on what frequency, under what
+tactical call. Those are also exactly the words transcription is worst at — a callsign is
+letters and digits with no language behind it, and `K6DRK` comes back as *K6 dark* or
+*case six DRK* often enough to make a log tedious to read. Handed the list as a whisper
+prompt at channel start, it gets them.
+
+Paste the ordinary `/edit` link (or a bare document ID) into **Event vocabulary** in the
+channel manager and the server reads the document's plain-text export — no authentication
+needed for a link-shared document, which every one of these already is because the team
+reads it. On the real Dipsea sheet a plain regex finds **35 callsigns** and 12 tactical
+calls. There is no AI anywhere in this and there does not need to be; what actually
+matters is *normalizing* what comes back, because the export is a flattened table and the
+same call arrives as `Net control\t`, `net control\n` and `netcontrol`.
+
+**Only two things are taken, and the document is never stored.** Callsigns matched on US
+amateur shape (`\b[A-Z]{1,2}[0-9][A-Z]{1,3}\b`, which is narrow enough to sit beside
+`440.1375MHz`, `PL 192.8Hz`, `CC3` and `Ch21R` without eating any of them, and drops the
+SSID off `KM6BON-7`), and tactical calls from a fixed vocabulary of roles — Sweep, SAG,
+Aid, Biker, Hiker, Net Control, Start, Finish — normalized to their spoken form. Nothing
+else, and nothing that merely looks like a proper noun. The same sheet carries operators'
+full names, their shift times and somebody's mobile number; a fleet of receivers in sheds
+has no business holding any of it, so it is not read and no copy of the document is kept.
+
+**Where it is refreshed from is the interesting part.** The sheet is edited up to the
+morning of the event, and the person editing it will not be sitting in the channel
+manager. So the refresh runs from the one thing that runs on its own — the devices' own
+60-second configuration fetch — with three guards: at most one fetch per quarter hour
+across the whole fleet, a non-blocking lock so eight devices polling in the same second
+produce one request and not eight, and an 8-second timeout inside the 30 seconds the
+device already allows. A failed fetch keeps the vocabulary that was already in force,
+because losing a good list to one timed-out request on a marginal link would be strictly
+worse than holding yesterday's. Under Apache's mod_php there is no `fastcgi_finish_request`
+to hide the fetch behind, so this is a real cost on a real request, and that is why it is
+bounded rather than convenient.
+
+**Read sheet now** in the manager bypasses the cache and shows the callsigns and tactical
+calls it found — the actual lists, not just counts. The question somebody is asking after
+editing a document is not "how many" but "did it read *my* sheet", and their own callsign
+in the list is the only thing that answers it.
+
+A vocabulary change **does** restart the channels, unlike an `update_requested` stamp: the
+worker builds its prompt once, at startup, so a vocabulary it never reloads is a vocabulary
+it never uses.
+
+The extracted lists live in `transcriber-vocabulary.json` *beside* the registry rather than
+inside it, for the same reason the per-device state does — and one more: a refresh that
+moved the registry's fingerprint would make an open manager page refuse its own Save as a
+stale write.
+
+The sheet URL is stored fleet-wide in the registry (`settings.sheet_url`) rather than per
+device, because the vocabulary is per *event* and there is one live event at a time. It
+arguably belongs on the event in the map admin instead, beside the event name and date —
+that is where an operator sets an event up, and where it would survive one event ending and
+the next beginning. That is the right long-term home and this is deliberately not it yet:
+moving it means a schema change to `event.yaml` and a second admin page, for a field that
+is typed once a month.
+
 The manager saves on an explicit **Save**, not as you type, and carries a fingerprint of
 what the page was loaded from so the server refuses a write made against a stale copy
 rather than silently reverting somebody else's change. **Update devices** is separate and
