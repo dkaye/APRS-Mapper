@@ -279,6 +279,28 @@ check, the watchdog's [decode check](#decode-check), catches the receiver that h
 while still reporting itself healthy; when it logs `RECEIVER DEAD`, `sdr-usb-test` below is
 the next thing to run.
 
+**Before any of that: decodes are not in the journal.** `direwolf-run.sh` redirects direwolf's
+stdout to `/var/log/direwolf/console.log`, so `journalctl -u direwolf` carries only rtl_fm's
+startup chatter and never a single decoded packet. Grep the journal for `audio level` on a
+perfectly healthy gate and you get zero, which reads exactly like a dead receiver.
+
+That cost an afternoon. A dongle was swapped, the journal showed no decodes, and the
+conclusion — that the new SDR needed a different driver — was wrong twice over: the gate had
+been decoding the whole time, and the packaged `librtlsdr` already supported the new hardware.
+A hand-built driver was installed over a working one on the strength of it.
+
+So, in order:
+
+| Question | Where the answer is |
+|---|---|
+| Is it decoding right now? | `sudo tail -f /var/log/direwolf/console.log` — an `audio level` line per frame |
+| How much has it decoded? | `/home/pi/aprslogs/<date>.log`, one line per packet, and the file's mtime |
+| Which stations, how many? | `awk -F, '{print $4}' /home/pi/aprslogs/<date>.log \| sort -u \| wc -l` |
+| Did rtl_fm start, and how? | `journalctl -u direwolf` — tuner, sample rate, and errors, but no decodes |
+
+Unique stations is the better measure of a receiver than packet count: one nearby station
+beaconing every minute dominates a total and says nothing about how far the gate can hear.
+
 **SDR self-noise self-test (automatic).** `sdr-selftest.sh` runs nightly (from
 `auto-update.sh`, before the 4:10 am reboot) and can also be run by hand
 (`bash ~/sdr-selftest.sh`). It briefly stops direwolf, sweeps 144–148 MHz with
