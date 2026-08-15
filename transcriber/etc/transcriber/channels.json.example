@@ -15,7 +15,21 @@
     "          rtl_eeprom -d 0 -s 00000001",
     "squelch   rtl_fm squelch level; 0 disables it. Too low and the channel",
     "          transcribes hiss, too high and it clips the start of every over.",
-    "model     whisper model under /opt/transcriber/models"
+    "model     whisper model under /opt/transcriber/models",
+    "",
+    "record_until",
+    "          keep every clip this channel records, as well as transcribing it, until",
+    "          this moment; absent or past means keep nothing, which is the normal",
+    "          state. Epoch seconds, or '2026-08-16T11:30' in the receiver's local",
+    "          time, or the same with a trailing Z for UTC. The audio and a manifest",
+    "          line per clip go to /var/spool/transcriber/<channel>/recordings — on the",
+    "          card, deliberately, which is the one exception to clips living in RAM.",
+    "          For capturing a corpus a detector can be built against; not for running.",
+    "          Stop transcriber-config.timer before setting this by hand, or the poll",
+    "          will fetch a copy without it and undo it inside a minute.",
+    "record_max_bytes",
+    "          how much this channel may keep before it stops by itself, in bytes.",
+    "          Defaults to 512 MB, which is about seven hours of a busy net."
   ],
   "channels": [
     {

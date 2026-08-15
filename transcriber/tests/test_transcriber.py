@@ -25,6 +25,7 @@ import struct
 import sys
 import tempfile
 import threading
+import time
 import wave
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -725,7 +726,7 @@ def test_transcription_runs_off_the_capture_thread():
     import time as _time
     work, stopping, done = transcriber.ClipQueue(), threading.Event(), []
 
-    def slow(channel, path, whisper, model, outbox):
+    def slow(channel, path, whisper, model, outbox, retention=None):
         _time.sleep(0.15)                   # far slower than clips arrive
         done.append(path)
 
@@ -1505,7 +1506,7 @@ def test_only_a_capped_clip_answers_the_open_carrier_question():
         def verdict(self, logged):
             said.append(logged)
 
-    def stub(channel, path, whisper, model, outbox):
+    def stub(channel, path, whisper, model, outbox, retention=None):
         return "yes" in path
 
     real, transcriber.handle_clip = transcriber.handle_clip, stub
@@ -1751,8 +1752,12 @@ def stub_whisper(directory, says):
     return path
 
 
-def run_pipeline(tmp, says, clip_seconds=3.0, vocabulary=None):
-    """One --spool-only pass over a single clip. Returns the entries the server got."""
+def run_pipeline(tmp, says, clip_seconds=3.0, vocabulary=None, channel=None):
+    """One --spool-only pass over a single clip. Returns the entries the server got.
+
+    `channel` is merged into the channel entry, for the settings a test wants to set the
+    way the manager would rather than by reaching into the module.
+    """
     spool = os.path.join(tmp, "spool")
     os.makedirs(spool, exist_ok=True)
     clip = os.path.join(spool, "clip_001.wav")
@@ -1773,12 +1778,14 @@ def run_pipeline(tmp, says, clip_seconds=3.0, vocabulary=None):
     Handler.status, Handler.body = 200, b'{"ok":true}'
 
     config = os.path.join(tmp, "channels.json")
+    entry = {
+        "id": "rx1-146520", "label": "146.520", "token": "tok-rx",
+        "frequency": "146520000", "serial": "00000001",
+        "server": f"http://127.0.0.1:{port}",
+    }
+    entry.update(channel or {})
     with open(config, "w") as fh:
-        json.dump({"channels": [{
-            "id": "rx1-146520", "label": "146.520", "token": "tok-rx",
-            "frequency": "146520000", "serial": "00000001",
-            "server": f"http://127.0.0.1:{port}",
-        }], "vocabulary": vocabulary or {}}, fh)
+        json.dump({"channels": [entry], "vocabulary": vocabulary or {}}, fh)
 
     rc = transcriber.main([
         "--channel", "rx1-146520", "--config", config, "--spool", spool,
@@ -1965,6 +1972,234 @@ def test_pipeline_discards_short_clip():
         check("nothing logged", sent, [])
 
 
+# ── keeping the audio ────────────────────────────────────────────────────────
+#
+# Retention exists to build a corpus, and a corpus is only useful if it is complete and
+# if nothing about it can take the receiver off the air. Both halves are tested here: what
+# gets kept, and what happens when keeping it fails.
+
+def retained(tmp):
+    """(the wavs kept, the manifest lines) after a run_pipeline pass."""
+    directory = os.path.join(tmp, "spool", "recordings")
+    if not os.path.isdir(directory):
+        return [], []
+    wavs = sorted(n for n in os.listdir(directory) if n.endswith(".wav"))
+    lines = []
+    manifest = os.path.join(directory, "manifest.jsonl")
+    if os.path.exists(manifest):
+        with open(manifest) as fh:
+            lines = [json.loads(ln) for ln in fh if ln.strip()]
+    return wavs, lines
+
+
+def test_the_audio_is_thrown_away_unless_somebody_asked_to_keep_it():
+    """Off is the normal state and the default, and with it off nothing about the
+    channel is different — the card is not touched at all, not even to make the
+    directory."""
+    print("retention — off unless asked")
+    check("a channel that says nothing keeps nothing",
+          transcriber.Channel({"id": "rx1"}).record_until, 0.0)
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, sent = run_pipeline(tmp, "aid three we have a rider down")
+        check("exit 0", rc, 0)
+        check("the entry reaches the log as before",
+              sent, ["aid three we have a rider down"])
+        check("and nothing is kept", retained(tmp), ([], []))
+        check("not even a directory to keep it in",
+              os.path.exists(os.path.join(tmp, "spool", "recordings")), False)
+
+
+def test_a_window_that_has_passed_keeps_nothing():
+    """The whole reason retention is asked for with an expiry rather than a switch: a
+    switch left on records until the card fills, and a card that fills takes the receiver
+    off the air. An hour after the net, this has to be over whether or not anybody
+    remembered."""
+    print("retention — an expired window")
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, sent = run_pipeline(tmp, "aid three we have a rider down",
+                                channel={"record_until": time.time() - 60})
+        check("exit 0", rc, 0)
+        check("the entry still reaches the log",
+              sent, ["aid three we have a rider down"])
+        check("and nothing is kept", retained(tmp), ([], []))
+
+    # The control, and it is not optional: "nothing was kept" passes for free on a
+    # channel where nothing is ever kept, which is how a test comes to pass against the
+    # very code it was written for. The same setting an hour the other way must record.
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, sent = run_pipeline(tmp, "aid three we have a rider down",
+                                channel={"record_until": time.time() + 3600})
+        check("while the same setting still in the future does keep the clip",
+              len(retained(tmp)[0]), 1)
+
+    # And the case that will actually happen, which the two above between them do not
+    # cover: the deadline passes while the channel is running. Nothing restarts at that
+    # moment and nothing is watching the clock, so it is the check made as each clip
+    # arrives that has to stop it — with only the startup check, both of the tests above
+    # still pass and the recording runs until the card fills.
+    with tempfile.TemporaryDirectory() as tmp:
+        clip = os.path.join(tmp, "clip_00001.wav")
+        write_wav(clip, 1.0)
+        keep_dir = os.path.join(tmp, "recordings")
+        r = transcriber.Retention(keep_dir, time.time() + 0.3)
+        r.keep(clip, 1.0, "inside the window", "inside the window",
+               "inside the window", "")
+        time.sleep(0.4)
+        r.keep(clip, 1.0, "after it closed", "after it closed", "after it closed", "")
+        check("the clip inside the window is kept, the one after it is not",
+              len([n for n in os.listdir(keep_dir) if n.endswith(".wav")]), 1)
+        check("and it has stopped of its own accord", r.on, False)
+
+
+def test_the_manifest_says_what_each_clip_became():
+    """Audio alone is half a corpus. Judging whether a tone detector would have helped
+    means knowing what each clip actually produced — so every retained wav has a line
+    beside it, and the line names the file it is about."""
+    print("retention — the manifest beside the audio")
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, sent = run_pipeline(tmp, "(water splashing) aid three we have a rider down",
+                                channel={"record_until": time.time() + 3600})
+        wavs, lines = retained(tmp)
+        check("the clip is on the card", len(wavs), 1)
+        check("with exactly one line about it", len(lines), 1)
+        line = lines[0] if lines else {}
+        check("the line names the wav", line.get("file"), wavs[0] if wavs else None)
+        check("and its length", round(line.get("seconds", 0)), 3)
+        check("what whisper returned", line.get("whisper"),
+              "(water splashing) aid three we have a rider down")
+        check("what clean() left of it", line.get("clean"),
+              "aid three we have a rider down")
+        check("that loggable() kept it", line.get("kept"), True)
+        check("with nothing to explain", line.get("why"), "")
+        check("and the log agrees", sent, ["aid three we have a rider down"])
+
+    # And it lines up with the event log word for word, callsign corrections and all.
+    # Anyone using this corpus starts from a line in the log — "the ID at about ten
+    # past" — and has to be able to find the clip it came from; a manifest holding the
+    # text as whisper spelled it would not match the entry anybody is looking at.
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, sent = run_pipeline(tmp, "K-6 DRK testing on West Marin", vocabulary=ROSTER,
+                                channel={"record_until": time.time() + 3600})
+        wavs, lines = retained(tmp)
+        line = lines[0] if lines else {}
+        check("the manifest holds what whisper heard", line.get("whisper"),
+              "K-6 DRK testing on West Marin")
+        check("and what the log was actually sent", [line.get("logged")], sent)
+
+
+def test_the_manifest_says_why_a_clip_was_not_logged():
+    """The clips that produced nothing are the interesting ones — a courtesy beep and a
+    Morse ID both land here — so the reason has to be recorded, not just the fact."""
+    print("retention — why a clip produced nothing")
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, sent = run_pipeline(tmp, "Beep", channel={"record_until": time.time() + 3600})
+        wavs, lines = retained(tmp)
+        check("nothing is logged", sent, [])
+        check("but the audio is kept", len(wavs), 1)
+        line = lines[0] if lines else {}
+        check("the line says whisper heard the tone as a word", line.get("whisper"), "Beep")
+        check("that it was not logged", line.get("kept"), False)
+        check("and says why", bool(line.get("why")), True)
+
+
+def test_a_clip_too_short_to_transcribe_is_still_worth_keeping():
+    """MIN_CLIP_SECONDS throws away key-ups and squelch tails without asking whisper —
+    and a courtesy beep in a clip of its own is often exactly that long. The clips that
+    rule discards are therefore among the ones a tone detector most needs to be built
+    against, so retention takes them too and the manifest says whisper never ran."""
+    print("retention — the clips the pipeline never transcribes")
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, sent = run_pipeline(tmp, "aid three we have a rider down", clip_seconds=0.5,
+                                channel={"record_until": time.time() + 3600})
+        wavs, lines = retained(tmp)
+        check("nothing is logged, exactly as before", sent, [])
+        check("the audio is kept anyway", len(wavs), 1)
+        line = lines[0] if lines else {}
+        check("whisper was never asked", line.get("whisper"), "")
+        check("and the line says so", "short" in (line.get("why") or ""), True)
+
+
+def test_a_clip_that_cannot_be_kept_does_not_stop_the_channel():
+    """Recording is strictly secondary to receiving. A card that has filled, a directory
+    that has gone, a permission changed underneath us — every one of those stops the
+    recording and none of them may cost the log a single entry."""
+    print("retention — a write that fails")
+    # The control first. Without it this test asks only that the log still works, which
+    # it does on a channel that never tried to record anything at all.
+    with tempfile.TemporaryDirectory() as tmp:
+        run_pipeline(tmp, "aid three we have a rider down",
+                     channel={"record_until": time.time() + 3600})
+        check("with the card writable the clip is kept", len(retained(tmp)[0]), 1)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, "spool"), exist_ok=True)
+        # A plain file where the directory belongs. Everything under it then fails, and
+        # it fails for root as well — which a chmod would not, and these run as root.
+        with open(os.path.join(tmp, "spool", "recordings"), "w") as fh:
+            fh.write("in the way")
+        rc, sent = run_pipeline(tmp, "aid three we have a rider down",
+                                channel={"record_until": time.time() + 3600})
+        check("exit 0", rc, 0)
+        check("and the transmission still reaches the log",
+              sent, ["aid three we have a rider down"])
+
+
+def test_the_byte_cap_stops_recording_but_not_receiving():
+    """The second bound. Time alone does not bound the card: a stuck carrier or a
+    squelch that has failed open would write for the whole window at the full rate."""
+    print("retention — the second bound")
+    with tempfile.TemporaryDirectory() as tmp:
+        clip = os.path.join(tmp, "clip_00001.wav")
+        write_wav(clip, 1.0)                    # 32 KB of audio, plus the header
+        keep_dir = os.path.join(tmp, "recordings")
+        r = transcriber.Retention(keep_dir, time.time() + 3600, max_bytes=40000)
+        r.keep(clip, 1.0, "hello there", "hello there", "hello there", "")
+        check("the first clip fits and is kept",
+              len([n for n in os.listdir(keep_dir) if n.endswith(".wav")]), 1)
+        r.keep(clip, 1.0, "hello there", "hello there", "hello there", "")
+        check("the second would cross the cap, so it is not written",
+              len([n for n in os.listdir(keep_dir) if n.endswith(".wav")]), 1)
+        check("and nothing more will be", r.on, False)
+        check("a clip is never half-written to fit",
+              [ln for ln in open(os.path.join(keep_dir, "manifest.jsonl"))] != [], True)
+
+    # And the same thing through the channel: recording stops, the log does not.
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, sent = run_pipeline(tmp, "aid three we have a rider down",
+                                channel={"record_until": time.time() + 3600,
+                                         "record_max_bytes": 1})
+        check("nothing is kept", retained(tmp)[0], [])
+        check("and the channel carries on logging",
+              sent, ["aid three we have a rider down"])
+
+
+def test_kept_clips_sort_in_the_order_they_were_heard():
+    """The clip's own name can do neither job: seq starts again at 1 on every restart,
+    so a clip from this run lands on one from the last run, and the order of the names
+    is the order of the process rather than the order of the radio."""
+    print("retention — names that sort and do not collide")
+    with tempfile.TemporaryDirectory() as tmp:
+        keep_dir = os.path.join(tmp, "recordings")
+        # The same file name twice, as two restarts would produce it, an hour apart.
+        first = os.path.join(tmp, "a", "clip_00001.wav")
+        second = os.path.join(tmp, "b", "clip_00001.wav")
+        for path in (first, second):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            write_wav(path, 1.0)
+        os.utime(first, (time.time() - 3600, time.time() - 3600))
+
+        r = transcriber.Retention(keep_dir, time.time() + 3600)
+        r.keep(second, 1.0, "later", "later", "later", "")     # newer one kept first
+        r.keep(first, 1.0, "earlier", "earlier", "earlier", "")
+        wavs = sorted(n for n in os.listdir(keep_dir) if n.endswith(".wav"))
+        check("both survive", len(wavs), 2)
+        with open(os.path.join(keep_dir, "manifest.jsonl")) as fh:
+            lines = [json.loads(ln) for ln in fh if ln.strip()]
+        by_name = {ln["file"]: ln["whisper"] for ln in lines}
+        check("and sorting the names puts the earlier transmission first",
+              [by_name.get(n) for n in wavs], ["earlier", "later"])
+
+
 def test_an_idle_frequency_is_not_fatal():
     """sox creates its output file the instant it opens one and then waits, so on a
     quiet frequency there is always a 44-byte header sitting in the spool. Reading it
@@ -2115,6 +2350,14 @@ if __name__ == "__main__":
         test_pipeline_corrects_a_callsign_but_only_after_the_guards,
         test_pipeline_discards_short_clip,
         test_pipeline_transcribes_a_capped_clip_rather_than_binning_it,
+        test_the_audio_is_thrown_away_unless_somebody_asked_to_keep_it,
+        test_a_window_that_has_passed_keeps_nothing,
+        test_the_manifest_says_what_each_clip_became,
+        test_the_manifest_says_why_a_clip_was_not_logged,
+        test_a_clip_too_short_to_transcribe_is_still_worth_keeping,
+        test_a_clip_that_cannot_be_kept_does_not_stop_the_channel,
+        test_the_byte_cap_stops_recording_but_not_receiving,
+        test_kept_clips_sort_in_the_order_they_were_heard,
         test_an_idle_frequency_is_not_fatal,
         test_a_broken_whisper_is_fatal_not_silent,
         test_disabled_channel_does_nothing, test_unknown_channel_is_fatal,

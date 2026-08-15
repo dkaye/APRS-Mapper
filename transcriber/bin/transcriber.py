@@ -25,6 +25,7 @@
 # ©2026 Doug Kaye, K6DRK <doug@rds.com>
 
 import argparse
+import calendar
 import collections
 import copy
 import difflib
@@ -48,7 +49,7 @@ import wave
 # 5.x — it is a separate device on its own cadence, and it is new. See Versioning in the
 # README. auto-update.sh copies this to /etc/transcriber/version so a device can be
 # identified without running anything.
-VERSION = "1.1"
+VERSION = "1.2"
 
 CONFIG = "/etc/transcriber/channels.json"
 # What must survive a reboot lives on the card: the outbox, so a transmission heard
@@ -221,6 +222,76 @@ class Channel:
         # channel says otherwise, and PROMPT_FLAG explains at length why the default is
         # the one that matters here.
         self.initial_prompt = bool(d.get("initial_prompt", False))
+        # Keep the audio as well as the text, until this moment. Absent or past is off,
+        # which is the normal state — see Retention for what it is for and why it is
+        # asked for as a deadline rather than as a switch.
+        #
+        # Setting it by hand needs one precaution, and without it nothing is recorded at
+        # all. transcriber-config.timer polls the server every 60 seconds and installs
+        # what comes back whenever it differs from what is on the device, and
+        # transcriber_channels_for() in store.php builds that response from a fixed list
+        # of keys which does not include this one. So a value typed into
+        # /etc/transcriber/channels.json survives about a minute, and the restart that
+        # replaces it looks exactly like a channel that was never asked to record:
+        #
+        #     systemctl stop transcriber-config.timer     # first, or it will be undone
+        #     …edit /etc/transcriber/channels.json…
+        #     systemctl restart transcriber@<channel-id>
+        #     systemctl start transcriber-config.timer    # afterwards
+        #
+        # If the manager ever grows a control for this it belongs beside the model and
+        # the initial prompt — and it would have to be added to that key list as well,
+        # which is what would make the precaution above unnecessary. It should offer a
+        # duration and write down the deadline, never a switch somebody has to remember.
+        self.record_until = record_deadline(d.get("record_until"))
+        self.record_max_bytes = _cap(d.get("record_max_bytes"), RECORD_MAX_BYTES)
+
+
+def record_deadline(value):
+    """When a channel's audio retention runs out, in epoch seconds. 0 means off.
+
+    Takes what a person would type as well as what a manager would send: epoch seconds,
+    or "2026-08-16T11:00" in the receiver's own local time, or the same with a trailing Z
+    for UTC. Local, because somebody setting this before a net is thinking in the time on
+    their watch.
+
+    Anything unreadable is off, loudly. The failure that costs something here is not a
+    receiver that fails to record; it is somebody believing an hour of a net is being
+    recorded when it is not, because the corpus only exists once.
+    """
+    if value in (None, "", 0, False):
+        return 0.0
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip()
+    utc = text.endswith("Z") or text.endswith("z")
+    if utc:
+        text = text[:-1].strip()
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"):
+        try:
+            parts = time.strptime(text, fmt)
+        except ValueError:
+            continue
+        # mktime reads tm_isdst=-1, which strptime leaves set, so a local time either
+        # side of a clock change is still the time somebody meant.
+        return calendar.timegm(parts) if utc else time.mktime(parts)
+    log.error("record_until is %r, which is not a time I can read, so the audio will NOT "
+              "be kept. Write epoch seconds, or 2026-08-16T11:00 in local time.", value)
+    return 0.0
+
+
+def _cap(value, default):
+    """A positive integer from the config, or the default. Never raises: this file runs
+    on a receiver in a shed, and a typo in an optional setting must not take it off the
+    air."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default
+    return n if n > 0 else default
 
 
 def load_channel(path, channel_id):
@@ -480,37 +551,50 @@ def clean(text):
     return " ".join(stripped.split()).strip()
 
 
-def worth_logging(text):
-    """Whether this is speech rather than whisper's imagination.
+def rejection(text):
+    """Why this is whisper's imagination rather than speech, in a few words, or "" if it
+    is not.
 
     Deliberately conservative. Losing a genuine transmission costs the log one line;
     admitting invented ones costs it credibility, and an operator who stops trusting
     the log stops reading it.
+
+    The reason, and not merely the verdict, because the retention manifest records it:
+    an hour of kept audio is only half of what a tone detector can be built from, and
+    the other half is what each clip produced and what became of it. One implementation
+    rather than two, since a second copy of these rules kept alongside worth_logging()
+    would drift from it and the manifest would then describe a channel that does not
+    exist.
     """
     if not text:
-        return False
+        return "nothing"
     # Anything wholly inside brackets is whisper describing a sound rather than
     # reporting speech — "(water splashing)", "[MUSIC]", "(engine noise)". There is no
     # useful list of these to keep; the shape is the signal. An open squelch on a quiet
     # frequency produces them steadily.
     if re.fullmatch(r"[\(\[\{].*[\)\]\}]|\*.*\*|♪.*♪", text.strip(), re.S):
-        return False
+        return "a sound described rather than speech"
     bare = re.sub(r"[^\w\s]", "", text).strip().lower()
     if bare in HALLUCINATIONS or text.strip().lower() in HALLUCINATIONS:
-        return False
+        return "one of whisper's stock inventions"
     if len(bare) < 3:
-        return False
+        return "too short to be anything"
     # "you you you you" and friends — whisper looping on noise.
     words = bare.split()
     if len(words) >= 4 and len(set(words)) == 1:
-        return False
+        return "one word over and over"
     # The same thing over and over in phrases rather than in single words, which is
     # what the fast model actually produces on marginal audio. Judged by how much of
     # the text is a copy of the rest of it, because there is no list of these to keep —
     # the loop invents a different sentence every time and then sticks on it.
     if len(words) >= LOOP_MIN_WORDS and loop_ratio(words) < LOOP_RATIO:
-        return False
-    return True
+        return "a loop"
+    return ""
+
+
+def worth_logging(text):
+    """Whether this is speech rather than whisper's imagination. See rejection()."""
+    return not rejection(text)
 
 
 def loop_ratio(words, n=3):
@@ -1738,6 +1822,215 @@ def settled_clips(spool, quiet_for=1.0):
     return out
 
 
+# ── keeping the audio ────────────────────────────────────────────────────────
+#
+# Normally a clip is written to tmpfs, read once by whisper and deleted. Retention is the
+# one thing that keeps it, and it exists because a detector has to be built against what
+# a repeater actually sends rather than against what a textbook says it sends: the
+# frequency and length of the courtesy beep, whether the Morse ID is keyed over the top of
+# a voice or into a gap. That is a measurement, and it needs a tape.
+#
+# The clips go to the SPOOL, on the card, and that is deliberate — clip_dir() explains at
+# length why ordinary clips must never touch it, and every word of that still stands for
+# the ordinary case. This is the exception: an hour of a busy net is about 70 MB at 16 kHz
+# mono, the recording is worthless unless it survives the run that made it, and /run is
+# RAM that does not have room. Do not "fix" this back to tmpfs.
+#
+# Two bounds, and the reasoning behind each is the same one: the card is finite and a full
+# card takes the receiver off the air, which costs more than any recording is worth.
+#
+#   time    a deadline per channel, not a switch. A switch left on records until the card
+#           fills, and the whole failure being guarded against is somebody forgetting.
+#   bytes   because time alone bounds nothing at the rate a fault can write. A stuck
+#           transmitter or a squelch that has failed open produces a continuous carrier,
+#           and that is 115 MB an hour of solid recording however quiet the frequency is.
+
+RECORDINGS = "recordings"
+MANIFEST = "manifest.jsonl"
+
+# How much audio one channel may keep before it stops by itself. About seven hours of a
+# busy net, which is room for the hour this was built for and for somebody setting the
+# deadline a day out by mistake, and small enough to leave a card with anything on it.
+RECORD_MAX_BYTES = 512 * 1024 * 1024
+
+
+class Retention:
+    """Keeps the audio beside the text, for as long as it was asked to and no longer.
+
+    Nothing here may raise, and nothing here may matter. It runs inside the transcription
+    path, and every failure it can have — the card full, the directory gone, a permission
+    changed underneath us — has the same answer: stop recording, say so once, and leave
+    the channel transcribing and logging exactly as it was. Receiving is the job;
+    recording is a favour it does on the side.
+    """
+
+    def __init__(self, directory, until, max_bytes=RECORD_MAX_BYTES):
+        self.dir = directory
+        self.until = float(until or 0)
+        self.max_bytes = max_bytes
+        self.manifest = os.path.join(directory, MANIFEST)
+        self._stopped = ""
+        self._bytes = self._existing_bytes()
+        if time.time() >= self.until:
+            self._stop("the window it was given ended at %s" % when_text(self.until),
+                       failure=False)
+        else:
+            log.info("keeping the audio in %s until %s, up to %s (%s already there). It "
+                     "stops by itself at whichever comes first.",
+                     self.dir, when_text(self.until), size_text(self.max_bytes),
+                     size_text(self._bytes))
+
+    @property
+    def on(self):
+        """Whether anything more will be kept. Also what ends the window: the deadline is
+        checked here rather than on a timer, because there is nothing to do about it
+        until the next clip arrives."""
+        if self._stopped:
+            return False
+        if time.time() >= self.until:
+            self._stop("the window it was given has passed", failure=False)
+            return False
+        return True
+
+    def keep(self, path, seconds, heard, cleaned, logged, why):
+        """Copy one clip to the card and write its line of the manifest.
+
+        Both, or neither. Audio with no line means re-listening to an hour of radio by
+        hand to find out what each clip produced; a line with no audio names a file that
+        is not there. So the line is written only after the copy, and a copy that fails
+        takes its half-written file with it.
+
+        Called last in handle_clip, after the entry is already in the outbox, so nothing
+        on the way to the log waits for the card. It costs a few milliseconds against the
+        seconds whisper has just spent, on the transcribing thread rather than the
+        capture one — the radio is not waiting for any of this.
+        """
+        if not self.on:
+            return
+        name = None
+        try:
+            size = os.path.getsize(path)
+            # Refuse the clip that would cross the cap rather than truncating it: half a
+            # wav is a recording of nothing, and the point of the cap is to leave the
+            # card usable, not to fill it exactly.
+            if self._bytes + size > self.max_bytes:
+                self._stop("%s is as much as this channel was allowed to keep"
+                           % size_text(self.max_bytes), failure=False)
+                return
+            os.makedirs(self.dir, exist_ok=True)
+            when = clip_time(path)
+            name = self._name(path, when)
+            shutil.copyfile(path, os.path.join(self.dir, name))
+            line = json.dumps({
+                "file": name,
+                "when": when_text(when),
+                "seconds": round(seconds, 2),
+                "capped": is_capped(path),
+                # What whisper returned, what clean() left of it, and what reached the
+                # event log. All three, because they answer different questions: the
+                # first is what the model made of a tone, the second is what the filters
+                # were judging, and the third is what somebody reading the log later
+                # actually saw. The last is spelled the way the log spells it, callsign
+                # corrections and all, so a clip can be lined up against a log entry
+                # without wondering whether the two were changed on the way past.
+                "whisper": heard,
+                "clean": cleaned,
+                "kept": bool(logged),
+                "logged": logged or "",
+                "why": why,
+            }, ensure_ascii=False) + "\n"
+            with open(self.manifest, "a", encoding="utf-8") as fh:
+                fh.write(line)
+            self._bytes += size + len(line)
+        except Exception as e:              # noqa: BLE001 - see the class docstring:
+            # nothing about keeping a recording may cost the channel a transmission, and
+            # a narrower catch would only be a list of the ways it has failed so far.
+            # The card full and the directory gone are OSErrors; the next one might not
+            # be, and it would arrive in the middle of a net.
+            #
+            # Take the half-written clip with us, so the audio and the manifest stay in
+            # step and nothing names a file that is not there.
+            if name:
+                try:
+                    os.unlink(os.path.join(self.dir, name))
+                except OSError:
+                    pass
+            self._stop("%s: %s" % (type(e).__name__, e))
+
+    def _stop(self, why, failure=True):
+        """Stop recording, and say so once. Once, because the alternative is a line per
+        transmission for the rest of the net, which buries everything the channel says
+        about the radio."""
+        if self._stopped:
+            return
+        self._stopped = why
+        if failure:
+            log.error("no longer keeping the audio: %s. The channel carries on "
+                      "receiving, transcribing and logging as normal.", why)
+        else:
+            log.info("no longer keeping the audio: %s", why)
+
+    def _existing_bytes(self):
+        """What an earlier run of this channel already kept here.
+
+        The cap bounds the recording, not one process's share of it. A channel that
+        restarts mid-net — and a deaf-check restart is a normal thing for it to do — must
+        not start the budget again from zero, or the cap bounds nothing at all.
+        """
+        total = 0
+        try:
+            for name in os.listdir(self.dir):
+                try:
+                    total += os.path.getsize(os.path.join(self.dir, name))
+                except OSError:
+                    pass
+        except OSError:
+            pass                     # not there yet, which is the normal case
+        return total
+
+    def _name(self, path, when):
+        """A name that sorts into the order the transmissions happened and does not
+        collide with one from before a restart.
+
+        The clip's own name can do neither. seq starts again at 1 every time the channel
+        starts, so clip_00001.wav from this run lands on clip_00001.wav from the last
+        one, and the numbers are the order the process made them rather than the order
+        the radio heard them.
+
+        Local time, matching the log and the clock of whoever ran the net: lining a clip
+        up against "the ID at about ten past" is the first thing anybody will do with
+        this. The capped mark rides along, because a clip cut at MAX_CLIP_SECONDS is not
+        an over and whoever reads the corpus should not have to open it to find out.
+        """
+        base = "%s_%03d%s" % (time.strftime("%Y%m%dT%H%M%S", time.localtime(when)),
+                              int(when * 1000) % 1000,
+                              CAPPED_MARK if is_capped(path) else "")
+        name, n = base + ".wav", 0
+        while os.path.exists(os.path.join(self.dir, name)):
+            n += 1
+            name = "%s-%d.wav" % (base, n)
+        return name
+
+
+def clip_time(path):
+    """When a clip was written, which is when its carrier dropped. That is the order the
+    radio put the transmissions in, and it is not the order a backlogged worker gets to
+    them."""
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return time.time()
+
+
+def when_text(when):
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(when))
+
+
+def size_text(n):
+    """A size written the way the journal should carry it, since a person reads it."""
+    return "%.0f MB" % (n / 1048576) if n >= 1048576 else "%.0f KB" % (n / 1024)
+
+
 # ── main loop ────────────────────────────────────────────────────────────────
 
 class ClipQueue:
@@ -1878,7 +2171,8 @@ class OpenCarrier:
             self._segments = self._barren = self._skipped = 0
 
 
-def transcribe_loop(work, channel, whisper, model, outbox, stopping, carrier=None):
+def transcribe_loop(work, channel, whisper, model, outbox, stopping, carrier=None,
+                    retention=None):
     """Transcribe and post, off the capture thread.
 
     This has to be its own thread. whisper is blocking and posting has a fifteen-second
@@ -1899,7 +2193,7 @@ def transcribe_loop(work, channel, whisper, model, outbox, stopping, carrier=Non
                 return
             continue
         try:
-            logged = handle_clip(channel, path, whisper, model, outbox)
+            logged = handle_clip(channel, path, whisper, model, outbox, retention)
             # Only a capped segment answers the question OpenCarrier is asking. An
             # ordinary over that came back empty is a squelch tail, and there are
             # hundreds of those a day.
@@ -1910,11 +2204,22 @@ def transcribe_loop(work, channel, whisper, model, outbox, stopping, carrier=Non
             log.exception("transcription failed")   # stop the channel transcribing
 
 
-def handle_clip(channel, path, whisper, model, outbox):
-    """Transcribe one clip and queue whatever it said. True if anything was logged."""
+def handle_clip(channel, path, whisper, model, outbox, retention=None):
+    """Transcribe one clip and queue whatever it said. True if anything was logged.
+
+    `retention` is normally None and the clip is deleted, which is the whole of what this
+    used to do with the audio. Where a channel has asked to keep it, the clip is copied to
+    the card first — last of all, after the entry is in the outbox. See Retention.
+    """
     seconds = clip_seconds(path)
     if seconds < MIN_CLIP_SECONDS:
         log.debug("ignoring %.1fs clip", seconds)
+        # Kept all the same, and that is the point rather than an oversight: a courtesy
+        # beep in a clip of its own is often shorter than this, so the clips this rule
+        # throws away unheard are among the ones a tone detector most needs.
+        if retention is not None:
+            retention.keep(path, seconds, "", "", "",
+                           "shorter than MIN_CLIP_SECONDS, so whisper never ran")
         os.unlink(path)
         return False
     if seconds >= MAX_CLIP_SECONDS:
@@ -1931,22 +2236,35 @@ def handle_clip(channel, path, whisper, model, outbox):
                     "the squelch level for this site if it keeps happening.", seconds)
     vocabulary = getattr(channel, "vocabulary", None) or Vocabulary()
     prompt = vocabulary.prompt() if getattr(channel, "initial_prompt", False) else None
-    text = clean(transcribe(whisper, model, path, seconds, prompt=prompt))
-    os.unlink(path)
+    # What whisper returned and what clean() left of it, separately. The pipeline only
+    # ever needed the second; the manifest needs both, because "(buzzing)" and the empty
+    # string it becomes are different answers to what a tone did to the model.
+    heard = transcribe(whisper, model, path, seconds, prompt=prompt)
+    text = clean(heard)
     keep = loggable(text)
+    logged = ""                  # what reached the log, spelled as the log spells it
     if not keep:
         log.info("discarded (%.1fs): %r", seconds, text[:60])
-        return False
-    if keep != text:
-        log.info("trimmed a repeated phrase out of (%.1fs): %r", seconds, text[:60])
-    # After the guards, never before: they are calibrated on what whisper emits, and this
-    # has no vote in whether the entry is real. See correct_callsigns.
-    written = correct_callsigns(keep, vocabulary)
-    if written != keep:
-        log.info("callsigns (%.1fs): %r → %r", seconds, keep[:60], written[:60])
-    log.info("logging (%.1fs): %s", seconds, written[:80])
-    outbox.add(written, time.time())
-    return True
+    else:
+        if keep != text:
+            log.info("trimmed a repeated phrase out of (%.1fs): %r", seconds, text[:60])
+        # After the guards, never before: they are calibrated on what whisper emits, and
+        # this has no vote in whether the entry is real. See correct_callsigns.
+        written = correct_callsigns(keep, vocabulary)
+        if written != keep:
+            log.info("callsigns (%.1fs): %r → %r", seconds, keep[:60], written[:60])
+        log.info("logging (%.1fs): %s", seconds, written[:80])
+        outbox.add(written, time.time())
+        logged = written
+    # Last, after the entry is safely in the outbox, so nothing bound for the log waits
+    # on the card. loggable() answered "" for one of several reasons and the manifest
+    # wants the reason; the one case rejection() cannot name is the entry that passed on
+    # its own and collapsed to a loop once the repetition was trimmed out of it.
+    if retention is not None:
+        retention.keep(path, seconds, heard, text, logged,
+                       "" if keep else (rejection(text) or "a loop once it was trimmed"))
+    os.unlink(path)
+    return bool(logged)
 
 
 def main(argv=None):
@@ -1990,6 +2308,12 @@ def main(argv=None):
         return run_calibration(channel, spool)
 
     outbox = Outbox(os.path.join(spool, "outbox"))
+    # None unless this channel has asked to keep its audio, and None is the normal state.
+    # In the spool rather than with the clips: this is the one thing here that has to
+    # survive the run that recorded it. See Retention.
+    retention = (Retention(os.path.join(spool, RECORDINGS), channel.record_until,
+                           channel.record_max_bytes)
+                 if channel.record_until else None)
     # --spool-only means clips were put somewhere by hand or by a test; that is where to
     # read them from, and inventing a second directory would just mean finding nothing.
     if args.spool_only:
@@ -2074,7 +2398,7 @@ def main(argv=None):
     carrier = OpenCarrier()
     worker = threading.Thread(
         target=transcribe_loop,
-        args=(work, channel, whisper, model, outbox, stopping, carrier),
+        args=(work, channel, whisper, model, outbox, stopping, carrier, retention),
         daemon=True, name="transcribe")
     worker.start()
 
@@ -2182,7 +2506,7 @@ def main(argv=None):
             if rtl is None:
                 for path in settled_clips(clips):
                     if args.once:
-                        handle_clip(channel, path, whisper, model, outbox)
+                        handle_clip(channel, path, whisper, model, outbox, retention)
                         outbox.flush(lambda t: post_log_entry(channel, t))
                     else:
                         enqueue(path)
