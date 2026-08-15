@@ -48,6 +48,17 @@ header('Cache-Control: no-store');
 echo json_encode([
     'channels'         => transcriber_channels_for($device),
     'update_requested' => $state['update_requested'],
+    // Recalibrate, pressed against one channel in the manager. Per channel and not
+    // fleet-wide, because it takes that channel off the air for a couple of minutes: a
+    // device compares each stamp with the last one it acted on, so nothing is written
+    // back and one that was switched off does not wake up and run a measurement somebody
+    // asked for last week. Only this device's channels are listed — see
+    // transcriber_calibration_requests_for().
+    //
+    // Cast to an object so an empty one encodes as {} rather than []. The device reads
+    // it as a map, and a list where a map was expected is the kind of difference that
+    // shows up as a feature quietly never working.
+    'calibrate_requested' => (object)transcriber_calibration_requests_for($device),
     // Fleet-wide, not per device: the whole event runs one assignment sheet, and a
     // receiver on any frequency may hear any station on it.
     //

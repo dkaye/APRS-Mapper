@@ -98,6 +98,7 @@ rsync -a --ignore-times "$TMP/bin/"     /opt/transcriber/bin/
 rsync -a --ignore-times "$TMP/systemd/" /etc/systemd/system/
 [ -d "$TMP/udev" ] && rsync -a --ignore-times "$TMP/udev/" /etc/udev/rules.d/ || true
 chmod +x /opt/transcriber/bin/*.py
+chmod +x /opt/transcriber/bin/*.sh          # calibrate.sh, run by transcriber-calibrate@
 
 # Seed an example config so the worker has something to explain itself with before
 # the device is enrolled. auto-update.sh replaces it with the real list.

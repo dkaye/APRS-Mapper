@@ -13,6 +13,8 @@ require_once '/var/www/html/track_ip.php'; track_client_ip('transcriber');
  *   ?save       POST — {devices:[…], channels:[…], settings:{…}}, write the registry
  *   ?rotate     POST — {kind:'device'|'channel', id} → issue a fresh token, return it once
  *   ?vocabulary POST — re-read the assignment sheet now, return what it found
+ *   ?calibrate  POST — {channel} → ask that channel to measure its gain and squelch
+ *   ?status     GET  — per-device check-in, and per-channel calibration state
  *   ?logout     GET  — end the session
  *
  * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
@@ -85,6 +87,11 @@ if (isset($_GET['load'])) {
     // this within a quarter of an hour on its own. The button is there for the case that
     // matters, which is a sheet edited two minutes ago.
     $data['vocabulary'] = transcriber_vocabulary_report();
+    // What each channel was last measured at, and when — including the channels that have
+    // never been measured at all, which are simply absent. Loaded here as well as polled
+    // from ?status so the page can say "never calibrated" the moment it opens, rather than
+    // showing nothing until somebody presses something.
+    $data['calibration'] = transcriber_calibration_load();
     jsonOut($data);
 }
 
@@ -168,15 +175,38 @@ if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
              'vocabulary_changed' => $changed]);
 }
 
-// Polled by the page while it waits for the fleet to check in. Deliberately cheap: two
-// small files and a hash per device, no writes.
+// Polled by the page while it waits for the fleet to check in, or for one channel to
+// finish measuring itself. Deliberately cheap: three small files and a hash per device,
+// no writes.
+//
+// `now` is the server's clock and the page does its arithmetic against it rather than
+// against the browser's. A calibration countdown runs from a timestamp a device reported,
+// and a laptop two minutes out would otherwise show a measurement finishing before it
+// started.
 if (isset($_GET['status'])) {
-    jsonOut(['now' => time(), 'devices' => transcriber_device_status()]);
+    jsonOut(['now'         => time(),
+             'devices'     => transcriber_device_status(),
+             'calibration' => transcriber_calibration_load()]);
 }
 
 if (isset($_GET['update']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$canEdit) jsonOut(['error' => 'Missing permission: netbird.admin'], 403);
     jsonOut(['ok' => true, 'requested' => transcriber_request_update()]);
+}
+
+// Recalibrate one channel: measure the tuner gain for the site it is on, and then the
+// squelch at that gain. Per channel rather than per device or fleet-wide, because it
+// takes that one channel off the air for a couple of minutes and its neighbour on the
+// same Pi has no reason to stop listening.
+//
+// The channel has to exist here and not only on the device. A request for one that does
+// not is a request no device will ever answer, and the page would count down to nothing.
+if (isset($_GET['calibrate']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!$canEdit) jsonOut(['error' => 'Missing permission: netbird.admin'], 403);
+    $body = json_decode(file_get_contents('php://input'), true);
+    $channel = trim((string)($body['channel'] ?? ''));
+    if (transcriber_channel_device($channel) === '') jsonOut(['error' => 'Not found'], 404);
+    jsonOut(['ok' => true, 'requested' => transcriber_request_calibration($channel)]);
 }
 
 // Re-read the assignment sheet now. Unconditional — this is the button somebody presses
@@ -257,6 +287,13 @@ input:focus, select:focus { outline: 2px solid #2563eb; outline-offset: -1px; bo
 .ro { color: #374151; }                  /* read-only: plain text, never an empty box */
 .tok { font-size: 12px; white-space: nowrap; }
 .tok.set { color: #16a34a; } .tok.unset { color: #dc2626; font-weight: 600; }
+/* Never calibrated is colored like the thing it is: not an error, but a receiver running
+   numbers measured on somebody else's hill, which nobody would otherwise think to look
+   for. Same amber as a missing vocabulary section, for the same reason. */
+.cal { font-size: 12px; white-space: nowrap; }
+.cal.never { color: #b45309; font-weight: 600; }
+.cal.busy { color: #2563eb; }
+.cal.bad { color: #dc2626; font-weight: 600; }
 .derived { font-size: 11px; color: #9ca3af; margin-top: 2px; font-family: ui-monospace, monospace; }
 .panel { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 14px;
          font-size: 13px; line-height: 1.55; margin-bottom: 6px; }
@@ -336,6 +373,12 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
     <p><strong>Update devices</strong> is for software rather than settings: it asks every
        Transcriber to pull a new worker at its next check instead of waiting for the
        nightly run at 4:11am. Settings do not need it.</p>
+    <p><strong>Recalibrate</strong>, on a channel row, is the other kind of thing again:
+       it asks that one channel to measure the tuner gain and squelch for the site it is
+       on. It is off the air for two or three minutes while it does, so it is asked for
+       rather than scheduled — nothing here recalibrates by itself, at boot or otherwise.
+       A channel that has never been calibrated says <strong>Never</strong> and is running
+       numbers measured somewhere else.</p>
     <p>This page does <strong>not</strong> refresh by itself, so it can go stale while it
        sits open. It no longer overwrites what it cannot see: if anything changed since
        you loaded, Save is refused and asks you to reload rather than quietly reverting
@@ -373,10 +416,22 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
     <tr><th>Squelch</th><td>How strong a signal has to be before the receiver records
         anything. This is the one setting that decides what gets logged: too low and the
         Pi spends its day transcribing static, too high and it is quietly deaf.
-        <br>Leave it <strong>blank</strong> and each channel measures its own site on
-        first start and remembers the answer — right for almost everywhere. Put a number
-        in only when you have a reason: raise it (30, 40) if the log fills with noise,
-        lower it if weak stations are being missed. Roughly 0–100.</td></tr>
+        <br>Leave it <strong>blank</strong> and the channel uses whatever
+        <strong>Recalibrate</strong> measured for the site it is on, or a built-in default
+        if nobody has ever pressed it. Put a number in only when you have a reason: raise
+        it (30, 40) if the log fills with noise, lower it if weak stations are being
+        missed. Roughly 0–100. A number typed here overrides the measurement.</td></tr>
+    <tr><th>Calibration</th><td>The tuner gain and squelch measured at the site this
+        receiver is actually on, and when. The two go together: squelch is a threshold on
+        received signal strength, and the gain decides what that strength is, so a squelch
+        measured at the wrong gain means nothing.
+        <br><strong>Never</strong> means this channel is running the built-in pair, which
+        was measured somewhere else — worth fixing on a newly sited receiver, and harmless
+        on one that is somewhere quiet. Pressing <strong>Recalibrate</strong> takes that
+        one channel off the air for two or three minutes while it measures, and nothing
+        said on that frequency is logged until it finishes. Do it on a quiet channel:
+        traffic arriving mid-measurement is detected and the calibration is abandoned
+        rather than recorded wrong.</td></tr>
     <tr><th>Accuracy</th><td><strong>Fast</strong> keeps up with a busy net in real time and
         is the right default. <strong>Careful</strong> is better on callsigns and phonetics
         but runs about three times slower, so on a busy frequency entries arrive behind the
@@ -388,7 +443,8 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
     <table>
       <thead><tr>
         <th>Receiver</th><th>Frequency (MHz)</th><th>Heard as</th><th>Dongle serial</th>
-        <th>Squelch</th><th>Accuracy</th><th>On</th><th>Log token</th><th></th>
+        <th>Squelch</th><th>Calibration</th><th>Accuracy</th><th>On</th><th>Log token</th>
+        <th></th>
       </tr></thead>
       <tbody id="channels"></tbody>
     </table>
@@ -482,7 +538,7 @@ const CAN_EDIT = <?= $canEdit ? 'true' : 'false' ?>;
 const MODELS = [{file: 'ggml-tiny.en.bin', name: 'Fast'},
                 {file: 'ggml-base.en.bin', name: 'Careful'}];
 let data = {devices: [], channels: [], settings: {sheet_url: '', vocabulary_extra: ''},
-            vocabulary: {}};
+            vocabulary: {}, calibration: {}};
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
@@ -805,6 +861,193 @@ function renderVocabulary() {
     }
 }
 
+/* What this channel was measured at, or that it never has been.
+ *
+ * "Never" is the state this column exists for. A receiver that has never been calibrated
+ * works — it runs the built-in gain and squelch — and looks exactly like one that has, so
+ * a newly sited Pi would quietly use numbers measured on a different hill with a different
+ * antenna for as long as nobody thought to ask. Nobody presses a button they have no
+ * reason to know about, so the page has to say it.
+ *
+ * A failure keeps showing the last good pair beside the reason, because that pair is what
+ * the receiver went back on the air with. */
+function calibrationCell(c) {
+    const cal = (data.calibration || {})[c.id] || {};
+    const btn = CAN_EDIT && c.id
+        ? ` <button class="row-btn" onclick="recalibrate('${esc(c.id)}')">Recalibrate</button>`
+        : '';
+    const pair = cal.gain
+        ? `<span class="cal">${cal.gain} dB / ${cal.squelch}</span>`
+        : '';
+
+    // No button while it is running: pressing it again would only queue a second
+    // measurement behind the one already holding the dongle.
+    if (cal.requested && (!cal.finished || cal.finished < cal.requested)) {
+        return (cal.started >= cal.requested
+                ? '<span class="cal busy">Measuring…</span>'
+                : '<span class="cal busy">Waiting for the receiver…</span>')
+             + (pair ? `<div class="derived">now: ${cal.gain} dB / ${cal.squelch}</div>` : '');
+    }
+    if (cal.error) {
+        return `<span class="cal bad" title="${esc(cal.error)}">Failed</span>${btn}`
+             + `<div class="derived">${esc(cal.error)}</div>`
+             + (pair ? `<div class="derived">still using ${cal.gain} dB / ${cal.squelch}</div>` : '');
+    }
+    if (cal.gain) {
+        return pair + btn + `<div class="derived">measured ${ago(cal.finished)}</div>`;
+    }
+    // No numbers and nothing pending. Deliberately not spelling out what the built-in pair
+    // is: it lives in the worker, and a second copy of it here would be wrong the first
+    // time somebody changed one of them.
+    return `<span class="cal never">Never</span>${btn}`
+         + '<div class="derived">built-in defaults</div>';
+}
+
+/* Measure one channel's gain and squelch, at the site it is on.
+ *
+ * Off the air while it runs, so it says so first — the same shape as "Update devices",
+ * which also asks before doing something a receiver will notice. */
+async function recalibrate(id) {
+    if (!CAN_EDIT) return;
+    // The device measures the channel as it is SAVED. An unsaved frequency change means a
+    // different channel id, and an unsaved squelch override means the number about to be
+    // measured is one the manager is going to overrule — either way the answer would be
+    // about something other than what is on the screen.
+    if (dirty) {
+        status('Save first — the receiver measures the channel as it is saved', 'error');
+        notice('Save before calibrating',
+               'This page has changes that have not been saved, so the receiver would '
+             + 'measure the channel as it was before them. Press Save, then Recalibrate.');
+        return;
+    }
+    if (!confirm(`Measure the tuner gain and squelch for ${id}?\n\n`
+               + `That channel is off the air for two or three minutes while it measures, `
+               + `and nothing said on that frequency is logged until it finishes. Other `
+               + `channels on the same receiver keep listening.\n\n`
+               + `Do this on a quiet channel: if somebody transmits during the `
+               + `measurement it is abandoned rather than recorded wrong.`)) return;
+    try {
+        const r = await fetch('?calibrate', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({channel: id}),
+        });
+        const d = await r.json();
+        if (d.error) { status(d.error, 'error'); return; }
+        // Show it as pending straight away rather than a second later when the first poll
+        // comes back, so the button visibly did something.
+        data.calibration = data.calibration || {};
+        data.calibration[id] = {...(data.calibration[id] || {}),
+                                requested: d.requested, started: 0, finished: 0, error: ''};
+        render();
+        waitForCalibration(id, d.requested);
+    } catch { status('Request failed', 'error'); }
+}
+
+/* Wait for one channel to measure itself, and count down honestly while it does.
+ *
+ * Two phases, because there are two waits and only the second one has a length. The
+ * device collects its settings once a minute, so the first phase is the same wait as
+ * everything else on this page — up to 75 seconds before it even hears about this. A
+ * countdown started at the button press would spend that minute counting down to a
+ * measurement that had not begun, and would then claim the channel was back on the air
+ * while the radio was still busy.
+ *
+ * So the device reports that it has STARTED, and how long it expects to take, and the
+ * second phase counts down from that against the server's clock rather than the
+ * browser's. When the estimate runs out and the device has not reported back, the page
+ * says it is still measuring rather than pretending to know something it does not. */
+const CALIBRATE_PICKUP = WAIT_SECONDS;      // the same 60-second poll, and the same slack
+const CALIBRATE_OVERRUN = 420;              // ...after which the receiver is not answering
+
+async function waitForCalibration(id, since) {
+    clearInterval(waitTimer);
+    let left = CALIBRATE_PICKUP;
+    let startedAt = 0;                      // when we first saw it start, by our clock
+    let checking = false;
+
+    const done = (text, cls) => {
+        clearInterval(waitTimer);
+        $('spinner').hidden = true;
+        status(text, cls);
+        render();
+    };
+
+    const show = () => {
+        if (!startedAt) {
+            status(`Calibrating ${id} — waiting for the receiver to start  :${left}`, 'saving');
+        } else if (left > 0) {
+            status(`Calibrating ${id} — measuring, about  :${left}`, 'saving');
+        } else {
+            status(`Calibrating ${id} — still measuring`, 'saving');
+        }
+    };
+
+    const check = async () => {
+        if (checking) return;
+        checking = true;
+        try {
+            const d = await (await fetch('?status')).json();
+            if (d.calibration) data.calibration = d.calibration;
+            const cal = (d.calibration || {})[id] || {};
+            if (cal.finished >= since) {
+                if (cal.error) {
+                    done('Calibration failed: ' + cal.error, 'error');
+                    notice('Calibration failed',
+                           id + ' did not finish measuring: ' + cal.error + '\n\n'
+                         + 'Nothing was changed — the channel is back on the air using '
+                         + 'what it was using before. Try again when the frequency is '
+                         + 'quiet.');
+                } else {
+                    done(`${id}: gain ${cal.gain} dB, squelch ${cal.squelch} — measured`,
+                         'saved');
+                }
+                return;
+            }
+            if (cal.started >= since) {
+                if (!startedAt) { startedAt = Date.now(); render(); }
+                // Against the server's clock, not this browser's: the start is a
+                // timestamp the device reported and the page has no idea how far out its
+                // own clock is. The fallback is only for a device too old to say.
+                left = Math.max(0, (cal.expected || 150) - (d.now - cal.started));
+            }
+        } catch (e) {
+            // A blip in the page's own connection is not the receiver failing to answer.
+        } finally { checking = false; }
+    };
+
+    $('spinner').hidden = false;
+    show();
+    await check();
+
+    let tick = 0;
+    waitTimer = setInterval(() => {
+        tick++;
+        if (!startedAt) {
+            if (--left <= 0) {
+                done('No response from the receiver for ' + id, 'error');
+                notice('Calibration not started',
+                       id + ' has not collected the request. It is saved and the receiver '
+                     + 'will act on it as soon as it checks in.\n\n'
+                     + 'A device that is switched off, off the network, or has the wrong '
+                     + 'config token will look exactly like this.');
+                return;
+            }
+        } else {
+            if (left > 0) left--;
+            if (Date.now() - startedAt > CALIBRATE_OVERRUN * 1000) {
+                done('No result from ' + id, 'error');
+                notice('Calibration did not report back',
+                       id + ' said it had started measuring but never said what it found. '
+                     + 'The channel restarts by itself either way; check the update log '
+                     + 'on that receiver.');
+                return;
+            }
+        }
+        show();
+        if (tick % 2 === 0) check();
+    }, 1000);
+}
+
 function tokenCell(row, kind, key) {
     const state = row.has_token ? '<span class="tok set">set</span>'
                                 : '<span class="tok unset">none</span>';
@@ -900,6 +1143,7 @@ function renderRows() {
                         oninput="data.channels[${i}].squelch = this.value"
                         onchange="touch()">`
               : ro(c.squelch ? c.squelch : 'auto')}</td>
+        <td>${calibrationCell(c)}</td>
         <td>${CAN_EDIT
               ? `<select onchange="data.channels[${i}].model = this.value; touch()">
                    ${MODELS.map(m => `<option value="${m.file}"${m.file === c.model ? ' selected' : ''}>${m.name}</option>`).join('')}

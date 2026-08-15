@@ -282,10 +282,12 @@ cfg_setup() {
       echo 'LAST_UPDATE_SEEN="'"$SANDBOX"'/etc/last-update-request"'
       echo 'CHANNELS_ONLY=""'
       echo 'SELF=/bin/true'
+      echo 'CAL_SEEN_DIR="'"$SANDBOX"'/etc/calibrate"'
       echo 'log() { echo "$*" >> "'"$SANDBOX"'/log.txt"; }'
       # A shell function beats anything on PATH, so the block under test calls this
       # instead of reaching for the network.
       echo 'curl() { cp "$RESPONSE" "'"$SANDBOX"'/tmp/response.json"; }'
+      echo 'systemctl() { echo "$*" >> "'"$SANDBOX"'/calls.txt"; }'
       sed -n '/^# ── channels ─/,/^# ── restart what is configured/p' "$SRC/auto-update.sh" \
         | sed -e 's/-o root -g pi //'
       # CHANNELS_CHANGED is what the restart section keys off, so read the variable
@@ -295,6 +297,7 @@ cfg_setup() {
     } > "$SANDBOX/fetch.sh"
     echo tok > "$SANDBOX/token"
     : > "$SANDBOX/log.txt"
+    : > "$SANDBOX/calls.txt"
 }
 
 # fetch <the JSON the server returned>
@@ -394,6 +397,43 @@ check "installs an empty vocabulary rather than none" "$(cfg vocabulary.callsign
 check "the config is still valid" \
       "$(python3 -c "import json;json.load(open('$SANDBOX/etc/channels.json'));print('yes')" 2>/dev/null)" \
       "yes"
+
+echo "calibration — a request reaches the channel it names, once"
+# Recalibrate is per channel and takes that channel off the air for a couple of minutes,
+# so it must be acted on exactly once per press. A device that ran it again on every poll
+# would leave a receiver permanently measuring instead of listening — which is the same
+# shape of bug as restarting a channel that has not changed, and worse.
+teardown
+cfg_setup
+fetch '{"channels":[{"id":"rx1-147465","enabled":true}],"update_requested":0,
+        "calibrate_requested":{"rx1-147465":1755000000}}'
+check "starts the calibration for that channel" \
+      "$(grep -c 'start --no-block transcriber-calibrate@rx1-147465.service' "$SANDBOX/calls.txt")" "1"
+# And the stamp stays out of the installed config, for the same reason update_requested
+# does: in that file it would read as a changed channel list and restart every receiver on
+# the device every time somebody pressed the button.
+check "the stamp is not in the config file" \
+      "$(grep -c 'calibrate_requested' "$SANDBOX/etc/channels.json")" "0"
+
+: > "$SANDBOX/calls.txt"
+fetch '{"channels":[{"id":"rx1-147465","enabled":true}],"update_requested":0,
+        "calibrate_requested":{"rx1-147465":1755000000}}'
+check "the same request is not run a second time" \
+      "$(grep -c 'transcriber-calibrate@' "$SANDBOX/calls.txt")" "0"
+check "and it is not a configuration change" "$(cat "$SANDBOX/changed.txt")" "no"
+
+: > "$SANDBOX/calls.txt"
+fetch '{"channels":[{"id":"rx1-147465","enabled":true}],"update_requested":0,
+        "calibrate_requested":{"rx1-147465":1755000600}}'
+check "a fresh press is run" \
+      "$(grep -c 'start --no-block transcriber-calibrate@rx1-147465.service' "$SANDBOX/calls.txt")" "1"
+
+# A server that has not been deployed yet sends no such key at all, which is the ordinary
+# state of a device for a day. It must not be an error and must not run anything.
+: > "$SANDBOX/calls.txt"
+fetch '{"channels":[{"id":"rx1-147465","enabled":true}],"update_requested":0}'
+check "a server with no calibration to report runs nothing" \
+      "$(grep -c 'transcriber-calibrate@' "$SANDBOX/calls.txt")" "0"
 
 echo "configuration — a response that is not a config at all"
 # The rule that must never regress, restated for the response rather than the archive: a

@@ -386,6 +386,12 @@ def main(argv=None):
     os.makedirs(spool, exist_ok=True)
     unit = unit_for(channel.id)
 
+    # The gain this channel actually opens with, settled before anything is captured.
+    # start_capture does this for itself, but the static pass builds its own rtl_fm
+    # command — and a comparison run at a different gain from the channel it is about is a
+    # comparison of a different receiver.
+    channel.gain, _, _ = tr.calibration_for(channel, spool)
+
     print(f"Comparing {arms[0].name} and {arms[1].name} on {channel.label} "
           f"({int(channel.frequency)/1e6:.4f} MHz)")
     for arm in arms:

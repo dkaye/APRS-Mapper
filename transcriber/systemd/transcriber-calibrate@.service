@@ -1,0 +1,20 @@
+[Unit]
+Description=Measure the tuner gain and squelch for Transcriber channel %i
+# Needs the network to tell the manager it has started and what it found, but must not
+# refuse to run without it: the measurement is worth making either way, and the numbers
+# are written down on the device.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Root, and deliberately: it stops and starts transcriber@%i.service and reads the device
+# token. The worker it calls runs the radio and holds only the channel's own token.
+ExecStart=/opt/transcriber/bin/calibrate.sh %i
+# A unit of its own rather than part of the 60-second config poll, whose service is killed
+# at 120 seconds. A calibration is a gain sweep and a squelch scan and takes a couple of
+# minutes; run from the poller it would be cut in half every time.
+#
+# Still bounded, because the channel is off the air until this finishes. calibrate.sh puts
+# it back from a trap, which systemd's SIGTERM runs.
+TimeoutStartSec=600

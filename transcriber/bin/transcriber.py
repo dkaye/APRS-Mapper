@@ -26,9 +26,11 @@
 
 import argparse
 import collections
+import copy
 import difflib
 import json
 import logging
+import math
 import os
 import re
 import select
@@ -46,12 +48,13 @@ import wave
 # 5.x — it is a separate device on its own cadence, and it is new. See Versioning in the
 # README. auto-update.sh copies this to /etc/transcriber/version so a device can be
 # identified without running anything.
-VERSION = "1.0"
+VERSION = "1.1"
 
 CONFIG = "/etc/transcriber/channels.json"
 # What must survive a reboot lives on the card: the outbox, so a transmission heard
-# during an outage is not lost, and the measured squelch, so a restart is listening
-# again in seconds rather than deaf for a minute while it re-measures.
+# during an outage is not lost, and the measured gain and squelch, which are the only
+# record of what this site was measured at and are not measured again unless somebody
+# asks for it.
 SPOOL = "/var/spool/transcriber"
 # What must not touch the card lives in RAM. See clip_dir().
 CLIPS = "/run/transcriber"
@@ -80,6 +83,13 @@ DEFAULT_SQUELCH = 25
 # and overloads the front end anywhere with a strong signal nearby, which is why it was
 # removed in favour of automatic in the first place. At a fixed 30 the same idle frequency
 # is silent at every squelch level from 10 to 40.
+#
+# It is a starting value and not an answer, because 30 was measured at ONE site. These
+# receivers go up hills and into sheds with different antennas and different neighbours,
+# and the gain a site wants is decided by how much noise its antenna hears — see
+# choose_gain(). The squelch is already measured per site, and a squelch measured at the
+# wrong gain means nothing, so the two are measured and cached together when somebody
+# presses Recalibrate in the channel manager. Until they are, a channel runs on this pair.
 DEFAULT_GAIN = 30
 
 # A transmission shorter than this is a squelch tail, a key-up, or someone knocking
@@ -183,10 +193,18 @@ class Channel:
         self.frequency = str(d.get("frequency") or "")
         self.serial = str(d.get("serial") or "")
         self.squelch = int(d.get("squelch") or 0)
-        # Tuner gain in dB. Fixed, not automatic — see DEFAULT_GAIN for why the squelch
-        # cannot work without it. A site with a strong signal nearby can lower it per
-        # channel in the manager; somewhere very quiet can raise it.
-        self.gain = d.get("gain") if d.get("gain") not in (None, "", 0) else DEFAULT_GAIN
+        # Tuner gain in dB, and squelch above it: both are OVERRIDES here, None and 0
+        # meaning "nobody has said", not "use the default". What a channel actually opens
+        # with is settled by calibration_for(), which needs the spool to know what was
+        # measured for this site — and the difference between "set" and "unset" is the
+        # whole of how a measurement gets a chance to be used.
+        #
+        # Fixed, never automatic: see DEFAULT_GAIN for why the squelch cannot work
+        # without it. The manager does not offer a gain box and should not — the whole
+        # point is that it is measured rather than guessed at — so this is the escape
+        # hatch: a "gain" written into this device's channels.json by hand, for the site
+        # with something so strong nearby that the knee is the wrong answer.
+        self.gain = float(d["gain"]) if d.get("gain") not in (None, "", 0) else None
         self.model = d.get("model") or "ggml-tiny.en.bin"
         self.enabled = bool(d.get("enabled", True))
         self.server = (d.get("server") or SERVER).rstrip("/")
@@ -1113,7 +1131,22 @@ def write_clip(directory, audio, seq, capped=False):
     return path
 
 
-# Calibration. Ascending, so the winner is the LOWEST level that shuts out this site's
+# ── calibration ──────────────────────────────────────────────────────────────
+#
+# Two numbers, measured in this order and cached together: the tuner gain, and then the
+# squelch level AT that gain. Together because a squelch level means nothing on its own —
+# rtl_fm's -l compares received power against a threshold and the gain decides what that
+# power is, so a squelch cached beside no gain is a number measured against something
+# nobody wrote down. That is the bug this pairing exists to prevent, and we have had it.
+#
+# On demand only. There is no expiry and nothing measures at startup: calibration takes
+# the channel off the air for a couple of minutes, and a channel going deaf at an hour
+# nobody chose — during a net, say — is a worse outcome than one running slightly stale
+# numbers. It happens when somebody presses Recalibrate in the channel manager, and the
+# consequence is that a freshly deployed receiver runs on the compiled-in defaults until
+# they do. The manager says "never calibrated" in so many words for exactly that reason.
+
+# Ascending, so the winner is the LOWEST level that shuts out this site's
 # noise — the most sensitive setting that still gates, rather than a safe-but-deaf one.
 # The step is the margin: landing on 30 means 20 let noise through, so the true edge is
 # between them and there is up to a step of headroom against drift.
@@ -1121,7 +1154,45 @@ def write_clip(directory, audio, seq, capped=False):
 # with -l 0 gates nothing at all. It was in this list, and a measurement returned it.
 SQUELCH_CANDIDATES = list(range(10, 201, 10))
 QUIET_FRACTION = 0.05        # under 5% of the full sample rate counts as "shut"
-CALIBRATION_MAX_AGE = 86400  # re-measure daily; a site does not change hour to hour
+
+# Tuner gains to try, in dB, all of them steps the R820T actually offers. A subset of its
+# 29, about 4 dB apart: the knee is found from the SLOPE between neighbours, and steps
+# closer together than a floor measurement is repeatable would be reading noise.
+#
+# The list stops at 32.8 and not at the tuner's 49.6 dB maximum, and that cap is doing
+# real work. The knee is measured on an IDLE channel, and the failure that got a hardcoded
+# 40 removed is not visible from there: front-end overload from a strong transmitter
+# somewhere else in the band, which is not on this frequency and need not be transmitting
+# while the sweep runs. Nothing the sweep can measure would object to 40 dB. So the sweep
+# is allowed to find the knee and is not allowed to chase it up to where this tuner stops
+# being linear.
+GAIN_CANDIDATES = [8.7, 12.5, 16.6, 20.7, 25.4, 29.7, 32.8]
+
+# How much of each dB of gain has to reach the noise floor before the receiver counts as
+# hearing the band rather than its own converter.
+#
+# At the knee itself the two contribute equally and the floor rises 0.5 dB per dB, which
+# is 3 dB of sensitivity given away to the receiver's own noise. At 0.7 the converter adds
+# about 1 dB and everything above that buys hundredths of a dB in exchange for headroom
+# the sweep cannot measure the cost of. So: past the knee, and not far past it.
+KNEE_SLOPE = 0.7
+
+# How far a repeated floor measurement may differ, in dB, before the sweep is thrown away.
+# An RMS over a quarter of a million samples repeats to a small fraction of a dB, so this
+# is not measurement scatter — it is somebody transmitting.
+FLOOR_TOLERANCE = 1.0
+
+# How long each floor measurement listens, and how long opening the dongle and letting the
+# tuner settle costs before it can. The second is not a guess: _sample_rtl has discarded
+# exactly this much as warm-up since the first idle-frequency measurement, and both the
+# floor sweep and the countdown the manager shows are built on it.
+FLOOR_SECONDS = 1.0
+RTL_OPEN_SECONDS = 1.5
+
+# What the raw I/Q is sampled at. Not the 200000 rtl_argv asks for: rtl_fm oversamples and
+# decimates internally, while rtl_sdr hands the rate straight to the tuner, and the
+# RTL2832U will not deliver below about 225 kHz.
+IQ_RATE = 250000
 
 
 def choose_squelch(sample, candidates=SQUELCH_CANDIDATES, quiet=QUIET_FRACTION):
@@ -1173,6 +1244,305 @@ def choose_squelch(sample, candidates=SQUELCH_CANDIDATES, quiet=QUIET_FRACTION):
     return None
 
 
+def gain_text(gain):
+    """A tuner gain written the way a person would write it: 30, not 30.0, and 16.6 as it
+    is. It reaches rtl_fm's command line and the journal, and both are read by people."""
+    return f"{float(gain):g}"
+
+
+def choose_gain(measure, candidates=GAIN_CANDIDATES, slope=KNEE_SLOPE,
+                tolerance=FLOOR_TOLERANCE):
+    """The lowest gain at which this receiver hears the band rather than itself.
+    Returns (gain, "") or (None, why).
+
+    `measure(gain) -> the noise floor in dB, or None if the receiver produced nothing`,
+    injected the way choose_squelch's sampler is, so the knee-finding can be tested
+    against synthetic curves without a radio.
+
+    NOT "the most sensitive gain whose noise the squelch still gates", which is the
+    obvious thing to measure and is wrong. Gating and sensitivity pull in opposite
+    directions, and on a dead band only gating can be measured at all — so optimizing for
+    it alone walks the gain down until the receiver gates beautifully and hears nothing.
+    That is this project's recurring failure and it must not come back.
+
+    The knee is a question a dead band can answer. Raise the gain a step at a time and
+    watch the noise floor. While the receiver is limited by its own converter the floor
+    rises LESS than each gain increment — the ADC's noise does not care how much gain
+    precedes it. Once it is limited by thermal noise arriving from the antenna, the floor
+    rises 1:1, because that noise is being amplified along with everything else. Where the
+    slope crosses KNEE_SLOPE is where the receiver stops hearing itself and starts hearing
+    the band, and no signal has to be present for any of it.
+
+    Three ways it refuses to answer, and each names itself:
+
+      - the receiver hands back nothing            the tuner has not locked
+      - the floor never follows the gain           there is no antenna on it
+      - the floor moves while being measured       somebody is transmitting
+
+    The last is the one worth being careful about, because what traffic produces is not a
+    wild answer but a plausible one: a floor that jumps at one gain looks exactly like a
+    knee. Three checks catch it, and none of them depends on hearing what was said. A
+    floor that FALLS as the gain rises cannot happen, so it is proof something was on the
+    air and has stopped. The bottom of the sweep is measured again at the end, which
+    catches the harder case — a carrier that comes up mid-sweep and is still up at the
+    end, agreeing with itself everywhere it is asked. And the knee itself is confirmed by
+    measuring its two points a second time, the way choose_squelch confirms a quiet level.
+    """
+    floors = []
+    for gain in candidates:
+        floor = measure(gain)
+        if floor is None:
+            return None, "the receiver produced no samples — the tuner has not locked"
+        floors.append(floor)
+
+    # The band has to have been idle throughout, not merely idle when we started.
+    again = measure(candidates[0])
+    if again is None:
+        return None, "the receiver stopped producing samples part way through"
+    if abs(again - floors[0]) > tolerance:
+        return None, ("the noise floor moved while it was being measured — something was "
+                      "transmitting")
+    for i in range(1, len(floors)):
+        if floors[i] < floors[i - 1] - tolerance:
+            return None, ("the noise floor fell as the gain rose, which cannot happen — "
+                          "something was transmitting")
+
+    for i in range(1, len(candidates)):
+        rise = (floors[i] - floors[i - 1]) / (candidates[i] - candidates[i - 1])
+        if rise < slope:
+            continue
+        # The first candidate can never be the answer: it has nothing below it to measure
+        # a slope against. A site noisy enough to be past the knee at the bottom of the
+        # sweep therefore gets the second step, which is the lowest gain we can actually
+        # show is hearing the band — a lower one might do as well, and might not.
+        #
+        # Confirm before caching it, exactly as choose_squelch confirms a quiet level:
+        # measure the same two points again and require the same 1:1 rise. A single
+        # measurement that happened to catch a key-up is the whole failure mode here.
+        below, at = measure(candidates[i - 1]), measure(candidates[i])
+        if below is None or at is None:
+            return None, "the receiver stopped producing samples part way through"
+        if (at - below) / (candidates[i] - candidates[i - 1]) < slope:
+            return None, ("the noise floor did not rise the same way twice — something "
+                          "was transmitting")
+        return candidates[i], ""
+
+    return None, ("the noise floor did not rise with the gain at all, so the receiver is "
+                  "hearing itself rather than the antenna — check the antenna and its "
+                  "connector")
+
+
+def calibration_seconds():
+    """About how long a calibration takes, for the countdown the manager shows.
+
+    An estimate, and the manager says "about". The gain sweep is exact — a fixed number of
+    measurements of a known length. The squelch scan is not: it stops at the first level
+    that gates, which on a normal site is the second or third of twenty, and it is worth
+    being wrong here rather than making the page invent a number of its own.
+    """
+    floor = RTL_OPEN_SECONDS + FLOOR_SECONDS
+    # The sweep, the re-measured bottom, and the two-point confirmation.
+    sweep = (len(GAIN_CANDIDATES) + 3) * floor
+    # One full look at one squelch level is two passes, each with its own warm-up. Four
+    # levels: the dead-input check, and the two or three the scan gets through.
+    look = 2 * RTL_OPEN_SECONDS + 5.0
+    return int(sweep + 4 * look)
+
+
+def rtl_iq_argv(channel, gain, seconds):
+    """How the raw I/Q is captured for a noise-floor measurement.
+
+    rtl_sdr rather than rtl_fm, and that is not an inconsistency with rtl_argv. The noise
+    floor is a question about RF power, and FM demodulation throws power away: on a dead
+    band rtl_fm's output is full-scale hiss whatever the tuner gain is, so a floor
+    measured through it would barely move across the sweep and the knee would never
+    appear. The raw I/Q is the only place the question can be asked.
+
+    By bare serial, for the reason rtl_argv gives at length — the same verbose_device_search
+    is behind both, and the same wrong forms fail the same silent way.
+
+    -n rather than a timer: rtl_sdr exits after that many samples, which is exact, and the
+    warm-up is taken off the front of what comes back instead of being waited out.
+    """
+    return ["rtl_sdr", "-d", channel.serial, "-f", str(channel.frequency),
+            "-s", str(IQ_RATE), "-g", gain_text(gain),
+            "-n", str(int(IQ_RATE * (RTL_OPEN_SECONDS + seconds))), "-"]
+
+
+def floor_db(iq):
+    """The power in a block of raw unsigned-8-bit I/Q, in dB, or None if there is none.
+
+    Each half keeps its own DC offset, which is why they are counted separately: the
+    tuner's I and Q offsets differ by a count or two, and at the bottom of the sweep —
+    where the entire point is that the floor is barely above the converter's own noise —
+    a DC error of one count would be most of the answer.
+
+    Counted through a 256-entry histogram rather than sample by sample. This runs on a Pi
+    over half a megabyte per measurement, and bytes.count() does each scan in C.
+    """
+    power = 0.0
+    for half in (iq[0::2], iq[1::2]):
+        if not half:
+            return None
+        hist = [half.count(v) for v in range(256)]
+        mean = sum(v * n for v, n in enumerate(hist)) / len(half)
+        power += sum((v - mean) ** 2 * n for v, n in enumerate(hist)) / len(half)
+    if power <= 0:
+        return None                      # a constant stream is not a noise floor
+    return 10 * math.log10(power)
+
+
+def measure_floor(channel, gain, seconds=FLOOR_SECONDS):
+    """This site's noise floor at one tuner gain, in dB, or None if nothing came back."""
+    try:
+        out = subprocess.run(rtl_iq_argv(channel, gain, seconds),
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             timeout=RTL_OPEN_SECONDS + seconds + 15)
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning("could not measure the noise floor at %s dB (%s)", gain, e)
+        return None
+    # The burst produced while the device opens and the tuner settles says nothing about
+    # the noise floor, so it is cut off the front rather than waited out.
+    settled = out.stdout[int(IQ_RATE * RTL_OPEN_SECONDS) * 2:]
+    if len(settled) < IQ_RATE:           # less than half the wanted samples: not a reading
+        return None
+    return floor_db(settled)
+
+
+def calibration_path(spool):
+    return os.path.join(spool, "calibration.json")
+
+
+def calibration_load(spool, frequency=None):
+    """What was measured for this channel, or None if nothing usable was.
+
+    Both numbers or neither. A cache carrying a squelch and no gain is what the previous
+    version of this file wrote, and honouring half of it would put a level measured at an
+    unknown gain back on the air — which is the failure the pairing exists to prevent, so
+    it reads as "never calibrated" and the channel falls back to the compiled-in pair.
+
+    No age check. A measurement describes where the receiver is, not when it was taken,
+    and re-measuring it on a timer takes a channel off the air at an hour nobody chose.
+    """
+    try:
+        with open(calibration_path(spool), encoding="utf-8") as fh:
+            saved = json.load(fh)
+        gain = float(saved["gain"])
+        squelch = int(saved["squelch"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if gain <= 0 or squelch <= 0:
+        return None
+    # Belt and braces: the channel id already carries the frequency, so a retune makes a
+    # new spool directory. If one ever does not, a measurement made on another frequency
+    # is exactly the kind of borrowed number this whole change is about.
+    if frequency and str(saved.get("frequency") or "") not in ("", str(frequency)):
+        log.warning("the cached calibration was measured on %s, not %s; ignoring it",
+                    saved.get("frequency"), frequency)
+        return None
+    return {"gain": gain, "squelch": squelch, "when": float(saved.get("when") or 0)}
+
+
+def calibration_save(spool, result):
+    try:
+        with open(calibration_path(spool), "w", encoding="utf-8") as fh:
+            json.dump(result, fh)
+    except OSError as e:
+        log.error("could not write the calibration down (%s); it will have to be "
+                  "measured again", e)
+
+
+def calibration_for(channel, spool):
+    """The gain and squelch this channel should open with, and what was measured here.
+
+    Precedence is the same for both and in this order: a value set in the manager wins,
+    because somebody typed it on purpose; then whatever was measured for this site; then
+    the compiled-in default. The third case is a receiver nobody has calibrated yet, and
+    it is a normal state to be in rather than an error — it is just one the manager has to
+    show, or a new Pi quietly runs numbers measured somewhere else.
+    """
+    measured = calibration_load(spool, channel.frequency)
+    gain = channel.gain or (measured or {}).get("gain") or DEFAULT_GAIN
+    squelch = channel.squelch or (measured or {}).get("squelch") or DEFAULT_SQUELCH
+    return gain, squelch, measured
+
+
+def calibrate(channel, spool, measure=None, sample=None):
+    """Measure this channel's gain and then its squelch AT that gain, and cache the two
+    together. Returns (what was written, "") or (None, why).
+
+    In that order and never the other way round: the squelch is a threshold on received
+    power, and changing the gain afterwards would change what it is a threshold on. Both
+    samplers are injectable for the tests, which is the only way any of this can be
+    exercised without a radio.
+
+    The order also covers the one thing the sweep cannot see for itself. A carrier that
+    was already up before the sweep began and is still up at the end is consistent
+    everywhere the sweep looks, and it tracks the gain 1:1 from the bottom — so it reads
+    as a receiver that was past the knee all along. The squelch scan that follows cannot
+    miss it: nothing gates a channel somebody is transmitting on, so it returns None and
+    the whole calibration is abandoned rather than cached.
+    """
+    measure = measure or (lambda gain: measure_floor(channel, gain))
+    gain, why = choose_gain(measure)
+    if gain is None:
+        return None, why
+    log.info("gain %s dB — the knee, measured for this site", gain_text(gain))
+
+    # The squelch is measured through a receiver opened at the gain just chosen. A copy,
+    # so nothing here changes what the caller holds.
+    at_gain = copy.copy(channel)
+    at_gain.gain = gain
+    sample = sample or (lambda level, secs: _sample_rtl(at_gain, level, secs))
+    level = choose_squelch(sample)
+    if level is None:
+        return None, (f"nothing shut the receiver up at {gain_text(gain)} dB — either "
+                      f"the channel was busy throughout, or the receiver stopped "
+                      f"producing samples")
+
+    result = {"gain": gain, "squelch": level, "when": time.time(),
+              "frequency": str(channel.frequency)}
+    calibration_save(spool, result)
+    return result, ""
+
+
+def emit(**fields):
+    """One line of JSON on stdout, flushed as it is written.
+
+    calibrate.sh reads these as they appear and forwards each to the server. That is what
+    makes the manager's countdown honest: the device says when the radio work actually
+    started, which can be up to a minute after the button was pressed, rather than the
+    page counting down from a moment that meant nothing.
+
+    stdout is these lines and nothing else — everything else the worker says goes to the
+    log, which is stderr.
+    """
+    print(json.dumps(fields), flush=True)
+
+
+def run_calibration(channel, spool):
+    """Measure this channel now, reporting on stdout as it goes. 0 if it worked.
+
+    Everything around it — stopping the channel, telling the server, starting it again —
+    belongs to calibrate.sh, which runs as root and holds the DEVICE token. This holds the
+    channel token and the radio, and does neither of those jobs.
+    """
+    if not receiver_alive(channel):
+        emit(state="failed",
+             error="the receiver is not producing samples — the tuner has not locked")
+        return 1
+    emit(state="started", expected=calibration_seconds())
+    result, why = calibrate(channel, spool)
+    if result is None:
+        log.error("calibration failed: %s", why)
+        emit(state="failed", error=why)
+        return 1
+    log.info("gain %s dB, squelch %s — measured and cached",
+             gain_text(result["gain"]), result["squelch"])
+    emit(state="done", gain=result["gain"], squelch=result["squelch"])
+    return 0
+
+
 def rtl_argv(channel, level):
     """How this receiver is opened, at a given squelch level.
 
@@ -1202,12 +1572,13 @@ def rtl_argv(channel, level):
     -E deemp applies FM de-emphasis, which voice needs and without which the high end is
     harsh enough to cost accuracy.
     """
-    argv = ["rtl_fm", "-d", channel.serial, "-f", channel.frequency,
+    # Never without -g. rtl_fm's default is automatic gain, and automatic gain and an RF
+    # squelch cannot both work — see DEFAULT_GAIN. A channel with nothing measured and
+    # nothing set falls back to the compiled-in value rather than to AGC, so there is no
+    # path through this file that opens the receiver with the gain floating.
+    return ["rtl_fm", "-d", channel.serial, "-f", str(channel.frequency),
             "-M", "fm", "-s", "200000", "-r", str(SAMPLE_RATE), "-E", "deemp",
-            "-l", str(level)]
-    if channel.gain is not None:
-        argv += ["-g", str(channel.gain)]     # otherwise rtl_fm uses automatic gain
-    return argv
+            "-l", str(level), "-g", gain_text(channel.gain or DEFAULT_GAIN)]
 
 
 def _sample_rtl(channel, level, seconds):
@@ -1217,7 +1588,7 @@ def _sample_rtl(channel, level, seconds):
     try:
         # Opening the device and settling the tuner produces a burst that says nothing
         # about the noise floor. Discard it before counting.
-        warmup = time.time() + 1.5
+        warmup = time.time() + RTL_OPEN_SECONDS
         while time.time() < warmup:
             if select.select([p.stdout], [], [], 0.2)[0]:
                 os.read(p.stdout.fileno(), 65536)
@@ -1233,43 +1604,6 @@ def _sample_rtl(channel, level, seconds):
             p.wait(timeout=3)
         except subprocess.TimeoutExpired:
             p.kill()
-
-
-def calibrated_squelch(channel, spool):
-    """The squelch level to use, measured if need be and remembered afterwards.
-
-    Measuring takes the better part of a minute and holds the dongle, so the answer is
-    cached: a site's noise floor is a property of where the receiver is, not of when it
-    was last restarted, and a channel that restarts should be listening again in seconds.
-    """
-    cache = os.path.join(spool, "squelch.json")
-    try:
-        with open(cache, encoding="utf-8") as fh:
-            saved = json.load(fh)
-        if time.time() - saved["when"] < CALIBRATION_MAX_AGE:
-            log.info("squelch %s (measured %.1f hours ago)",
-                     saved["squelch"], (time.time() - saved["when"]) / 3600)
-            return saved["squelch"]
-    except (OSError, ValueError, KeyError):
-        pass
-
-    log.info("calibrating squelch — listening for this site's noise floor")
-    level = choose_squelch(lambda lv, secs: _sample_rtl(channel, lv, secs))
-    if level is None:
-        # Either nothing shut it up — a genuinely busy band — or the receiver gave us
-        # nothing to measure. Carry on at the default rather than refusing to listen, and
-        # do not cache it: a guess must be re-examined on the next restart, where a
-        # measurement is trusted for a day.
-        log.warning("could not measure a squelch level; using %s for now", DEFAULT_SQUELCH)
-        return DEFAULT_SQUELCH
-
-    log.info("squelch %s — measured", level)
-    try:
-        with open(cache, "w", encoding="utf-8") as fh:
-            json.dump({"squelch": level, "when": time.time(), "frequency": channel.frequency}, fh)
-    except OSError:
-        pass
-    return level
 
 
 def receiver_alive(channel):
@@ -1335,17 +1669,28 @@ def start_capture(channel, clips, spool):
     # quieter — which is to say the start of every over — and cut overs in half at the
     # first pause. Gone. The gap in the byte stream is the boundary, and it needs no
     # help deciding that.
-    # A value set in the manager is an override and is obeyed; otherwise it is measured
-    # for this site and cached.
+    # The gain and the squelch, settled together — see calibration_for(). Nothing is
+    # measured here: calibration runs when somebody asks for it, and a channel starting up
+    # must be listening again in seconds rather than deaf for minutes.
     #
-    # Say which, either way. The measured path logs its own answer, so an override used
-    # to be the one case where the journal never mentioned the squelch at all — and it is
-    # now the only number that decides what gets recorded, since nothing downstream
-    # second-guesses the RF gate any more. Too low and the Pi spends its afternoon
-    # transcribing static; too high and it is quietly deaf.
+    # Say where both numbers came from, every time. They are the only two that decide what
+    # gets recorded — too low a squelch and the Pi spends its afternoon transcribing
+    # static, too high and it is quietly deaf, and the gain decides what "low" means — and
+    # the first line after a restart is where anybody looks. The never-calibrated case
+    # says so at length, because the alternative is a receiver running numbers measured on
+    # a different hill and looking perfectly healthy while it does.
+    gain, level, measured = calibration_for(channel, spool)
+    channel.gain = gain
     if channel.squelch:
         log.info("squelch %s — set in the manager for this channel", channel.squelch)
-    level = channel.squelch or calibrated_squelch(channel, spool)
+    if measured:
+        log.info("gain %s dB, squelch %s — measured for this site %.1f hours ago",
+                 gain_text(gain), measured["squelch"],
+                 (time.time() - measured["when"]) / 3600)
+    else:
+        log.info("gain %s dB, squelch %s — the built-in defaults. This channel has never "
+                 "been calibrated; press Recalibrate in the channel manager to measure "
+                 "the site it is actually on.", gain_text(gain), level)
     argv = rtl_argv(channel, level)
     # rtl_fm's stderr went to /dev/null, which threw away the only thing it ever says
     # that matters. A dongle that has dropped off the USB bus produces "No supported
@@ -1614,7 +1959,9 @@ def main(argv=None):
     p.add_argument("-v", "--verbose", action="store_true")
     p.add_argument("--version", action="version", version=f"transcriber {VERSION}")
     p.add_argument("--calibrate", action="store_true",
-                   help="re-measure the squelch for this site now, ignoring the cache")
+                   help="measure this site's tuner gain and squelch now, cache them, and "
+                        "exit. The dongle must be free: stop the channel first, or let "
+                        "calibrate.sh do it.")
     args = p.parse_args(argv)
 
     logging.basicConfig(
@@ -1629,11 +1976,13 @@ def main(argv=None):
 
     spool = args.spool or os.path.join(SPOOL, re.sub(r"[^\w.-]", "_", channel.id))
     os.makedirs(spool, exist_ok=True)
+
+    # Before whisper is looked for and before anything is swept: calibration is a radio
+    # job and nothing else, and a device whose model is missing should still be able to
+    # measure its site.
     if args.calibrate:
-        try:
-            os.unlink(os.path.join(spool, "squelch.json"))
-        except OSError:
-            pass
+        return run_calibration(channel, spool)
+
     outbox = Outbox(os.path.join(spool, "outbox"))
     # --spool-only means clips were put somewhere by hand or by a test; that is where to
     # read them from, and inventing a second directory would just mean finding nothing.

@@ -164,6 +164,112 @@ class TranscriberStoreTest extends TestCase
         $this->assertNotSame($a, $b);
     }
 
+    // ── calibration ───────────────────────────────────────────────────────────
+    //
+    // Devices only ever fetched before this; now one channel at a time reports that it has
+    // started measuring its site and what it found. Everything here is about the two ways
+    // that can go wrong: a device speaking for a channel that is not its own, and a page
+    // that cannot tell a channel nobody has ever calibrated from one that has been.
+
+    /** A request reaches only the device whose channel it is. It is fetched with the same
+     *  device token as everything else, so anything else in this list would be one
+     *  Transcriber able to take another's channel off the air for two minutes. */
+    public function testACalibrationRequestIsOnlySeenByTheDeviceThatOwnsTheChannel(): void
+    {
+        $at = transcriber_request_calibration('rx2-146520', $this->file);
+
+        $this->assertSame(['rx2-146520' => $at],
+                          transcriber_calibration_requests_for('rx2', $this->file));
+        $this->assertSame([], transcriber_calibration_requests_for('rx1', $this->file));
+    }
+
+    /** The other half of the same rule, on the way back. A device token authenticates the
+     *  report — a channel token writes log entries and must not be able to do anything
+     *  else — so the channel it names has to be checked against the device that holds it. */
+    public function testAChannelIsOwnedByExactlyOneDevice(): void
+    {
+        $this->assertSame('rx1', transcriber_channel_device('rx1-146520', $this->file));
+        $this->assertSame('rx2', transcriber_channel_device('rx2-146520', $this->file));
+        $this->assertSame('', transcriber_channel_device('no-such-channel', $this->file));
+        $this->assertSame('', transcriber_channel_device('', $this->file));
+    }
+
+    /** "Never calibrated" has to be a state the manager can show, distinctly from a
+     *  channel that has been. A new Pi runs on the compiled-in gain and squelch — measured
+     *  on somebody else's hill — until the button is pressed, and nobody presses a button
+     *  they have no reason to know about. */
+    public function testAChannelWithNoCalibrationReadsAsNeverMeasured(): void
+    {
+        $all = transcriber_calibration_load($this->file);
+
+        $this->assertArrayNotHasKey('rx1-146520', $all);
+    }
+
+    /** Started first, then the result. The started report is what the manager's countdown
+     *  runs from: devices poll once a minute, so counting from the button press would be
+     *  wrong by up to a minute in the direction that claims a measurement has finished
+     *  while the radio is still busy. */
+    public function testTheDeviceReportsStartingAndThenWhatItMeasured(): void
+    {
+        transcriber_request_calibration('rx1-146520', $this->file);
+        $started = transcriber_record_calibration(
+            'rx1-146520', ['state' => 'started', 'expected' => 90], $this->file);
+
+        $this->assertGreaterThan(0, $started['started']);
+        $this->assertSame(90, $started['expected']);
+        $this->assertSame(0, $started['finished']);
+
+        $done = transcriber_record_calibration(
+            'rx1-146520', ['state' => 'done', 'gain' => 16.6, 'squelch' => 30], $this->file);
+
+        $this->assertSame(16.6, $done['gain']);
+        $this->assertSame(30, $done['squelch']);
+        $this->assertGreaterThan(0, $done['finished']);
+        $this->assertSame('', $done['error']);
+    }
+
+    /** A failure says why, and leaves the last good pair alone: the channel goes back on
+     *  the air using exactly what it was using before, so that is what the page must go on
+     *  showing. A failed calibration that says so is worth far more than a plausible one
+     *  that is wrong. */
+    public function testAFailedCalibrationKeepsTheNumbersTheReceiverIsStillUsing(): void
+    {
+        transcriber_record_calibration(
+            'rx1-146520', ['state' => 'done', 'gain' => 16.6, 'squelch' => 30], $this->file);
+        $row = transcriber_record_calibration(
+            'rx1-146520',
+            ['state' => 'failed', 'error' => 'something was transmitting'], $this->file);
+
+        $this->assertSame('something was transmitting', $row['error']);
+        $this->assertSame(16.6, $row['gain'], 'the receiver is still using what it measured');
+        $this->assertSame(30, $row['squelch']);
+    }
+
+    /** Anything that is not one of the three states is not recorded at all. This arrives
+     *  over the network from a device that may be running older code than the server. */
+    public function testAnUnknownStateIsRefusedRatherThanStored(): void
+    {
+        $this->assertArrayHasKey('error', transcriber_record_calibration(
+            'rx1-146520', ['state' => 'measuring'], $this->file));
+        $this->assertSame([], transcriber_calibration_load($this->file));
+    }
+
+    /** The one that would break the manager. Calibration state is written by devices at
+     *  moments nobody chose — a request, a start, a finish — and the page carries a
+     *  fingerprint of the registry to refuse a stale write. If these shared a file, an
+     *  open page would start refusing its own Save because a receiver reported in. Same
+     *  reasoning as the vocabulary, and the same separate file. */
+    public function testCalibrationDoesNotMoveTheRegistryFingerprint(): void
+    {
+        $before = transcriber_fingerprint($this->file);
+
+        transcriber_request_calibration('rx1-146520', $this->file);
+        transcriber_record_calibration(
+            'rx1-146520', ['state' => 'done', 'gain' => 20.7, 'squelch' => 20], $this->file);
+
+        $this->assertSame($before, transcriber_fingerprint($this->file));
+    }
+
     // ── the assignment sheet ──────────────────────────────────────────────────
 
     /** An excerpt with the same shapes as the real Dipsea assignment sheet, which is

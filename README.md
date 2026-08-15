@@ -2,7 +2,7 @@
 
 **Author:** Doug Kaye (K6DRK) · **Copyright:** 2026 Doug Kaye. All Rights Reserved.
 
-**Version:** Server & Displays (v1.22.1); Mobile App (v1.22.1); iGates (v5.2); Transcribers (v1.0) — see [Versioning](#versioning)
+**Version:** Server & Displays (v1.22.1); Mobile App (v1.22.1); iGates (v5.2); Transcribers (v1.1) — see [Versioning](#versioning)
 
 ---
 
@@ -23,7 +23,7 @@
 8. [Mobile Apps (v1.22.1)](#mobile-apps-v1221)
    - [Architecture](#app-architecture) · [Location Sharing Flow](#location-sharing-flow) · [Smart Track](#smart-track) · [Building & Distributing](#building-distributing) · [Background Location](#background-location)
 9. [Transcribers](#transcribers)
-   - [Transcriber Diagnostics](#transcriber-diagnostics)
+   - [Calibration](#calibration) · [Transcriber Diagnostics](#transcriber-diagnostics)
 10. [User Interfaces](#user-interfaces)
 11. [Authentication](#authentication)
 12. [Analyzer](#analyzer)
@@ -72,7 +72,7 @@ sharing a number are things that ship together**, and everything else carries it
 |------|---------|---------|
 | Server, Display Pis, web map, mobile apps | `1.22.1+42` | One release. They are one API contract and one deploy. |
 | iGates | `5.2` | Independent. Its own image, its own nightly update. |
-| Transcribers | `1.0` | Independent, and new. |
+| Transcribers | `1.1` | Independent, and new. |
 
 **Server, web and mobile share a number** because they genuinely move together: a
 release changes `WEB_VERSION` in `map/index.php`, `version` in `app/pubspec.yaml`, and
@@ -1309,16 +1309,92 @@ separate reasons, both about what a Pi in a box somewhere can afford to lose:
   has fallen off the USB bus, and it used to go to `/dev/null`.
 
 What must survive a reboot stays on the card under `/var/spool/transcriber/<channel>`:
-the outbox, so a transmission heard during an outage is not lost, and the measured
-squelch, so a restart is listening again in seconds instead of deaf for a minute while it
-measures the site again. The backlog is bounded by **both** clip count and total bytes —
+the outbox, so a transmission heard during an outage is not lost, and the measured gain
+and squelch, which are the only record of what this site was measured at and are never
+re-measured on their own. The backlog is bounded by **both** clip count and total bytes —
 a count alone bounds nothing when one clip can be 4 MB and `/run` is smaller than a
 hundred of them.
 
-**Two kinds of token, deliberately.** A *device* token only fetches configuration
-(`/transcriber/get.php?token=…&device=<hostname>`, and only that device's channels); a
-*channel* token only writes log entries. Neither can do the other's job, so a Transcriber
-left in a shed cannot be used to read the net's traffic. The registry lives at
+### Calibration
+
+**The gain and the squelch are measured together, at the site the receiver is on, when
+somebody presses Recalibrate.** They have to be together: squelch is a threshold on
+received power and the gain decides what that power is, so a squelch cached beside no gain
+is a number measured against something nobody wrote down. That is a bug this project has
+already had.
+
+**The gain is found by the noise-floor knee, and never by which gain's noise the squelch
+still gates.** That second question is the obvious one and it is a trap: gating and
+sensitivity pull in opposite directions, and on a dead band only gating can be measured —
+so optimizing for it alone walks the gain down until the receiver gates beautifully and
+hears nothing. Instead the sweep raises the gain a step at a time and measures the noise
+floor at each. While the receiver is limited by its own converter the floor rises *less*
+than each gain increment; once it is limited by thermal noise arriving from the antenna it
+rises 1:1. Where the slope reaches 0.7 dB per dB is where it starts hearing the band
+rather than itself, and no signal has to be present for any of it. The floor is measured
+from raw I/Q (`rtl_sdr`) rather than through `rtl_fm`, because FM demodulation throws the
+amplitude away — on a dead band its output is full-scale hiss at any gain, so the knee
+would never appear.
+
+The sweep stops at 32.8 dB rather than at the tuner's 49.6, and that cap is doing real
+work: the knee cannot see front-end overload from a strong transmitter elsewhere in the
+band, which is not on this frequency and need not be transmitting while the sweep runs.
+Nothing measurable here would object to 40 dB, which is exactly the value that had to be
+removed. So the sweep is allowed to find the knee and not to chase it past where this
+tuner stays linear.
+
+**Traffic mid-measurement invalidates it, and is detected rather than averaged in.** What
+a transmission produces is not a wild answer but a plausible one — a floor that jumps at
+one gain looks precisely like a knee. Three things catch it: a floor that *falls* as the
+gain rises cannot happen; the bottom of the sweep is measured again at the end, which
+catches a carrier that came up mid-sweep and stayed; and the knee itself is confirmed by
+measuring its two points a second time, the same way `choose_squelch()` confirms a quiet
+level. Any of them and the calibration is abandoned and says why. A failed calibration
+that says so is worth far more than a plausible one that is wrong.
+
+**On demand only, and therefore "never calibrated" is a state the manager shows.** There
+is no expiry and nothing measures at startup: it takes the channel off the air for two or
+three minutes, and a channel going deaf at an hour nobody chose — during a net — is worse
+than one running numbers measured a month ago. The consequence is that a freshly deployed
+receiver runs the compiled-in pair, measured on a different hill, until somebody presses
+the button. Nobody presses a button they have no reason to know about, so the Calibration
+column says **Never** in amber, distinctly from a channel that has been measured.
+
+**How the countdown stays honest.** Devices poll once a minute, so counting down from the
+button press would be wrong by up to a minute — in the direction that tells somebody the
+channel is back on the air while the radio is still busy. So the device reports in, which
+is the one thing Transcribers never did before: a small POST to `report.php`, authenticated
+with the **device** token and checked against the device that owns that channel. The worker
+prints a line of JSON when it starts (with how long it expects to take) and another when it
+finishes (with what it measured, or why it stopped); `calibrate.sh` forwards each as it
+appears. The manager counts down to the device's own start against the server's clock, and
+when the estimate runs out it says *still measuring* rather than inventing an answer.
+
+The pieces, and why each is separate:
+
+| Piece | Runs as | Why |
+|---|---|---|
+| `?calibrate` in the manager | the operator | Per channel: the other dongle on that Pi has no reason to stop listening |
+| `calibrate_requested` in `get.php` | — | A stamp per channel; the device remembers the last it acted on, so nothing is written back and a switched-off device does not wake up and run last week's request |
+| `transcriber-calibrate@<id>.service` | root | A unit of its own: the 60-second poll's service is killed at 120 seconds, and this takes minutes |
+| `calibrate.sh` | root | Holds the *device* token, stops and starts the channel, forwards each report |
+| `transcriber.py --calibrate` | pi | Holds the *channel* token and the radio, and does neither of the other two jobs |
+
+Calibration state lives in `transcriber-calibration.json`, beside the registry and not in
+it. The manager carries a fingerprint of the registry so a stale write is refused, and
+these records are written by receivers at moments nobody chose — put them together and a
+device reporting in would make an open page start refusing its own Save. Same reasoning as
+the vocabulary's own file, and the same conclusion. It is not in `transcriber-state.json`
+either: that one is rewritten by every device on every poll, and a read-modify-write from
+two directions loses whichever landed first, which here would be the report the page is
+waiting for.
+
+**Two kinds of token, deliberately.** A *device* token fetches that device's configuration
+(`/transcriber/get.php?token=…&device=<hostname>`, and only its own channels) and reports
+on its own channels' calibration (`report.php`, checked against the device that owns the
+channel); a *channel* token only writes log entries. Neither can do the other's job, so a
+Transcriber left in a shed cannot be used to read the net's traffic, and cannot speak for
+a receiver on another hill. The registry lives at
 `/var/lib/marsaprs/transcriber.json`, beside `messages.db` and **outside the web root** —
 a token registry under `/var/www/html` is how `mobile_trackers.json` came to be
 downloadable by anyone.
@@ -1349,10 +1425,11 @@ archive download, no self-replacement, no self-noise test — those belong to th
 run, and the last of them would take the receiver off the air for a minute every minute.
 
 Two things that sound like details and are not. The poll **never restarts a channel that
-has not changed**: doing so on a schedule would re-measure the squelch and lose whatever
-was being said, sixty times an hour, forever. And the `update_requested` stamp the manager
+has not changed**: doing so on a schedule would take it off the air and lose whatever was
+being said, sixty times an hour, forever. And the `update_requested` stamp the manager
 sets is kept *out* of the file the device compares against, or pressing "Update devices"
-would look like a changed channel list and restart every receiver for nothing.
+would look like a changed channel list and restart every receiver for nothing. The
+per-channel `calibrate_requested` stamps are kept out of it for the same reason.
 
 That file — `/etc/transcriber/channels.json` — is written with sorted keys and holds
 exactly two things, because it is both what the worker reads and what `cmp -s` compares to
@@ -1487,6 +1564,12 @@ fingerprint matches what it should now hold, or gives up after 75 seconds and na
 ones that never answered. A device the edit did not affect is already current, so it does
 not sit pending on somebody else's change.
 
+**Recalibrate**, on a channel row, is the third kind of thing: it asks that one channel to
+measure the gain and squelch for the site it is on, and the page counts down to what the
+device itself reports rather than to a clock — see [Calibration](#calibration). It refuses
+while there are unsaved changes, for the same reason **Read sheet now** does: the receiver
+would measure the channel as it was saved, not as it looks on the screen.
+
 **Two scripts, and the split between them matters.** `install.sh` builds the *machine* —
 packages, `whisper.cpp` compiled for this CPU, the models, the nightly cron — and knows
 nothing about which receiver it is. `configure.sh` makes it a *particular* receiver:
@@ -1533,7 +1616,9 @@ poor trade. The format is what the poller prints verbatim, so the two must chang
 | `transcriber/bin/transcriber.py` | The per-channel worker (stdlib only, like `isproxy.py`) |
 | `transcriber/bin/stats-listener.py` | Answers the NetBird monitor's UDP:1235 health poll |
 | `transcriber/bin/compare-models.py` | Bench tool: two models, or prompt off vs on, over identical audio |
+| `transcriber/bin/calibrate.sh` | Stops one channel, measures its gain and squelch, reports both, starts it again |
 | `transcriber/systemd/transcriber@.service` | Template unit — one instance per channel |
+| `transcriber/systemd/transcriber-calibrate@.service` | Runs `calibrate.sh` off the 60-second poll, which would kill it at 120 seconds |
 | `transcriber/install.sh` | One-time build: SDR tools, `whisper.cpp` compiled for this CPU, models |
 | `transcriber/home/configure.sh` | Site setup: hostname, NetBird, device token, dongle serials |
 | `transcriber/auto-update.sh` | Nightly: pulls the archive, fetches this device's channels, starts/stops units to match |
@@ -1598,34 +1683,36 @@ Empty means the server accepted it, and the problem is on the web side rather th
 radio side. Entries accumulate there when the server is unreachable and flush in order
 when it returns.
 
-**3. What squelch did it start with?** The first line after a restart says, and it is the
-single number that decides what gets recorded:
+**3. What gain and squelch did it start with?** The first line after a restart says, and
+they are the two numbers that decide what gets recorded:
 
 ```
-squelch 30 — set in the manager for this channel     ← an override you typed
-squelch 20 (measured 0.4 hours ago)                  ← its own measurement, cached
-squelch 20 — measured                                ← measured just now
-could not measure a squelch level; using 25 for now  ← the receiver gave it nothing
+squelch 30 — set in the manager for this channel               ← an override you typed
+gain 16.6 dB, squelch 20 — measured for this site 40.2 hours ago
+gain 30 dB, squelch 25 — the built-in defaults. This channel has never been calibrated…
 ```
 
 An override carried over from a different frequency is a common cause of a deaf channel:
-clear the Squelch box in the manager and let it measure the site it is actually on.
+clear the Squelch box in the manager and press **Recalibrate** for the site it is actually
+on.
 
-**The tuner gain is fixed at 30 dB, and it has to be.** Automatic gain and an RF squelch
-cannot both work: `rtl_fm`'s `-l` compares received power against a threshold, and AGC
-changes what that power means, winding the gain up on a quiet band until the noise crosses
-whatever level is set. Measured on an idle frequency with nothing on the air — squelch 40
-open 92% of the time, 50 open 25%, 60 open 22%, and that same 50 reading 0% ten minutes
-earlier. With the gain pinned, the same frequency is silent at every level from 10 to 40
-and calibration settles on 10.
+**The tuner gain is fixed, never automatic.** Automatic gain and an RF squelch cannot both
+work: `rtl_fm`'s `-l` compares received power against a threshold, and AGC changes what
+that power means, winding the gain up on a quiet band until the noise crosses whatever
+level is set. Measured on an idle frequency with nothing on the air — squelch 40 open 92%
+of the time, 50 open 25%, 60 open 22%, and that same 50 reading 0% ten minutes earlier.
+With the gain pinned, the same frequency is silent at every level from 10 to 40.
 
 The symptom is a channel that records its own noise floor: hours of long clips, nearly all
 transcribing to nothing, on a frequency whose real duty cycle is a fraction of a percent.
 Six hours of it here produced 154 minutes of "audio" from a band that was almost entirely
-idle. A site with a strong signal nearby can lower the gain per channel in the registry;
-somewhere very quiet can raise it. 40 was the original hardcoded value and is near this
-tuner's 49.6 dB maximum, which overloads the front end — that is why it became automatic,
-and why the answer is a moderate fixed value rather than either extreme.
+idle. 40 was the original hardcoded value and is near this tuner's 49.6 dB maximum, which
+overloads the front end — that is why it became automatic, and why the answer is a
+moderate fixed value rather than either extreme.
+
+**Which value is a question about the site, so it is measured there — see Calibration
+below.** 30 dB is what a channel uses until somebody measures it, and 30 dB was measured
+at one location.
 
 **4. Has the tuner wedged?** An RTL-SDR can stop locking while every command still
 reports success: `rtl_fm` prints "Tuned to 146700000 Hz", allocates its buffers,
@@ -1736,7 +1823,7 @@ down when they see one:
 | Flag | Set by | Honoured by |
 |------|--------|-------------|
 | `/tmp/sdr-usb-test.pause` | `sdr-usb-test`, `sdr-selftest.sh` (iGate) | `igate-watchdog.sh` |
-| `/tmp/transcriber-bench.pause` | `compare-models.py`, `sdr-selftest.sh` (Transcriber) | `auto-update.sh` |
+| `/tmp/transcriber-bench.pause` | `compare-models.py`, `sdr-selftest.sh` (Transcriber), `calibrate.sh` | `auto-update.sh` |
 
 Both are ignored once stale — eight hours for the Transcriber's, and the iGates clear
 `/tmp` on their nightly reboot — so a tool that dies without cleaning up cannot keep a
@@ -1750,7 +1837,8 @@ its fleet already watches rather than inventing a third.
 | `/etc/transcriber/channels.json` | This device's channels, collected from the manager |
 | `/home/pi/.transcriber-token` | Its config token — how it identifies itself |
 | `/var/spool/transcriber/<channel>/outbox/` | Entries the server has not accepted yet |
-| `/var/spool/transcriber/<channel>/squelch.json` | The measured squelch, cached for a day |
+| `/var/spool/transcriber/<channel>/calibration.json` | The gain and squelch measured for this site, kept until it is measured again |
+| `/etc/transcriber/calibrate/<channel>` | The last calibration request this device acted on |
 | `/run/transcriber/<channel>/` | Clips in flight, on tmpfs — and `rtl_fm.err`, which is where "No supported devices found." goes |
 | `/var/log/transcriber/update.log` | What the nightly and 60-second updates did |
 

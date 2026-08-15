@@ -44,6 +44,11 @@ CHANNELS_ONLY=""
 # every hour, would otherwise bury every real line in the update log.
 LAST_UPDATE_SEEN=/etc/transcriber/last-update-request
 
+# The last calibration request honoured for each channel, one file per channel id. Per
+# channel because Recalibrate is per channel: it takes that one receiver off the air for a
+# couple of minutes, and the other dongle on the same Pi has no reason to stop listening.
+CAL_SEEN_DIR=/etc/transcriber/calibrate
+
 log() {
     if [ -n "$CHANNELS_ONLY" ] && [ -z "${FORCE_LOG:-}" ]; then
         echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> /var/log/transcriber/update.log
@@ -105,6 +110,10 @@ rsync -a --ignore-times "$TMP/bin/"     /opt/transcriber/bin/
 rsync -a --ignore-times "$TMP/systemd/" /etc/systemd/system/
 [ -d "$TMP/udev" ] && rsync -a --ignore-times "$TMP/udev/" /etc/udev/rules.d/ || true
 chmod +x /opt/transcriber/bin/*.py
+# calibrate.sh among them. rsync carries the mode across, but a repository checkout that
+# lost the bit would produce a calibration that fails with "permission denied" on the
+# device and nowhere else.
+chmod +x /opt/transcriber/bin/*.sh
 
 # configure.sh, kept current so a device that has been in the field for a year still has
 # today's wizard on it when somebody finally SSHes in to move it. Everything it writes
@@ -200,6 +209,47 @@ PYEOF
                 # let it finish the job rather than doing half of it here.
                 exec "$SELF"
             fi
+        fi
+
+        # "Recalibrate", pressed in the manager against one channel: measure the tuner
+        # gain for the site this receiver is on, and then the squelch at that gain. The
+        # same mechanism as the update stamp and for the same reasons — the server hands
+        # out a timestamp per channel, the device remembers the last one it acted on, and
+        # a device that was switched off does not wake up and take a channel off the air
+        # over something somebody asked for last week.
+        #
+        # After the update block, deliberately. If a full update was also requested this
+        # run has already exec'd into it, and that run re-fetches and arrives back here
+        # with the channels freshly restarted — rather than a measurement being started
+        # underneath an update that is about to restart the channel it is measuring.
+        #
+        # --no-block, and a unit of its own. Calibration takes minutes and this is the
+        # 60-second poll, whose service is killed at 120 seconds; running it here would
+        # mean a measurement cut in half every time. transcriber-calibrate@.service stops
+        # the channel, measures, tells the server what it found, and starts it again.
+        if python3 - "$TMP/response.json" > "$TMP/calibrate.txt" 2>/dev/null <<'PYEOF'
+import json, re, sys
+requests = json.load(open(sys.argv[1])).get("calibrate_requested") or {}
+for channel, at in (requests.items() if isinstance(requests, dict) else []):
+    # This id becomes a file name and a systemd instance name. The server derives it from
+    # the device name and the frequency and cannot produce anything else, but nothing that
+    # arrives over the network gets to be the first thing that assumes so.
+    if re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", str(channel)):
+        print(channel, int(at or 0))
+PYEOF
+        then
+            while read -r id at; do
+                seen=$(cat "$CAL_SEEN_DIR/$id" 2>/dev/null || echo 0)
+                [ "$at" -gt "$seen" ] 2>/dev/null || continue
+                # Written before it runs, not after: a calibration that fails to start
+                # must not be retried every sixty seconds for the rest of the week. The
+                # manager shows the failure, and somebody presses the button again.
+                mkdir -p "$CAL_SEEN_DIR"
+                echo "$at" > "$CAL_SEEN_DIR/$id"
+                FORCE_LOG=1 log "calibration requested for $id"
+                systemctl start --no-block "transcriber-calibrate@$id.service" \
+                    || log "could not start the calibration for $id"
+            done < "$TMP/calibrate.txt"
         fi
     else
         log "channel list download failed; keeping the current one"
