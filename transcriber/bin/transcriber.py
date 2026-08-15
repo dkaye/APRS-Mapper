@@ -84,9 +84,34 @@ DEFAULT_GAIN = 30
 # A transmission shorter than this is a squelch tail, a key-up, or someone knocking
 # their PTT — never words worth logging, and exactly what whisper invents speech from.
 MIN_CLIP_SECONDS = 1.2
-# Longer than this and it is almost certainly an open carrier rather than a
-# transmission; transcribe what we have rather than growing a file forever.
+
+# The length at which a transmission stops being a transmission.
+#
+# This is not a limit on how long somebody may talk. On these frequencies an over runs
+# ten to twenty seconds and a conversation is four to six of them, with minutes of
+# nothing in between; two unbroken minutes is not a talkative operator. It is one of
+# two faults, and both have happened here: a transmitter stuck down, or a squelch that
+# has stopped gating and is handing us the noise floor as one endless carrier — which
+# is exactly what automatic gain did before DEFAULT_GAIN pinned it.
+#
+# So the cap is a sampling boundary rather than a chapter break: no sentence is being
+# cut in half and there is no pause worth hunting for. What matters is that the audio
+# is not thrown away in silence, which is what used to happen — the clip overshot the
+# cap by a tenth of a second, failed a `> MAX_CLIP_SECONDS` test, and was deleted
+# without ever reaching whisper, so a fault erased the only evidence of itself — and
+# that a carrier which never drops is not transcribed forever. See OpenCarrier.
 MAX_CLIP_SECONDS = 120
+
+# How many capped segments in a row may come back with nothing worth logging before we
+# stop transcribing this carrier, and how many are skipped between looks after that.
+#
+# Two segments is four minutes of unbroken carrier that whisper made nothing of, which
+# is enough to conclude nobody is talking. One further look every five segments — ten
+# minutes — is what stops a squelch that has failed open from making the channel deaf:
+# in that fault real traffic is still arriving inside the endless carrier, so a sample
+# now and then finds it and switches transcription back on.
+BARREN_SEGMENTS = 2
+RECHECK_SEGMENTS = 5
 # How far transcription may fall behind before clips start being dropped. At a
 # transmission every few seconds this is minutes of backlog — far more than the careful
 # model needs to catch up between overs.
@@ -341,14 +366,21 @@ def supports_flag(binary, flag, timeout=30):
     return _flag_support[(binary, flag)]
 
 
-def transcribe(binary, model, path):
-    """Text for one clip, or '' if there is nothing worth saying."""
+def transcribe(binary, model, path, seconds=0):
+    """Text for one clip, or '' if there is nothing worth saying.
+
+    The timeout follows the recording rather than sitting at a fixed number. The
+    careful model runs at about 0.8x real time on this Pi, so five minutes is generous
+    for anything the capture loop produces and far too little for a long file handed
+    over by the bench tool or by hand — and a timeout here raises, which loses the clip
+    and leaves it on disk to be found again.
+    """
     argv = [binary, "-m", model, "-f", path, "--no-timestamps", "--no-prints",
             "--language", "en", "--threads", str(max(1, (os.cpu_count() or 2) - 1))]
     if supports_flag(binary, SUPPRESS_NON_SPEECH):
         argv.append(SUPPRESS_NON_SPEECH)
     out = subprocess.run(
-        argv, capture_output=True, text=True, timeout=300,
+        argv, capture_output=True, text=True, timeout=max(300, seconds * 5),
     )
     if out.returncode != 0:
         log.error("whisper failed: %s", (out.stderr or "").strip()[:200])
@@ -593,9 +625,22 @@ def sweep_clips(directory):
                 pass
 
 
-def write_clip(directory, audio, seq):
+# What marks a clip that was cut at MAX_CLIP_SECONDS rather than at the end of a
+# transmission. It rides along in the file name because that is the one thing that
+# survives the queue between the capture thread and the transcribing one — and it makes
+# the anomaly obvious in a directory listing, where a "-open" clip is the only one that
+# means something is wrong.
+CAPPED_MARK = "-open"
+
+
+def is_capped(path):
+    """Was this clip cut by the cap rather than by the carrier dropping?"""
+    return CAPPED_MARK in os.path.basename(path)
+
+
+def write_clip(directory, audio, seq, capped=False):
     """One transmission, as a wav whisper can read."""
-    path = os.path.join(directory, f"clip_{seq:05d}.wav")
+    path = os.path.join(directory, f"clip_{seq:05d}{CAPPED_MARK if capped else ''}.wav")
     with wave.open(path, "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
@@ -925,7 +970,87 @@ class ClipQueue:
             return len(self._items)
 
 
-def transcribe_loop(work, channel, whisper, model, outbox, stopping):
+class OpenCarrier:
+    """Tells a transmitter that has stuck down from a channel that is genuinely in use.
+
+    Both look identical from the capture loop: samples arrive and never stop. The
+    difference is not in the audio — an RF squelch has already decided something is
+    transmitting, and a stuck microphone in a car is as loud as a conversation — it is
+    in whether there are words in it. So the answer comes back from the transcribing
+    thread, one capped segment at a time: BARREN_SEGMENTS in a row that whisper had
+    nothing to say about, and we stop spending on this carrier.
+
+    That has to be paid for, because it is expensive to be wrong. The careful model
+    takes about 100 seconds per 120-second segment, so transcribing a stuck carrier
+    keeps the worker permanently busy, puts every real transmission behind it, and the
+    log falls further behind the radio for as long as the fault lasts — which for a
+    stuck PTT in somebody's car can be hours.
+
+    Stopping outright would be wrong too, and this is the part worth remembering. One
+    of the two faults that produces an endless carrier is a squelch that has stopped
+    gating, and in that one real traffic is still arriving — buried in a recording that
+    never ends, but arriving. Going deaf to it would turn a degraded channel into a
+    dead one. So after giving up we still take one segment in RECHECK_SEGMENTS, and any
+    segment with words in it puts the channel straight back to normal.
+
+    Both threads touch this, so it is behind a lock.
+    """
+
+    def __init__(self, tolerate=BARREN_SEGMENTS, recheck=RECHECK_SEGMENTS):
+        self.tolerate = tolerate
+        self.recheck = recheck
+        self._lock = threading.Lock()
+        self._segments = 0        # capped segments cut from the transmission in progress
+        self._barren = 0          # consecutive ones whisper made nothing of
+        self._skipped = 0         # segments dropped since we stopped transcribing
+
+    @property
+    def skipping(self):
+        """Whether this carrier is currently being treated as stuck."""
+        with self._lock:
+            return self._barren >= self.tolerate
+
+    def segment(self):
+        """A transmission has just been cut at the cap. Whether to transcribe this one.
+
+        Called on the capture thread, so it must not block and must not care that the
+        verdict on the previous segment may not have arrived yet. It usually has —
+        even the careful model finishes a segment inside the two minutes the next one
+        takes to record — and when the worker is behind, the effect is only that one
+        more segment is transcribed before the channel gives up.
+        """
+        with self._lock:
+            self._segments += 1
+            if self._barren < self.tolerate:
+                return True
+            self._skipped += 1
+            if self._skipped >= self.recheck:
+                self._skipped = 0
+                return True             # a look, in case somebody is talking now
+            return False
+
+    def verdict(self, logged):
+        """What a capped segment turned out to contain. Called on the worker thread."""
+        with self._lock:
+            self._barren = 0 if logged else self._barren + 1
+            if self._barren == self.tolerate:
+                log.warning(
+                    "%d minutes of unbroken carrier with nothing worth logging in it — "
+                    "a stuck transmitter, or a squelch that is no longer gating. Not "
+                    "transcribing any more of it, apart from one segment in %d to see "
+                    "whether anybody is talking.",
+                    self.tolerate * MAX_CLIP_SECONDS // 60, self.recheck)
+
+    def dropped(self):
+        """The carrier dropped, whatever it was. Called on the capture thread."""
+        with self._lock:
+            if self._segments:
+                log.info("the carrier finally dropped, after about %d minutes",
+                         self._segments * MAX_CLIP_SECONDS // 60)
+            self._segments = self._barren = self._skipped = 0
+
+
+def transcribe_loop(work, channel, whisper, model, outbox, stopping, carrier=None):
     """Transcribe and post, off the capture thread.
 
     This has to be its own thread. whisper is blocking and posting has a fifteen-second
@@ -946,35 +1071,47 @@ def transcribe_loop(work, channel, whisper, model, outbox, stopping):
                 return
             continue
         try:
-            handle_clip(channel, path, whisper, model, outbox)
+            logged = handle_clip(channel, path, whisper, model, outbox)
+            # Only a capped segment answers the question OpenCarrier is asking. An
+            # ordinary over that came back empty is a squelch tail, and there are
+            # hundreds of those a day.
+            if carrier is not None and is_capped(path):
+                carrier.verdict(bool(logged))
             outbox.flush(lambda t: post_log_entry(channel, t))
         except Exception:                       # noqa: BLE001 - one bad clip must not
             log.exception("transcription failed")   # stop the channel transcribing
 
 
 def handle_clip(channel, path, whisper, model, outbox):
+    """Transcribe one clip and queue whatever it said. True if anything was logged."""
     seconds = clip_seconds(path)
     if seconds < MIN_CLIP_SECONDS:
         log.debug("ignoring %.1fs clip", seconds)
         os.unlink(path)
-        return
-    if seconds > MAX_CLIP_SECONDS:
-        # A stuck or open carrier, not an over. Transcribing it would occupy the
-        # channel for minutes and queue every real transmission behind it, to
-        # produce a paragraph of noise nobody wants in the log.
-        log.warning("discarding %.0fs clip — open carrier?", seconds)
-        os.unlink(path)
-        return
-    text = clean(transcribe(whisper, model, path))
+        return False
+    if seconds >= MAX_CLIP_SECONDS:
+        # Not an over — see MAX_CLIP_SECONDS. Transcribe it all the same: it was
+        # recorded, whether there are voices in it is the one question that separates
+        # the two faults it can be, and OpenCarrier needs that answer to decide whether
+        # to keep listening. What this must never do again is delete it. The previous
+        # version tested `> MAX_CLIP_SECONDS` against a clip the capture loop had
+        # overshot to 120.1 seconds, so every capped clip ever made was unlinked
+        # without reaching whisper, and the journal said "discarding 120s clip — open
+        # carrier?" as if that were a considered decision.
+        log.warning("%.0fs of carrier without a break — a stuck transmitter, or a "
+                    "squelch that is no longer gating. Transcribing it anyway; check "
+                    "the squelch level for this site if it keeps happening.", seconds)
+    text = clean(transcribe(whisper, model, path, seconds))
     os.unlink(path)
     keep = loggable(text)
     if not keep:
         log.info("discarded (%.1fs): %r", seconds, text[:60])
-        return
+        return False
     if keep != text:
         log.info("trimmed a repeated phrase out of (%.1fs): %r", seconds, text[:60])
     log.info("logging (%.1fs): %s", seconds, keep[:80])
     outbox.add(keep, time.time())
+    return True
 
 
 def main(argv=None):
@@ -1095,8 +1232,10 @@ def main(argv=None):
     # the radio. See transcribe_loop for why that separation is not optional.
     work = ClipQueue()
     stopping = threading.Event()
+    carrier = OpenCarrier()
     worker = threading.Thread(
-        target=transcribe_loop, args=(work, channel, whisper, model, outbox, stopping),
+        target=transcribe_loop,
+        args=(work, channel, whisper, model, outbox, stopping, carrier),
         daemon=True, name="transcribe")
     worker.start()
 
@@ -1105,7 +1244,9 @@ def main(argv=None):
     audio = bytearray()          # the transmission currently being received
     seq = 0
     last_data = None             # when samples last arrived; None between overs
-    max_bytes = MAX_CLIP_SECONDS * SAMPLE_RATE * 2
+    # A whole number of samples, and therefore an even number of bytes: the buffer is cut
+    # at this offset, and half a 16-bit sample would shift every sample after it.
+    max_bytes = int(MAX_CLIP_SECONDS * SAMPLE_RATE) * 2
     last_report, heard = time.time(), 0
     last_any_data = time.time()   # for the deaf-receiver check, not per-transmission
 
@@ -1140,15 +1281,32 @@ def main(argv=None):
                 if audio and last_data is not None and now - last_data >= GAP_SECONDS:
                     seq += 1
                     heard += 1
-                    enqueue(write_clip(clips, bytes(audio), seq))
+                    # The tail of a carrier already judged stuck is more of the same.
+                    if not carrier.skipping:
+                        enqueue(write_clip(clips, bytes(audio), seq))
                     audio.clear()
                     last_data = None
+                    carrier.dropped()
 
                 # A carrier that never drops would otherwise grow one clip forever.
+                #
+                # Cut at exactly the cap and keep the remainder, rather than writing the
+                # whole buffer and clearing it. The reads overshoot — a clip written
+                # this way measured 120.1 seconds — and downstream that tenth of a
+                # second was the difference between a clip being transcribed and being
+                # deleted unheard.
+                #
+                # No search for a pause to cut at, and no overlap between segments.
+                # Two minutes into an unbroken carrier there is no sentence being
+                # chopped in half; there is a fault being sampled. Overlap would only
+                # put the same words in the log twice, which is the exact shape of the
+                # invented text the filters downstream exist to keep out.
                 if len(audio) >= max_bytes:
                     seq += 1
-                    enqueue(write_clip(clips, bytes(audio), seq))
-                    audio.clear()
+                    segment = bytes(audio[:max_bytes])
+                    del audio[:max_bytes]
+                    if carrier.segment():
+                        enqueue(write_clip(clips, segment, seq, capped=True))
 
                 # Total silence for long enough is not proof of a quiet frequency — see
                 # DEAF_CHECK_SECONDS. Exit cleanly and let systemd start us again; the
@@ -1202,7 +1360,7 @@ def main(argv=None):
         # Whatever was mid-transmission when we were told to stop is still a
         # transmission. Without this it was dropped on the floor — the clip is only
         # written when the gap arrives, and a shutdown, or rtl_fm dying, arrives first.
-        if audio:
+        if audio and not carrier.skipping:
             seq += 1
             enqueue(write_clip(clips, bytes(audio), seq))
             audio.clear()

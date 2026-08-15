@@ -439,8 +439,16 @@ def emitter(script):
     return [sys.executable, "-c", body]
 
 
-def capture_clips(script, seconds):
-    """Run the capture loop against a fake radio; return the clips it wrote, in order."""
+def capture_clips(script, seconds, carrier=None):
+    """Run the capture loop against a fake radio.
+
+    Returns (name, duration) for each clip it wrote, in order — the name because a
+    segment cut at the cap is named differently from an over that ended on its own, and
+    that mark is what tells the transcribing thread which is which.
+
+    `carrier` replaces the OpenCarrier the loop would build for itself, so a test can
+    say "stop transcribing this one" without waiting for a real verdict.
+    """
     import subprocess as sp, time as _time
     with tempfile.TemporaryDirectory() as tmp:
         models = os.path.join(tmp, "models"); os.makedirs(models)
@@ -456,6 +464,9 @@ def capture_clips(script, seconds):
         # The liveness probe opens the real dongle, which these tests do not have. It is
         # covered on its own in test_a_wedged_tuner_is_not_mistaken_for_a_quiet_frequency.
         real_alive, transcriber.receiver_alive = transcriber.receiver_alive, lambda ch: True
+        real_carrier = transcriber.OpenCarrier
+        if carrier is not None:
+            transcriber.OpenCarrier = lambda: carrier
         transcriber.ClipQueue.put = lambda self, p: written.append(p)
         transcriber.start_capture = lambda ch, c, sp_: sp.Popen(
             emitter(script), stdout=sp.PIPE, stderr=sp.DEVNULL)
@@ -477,7 +488,15 @@ def capture_clips(script, seconds):
             transcriber.ClipQueue.put = real_put
             transcriber.start_capture = real_capture
             transcriber.receiver_alive = real_alive
-        return [transcriber.clip_seconds(p) for p in written if os.path.exists(p)]
+            transcriber.OpenCarrier = real_carrier
+        # Measured before the temporary directory goes, since the files go with it.
+        return [(os.path.basename(p), transcriber.clip_seconds(p))
+                for p in written if os.path.exists(p)]
+
+
+def capture_lengths(script, seconds):
+    """Just the durations, for the tests that only care where the cuts fell."""
+    return [d for _, d in capture_clips(script, seconds)]
 
 
 def test_a_pause_in_speech_does_not_end_the_transmission():
@@ -494,13 +513,13 @@ def test_a_pause_in_speech_does_not_end_the_transmission():
     """
     print("segmentation — a quiet passage mid-over")
     #        (seconds, emitting?, level)
-    got = capture_clips([(1.0, True, 3000),     # speech
-                         (0.6, True, 40),       # a pause — carrier still up, barely audible
-                         (1.0, True, 3000),     # more speech
-                         (1.5, False, 0),       # carrier drops: THIS ends it
-                         (1.0, True, 3000),     # a second over
-                         (1.5, False, 0)],
-                        seconds=7.0)
+    got = capture_lengths([(1.0, True, 3000),   # speech
+                           (0.6, True, 40),     # a pause — carrier up, barely audible
+                           (1.0, True, 3000),   # more speech
+                           (1.5, False, 0),     # carrier drops: THIS ends it
+                           (1.0, True, 3000),   # a second over
+                           (1.5, False, 0)],
+                          seconds=7.0)
     check("two transmissions, not four", len(got), 2)
     if len(got) == 2:
         # ~2.6s means the quiet middle survived and nothing was trimmed off the front.
@@ -510,18 +529,167 @@ def test_a_pause_in_speech_does_not_end_the_transmission():
 
 def test_a_long_gap_separates_two_overs():
     print("segmentation — two overs")
-    got = capture_clips([(1.0, True, 3000), (1.5, False, 0),
-                         (1.0, True, 3000), (1.5, False, 0)],
-                        seconds=6.0)
+    got = capture_lengths([(1.0, True, 3000), (1.5, False, 0),
+                           (1.0, True, 3000), (1.5, False, 0)],
+                          seconds=6.0)
     check("two clips", len(got), 2)
 
 
 def test_a_single_over_is_one_clip():
     print("segmentation — one over")
-    got = capture_clips([(2.0, True, 3000), (1.5, False, 0)], seconds=4.5)
+    got = capture_lengths([(2.0, True, 3000), (1.5, False, 0)], seconds=4.5)
     check("one clip", len(got), 1)
     if got:
         check("of about the right length", 1.7 <= got[0] <= 2.4, True)
+
+
+# ── a carrier that does not drop ─────────────────────────────────────────────
+
+class _FakeCarrier:
+    """An OpenCarrier whose answers the test chooses, so the capture loop can be asked
+    what it does with them without waiting on a real transcription."""
+
+    def __init__(self, keep):
+        self.keep = list(keep)
+        self.asked = 0
+        self.skipping = False
+        self.drops = 0
+
+    def segment(self):
+        self.asked += 1
+        return self.keep.pop(0) if self.keep else False
+
+    def verdict(self, logged):
+        pass
+
+    def dropped(self):
+        self.drops += 1
+
+
+def test_a_carrier_that_does_not_drop_is_cut_at_exactly_the_cap():
+    """The bug that threw away every long capture the channel ever made.
+
+    Reads overshoot, so writing the whole buffer produced a clip measuring 120.1s
+    against a downstream test of `> MAX_CLIP_SECONDS`. Every capped clip therefore
+    failed it and was deleted without reaching whisper, and the journal recorded
+    "discarding 120s clip — open carrier?" as though that had been the intention.
+
+    Cut at the cap exactly and carry the remainder into the next segment. The tenth of
+    a second is not the point; being on the wrong side of the ceiling is.
+    """
+    print("segmentation — a carrier that does not drop")
+    # 1.03 seconds, and the odd number is the entire point. The reads arrive in 50 ms
+    # blocks, so a cap of a round 1.0s would be reached exactly, there would be no
+    # overshoot, and this test would pass against the very code it was written for —
+    # which it did, the first time it was run. On the air rtl_fm's writes do not line up
+    # with the cap either, which is how a 120s cap produced a 120.1s clip.
+    cap = 1.03
+    saved, transcriber.MAX_CLIP_SECONDS = transcriber.MAX_CLIP_SECONDS, cap
+    try:
+        got = capture_clips([(4.0, True, 3000)], seconds=4.2)
+    finally:
+        transcriber.MAX_CLIP_SECONDS = saved
+
+    check("it is cut into segments rather than growing forever", len(got) >= 3, True)
+    check("none of which is over the cap", [n for n, d in got if d > cap], [])
+    check("each being exactly the cap", sorted({round(d, 3) for _, d in got}), [cap])
+    # The mark travels with the file, because it is what tells the transcribing thread
+    # that this clip answers the open-carrier question and an ordinary over does not.
+    check("and all of them are marked as capped",
+          [n for n, d in got if transcriber.CAPPED_MARK not in n], [])
+
+
+def test_a_carrier_judged_stuck_stops_being_recorded():
+    """A stuck transmitter must not keep the careful model busy for as long as it lasts.
+
+    The model takes about 100 seconds per 120-second segment, so transcribing an
+    unbroken carrier occupies the worker permanently, puts every real transmission
+    behind it, and leaves the log further behind the radio every minute. Once the
+    verdicts say there are no words in it, the capture loop stops writing it down.
+    """
+    print("segmentation — a carrier already judged stuck")
+    carrier = _FakeCarrier([True, False, False, True])
+    saved, transcriber.MAX_CLIP_SECONDS = transcriber.MAX_CLIP_SECONDS, 1.0
+    try:
+        got = capture_clips([(5.0, True, 3000)], seconds=5.0, carrier=carrier)
+    finally:
+        transcriber.MAX_CLIP_SECONDS = saved
+    check("the loop asks about every segment", carrier.asked >= 4, True)
+    check("and writes down only the ones it is told to", len(got), 2)
+
+
+def test_open_carrier_tells_a_stuck_transmitter_from_a_busy_channel():
+    """The two look identical from the capture loop — samples that never stop — and
+    the audio cannot separate them either, since an RF squelch has already decided
+    something is transmitting and a stuck microphone in a car is as loud as a
+    conversation. What separates them is whether there are words in it, which only the
+    transcribing thread knows.
+
+    Giving up outright would be the other mistake. One of the two faults that produces
+    an endless carrier is a squelch that has stopped gating, and real traffic is still
+    arriving inside it; going deaf would turn a degraded channel into a dead one.
+    """
+    print("OpenCarrier")
+    c = transcriber.OpenCarrier(tolerate=2, recheck=5)
+    check("the first segment of anything is transcribed", c.segment(), True)
+    c.verdict(True)                       # there were words in it
+    check("and so is the next, while there are words in them", c.segment(), True)
+
+    c.verdict(False)
+    check("one silent segment is not enough to give up", c.segment(), True)
+    c.verdict(False)
+    check("two in a row is", c.segment(), False)
+    check("and it stays given up", [c.segment() for _ in range(3)], [False] * 3)
+    check("but looks again every fifth segment", c.segment(), True)
+
+    c.verdict(True)                       # somebody is talking after all
+    check("and words put it straight back to normal", c.segment(), True)
+
+    # A long transmission that keeps producing text is never throttled, however long it
+    # runs. That is the case this must not break.
+    for _ in range(20):
+        c.verdict(True)
+        check_quiet(c.segment() is True)
+
+    c.verdict(False); c.verdict(False)
+    check("a carrier dropping forgets all of it", (c.segment(), c.dropped(), c.segment()),
+          (False, None, True))
+
+
+def test_only_a_capped_clip_answers_the_open_carrier_question():
+    """An ordinary over that came back empty says nothing about a stuck carrier — it is
+    a squelch tail, and there are hundreds of those a day. Only a clip the cap cut can
+    be evidence, which is why the mark is on the file rather than in a variable."""
+    print("open carrier — which clips count as evidence")
+    import time as _time
+    work, stopping, said = transcriber.ClipQueue(), threading.Event(), []
+
+    class Listening:
+        def verdict(self, logged):
+            said.append(logged)
+
+    def stub(channel, path, whisper, model, outbox):
+        return "yes" in path
+
+    real, transcriber.handle_clip = transcriber.handle_clip, stub
+    try:
+        worker = threading.Thread(
+            target=transcriber.transcribe_loop,
+            args=(work, None, None, None, _FakeOutbox(), stopping, Listening()),
+            daemon=True)
+        worker.start()
+        for name in ["clip_00001-yes.wav",                    # an ordinary over, logged
+                     "clip_00002.wav",                        # an ordinary over, silent
+                     "clip_00003%s.wav" % transcriber.CAPPED_MARK,
+                     "clip_00004-yes%s.wav" % transcriber.CAPPED_MARK]:
+            work.put(name)
+        deadline = _time.time() + 5
+        while len(said) < 2 and _time.time() < deadline:
+            _time.sleep(0.02)
+        stopping.set(); worker.join(timeout=5)
+    finally:
+        transcriber.handle_clip = real
+    check("only the capped clips are reported on", said, [False, True])
 
 
 def test_non_speech_tokens_are_suppressed_at_the_decoder_where_the_build_allows():
@@ -883,13 +1051,26 @@ def test_pipeline_discards_hallucination():
         check("nothing logged", sent, [])
 
 
-def test_pipeline_discards_open_carrier():
-    print("pipeline — stuck carrier")
+def test_pipeline_transcribes_a_capped_clip_rather_than_binning_it():
+    """What the field failure looked like from the log: nothing.
+
+    The capture loop cut a clip at the cap, the reads overshot to 120.1s, and
+    `if seconds > MAX_CLIP_SECONDS` deleted it before whisper ever saw it. A hundred
+    and twenty seconds of a repeater went in the bin for every one of them, and all the
+    journal said was "discarding 120s clip — open carrier?".
+
+    Two minutes of unbroken carrier is still a fault worth a warning — an over here runs
+    ten to twenty seconds — but the audio was recorded, and whether there are voices in
+    it is the one question that says which fault it is. So it gets transcribed.
+    """
+    print("pipeline — a clip cut at the cap")
     with tempfile.TemporaryDirectory() as tmp:
+        # The exact length the field failure produced, not a round number over it.
         rc, sent = run_pipeline(tmp, "aid three we have a rider down",
-                                clip_seconds=transcriber.MAX_CLIP_SECONDS + 5)
+                                clip_seconds=transcriber.MAX_CLIP_SECONDS + 0.1)
         check("exit 0", rc, 0)
-        check("nothing logged", sent, [])
+        check("what was on the air reaches the log",
+              sent, ["aid three we have a rider down"])
 
 
 def test_pipeline_discards_short_clip():
@@ -1003,6 +1184,10 @@ if __name__ == "__main__":
         test_repetition_on_the_air_is_not_a_hallucination,
         test_a_loop_on_the_end_is_trimmed_rather_than_thrown_away,
         test_a_transcription_that_is_mostly_loop_is_rejected_whole,
+        test_open_carrier_tells_a_stuck_transmitter_from_a_busy_channel,
+        test_only_a_capped_clip_answers_the_open_carrier_question,
+        test_a_carrier_that_does_not_drop_is_cut_at_exactly_the_cap,
+        test_a_carrier_judged_stuck_stops_being_recorded,
         test_transcription_runs_off_the_capture_thread,
         test_backlog_is_bounded_by_size_not_just_count,
         test_start_capture_builds_a_command_and_keeps_the_two_directories_straight,
@@ -1019,7 +1204,8 @@ if __name__ == "__main__":
         test_posting, test_unreachable_server_is_retried,
         test_a_clip_is_queued_once_not_once_per_loop,
         test_pipeline_logs_speech, test_pipeline_discards_hallucination,
-        test_pipeline_discards_short_clip, test_pipeline_discards_open_carrier,
+        test_pipeline_discards_short_clip,
+        test_pipeline_transcribes_a_capped_clip_rather_than_binning_it,
         test_an_idle_frequency_is_not_fatal,
         test_a_broken_whisper_is_fatal_not_silent,
         test_disabled_channel_does_nothing, test_unknown_channel_is_fatal,

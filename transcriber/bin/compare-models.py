@@ -53,7 +53,7 @@ def capture(channel, clips_dir, spool, want, deadline):
     """Yield finished clips, segmented exactly as the worker segments them."""
     rtl = tr.start_capture(channel, clips_dir, spool)
     audio, seq, last_data = bytearray(), 0, None
-    max_bytes = tr.MAX_CLIP_SECONDS * tr.SAMPLE_RATE * 2
+    max_bytes = int(tr.MAX_CLIP_SECONDS * tr.SAMPLE_RATE) * 2
     try:
         while seq < want and time.time() < deadline:
             ready, _, _ = select.select([rtl.stdout], [], [], 0.2)
@@ -69,9 +69,13 @@ def capture(channel, clips_dir, spool, want, deadline):
                 audio.clear()
                 last_data = None
             if len(audio) >= max_bytes:
+                # Exactly at the cap, keeping the remainder, as the worker does. The
+                # reads overshoot, and clips measuring 120.1s rather than 120.0s is how
+                # the worker came to be deleting every capped clip it made.
                 seq += 1
-                yield tr.write_clip(clips_dir, bytes(audio), seq)
-                audio.clear()
+                segment = bytes(audio[:max_bytes])
+                del audio[:max_bytes]
+                yield tr.write_clip(clips_dir, segment, seq, capped=True)
             if rtl.poll() is not None:
                 print(f"  rtl_fm exited: {tr.rtl_complaint(clips_dir)}")
                 return
@@ -129,7 +133,8 @@ def main():
                 row = {"seconds": secs}
                 for name, fname in MODELS:
                     t0 = time.time()
-                    text = tr.clean(tr.transcribe(whisper, os.path.join(args.models, fname), path))
+                    text = tr.clean(tr.transcribe(
+                        whisper, os.path.join(args.models, fname), path, secs))
                     took = time.time() - t0
                     totals[name] += took
                     # What the channel would actually file, not what whisper said: the
