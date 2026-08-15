@@ -662,6 +662,23 @@ async function requestUpdate() {
  * that the manager is pointed at last month's document. */
 async function refreshVocabulary() {
     if (!CAN_EDIT) return;
+    // The refresh reads the STORED url, because it has no other way of knowing which
+    // document to trust — the one in the box may be half-typed. So a url that has been
+    // changed but not saved is read from its old value, and the page reports what the
+    // PREVIOUS document contained, which looks exactly like the new one being wrong.
+    //
+    // That happened the first time somebody used this: a new sheet was pasted in, "read
+    // sheet now" pressed, and the honest "no vocabulary section" it reported was about a
+    // document the user was no longer looking at. Nothing about the wording could have
+    // helped; the button had to stop reading a url the page had already replaced.
+    if (dirty) {
+        status('Save first — the sheet is read from the saved address', 'error');
+        notice('Save before reading the sheet',
+               'The address in the box has not been saved yet, so reading now would '
+             + 'fetch the previous sheet and report on that one instead. Press Save, '
+             + 'then read.');
+        return;
+    }
     const btn = $('vocab-btn'), meta = $('vocab-meta');
     if (btn) btn.disabled = true;
     meta.textContent = 'Reading the sheet…';
