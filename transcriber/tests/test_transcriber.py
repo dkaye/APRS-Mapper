@@ -9,6 +9,10 @@
 # Runs without an SDR and without whisper: rtl_fm and sox are skipped via --spool-only,
 # and whisper is a stub script whose output the test chooses.
 #
+# compare-models.py is covered here too, in the bench section. It is a bench tool rather
+# than part of the service, but it is what decides whether the initial prompt ships, and
+# a measurement nobody has checked is worse than none.
+#
 # Usage: python3 transcriber/tests/test_transcriber.py   (exit 0 = pass)
 #
 # Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
@@ -504,6 +508,197 @@ def test_the_prompt_flags_are_only_passed_to_a_build_that_has_them():
     finally:
         transcriber.subprocess.run = real
         transcriber._flag_support.clear()
+
+
+# ── the bench tool ───────────────────────────────────────────────────────────
+#
+# compare-models.py is where the initial prompt above is decided, so its two answers have
+# to be trustworthy: that the prompt it measures is the one the device would actually
+# use, and that a line invented from static is recognized as invented. Neither needs a
+# radio to check.
+
+_BENCH = []
+
+
+def bench():
+    """compare-models.py, whose file name is not an importable one."""
+    if not _BENCH:
+        import importlib.util
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "bin",
+                            "compare-models.py")
+        spec = importlib.util.spec_from_file_location("compare_models", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _BENCH.append(module)
+    return _BENCH[0]
+
+
+def bench_channel(vocabulary=None):
+    return transcriber.Channel({"id": "rx1-146700", "frequency": "146700000",
+                                "serial": "1", "model": "ggml-base.en.bin"}, vocabulary)
+
+
+def test_the_bench_compares_configurations_and_not_only_models():
+    """Two arms that differ by the model, or two that differ by the prompt — one capture
+    either way, because two dongles hear different things and the difference in the text
+    would be confounded with a difference in what arrived.
+
+    The default stays the model comparison: that invocation is in the README and predates
+    this."""
+    print("bench — what the two arms differ by")
+    b = bench()
+    args = b.parser().parse_args(["--channel", "rx1", "--clips", "10", "--minutes", "20"])
+    check("the documented invocation still parses",
+          (args.clips, args.minutes), (10, 20.0))
+    check("and still compares models", args.compare, "models")
+
+    channel = bench_channel(vocab(PLACES))
+    models = b.arms_for("models", channel, "channels.json")
+    check("the model arms are the two models",
+          [a.model for a in models], [f for _, f in b.MODELS])
+    check("and neither is primed", [a.prompt for a in models], [None, None])
+
+    primed = b.arms_for("prompt", channel, "channels.json")
+    check("the prompt arms are one model run twice",
+          [a.model for a in primed], ["ggml-base.en.bin"] * 2)
+    check("the first plain", primed[0].prompt, None)
+    # The measurement is worth nothing if it is of a lookalike. This has to be the exact
+    # string the worker would hand whisper, built by the worker's own Vocabulary from the
+    # same file the device reads — token budget, excluded corrections and all.
+    check("the second primed with exactly what the worker would use",
+          primed[1].prompt, channel.vocabulary.prompt())
+    check("and a model can be named for both arms",
+          [a.model for a in b.arms_for("prompt", channel, "x", "ggml-tiny.en.bin")],
+          ["ggml-tiny.en.bin"] * 2)
+
+
+def test_a_prompt_comparison_says_when_there_is_nothing_to_prime_with():
+    """An event with no vocabulary is the normal case, and there a prompt comparison is
+    the same run twice. It would report "identical on 6 of 6", which reads as a result and
+    means only that nothing was measured — so it refuses instead, and says where it
+    looked."""
+    print("bench — an empty vocabulary")
+    b = bench()
+    try:
+        b.arms_for("prompt", bench_channel(vocab()), "/etc/transcriber/channels.json")
+        FAILURES.append("empty vocabulary: expected SystemExit")
+    except SystemExit as e:
+        check("refuses rather than measuring nothing", "no vocabulary" in str(e), True)
+        check("and says which file it read",
+              "/etc/transcriber/channels.json" in str(e), True)
+
+
+def test_a_line_off_static_that_names_the_roster_is_the_finding():
+    """The veto condition. "K6DRK at Cardiac" invented from hiss is far worse than a
+    mangled callsign: it is plausible, it names a real person and a real place, and
+    nobody reading the log has any reason to doubt it."""
+    print("bench — invented traffic")
+    b = bench()
+    v = vocab(PLACES)
+    check("ordinary invention names nobody",
+          b.names_from("thank you for watching", v), [])
+    check("a roster name is the finding",
+          b.names_from("K6DRK at Cardiac", v), ["K6DRK", "Cardiac"])
+    # The entry that matters most arrives mangled, and the worker would write it down
+    # properly before anybody read it — so the check runs over the corrected text rather
+    # than looking for the literal string.
+    check("even spelled the way whisper spells it",
+          b.names_from("kilo six delta romeo kilo at cardiac hill", v),
+          ["K6DRK", "Cardiac"])
+    # A callsign the event never listed is not this event's traffic. It is still junk in
+    # the log, and it is reported as such; it is not the veto.
+    check("a callsign nobody listed is not one of these names",
+          b.names_from("W6XYZ mobile", v), [])
+    check("nor is half a place name", b.names_from("the beach was crowded", v), [])
+
+
+def test_the_static_report_calls_out_what_was_invented_and_clears_what_was_not():
+    """Zero on both arms is the outcome the prompt needs, and it has to be stated as such
+    — the point of the pass is to produce a decision, not a table."""
+    print("bench — the static verdict")
+    b = bench()
+    arms = [b.Arm("Plain", "m", None), b.Arm("Primed", "m", "p")]
+    quiet = {a.name: b.Result("", "", 1.0, []) for a in arms}
+
+    lines = b.static_lines(arms, [dict(quiet) for _ in range(8)], 10.0, vocab(PLACES))
+    check("silence on both arms clears the prompt",
+          any("clears the prompt to ship" in ln for ln in lines), True)
+
+    invented = dict(quiet)
+    invented["Primed"] = b.Result("K6DRK at Cardiac", "K6DRK at Cardiac", 1.0,
+                                  ["K6DRK", "Cardiac"])
+    lines = b.static_lines(arms, [dict(quiet), invented], 10.0, vocab(PLACES))
+    check("one named entry is the veto", any("veto" in ln for ln in lines), True)
+    check("and it says which words were named",
+          any("K6DRK" in ln for ln in lines), True)
+    check("nothing is cleared while that stands",
+          any("clears the prompt" in ln for ln in lines), False)
+
+    # Junk from noise is a different finding from fiction from noise. Both are worth
+    # reading; only one of them names somebody.
+    junk = dict(quiet)
+    junk["Primed"] = b.Result("all right then", "all right then", 1.0, [])
+    lines = b.static_lines(arms, [junk], 10.0, vocab(PLACES))
+    check("noise in the log without a name is said differently",
+          any("junk rather" in ln for ln in lines), True)
+
+
+def test_the_traffic_summary_separates_what_correction_can_fix():
+    """The crux of the prompt decision. The worker corrects callsigns AFTER
+    transcription, so a prompt only earns its risk where it rescues something correction
+    cannot fix afterwards — a difference the correction pass closes by itself cost the
+    log nothing and bought it nothing."""
+    print("bench — raw against corrected")
+    b = bench()
+    arms = [b.Arm("Plain", "m", None), b.Arm("Primed", "m", "p")]
+    closed = {"seconds": 10.0,
+              "Plain": b.Result("K-6 DRK mobile", "K6DRK mobile", 3.0, ["K6DRK"]),
+              "Primed": b.Result("K6DRK mobile", "K6DRK mobile", 3.0, ["K6DRK"])}
+    lines = b.traffic_lines(arms, [closed])
+    check("a difference correction closes was bought for nothing",
+          any("correct_callsigns closes" in ln for ln in lines), True)
+
+    survives = dict(closed,
+                    Primed=b.Result("K6DRK at Cardiac", "K6DRK at Cardiac", 3.0, []))
+    lines = b.traffic_lines(arms, [survives])
+    check("one that survives correction is the thing being bought",
+          any("still different after correction" in ln for ln in lines), True)
+
+
+def test_the_static_pass_takes_noise_the_channel_would_never_record():
+    """The receiver does not record silence any more — the gain is pinned and the squelch
+    gates properly, so a quiet frequency yields no clips at all. That is correct, and it
+    removes the very thing a prompt has to be measured against.
+
+    So this pass opens the gate on purpose. -l 0 is not a low threshold but the absence
+    of one: rtl_fm then gates nothing and emits at the full rate, on the channel's own
+    frequency, and the stream is cut into clips the length of an over."""
+    print("bench — capturing static on purpose")
+    b = bench()
+    import subprocess as sp
+    seen = {}
+    real = b.subprocess.Popen
+
+    def fake_popen(argv, stdout=None, stderr=None):
+        # The real Popen, captured before the stub replaced it — a fake radio is still a
+        # process, and calling the name would call this.
+        seen["argv"] = argv
+        return real(emitter([(30.0, True, 40)]), stdout=stdout, stderr=sp.DEVNULL)
+
+    b.subprocess.Popen = fake_popen
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            clips = list(b.capture_noise(bench_channel(), d, 0.5, 2,
+                                         __import__("time").time() + 20))
+            lengths = [transcriber.clip_seconds(p) for p in clips]
+    finally:
+        b.subprocess.Popen = real
+
+    argv = seen.get("argv", [])
+    check("the gate is off, not merely low", argv[argv.index("-l") + 1], "0")
+    check("on the channel's own frequency", argv[argv.index("-f") + 1], "146700000")
+    check("two clips of noise", len(lengths), 2)
+    check("each the length asked for", all(0.45 <= s <= 0.65 for s in lengths), True)
 
 
 # ── capture must not wait for transcription ──────────────────────────────────
@@ -1605,6 +1800,12 @@ if __name__ == "__main__":
         test_a_correction_is_applied_before_the_vocabulary_and_not_after,
         test_the_initial_prompt_is_off_unless_a_channel_asks_for_it,
         test_the_prompt_flags_are_only_passed_to_a_build_that_has_them,
+        test_the_bench_compares_configurations_and_not_only_models,
+        test_a_prompt_comparison_says_when_there_is_nothing_to_prime_with,
+        test_a_line_off_static_that_names_the_roster_is_the_finding,
+        test_the_static_report_calls_out_what_was_invented_and_clears_what_was_not,
+        test_the_traffic_summary_separates_what_correction_can_fix,
+        test_the_static_pass_takes_noise_the_channel_would_never_record,
         test_open_carrier_tells_a_stuck_transmitter_from_a_busy_channel,
         test_only_a_capped_clip_answers_the_open_carrier_question,
         test_a_carrier_that_does_not_drop_is_cut_at_exactly_the_cap,

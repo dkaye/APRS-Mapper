@@ -365,12 +365,12 @@ SUPPRESS_NON_SPEECH = "--suppress-nst"
 # downstream cannot help: "KM6AOW mobile" off a hiss burst passes worth_logging()
 # perfectly, because it is a short, unrepetitive, entirely reasonable sentence.
 #
-# So it ships implemented and switched off. Turn it on for one channel, run
-# compare-models.py over that channel's real traffic AND over a stretch of real static,
-# and compare both — the accuracy it buys on speech is worth nothing if it also invents
-# a check-in from noise. Until somebody has done that measurement on this site, the
-# default stands. (compare-models.py calls transcribe() without a prompt today, so that
-# measurement starts by handing it one.)
+# So it ships implemented and switched off, and there is a measurement that decides it:
+# compare-models.py --compare prompt runs one model twice over the same audio, without
+# this prompt and with it, over the channel's real traffic AND over static it captures
+# unsquelched on purpose. The accuracy it buys on speech is worth nothing if it also
+# invents a check-in from noise. Until somebody has run that on this site, the default
+# stands.
 #
 # --carry-initial-prompt matters because a clip here can run past one 30-second window
 # (MAX_CLIP_SECONDS is 120), and without it the prompt applies only to the first.
@@ -1173,13 +1173,47 @@ def choose_squelch(sample, candidates=SQUELCH_CANDIDATES, quiet=QUIET_FRACTION):
     return None
 
 
+def rtl_argv(channel, level):
+    """How this receiver is opened, at a given squelch level.
+
+    One definition, because three things open the dongle and every one of them has to do
+    it identically or it is measuring a different receiver: the capture loop, the
+    calibration sampler, and compare-models.py's deliberate noise pass. Only the squelch
+    level differs between them, and that is the argument.
+
+    The dongle is addressed by USB SERIAL, never by index: index order is not stable
+    across reboots or re-plugs, and two channels silently swapping frequencies is the
+    kind of fault nobody notices until the log is wrong. "-d <serial>", not
+    "-d serial=<serial>" — rtl_fm's verbose_device_search tries the argument as an index,
+    then as an exact serial, then as a prefix, and the SoapySDR "serial=" form is none of
+    them. It fails in the worst possible way: the device is listed and then not selected,
+    so rtl_fm exits without ever tuning and the channel looks like a dead frequency.
+
+    Oversample and resample — "-s 200000 -r 16000", never "-s 16000" directly. The
+    RTL2832U cannot sample below about 225 kHz, so asking for the low rate makes rtl_fm
+    decimate internally and the audio comes out mangled. It is not obviously broken to
+    look at — the recording had a healthy 0.10 RMS and a clean waveform — but it is
+    unintelligible, and whisper answers unintelligible audio by inventing something. On a
+    30-second recording of a station reading out temperatures it produced "(I'm not a
+    fan)" and nothing else; the same 30 seconds captured this way transcribed every place
+    name and number correctly. 16000 is whisper's own rate, so nothing resamples it
+    afterwards.
+
+    -E deemp applies FM de-emphasis, which voice needs and without which the high end is
+    harsh enough to cost accuracy.
+    """
+    argv = ["rtl_fm", "-d", channel.serial, "-f", channel.frequency,
+            "-M", "fm", "-s", "200000", "-r", str(SAMPLE_RATE), "-E", "deemp",
+            "-l", str(level)]
+    if channel.gain is not None:
+        argv += ["-g", str(channel.gain)]     # otherwise rtl_fm uses automatic gain
+    return argv
+
+
 def _sample_rtl(channel, level, seconds):
     """Bytes rtl_fm emits at this squelch level over `seconds`."""
-    p = subprocess.Popen(
-        ["rtl_fm", "-d", channel.serial, "-f", channel.frequency,
-         "-M", "fm", "-s", "200000", "-r", str(SAMPLE_RATE), "-E", "deemp", "-l", str(level)]
-        + ([] if channel.gain is None else ["-g", str(channel.gain)]),
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    p = subprocess.Popen(rtl_argv(channel, level),
+                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     try:
         # Opening the device and settling the tuner produces a burst that says nothing
         # about the noise floor. Discard it before counting.
@@ -1264,27 +1298,10 @@ def start_capture(channel, clips, spool):
     squelch belongs on the card in `spool`, because re-measuring it costs a minute of
     deafness on every restart.
 
-    The dongle is addressed by USB SERIAL, never by index: index order is not stable
-    across reboots or re-plugs, and two channels silently swapping frequencies is the
-    kind of fault nobody notices until the log is wrong.
+    How the dongle itself is opened is rtl_argv's business — the serial, the oversampling
+    and the de-emphasis are the same for everything that opens it, and the squelch level
+    is the only thing this decides.
     """
-    # "-d <serial>", not "-d serial=<serial>". rtl_fm's verbose_device_search tries the
-    # argument as an index, then as an exact serial, then as a prefix — the SoapySDR
-    # "serial=" form is not one of them, and it fails in the worst possible way: the
-    # device is listed and then not selected, so rtl_fm exits without ever tuning and
-    # the channel looks like a dead frequency.
-    # Oversample and resample: "-s 200000 -r 24000", never "-s 24000" directly.
-    #
-    # The RTL2832U cannot sample below about 225 kHz, so asking for 24 kHz makes rtl_fm
-    # decimate internally and the audio comes out mangled. It is not obviously broken to
-    # look at — the recording had a healthy 0.10 RMS and a clean waveform — but it is
-    # unintelligible, and whisper answers unintelligible audio by inventing something.
-    # On a 30-second recording of a station reading out temperatures it produced
-    # "(I'm not a fan)" and nothing else. The same 30 seconds captured this way
-    # transcribed every place name and number correctly.
-    #
-    # -E deemp applies FM de-emphasis, which voice needs and without which the high end
-    # is harsh enough to cost accuracy.
     # Gate on SIGNAL STRENGTH, not audio level, and cut clips on gaps in the data
     # rather than on quiet passages in the audio.
     #
@@ -1329,11 +1346,7 @@ def start_capture(channel, clips, spool):
     if channel.squelch:
         log.info("squelch %s — set in the manager for this channel", channel.squelch)
     level = channel.squelch or calibrated_squelch(channel, spool)
-    argv = ["rtl_fm", "-d", channel.serial, "-f", channel.frequency,
-            "-M", "fm", "-s", "200000", "-r", str(SAMPLE_RATE), "-E", "deemp",
-            "-l", str(level)]
-    if channel.gain is not None:
-        argv += ["-g", str(channel.gain)]     # otherwise rtl_fm uses automatic gain
+    argv = rtl_argv(channel, level)
     # rtl_fm's stderr went to /dev/null, which threw away the only thing it ever says
     # that matters. A dongle that has dropped off the USB bus produces "No supported
     # devices found." and exit 1; all the journal showed was "rtl_fm exited (1)", and

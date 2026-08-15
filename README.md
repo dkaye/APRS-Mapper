@@ -1271,9 +1271,11 @@ prompt (`--prompt`, plus `--carry-initial-prompt` because a clip can run past on
 point and the danger. The worst failure this device has is confident text invented from
 static, and "KM6AOW mobile" off a hiss burst passes every filter here, because it is a
 short, unrepetitive, entirely reasonable sentence. It is a per-channel switch that is off
-unless explicitly enabled; turn it on for one channel, measure it with
-`compare-models.py` against that channel's real traffic **and** against real static, and
-argue about it afterwards.
+unless explicitly enabled, and there is a measurement that decides it:
+`compare-models.py --compare prompt` runs one model twice over the same audio, without
+the prompt and with it, over real traffic **and** over static captured unsquelched on
+purpose. Zero loggable lines from the noise on both arms clears it; one entry naming the
+roster is the veto. See Transcriber Diagnostics.
 
 **A gap in the byte stream is the boundary between transmissions, and that is the whole
 of the segmentation.** `rtl_fm`'s squelch gates on RF power *before* demodulation, so
@@ -1530,7 +1532,7 @@ poor trade. The format is what the poller prints verbatim, so the two must chang
 |------|---------|
 | `transcriber/bin/transcriber.py` | The per-channel worker (stdlib only, like `isproxy.py`) |
 | `transcriber/bin/stats-listener.py` | Answers the NetBird monitor's UDP:1235 health poll |
-| `transcriber/bin/compare-models.py` | Bench tool: Fast vs Careful over identical audio |
+| `transcriber/bin/compare-models.py` | Bench tool: two models, or prompt off vs on, over identical audio |
 | `transcriber/systemd/transcriber@.service` | Template unit — one instance per channel |
 | `transcriber/install.sh` | One-time build: SDR tools, `whisper.cpp` compiled for this CPU, models |
 | `transcriber/home/configure.sh` | Site setup: hostname, NetBird, device token, dongle serials |
@@ -1674,11 +1676,13 @@ A ratio of loudest to quietest half-second near **1** is steady hiss — nothing
 received. Speech gives a ratio of **5 or more**. whisper describing the file as
 `(machine whirring)` or `(buzzing)` is it telling you the same thing.
 
-**Comparing Fast against Careful.** `compare-models.py` captures each transmission once
-and runs both models over that same file:
+**Comparing two configurations over the same audio.** `compare-models.py` captures each
+transmission once and runs two arms over that same file. The arms differ by the model, or
+by whether whisper is primed with the event vocabulary:
 
 ```
 sudo /opt/transcriber/bin/compare-models.py --channel <id> --clips 10 --minutes 20
+sudo /opt/transcriber/bin/compare-models.py --channel <id> --compare prompt
 ```
 
 One capture, not two channels. Two channels on two dongles hear slightly different
@@ -1686,10 +1690,38 @@ things, so any difference in the text would be confounded with a difference in w
 arrived — which is the one thing the comparison is supposed to hold constant. It borrows
 the worker's own capture path (same squelch, same gap segmentation, same filters), posts
 nothing to the log, marks which lines the filters would have dropped, and reports each
-model's speed against real time. Above 1.0x a model cannot keep up with a busy net.
+arm's speed against real time. Above 1.0x an arm cannot keep up with a busy net.
 
-It stops the channel while it runs, because there is one dongle per channel, and starts
-it again however it exits.
+`--compare prompt` builds its prompt with the worker's own `Vocabulary`, from the same
+`/etc/transcriber/channels.json` the device reads, and prints it — a measurement of a
+lookalike would be worth nothing, and a prompt naming last month's event would otherwise
+look like a result. It refuses to run against an event with no vocabulary rather than
+reporting the "identical on 6 of 6" that two identical arms would produce.
+
+Each transmission shows both arms' text *and* what `correct_callsigns` would make of it,
+because the worker corrects callsigns after transcription: a difference the correction
+pass closes by itself was bought for nothing, and the summary counts the two separately.
+**Only the entries still different after correction are what a prompt actually buys.**
+
+**Then it captures static on purpose**, and that pass is the point of the exercise. The
+receiver no longer records silence — the gain is pinned and the squelch gates properly,
+so a quiet frequency yields no clips at all, which is correct and removes the very thing
+this test needs. So the second pass opens the gate itself (`-l 0`, the absence of a
+threshold rather than a low one), on the channel's own frequency, in clips the length of
+an over, and asks of each arm how many clips of *nothing* produced something the log
+would have accepted. It reports that separately, with the text.
+
+**Zero on both arms is what clears a prompt to ship.** Any entry naming a callsign,
+tactical call or place name from the vocabulary is the finding and the veto — checked
+after `correct_callsigns` has run, since "kilo six delta romeo kilo" off a hiss burst is
+K6DRK named in the log. An invented line reading "K6DRK at Cardiac" is far worse than a
+mangled callsign: it is plausible, it names a real person and a real place, and nobody
+has any reason to doubt it.
+
+`--static-clips 0` skips the static pass, `--clips 0` skips the traffic pass. It stops the
+channel while it runs, because there is one dongle per channel, and starts it again
+however it exits, including on Ctrl-C — the first Ctrl-C ends the wait for traffic and
+goes on to the static pass, the second ends the run.
 
 **A diagnostic that owns the dongle says so.** There is one SDR per channel, and several
 things want it: the nightly self-noise sweep, `compare-models.py`, `sdr-usb-test` on the
