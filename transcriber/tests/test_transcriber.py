@@ -183,6 +183,11 @@ def test_start_capture_builds_a_command_and_keeps_the_two_directories_straight()
 
         argv = seen["argv"]
         check("addresses the dongle by bare serial", argv[argv.index("-d") + 1], "56052444")
+        # Fixed gain, always. Automatic gain and an RF squelch cannot both work: AGC winds
+        # the gain up on a quiet band until the noise crosses whatever threshold is set,
+        # so the same squelch level reads 0% open and 25% open ten minutes apart. Measured
+        # on a real receiver; the channel spent a day recording its own noise floor.
+        check("pins the tuner gain", argv[argv.index("-g") + 1], "30")
         check("tunes where it was told", argv[argv.index("-f") + 1], "147465000")
         # -s 200000 -r 16000, never -s 16000: the RTL2832U cannot sample that low and the
         # audio comes back mangled but plausible-looking, which whisper answers by

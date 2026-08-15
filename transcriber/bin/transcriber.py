@@ -62,6 +62,25 @@ SERVER = "https://marsaprs.org"
 # per channel in the manager.
 DEFAULT_SQUELCH = 25
 
+# Tuner gain in dB, fixed rather than automatic.
+#
+# Automatic gain and an RF squelch cannot both work. rtl_fm's -l compares received power
+# against a threshold, and AGC changes what that power means: on a quiet band it winds the
+# gain up until the noise crosses whatever level you set. Measured on an idle frequency,
+# with nothing whatsoever on the air — squelch 40 open 92% of the time, 50 open 25%, 60
+# open 22%, and the same level of 50 reading 0% ten minutes earlier. Not a threshold that
+# was slightly wrong: a threshold that meant something different every few minutes.
+#
+# The channel had been recording that noise all day. Six hours of it produced 154 minutes
+# of "audio" on a frequency whose real duty cycle is nearer 1%, and whisper was run twice
+# over every second of it.
+#
+# 30 dB, not the 40 that was hardcoded here once: 40 is near this tuner's 49.6 dB maximum
+# and overloads the front end anywhere with a strong signal nearby, which is why it was
+# removed in favour of automatic in the first place. At a fixed 30 the same idle frequency
+# is silent at every squelch level from 10 to 40.
+DEFAULT_GAIN = 30
+
 # A transmission shorter than this is a squelch tail, a key-up, or someone knocking
 # their PTT — never words worth logging, and exactly what whisper invents speech from.
 MIN_CLIP_SECONDS = 1.2
@@ -103,10 +122,10 @@ class Channel:
         self.frequency = str(d.get("frequency") or "")
         self.serial = str(d.get("serial") or "")
         self.squelch = int(d.get("squelch") or 0)
-        # Tuner gain in dB, or None for rtl_fm's automatic. Automatic by default: a
-        # fixed 40 was hardcoded here, which is near this tuner's maximum and overloads
-        # the front end anywhere with a strong signal nearby.
-        self.gain = d.get("gain")
+        # Tuner gain in dB. Fixed, not automatic — see DEFAULT_GAIN for why the squelch
+        # cannot work without it. A site with a strong signal nearby can lower it per
+        # channel in the manager; somewhere very quiet can raise it.
+        self.gain = d.get("gain") if d.get("gain") not in (None, "", 0) else DEFAULT_GAIN
         self.model = d.get("model") or "ggml-tiny.en.bin"
         self.enabled = bool(d.get("enabled", True))
         self.server = (d.get("server") or SERVER).rstrip("/")

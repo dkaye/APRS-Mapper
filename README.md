@@ -1391,6 +1391,22 @@ could not measure a squelch level; using 25 for now  ← the receiver gave it no
 An override carried over from a different frequency is a common cause of a deaf channel:
 clear the Squelch box in the manager and let it measure the site it is actually on.
 
+**The tuner gain is fixed at 30 dB, and it has to be.** Automatic gain and an RF squelch
+cannot both work: `rtl_fm`'s `-l` compares received power against a threshold, and AGC
+changes what that power means, winding the gain up on a quiet band until the noise crosses
+whatever level is set. Measured on an idle frequency with nothing on the air — squelch 40
+open 92% of the time, 50 open 25%, 60 open 22%, and that same 50 reading 0% ten minutes
+earlier. With the gain pinned, the same frequency is silent at every level from 10 to 40
+and calibration settles on 10.
+
+The symptom is a channel that records its own noise floor: hours of long clips, nearly all
+transcribing to nothing, on a frequency whose real duty cycle is a fraction of a percent.
+Six hours of it here produced 154 minutes of "audio" from a band that was almost entirely
+idle. A site with a strong signal nearby can lower the gain per channel in the registry;
+somewhere very quiet can raise it. 40 was the original hardcoded value and is near this
+tuner's 49.6 dB maximum, which overloads the front end — that is why it became automatic,
+and why the answer is a moderate fixed value rather than either extreme.
+
 **4. Has the tuner wedged?** An RTL-SDR can stop locking while every command still
 reports success: `rtl_fm` prints "Tuned to 146700000 Hz", allocates its buffers,
 announces its sample rate, and produces not one byte. `rtl_test` says
