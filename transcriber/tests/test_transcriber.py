@@ -54,9 +54,15 @@ def test_worth_logging():
                  # whisper's other house style for the same thing. These reached a real
                  # event log: a squelch crash as "*BANG*", static as "*gunshot*". Worse
                  # than a wrong entry, because it reads like something happened.
-                 "*BANG*", "*gunshot*", "*static*", "♪♪♪", "♪ music ♪"]:
+                 "*BANG*", "*gunshot*", "*static*", "♪♪♪", "♪ music ♪",
+                 # A repeater's courtesy tone, landing in a clip of its own. Three entries
+                 # reading exactly this reached a real event log; on a roll call with an
+                 # over every few seconds there would have been dozens.
+                 "Beep", "beep", "Beep.", "BEEP", "Tone", "chirp"]:
         check(f"discards {junk!r}", transcriber.worth_logging(junk), False)
     for real in ["aid three we have a rider down", "copy that sending medical",
+                 # The word inside real speech is not the tone on its own.
+                 "I heard the beep after your transmission", "what tone are you using",
                  "net control this is whiskey six sierra golf"]:
         check(f"keeps {real[:24]!r}", transcriber.worth_logging(real), True)
 

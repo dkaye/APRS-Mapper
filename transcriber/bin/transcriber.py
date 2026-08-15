@@ -141,6 +141,12 @@ HALLUCINATIONS = {
     "", "you", "thank you", "thank you.", "thanks for watching",
     "thanks for watching!", "bye", "bye.", "[blank_audio]", "(silence)",
     "[ silence ]", "so", "so.", "uh", "um", ".", "...",
+    # A repeater sounds a courtesy tone after every over. When it lands in a clip of its
+    # own — the carrier drops, the tone re-keys it, and the hang time makes the clip long
+    # enough to survive MIN_CLIP_SECONDS — whisper reports it as the word. Three entries
+    # reading exactly "Beep" reached a real event log this way, and on a roll call with an
+    # over every few seconds there would have been dozens.
+    "beep", "beeps", "beeping", "bleep", "bloop", "tone", "chirp", "ding", "buzz",
 }
 
 # whisper's other failure on marginal audio: not one invented sentence but the same one
