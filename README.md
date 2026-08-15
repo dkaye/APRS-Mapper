@@ -1233,11 +1233,20 @@ an earlier.
 
 **Callsigns are what a net log most needs right, and what whisper is worst at.** One
 station on this receiver came back as `K-60RK`, `K-6 DRK`, `6 delta rho mu` and
-`K-60 Arcade` — all four are K6DRK. So the worker fixes them up, in four layers, and
-stops at the first that fits: exactly a callsign or tactical call this event knows; close
-enough to one of them and to nothing else; something with the *shape* of a US callsign
-(one or two letters, a digit, one to three letters), which is what collapses "whiskey six
-sierra golf" into W6SG; and otherwise the words exactly as they were heard.
+`K-60 Arcade` — all four are K6DRK. So the worker fixes them up, in five layers, and
+stops at the first that fits: a correction somebody wrote down for this exact mishearing;
+exactly a callsign or phrase this event knows; close enough to one of them and to nothing
+else; something with the *shape* of a US callsign (one or two letters, a digit, one to
+three letters), which is what collapses "whiskey six sierra golf" into W6SG; and otherwise
+the words exactly as they were heard.
+
+A **correction** is the only layer that is told rather than worked out, which is why it
+outranks the rest and why it is the only one that never matches loosely. It is a rule —
+"whatever this normalizes to, write that instead" — and a fuzzy rule would let one typo'd
+entry rewrite unrelated traffic into whatever its author had in mind, which nothing else
+here can do. It also has to run *before* the layers below rather than after: those run over
+the same words, and letting them go first would consume the text the rule names, so the
+rule would silently never fire — which is precisely the failure somebody typed it to fix.
 
 That last layer is the point rather than the fallback. **A wrong callsign in a log is
 worse than a mangled one** — it reads as authoritative, it points at the wrong person, and
@@ -1348,8 +1357,20 @@ exactly two things, because it is both what the worker reads and what `cmp -s` c
 decide whether a receiver restarts:
 
 ```json
-{"channels": [ … ], "vocabulary": {"callsigns": [ … ], "tactical": [ … ]}}
+{"channels": [ … ],
+ "vocabulary": {"callsigns":   [ … ],
+                "tactical":    [ … ],
+                "terms":       ["Windy Gap", "Cardiac", … ],
+                "corrections": {"cardiac hill": "Cardiac", … }}}
 ```
+
+Every one of those four keys is written whether or not the server sent it, defaulting to
+empty. That is what makes a mixed-version day ordinary: the archive lands on the nightly
+run and the server is deployed separately, so a device runs new code against an old server
+for a while — and a config file that changed *shape* run to run would stop `cmp -s` being a
+change detector. In the other direction a device fetches `terms` and `corrections` before
+its worker knows what they are, and ignores them. Neither direction needs a version number;
+extra keys are ignored and absent ones read as empty, at both ends.
 
 **The words that will be said on the air are already written down, on the assignment
 sheet.** Every event has one, in Google Docs: who is where, on what frequency, under what
@@ -1366,14 +1387,56 @@ calls. There is no AI anywhere in this and there does not need to be; what actua
 matters is *normalizing* what comes back, because the export is a flattened table and the
 same call arrives as `Net control\t`, `net control\n` and `netcontrol`.
 
-**Only two things are taken, and the document is never stored.** Callsigns matched on US
-amateur shape (`\b[A-Z]{1,2}[0-9][A-Z]{1,3}\b`, which is narrow enough to sit beside
-`440.1375MHz`, `PL 192.8Hz`, `CC3` and `Ch21R` without eating any of them, and drops the
-SSID off `KM6BON-7`), and tactical calls from a fixed vocabulary of roles — Sweep, SAG,
+**Only what a prompt can act on is taken, and the document is never stored.** Callsigns
+matched on US amateur shape (`\b[A-Z]{1,2}[0-9][A-Z]{1,3}\b`, which is narrow enough to sit
+beside `440.1375MHz`, `PL 192.8Hz`, `CC3` and `Ch21R` without eating any of them, and drops
+the SSID off `KM6BON-7`), and tactical calls from a fixed vocabulary of roles — Sweep, SAG,
 Aid, Biker, Hiker, Net Control, Start, Finish — normalized to their spoken form. Nothing
 else, and nothing that merely looks like a proper noun. The same sheet carries operators'
 full names, their shift times and somebody's mobile number; a fleet of receivers in sheds
 has no business holding any of it, so it is not read and no copy of the document is kept.
+
+**Place names have to be stated, because no pattern can find them.** Aid stations answer to
+their own tactical calls — *Windy Gap*, *Cardiac*, *Bootjack*, *Pantoll*, *Stinson Beach* —
+and those are ordinary words in an ordinary order. Any regex wide enough to catch them
+would catch half the document, including the names the paragraph above exists to keep out.
+So the sheet says them outright: a line with **Vocabulary** in it, then one term per line,
+ending at the first blank line.
+
+```
+Transcriber Vocabulary
+Windy Gap
+Cardiac
+Bootjack
+Cardiac Hill = Cardiac
+```
+
+The heading is a heading and not any line with the word in it — reduced to its words it
+must be five or fewer, so `Transcriber Vocabulary`, `Vocabulary:` and `Vocabulary (place
+names)` are headings and a sentence about vocabulary is not. A tab in front of a term (the
+export flattens tables) and a `*` or `1.` in front of it (the author will use a list, because
+it is a list) are decoration and come off. A line with `=` is a **correction**: what the
+transcription produced on the left, what it should have said on the right, keyed by the
+normalized heard form so the worker looks it up rather than scanning. Its right-hand side
+is a term too — somebody who reports that "Cardiac" comes out as "Cardiff" has told us
+Cardiac is a phrase this event says.
+
+**Whether the section was found is reported separately from what it held, and that is not
+decoration.** Rename the heading, or lose the section in an edit, and the terms silently
+become none: the callsign and tactical counts are unchanged, everything looks like it
+worked, and the first anybody knows is a log full of *Windy Cap* halfway through an event.
+So the manager says **vocabulary section: found, 12 terms** or **not found**, distinctly
+from the two counts beside it. Silent degradation is the failure mode this system keeps
+producing and this is the cheapest place to stop one.
+
+**The manager also has a box for the same syntax**, merged with whatever the sheet gave. It
+is not the main mechanism — a term belongs on the sheet, where the whole team can see it —
+it is for the middle of an event, when *Cardiac* is coming out as *Cardiff* in the log and
+the shared document is not yours to edit right then. It lives in the registry beside the
+sheet URL and is merged in at read time rather than baked into the stored vocabulary, so it
+takes effect on Save with no fetch at all, and it survives a failed refresh — which matters,
+because a document that cannot be reached is exactly when somebody is typing into that box.
+On the same key, the box wins: it was typed later, by somebody watching the log get it wrong.
 
 **Where it is refreshed from is the interesting part.** The sheet is edited up to the
 morning of the event, and the person editing it will not be sitting in the channel
@@ -1387,10 +1450,10 @@ worse than holding yesterday's. Under Apache's mod_php there is no `fastcgi_fini
 to hide the fetch behind, so this is a real cost on a real request, and that is why it is
 bounded rather than convenient.
 
-**Read sheet now** in the manager bypasses the cache and shows the callsigns and tactical
-calls it found — the actual lists, not just counts. The question somebody is asking after
-editing a document is not "how many" but "did it read *my* sheet", and their own callsign
-in the list is the only thing that answers it.
+**Read sheet now** in the manager bypasses the cache and shows what it found — the actual
+lists, not just counts, and whether the vocabulary section was there. The question somebody
+is asking after editing a document is not "how many" but "did it read *my* sheet", and their
+own callsign in the list is the only thing that answers it.
 
 A vocabulary change **does** restart the channels, unlike an `update_requested` stamp: the
 worker builds its prompt once, at startup, so a vocabulary it never reloads is a vocabulary
@@ -1401,8 +1464,9 @@ inside it, for the same reason the per-device state does — and one more: a ref
 moved the registry's fingerprint would make an open manager page refuse its own Save as a
 stale write.
 
-The sheet URL is stored fleet-wide in the registry (`settings.sheet_url`) rather than per
-device, because the vocabulary is per *event* and there is one live event at a time. It
+The two typed fields — the sheet URL and the supplement box (`settings.sheet_url` and
+`settings.vocabulary_extra`) — are stored fleet-wide in the registry rather than per device,
+because the vocabulary is per *event* and there is one live event at a time. It
 arguably belongs on the event in the map admin instead, beside the event name and date —
 that is where an operator sets an event up, and where it would survive one event ending and
 the next beginning. That is the right long-term home and this is deliberately not it yet:

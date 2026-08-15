@@ -75,12 +75,16 @@ if (isset($_GET['load'])) {
     // Given an explicit shape rather than passed through. An empty PHP array encodes as
     // [] and not {}, and a JSON array that the page then hangs a property on loses it
     // silently on the way back — the sheet URL would simply never save.
-    $data['settings'] = ['sheet_url' => (string)($data['settings']['sheet_url'] ?? '')];
-    // The lists as they stand, with when and whether the last read worked. Not refetched
-    // here — opening a page is not a reason to make somebody wait on Google, and the
-    // device poll keeps this within a quarter of an hour on its own. The button is there
-    // for the case that matters, which is a sheet edited two minutes ago.
-    $data['vocabulary'] = transcriber_vocabulary_load();
+    $data['settings'] = [
+        'sheet_url'        => (string)($data['settings']['sheet_url'] ?? ''),
+        'vocabulary_extra' => (string)($data['settings']['vocabulary_extra'] ?? ''),
+    ];
+    // The lists as they stand, with when and whether the last read worked, and what is
+    // actually in force once the supplement box is folded in. Not refetched here — opening
+    // a page is not a reason to make somebody wait on Google, and the device poll keeps
+    // this within a quarter of an hour on its own. The button is there for the case that
+    // matters, which is a sheet edited two minutes ago.
+    $data['vocabulary'] = transcriber_vocabulary_report();
     jsonOut($data);
 }
 
@@ -149,12 +153,19 @@ if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     // the manager has the right document wants to recognize their own link, not a
     // rewritten one they have never seen.
     $sheet = substr(trim((string)($body['settings']['sheet_url'] ?? '')), 0, 300);
-    $settings = ['sheet_url' => $sheet];
-    $changed  = $sheet !== (string)($old['settings']['sheet_url'] ?? '');
+    // The supplement box, stored as typed. It is read by the same parser as the sheet's
+    // own section and merged with it on the way out, so a term typed here is in force at
+    // the devices' next poll without anything being fetched from Google — which is the
+    // entire point of it, because the case it exists for is a document that is either
+    // unreachable or not yours to edit while the event is running.
+    $extra = substr((string)($body['settings']['vocabulary_extra'] ?? ''), 0, 4000);
+    $settings = ['sheet_url' => $sheet, 'vocabulary_extra' => $extra];
+    $changed  = $sheet !== (string)($old['settings']['sheet_url'] ?? '')
+             || $extra !== (string)($old['settings']['vocabulary_extra'] ?? '');
 
     transcriber_save(['devices' => $devices, 'channels' => $channels, 'settings' => $settings]);
     jsonOut(['ok' => true, 'devices' => count($devices), 'channels' => count($channels),
-             'sheet_changed' => $changed]);
+             'vocabulary_changed' => $changed]);
 }
 
 // Polled by the page while it waits for the fleet to check in. Deliberately cheap: two
@@ -173,7 +184,8 @@ if (isset($_GET['update']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
 // ago, come back later" would be answering a question nobody asked.
 if (isset($_GET['vocabulary']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$canEdit) jsonOut(['error' => 'Missing permission: netbird.admin'], 403);
-    jsonOut(transcriber_vocabulary_refresh());
+    transcriber_vocabulary_refresh();
+    jsonOut(transcriber_vocabulary_report());
 }
 
 if (isset($_GET['rotate']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -284,6 +296,17 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
               padding: 2px 6px; font-size: 12px; font-family: ui-monospace, monospace; }
 #vocab-meta { margin: 10px 0 0; }
 #vocab-meta.error { color: #dc2626; }
+/* The section report is not decoration. If the heading is renamed or the section is lost
+   in an edit, the terms silently become none and the first anybody knows is a log full of
+   "Windy Cap" — so "not found" is colored like the problem it is. */
+#vocab-section { margin: 6px 0 0; font-weight: 600; }
+#vocab-section.missing { color: #b45309; }
+#vocab-extra { width: 100%; box-sizing: border-box; resize: vertical;
+               font-family: ui-monospace, monospace; font-size: 13px; }
+#vocab-extra-meta { margin: 8px 0 0; }
+.sample { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px;
+          padding: 10px 12px; font-size: 13px; line-height: 1.5; overflow-x: auto;
+          font-family: ui-monospace, monospace; }
 </style>
 </head>
 <body>
@@ -381,9 +404,10 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
      tedious to read. Paste the ordinary <code>/edit</code> link — the document must be
      shared as <em>Anyone with the link can view</em>, which yours already is if the team
      can read it.<br>
-     Only callsigns and tactical calls are taken. Names, shift times and phone numbers on
-     the sheet are not read and are never stored. The sheet is re-read every quarter of an
-     hour by itself; press <strong>Read sheet now</strong> if you have just edited it.</p>
+     Only callsigns, tactical calls and the vocabulary section below are taken. Names,
+     shift times and phone numbers on the sheet are not read and are never stored. The
+     sheet is re-read every quarter of an hour by itself; press <strong>Read sheet
+     now</strong> if you have just edited it.</p>
   <div class="box">
     <div class="vocab-row">
       <?php if ($canEdit): ?>
@@ -395,7 +419,44 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
       <?php endif; ?>
     </div>
     <p class="hint" id="vocab-meta"></p>
+    <p class="hint" id="vocab-section"></p>
     <div id="vocab-lists"></div>
+  </div>
+
+  <h2>Place names and corrections</h2>
+  <p class="hint">Callsigns and tactical calls are found on the sheet by their shape.
+     <strong>Place names are not</strong>: <em>Windy Gap</em>, <em>Cardiac</em>,
+     <em>Bootjack</em>, <em>Pantoll</em> and <em>Stinson Beach</em> are ordinary words in
+     an ordinary order, and nothing that could pick them out of the document would leave
+     the rest of it alone. So the sheet has to say them. Ask whoever keeps it to add a
+     heading with <strong>Vocabulary</strong> in it and then one term per line, ending at a
+     blank line:</p>
+  <pre class="sample">Transcriber Vocabulary
+Windy Gap
+Cardiac
+Bootjack
+Pantoll
+Stinson Beach
+Cardiac Hill = Cardiac</pre>
+  <p class="hint">The last line is a <strong>correction</strong>: what the transcription
+     produced on the left, what it should have said on the right. Use one only for a
+     mishearing somebody has actually heard — a correction is obeyed exactly, so it fixes
+     the phrase it names and nothing else.</p>
+  <p class="hint">The box below is the same thing, typed here instead of in the document.
+     It is not the main way to do this — a term belongs on the sheet, where the whole team
+     can see it. It is for the middle of an event, when <em>Cardiac</em> is coming out as
+     <em>Cardiff</em> in the log and the shared document is not yours to edit right then.
+     What you type here is added to what the sheet gave, and takes effect at each Pi's next
+     check after you press Save.</p>
+  <div class="box">
+    <?php if ($canEdit): ?>
+      <textarea id="vocab-extra" rows="5" spellcheck="false"
+                placeholder="Pantoll&#10;Cardiff = Cardiac"
+                oninput="data.settings.vocabulary_extra = this.value; touch()"></textarea>
+    <?php else: ?>
+      <pre class="sample" id="vocab-extra-ro"></pre>
+    <?php endif; ?>
+    <p class="hint" id="vocab-extra-meta"></p>
   </div>
 </main>
 
@@ -420,7 +481,8 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
 const CAN_EDIT = <?= $canEdit ? 'true' : 'false' ?>;
 const MODELS = [{file: 'ggml-tiny.en.bin', name: 'Fast'},
                 {file: 'ggml-base.en.bin', name: 'Careful'}];
-let data = {devices: [], channels: [], settings: {sheet_url: ''}, vocabulary: {}};
+let data = {devices: [], channels: [], settings: {sheet_url: '', vocabulary_extra: ''},
+            vocabulary: {}};
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
@@ -561,11 +623,12 @@ async function save() {
         // Re-read: the server issues tokens for new rows and normalises ids, so the
         // browser must not keep believing what it sent.
         await load();
-        // A new sheet URL is worth reading straight away — the alternative is a field
-        // that saves and then appears to do nothing for a quarter of an hour. Not folded
-        // into the save itself: fetching a document from Google can take seconds, and
-        // Save must return as fast as it did before whether or not this field was touched.
-        if (d.sheet_changed) await refreshVocabulary();
+        // A new sheet URL, or a change to the supplement box, is worth reading straight
+        // away — the alternative is a field that saves and then appears to do nothing for
+        // a quarter of an hour. Not folded into the save itself: fetching a document from
+        // Google can take seconds, and Save must return as fast as it did before whether
+        // or not these fields were touched.
+        if (d.vocabulary_changed) await refreshVocabulary();
         // A device is done when what it holds matches what it should hold — which is
         // already true for one the edit did not touch, so it does not sit pending on
         // somebody else's change.
@@ -626,9 +689,12 @@ function ago(ts) {
     return Math.round(s / 86400) + ' days ago';
 }
 
+const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`;
+
 function renderVocabulary() {
     const v = data.vocabulary || {};
-    const url = (data.settings || {}).sheet_url || '';
+    const settings = data.settings || {};
+    const url = settings.sheet_url || '';
     const box = $('sheet-url');
     // Not while somebody is typing in it: this runs on every render, including the one
     // that follows a save.
@@ -636,26 +702,90 @@ function renderVocabulary() {
     const readonlyUrl = $('sheet-url-ro');          // shown instead of the box without edit rights
     if (readonlyUrl) readonlyUrl.textContent = url || 'No sheet set';
 
+    const extraBox = $('vocab-extra');
+    if (extraBox && document.activeElement !== extraBox) {
+        extraBox.value = settings.vocabulary_extra || '';
+    }
+    const extraRo = $('vocab-extra-ro');
+    if (extraRo) extraRo.textContent = settings.vocabulary_extra || 'Nothing added here.';
+
     const calls = v.callsigns || [], tac = v.tactical || [];
+    // What is in force — the sheet and the box together — because that is what the
+    // receivers were handed. `words` is absent on a response that carried no lists at all,
+    // such as a permission error; fall back rather than render nothing.
+    const words = v.words || {callsigns: calls, tactical: tac, terms: v.terms || [],
+                              corrections: v.corrections || {}};
+
     const meta = $('vocab-meta');
     if (v.error) {
         meta.textContent = 'Could not read the sheet: ' + v.error
             + (calls.length ? ' The channels are still using what it read last time.' : '');
         meta.className = 'hint error';
     } else if (!url) {
-        meta.textContent = 'No sheet set. Channels transcribe without a vocabulary hint.';
+        meta.textContent = 'No sheet set. '
+            + ((words.terms || []).length
+                ? 'Channels are using only what is typed below.'
+                : 'Channels transcribe without a vocabulary hint.');
         meta.className = 'hint';
     } else {
-        meta.textContent = `${calls.length} callsign${calls.length === 1 ? '' : 's'} and `
-            + `${tac.length} tactical call${tac.length === 1 ? '' : 's'}, read ${ago(v.fetched_at)}.`;
+        meta.textContent = `${plural(calls.length, 'callsign')} and `
+            + `${plural(tac.length, 'tactical call')}, read ${ago(v.fetched_at)}.`;
         meta.className = 'hint';
     }
 
-    $('vocab-lists').innerHTML = [['Callsigns', calls], ['Tactical calls', tac]]
+    /* Whether the sheet's vocabulary section was there, said separately from the counts
+     * above and never folded into them.
+     *
+     * This is the whole reason the parser reports it. Rename the heading, or lose the
+     * section in an edit, and the terms silently become none — the callsign and tactical
+     * counts are unchanged, everything looks like it worked, and the first anybody knows
+     * is a log full of "Windy Cap" halfway through an event. A line that says "not found"
+     * costs nothing and is the only thing standing between that and a phone call. */
+    const section = $('vocab-section');
+    const terms = (v.terms || []).length;
+    const fixes = Object.keys(v.corrections || {}).length;
+    if (!url || v.error) {
+        section.textContent = '';
+        section.className = 'hint';
+    } else if (v.section_found) {
+        section.textContent = `Vocabulary section: found, ${plural(terms, 'term')}`
+            + (fixes ? ` and ${plural(fixes, 'correction')}.` : '.');
+        section.className = 'hint';
+    } else {
+        section.textContent = 'Vocabulary section: not found. The sheet has no heading with '
+            + '"Vocabulary" in it, so no place names were read from it.';
+        section.className = 'hint missing';
+    }
+
+    const fixLines = Object.keys(words.corrections || {})
+        .map(heard => `${heard} → ${words.corrections[heard]}`);
+    $('vocab-lists').innerHTML = [['Callsigns', words.callsigns || []],
+                                  ['Tactical calls', words.tactical || []],
+                                  ['Place names and other terms', words.terms || []],
+                                  ['Corrections', fixLines]]
         .filter(g => g[1].length)
         .map(g => `<div class="vocab-group"><strong>${g[0]}</strong>
                    <div class="words">${g[1].map(w => `<span>${esc(w)}</span>`).join('')}</div>
                  </div>`).join('');
+
+    /* And what the box on its own came to. Same argument as listing the words: the
+     * question nobody asks is "how many", it is "did it understand the line I typed". A
+     * line with a typo in it — no "=", or nothing after one — is simply not there, and
+     * this is where that shows. */
+    const em = $('vocab-extra-meta');
+    const ex = v.extra || {terms: [], corrections: {}};
+    const exTerms = (ex.terms || []).length;
+    const exFixes = Object.keys(ex.corrections || {}).length;
+    if (!exTerms && !exFixes) {
+        em.textContent = (settings.vocabulary_extra || '').trim()
+            ? 'Nothing readable here yet — press Save, and check each line is a term or '
+              + '"heard = written".'
+            : 'Empty. The sheet is doing all the work, which is where it belongs.';
+    } else {
+        em.textContent = `Adding ${plural(exTerms, 'term')}`
+            + (exFixes ? ` and ${plural(exFixes, 'correction')}` : '')
+            + " to the event's vocabulary.";
+    }
 }
 
 function tokenCell(row, kind, key) {

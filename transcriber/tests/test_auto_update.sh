@@ -332,6 +332,33 @@ check "and the channel list is still there beside them" \
       "$(python3 -c "import json;print(json.load(open('$SANDBOX/etc/channels.json'))['channels'][0]['id'])")" \
       "rx1-147465"
 
+echo "configuration — the stated terms and corrections reach the device too"
+# The place names, which no pattern can find, and the corrections somebody typed after
+# hearing one go wrong. They travel in the same file for the same reason: the worker reads
+# them once, at startup, so a change to either has to restart the channel.
+teardown
+cfg_setup
+fetch '{"channels":[{"id":"rx1-147465","enabled":true}],"update_requested":0,
+        "vocabulary":{"callsigns":["K6DRK"],"tactical":["Net Control"],
+                      "terms":["Windy Gap","Cardiac"],
+                      "corrections":{"cardiac hill":"Cardiac"}}}'
+check "the terms are installed" "$(cfg vocabulary.terms)" "Windy Gap,Cardiac"
+check "and so are the corrections" "$(cfg 'vocabulary.corrections.cardiac hill')" "Cardiac"
+
+echo "configuration — a server that has the old two keys and not the new two"
+# The realistic mixed-version day: the archive lands on the nightly run and the server is
+# deployed separately, so a device runs new code against an old server for a while. Missing
+# means empty, and empty must be present rather than absent — the worker reads a key that
+# is not there as empty either way, but a config file that changes shape run to run stops
+# `cmp -s` from being a change detector.
+teardown
+cfg_setup
+fetch '{"channels":[{"id":"rx1-147465","enabled":true}],"update_requested":0,
+        "vocabulary":{"callsigns":["K6DRK"],"tactical":["Net Control"]}}'
+check "the old keys still arrive" "$(cfg vocabulary.callsigns)" "K6DRK"
+check "terms are present and empty, not missing" "$(cfg vocabulary.terms)" ""
+check "corrections likewise" "$(cfg vocabulary.corrections)" "{}"
+
 # The regression this file exists to prevent, restated for the new key. The update stamp
 # changes every time somebody presses the button; in this file it would read as a changed
 # channel list and restart every receiver on the device for nothing.

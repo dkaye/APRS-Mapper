@@ -147,6 +147,13 @@ def test_a_transcription_that_is_mostly_loop_is_rejected_whole():
 ROSTER = {"callsigns": ["K6DRK", "KM6AOW", "W6ABC"],
           "tactical": ["Sweep 1", "Net Control"]}
 
+# The other half of the same delivery: the place names the sheet states outright, because
+# no pattern can find them, and a correction somebody wrote down after hearing one go
+# wrong. All five of these are real Dipsea aid stations.
+PLACES = {"callsigns": ["K6DRK"], "tactical": ["Net Control"],
+          "terms": ["Windy Gap", "Cardiac", "Stinson Beach"],
+          "corrections": {"cardiac hill": "Cardiac"}}
+
 
 def vocab(d=None):
     return transcriber.Vocabulary(d)
@@ -270,7 +277,15 @@ def test_an_event_with_no_vocabulary_is_the_normal_case():
     event on a new frequency ever has."""
     print("callsigns — no vocabulary at all")
     for empty in [None, {}, {"callsigns": [], "tactical": []},
-                  {"callsigns": None, "tactical": None}]:
+                  {"callsigns": None, "tactical": None},
+                  # And the four-key shape with nothing in it, which is what a device gets
+                  # from a server whose sheet has no Vocabulary section — the state every
+                  # event is in until somebody adds one.
+                  {"callsigns": [], "tactical": [], "terms": [], "corrections": {}},
+                  {"terms": None, "corrections": None},
+                  # A registry hand-edited into the wrong shape. This runs on a receiver in
+                  # a shed; it may do nothing, but it may not raise.
+                  {"terms": "Windy Gap", "corrections": ["cardiff", "Cardiac"]}]:
         v = vocab(empty)
         check(f"{empty} is an empty vocabulary, not a failure", bool(v), False)
         check("and the shape rule still applies",
@@ -297,6 +312,107 @@ def test_an_event_with_no_vocabulary_is_the_normal_case():
         check("and one with it reaches the channel", ch.vocabulary.callsigns[0], "K6DRK")
 
 
+def test_a_stated_term_is_matched_like_a_tactical_call():
+    """Place names are the one thing no pattern on the sheet can find — "Windy Gap",
+    "Bootjack", "Stinson Beach" are multi-word proper nouns with no shape to them — so the
+    sheet states them outright and they arrive as `terms`.
+
+    They are the same kind of thing as a tactical call: a phrase this event expects to
+    hear. So they go through the same matcher, which already handles multi-word spans, and
+    nothing new had to be invented for them."""
+    print("callsigns — the terms the sheet states outright")
+    check("a stated place name is written the way the sheet writes it",
+          corrected("we are at windy gap with the runners", PLACES),
+          "we are at Windy Gap with the runners")
+    check("and a near miss is corrected to it, the way a tactical call is",
+          corrected("windy cap is clear", PLACES), "Windy Gap is clear")
+    check("a three-word term is one span",
+          corrected("moving to stinson beach now", PLACES), "moving to Stinson Beach now")
+    check("terms and tactical calls live together",
+          corrected("net control this is windy gap", PLACES),
+          "Net Control this is Windy Gap")
+    check("and nothing that is not close to one is touched",
+          corrected("we are at the top of the swoop", PLACES),
+          "we are at the top of the swoop")
+
+    # The case a list of place names introduces and a list of tactical calls never did:
+    # one-word terms. difflib scores "at cardiac" against "cardiac" at 0.82, because one
+    # short extra word barely moves the ratio — so the term eats the word in front of it
+    # and the log quietly loses a word. A span is compared only with phrases of the same
+    # number of words, which is what stops it.
+    short = {"terms": ["Cardiac", "Stinson Beach"]}
+    check("a one-word term does not swallow the word before it",
+          corrected("we are at cardiac", short), "we are at Cardiac")
+    check("nor the word after it",
+          corrected("cardiac copies that", short), "Cardiac copies that")
+
+    # The one thing whisper reliably does to a place name is split it, and that is not a
+    # mishearing — it is the same letters in the same order. Handled exactly, so the guard
+    # above costs nothing.
+    split = {"terms": ["Bootjack", "Pantoll", "Stinson Beach"]}
+    check("a place name whisper split in two is put back together",
+          corrected("boot jack copies", split), "Bootjack copies")
+    check("and the capitalized version of the same",
+          corrected("we are at Pan Toll", split), "we are at Pantoll")
+    check("but joining is exact, so it does not reach across a real word",
+          corrected("at stinson beach", split), "at Stinson Beach")
+
+
+def test_a_correction_is_exact_and_never_fuzzy():
+    """A correction is somebody writing down a mishearing they actually heard: "Cardiac"
+    is coming out as "Cardiff", so `Cardiff = Cardiac` goes in the box.
+
+    It matches the normalized form exactly and in no other way. A fuzzy correction rule is
+    a footgun of a different order from a fuzzy vocabulary match: the vocabulary can only
+    ever rewrite text into a callsign or a phrase the event actually uses, while a rule
+    says "replace this with that" and one typo'd entry would rewrite unrelated traffic
+    into whatever its author had in mind. One character out and it does nothing."""
+    print("callsigns — corrections, which do not guess")
+    only = {"corrections": {"cardiff": "Cardiac"}}
+    check("the form that was written down is corrected",
+          corrected("cardiff is clear of the course", only), "Cardiac is clear of the course")
+    check("punctuation stays where it was",
+          corrected("say again, cardiff?", only), "say again, Cardiac?")
+    # One character away is exactly what the fuzzy matcher takes, and exactly what this
+    # must not.
+    check("one character away is left alone", corrected("cardif is clear", only),
+          "cardif is clear")
+    check("and so is a longer word that contains it",
+          corrected("cardiffs are clear", only), "cardiffs are clear")
+
+    multi = {"corrections": {"cardiac hill": "Cardiac"}}
+    check("a correction can span words", corrected("we are at cardiac hill", multi),
+          "we are at Cardiac")
+    check("but only the words it names",
+          corrected("we are at cardiac hills", multi), "we are at cardiac hills")
+
+
+def test_a_correction_is_applied_before_the_vocabulary_and_not_after():
+    """The ordering, which is the whole of what makes a correction worth having.
+
+    A correction is an instruction from somebody who watched the log get it wrong. The
+    vocabulary matcher is a guess — a good one, but a guess — and it runs over the same
+    words. If it went first it would consume the text the rule names and the rule would
+    silently never fire, which is the failure the box exists to fix.
+
+    Here the sheet lists "Cardiac Hill" as a term and the operator wants the log to say
+    "Cardiac". Both orders produce a defensible answer; only one of them does what the
+    person typing was asking for."""
+    print("callsigns — a correction outranks a guess")
+    sheet = {"terms": ["Cardiac Hill", "Cardiac"]}
+    check("the sheet's own term is what the matcher would give",
+          corrected("we are at cardiac hill", sheet), "we are at Cardiac Hill")
+    check("and the correction overrides it",
+          corrected("we are at cardiac hill", dict(sheet, corrections={"cardiac hill": "Cardiac"})),
+          "we are at Cardiac")
+    # The other side of the same ordering: a rule naming something the roster knows
+    # exactly still wins, because it was typed on purpose.
+    check("even over an exact callsign the event knows",
+          corrected("K6DRK mobile", {"callsigns": ["K6DRK"],
+                                     "corrections": {"k6drk": "K6DRK/M"}}),
+          "K6DRK/M mobile")
+
+
 def test_the_initial_prompt_is_off_unless_a_channel_asks_for_it():
     """Priming whisper with the roster makes it likelier to emit those exact words —
     which is the point, and the danger. The worst failure this device has is confident
@@ -316,6 +432,15 @@ def test_the_initial_prompt_is_off_unless_a_channel_asks_for_it():
     check("the prompt names the stations", "K6DRK" in v.prompt(), True)
     check("and the tactical calls", "Sweep 1" in v.prompt(), True)
     check("an empty vocabulary has nothing to prompt with", vocab().prompt(), "")
+
+    # The stated terms belong in it more than anything else does. A place name is the case
+    # the prompt was meant for: whisper has no reason to reach for "Bootjack" and every
+    # reason to reach for "boot jack".
+    p = vocab(PLACES).prompt()
+    check("and the terms the sheet stated", "Stinson Beach" in p, True)
+    # But not the mishearings. A correction's heard-form is what went wrong; priming the
+    # model with it would make it likelier to produce the very text being corrected.
+    check("while a correction's heard-form is not in it", "cardiac hill" in p.lower(), False)
 
     # whisper.cpp truncates at n_text_ctx/2 and drops the tail silently, so the trimming
     # happens here, where it can drop whole callsigns instead of half of one.
@@ -1475,6 +1600,9 @@ if __name__ == "__main__":
         test_the_event_vocabulary_answers_what_a_guess_only_asks,
         test_a_partial_match_is_left_exactly_as_it_was_heard,
         test_an_event_with_no_vocabulary_is_the_normal_case,
+        test_a_stated_term_is_matched_like_a_tactical_call,
+        test_a_correction_is_exact_and_never_fuzzy,
+        test_a_correction_is_applied_before_the_vocabulary_and_not_after,
         test_the_initial_prompt_is_off_unless_a_channel_asks_for_it,
         test_the_prompt_flags_are_only_passed_to_a_build_that_has_them,
         test_open_carrier_tells_a_stuck_transmitter_from_a_busy_channel,

@@ -149,22 +149,29 @@ if [ -f "$TOKEN_FILE" ]; then
         # and restarts every receiver on the device for no reason.
         #
         # The vocabulary — the callsigns and tactical calls off the event's assignment
-        # sheet — belongs in here precisely because a change to it SHOULD restart the
-        # channels: the worker builds its whisper prompt from it once, at startup, so a
-        # vocabulary it never reloads is a vocabulary it never uses. Unlike the update
-        # stamp, it only changes when the document does.
+        # sheet, the place names stated in its Vocabulary section, and the corrections
+        # somebody typed after hearing one go wrong — belongs in here precisely because a
+        # change to it SHOULD restart the channels: the worker builds its whisper prompt
+        # and its lookup tables from it once, at startup, so a vocabulary it never reloads
+        # is a vocabulary it never uses. Unlike the update stamp, it only changes when the
+        # document or the manager's box does.
         #
         # sort_keys, and defaults for a key an older server does not send, so the file is
         # byte-identical run to run and `cmp -s` below stays the change detector. A device
         # that stopped being able to tell "unchanged" from "changed" would either restart
-        # its receivers every minute or never pick anything up.
+        # its receivers every minute or never pick anything up. The defaults are also what
+        # makes a mixed-version day ordinary: the archive lands on the nightly run and the
+        # server is deployed separately, so a device runs new code against an old server
+        # for a while and must simply see empty lists.
         if python3 - "$TMP/response.json" "$TMP/channels.json" <<'PYEOF' 2>/dev/null
 import json, sys
 r = json.load(open(sys.argv[1]))
 vocab = r.get("vocabulary") or {}
 json.dump({"channels": r["channels"],
-           "vocabulary": {"callsigns": vocab.get("callsigns") or [],
-                          "tactical":  vocab.get("tactical")  or []}},
+           "vocabulary": {"callsigns":   vocab.get("callsigns")   or [],
+                          "tactical":    vocab.get("tactical")    or [],
+                          "terms":       vocab.get("terms")       or [],
+                          "corrections": vocab.get("corrections") or {}}},
           open(sys.argv[2], "w"), indent=4, sort_keys=True)
 PYEOF
         then

@@ -585,13 +585,17 @@ def loggable(text):
 # All four are K6DRK. The model has no idea callsigns exist; it is spelling out sounds
 # and reaching for English words, and a log full of K-60RK is a log nobody can search.
 #
-# Three things happen here, in descending order of confidence, and the first that fits
+# Four things happen here, in descending order of confidence, and the first that fits
 # wins:
 #
-#   1. the span is exactly a callsign or tactical call this event knows      → use it
+#   0. somebody wrote down this exact mishearing and what it should say      → obey it
+#   1. the span is exactly a callsign or phrase this event knows             → use it
 #   2. it is close enough to one of them, and to nothing else                → use it
 #   3. it spells out something with the SHAPE of a US callsign               → collapse
 #   4. none of the above                                                     → untouched
+#
+# Rule 0 is the only one that is told rather than worked out, which is why it outranks the
+# rest — and why it is the only one that never matches loosely.
 #
 # Knowing the event's own list is what makes this safe, and it is the whole reason the
 # manager collects one: "did I hear a callsign" is a guess, while "which of these
@@ -659,36 +663,75 @@ AMBIGUITY_MARGIN = 0.05
 
 
 class Vocabulary:
-    """The callsigns and tactical calls this event expects to hear.
+    """Everything this event has told the receiver to expect: the callsigns and tactical
+    calls found on the assignment sheet, the phrases it states outright, and the
+    corrections somebody wrote down after hearing one go wrong.
 
-    Delivered in channels.json beside the channels, because it is a property of the
-    event rather than of any one receiver. Both keys are optional and both are routinely
-    empty — an event with no roster is the normal case, not an error, and everything
-    here degrades to "leave the words alone".
+    Four keys, in two kinds. `callsigns`, `tactical` and `terms` are all things the event
+    says — a phrase to be matched, loosely, against what whisper produced. Tactical calls
+    and terms are the same kind of thing and are held together in `by_phrase`; they arrive
+    separately only because one is found by pattern and the other is stated, which is a
+    fact about the sheet and not about the words.
+
+    `corrections` is the other kind: a rule, not a candidate. It maps a normalized
+    heard-form to what should be written instead, and it is applied on an exact match and
+    in no other way. See resolve() for why it is applied first.
+
+    Delivered in channels.json beside the channels, because it is a property of the event
+    rather than of any one receiver. Every key is optional and all of them are routinely
+    empty — an event with no roster is the normal case, not an error, and everything here
+    degrades to "leave the words alone".
     """
 
     def __init__(self, d=None):
-        d = d or {}
-        self.callsigns = [str(c).strip() for c in (d.get("callsigns") or []) if str(c).strip()]
-        self.tactical = [str(t).strip() for t in (d.get("tactical") or []) if str(t).strip()]
+        d = d if isinstance(d, dict) else {}
+        self.callsigns = _strings(d.get("callsigns"))
+        self.tactical = _strings(d.get("tactical"))
+        self.terms = _strings(d.get("terms"))
         # Keyed by what a mishearing would have to be compared against: callsigns with
-        # punctuation and case removed, tactical calls as lower-case words with spoken
-        # numbers written as digits, so "sweet one" and "Sweep 1" are the same shape of
-        # thing before they are ever compared.
+        # punctuation and case removed, phrases as lower-case words with spoken numbers
+        # written as digits, so "sweet one" and "Sweep 1" are the same shape of thing
+        # before they are ever compared.
         self.by_call = {}
         for call in self.callsigns:
             key = re.sub(r"[^0-9A-Za-z]", "", call).upper()
             if key:
                 self.by_call.setdefault(key, call)
-        self.by_tactical = {}
-        for term in self.tactical:
+        self.by_phrase = {}
+        for term in self.tactical + self.terms:
             key = phrase_key(term.split())
             if key:
-                self.by_tactical.setdefault(key, term)
-        self.tactical_span = max([len(k.split()) for k in self.by_tactical] or [0])
+                self.by_phrase.setdefault(key, term)
+        self.phrase_span = max([len(k.split()) for k in self.by_phrase] or [0])
+        # The same phrases again, split by how many words they are, for the fuzzy layer to
+        # compare like with like. See resolve() for what goes wrong without it — briefly, a
+        # one-word phrase scores 0.82 against the two words before it and eats the first
+        # one, which is a word deleted from the log.
+        self.by_phrase_n = {}
+        for key, term in self.by_phrase.items():
+            self.by_phrase_n.setdefault(len(key.split()), {})[key] = term
+        # And once more with the spaces taken out, for the one thing whisper reliably does
+        # to a place name: it splits it. "Bootjack" comes back as "boot jack" and "Pantoll"
+        # as "Pan Toll", which is the same letters in the same order and no guess at all.
+        self.by_phrase_joined = {}
+        for key, term in self.by_phrase.items():
+            self.by_phrase_joined.setdefault(key.replace(" ", ""), term)
+
+        # Corrections, keyed the way the server keyed them. The server writes these keys
+        # and this looks them up, so correction_key() here and transcriber_correction_key()
+        # in store.php have to agree exactly — a difference between them is not a mismatch
+        # anybody would see, it is a rule that silently never fires.
+        self.by_correction = {}
+        raw = d.get("corrections")
+        for heard, written in (raw.items() if isinstance(raw, dict) else []):
+            key = correction_key(str(heard))
+            written = str(written).strip()
+            if key and written:
+                self.by_correction[key] = written
+        self.correction_span = max([len(k.split()) for k in self.by_correction] or [0])
 
     def __bool__(self):
-        return bool(self.by_call or self.by_tactical)
+        return bool(self.by_call or self.by_phrase or self.by_correction)
 
     def prompt(self):
         """The initial prompt for whisper, or "" if there is nothing to say.
@@ -697,8 +740,13 @@ class Vocabulary:
         why that is off by default and what has to be measured before it is not.
 
         Callsigns first, because they are what the model gets wrong and what the log
-        most needs right; tactical calls fill whatever budget is left. Terms are dropped
-        whole rather than truncated, since half a callsign is a word nobody says.
+        most needs right; tactical calls and stated terms fill whatever budget is left.
+        Terms are dropped whole rather than truncated, since half a callsign is a word
+        nobody says.
+
+        Corrections are deliberately absent. Their left-hand side is what went wrong, and
+        priming the model with it would make it likelier to produce the very text being
+        corrected.
         """
         if not self:
             return ""
@@ -710,13 +758,25 @@ class Vocabulary:
         # under-estimating is the tail being cut off silently inside whisper.
         budget = PROMPT_MAX_TOKENS - (len(lead) // 4 + 1)
         terms = []
-        for term in self.callsigns + self.tactical:
+        for term in self.callsigns + self.tactical + self.terms:
             cost = max(1, (len(term) + 1) // 2) + 1        # +1 for the separator
             if cost > budget:
                 continue
             budget -= cost
             terms.append(term)
         return f"{lead} {', '.join(terms)}." if terms else ""
+
+
+def _strings(value):
+    """The non-empty strings in what should have been a list of them.
+
+    Anything else is nothing. channels.json is written by a script from a server response
+    and can be hand-edited on the device, and a string where a list was expected iterates
+    into single characters — a vocabulary of "W", "i", "n", "d", "y" would match half the
+    band. This runs on a receiver in a shed: it may do nothing, but it may not raise."""
+    if not isinstance(value, list):
+        return []
+    return [str(v).strip() for v in value if str(v).strip()]
 
 
 def phrase_key(tokens):
@@ -729,6 +789,18 @@ def phrase_key(tokens):
             return ""
         words.append(SPOKEN_DIGITS.get(bare, bare))
     return " ".join(words)
+
+
+def correction_key(text):
+    """The heard-form of a correction, reduced to the one shape both ends compare on:
+    lower case, and anything that is not a letter or a digit becomes a single space.
+
+    transcriber_correction_key() in store.php does exactly this and must go on doing
+    exactly this. Deliberately not phrase_key(): that maps spoken numbers to digits, and
+    the server has no table to do the same with. Half a shared normalization is worse than
+    none, because the halves disagree only on the rules nobody thought to test.
+    """
+    return re.sub(r"[^0-9A-Za-z]+", " ", text).strip().lower()
 
 
 def closest(key, table):
@@ -816,14 +888,42 @@ def resolve(tokens, i, vocab):
         if spelled:
             spans.append((n, spelled))
 
+    # 0. A correction somebody wrote down, on an exact match of the normalized form and on
+    # nothing else. Never fuzzy: everything below can only ever write a callsign or a
+    # phrase this event actually uses, while a correction says "replace this with that",
+    # and a fuzzy one would let a single typo'd entry rewrite unrelated traffic into
+    # whatever its author had in mind. One character out and it does nothing.
+    #
+    # Before the layers below, not after, and that is the point of it. A correction is an
+    # instruction from somebody watching the log get this exact phrase wrong; the layers
+    # below are a guess, a good one but a guess, and they run over the same words. Let them
+    # go first and they consume the text the rule names — the rule then silently never
+    # fires, which is precisely the failure somebody opened the box to fix. Running it
+    # first also cannot make anything below worse: what it writes is what the event calls
+    # the thing, so layer 1 would only have confirmed it.
+    for n in range(min(vocab.correction_span, len(tokens) - i), 0, -1):
+        key = correction_key(" ".join(tokens[i:i + n]))
+        if key in vocab.by_correction:
+            return n, vocab.by_correction[key]
+
     # 1. Exactly something this event knows. Nothing to decide.
     for n, spelled in spans:
         if spelled in vocab.by_call:
             return n, vocab.by_call[spelled]
-    for n in range(min(vocab.tactical_span, len(tokens) - i), 0, -1):
+    for n in range(min(vocab.phrase_span, len(tokens) - i), 0, -1):
         key = phrase_key(tokens[i:i + n])
-        if key in vocab.by_tactical:
-            return n, vocab.by_tactical[key]
+        if key in vocab.by_phrase:
+            return n, vocab.by_phrase[key]
+    # The same letters in the same order, differently spaced — "boot jack" for Bootjack,
+    # "Pan Toll" for Pantoll. Exact, not fuzzy: every character still has to be one that
+    # was said, so this cannot invent anything, and it belongs up here with the other
+    # certainties rather than down among the guesses. One token more than the phrase has
+    # words, because one extra token is one split word; two is not a spelling of it, it is
+    # a different sentence.
+    for n in range(min(vocab.phrase_span + 1, len(tokens) - i), 0, -1):
+        key = phrase_key(tokens[i:i + n]).replace(" ", "")
+        if key and key in vocab.by_phrase_joined:
+            return n, vocab.by_phrase_joined[key]
 
     # 2. Close enough to something this event knows, and to nothing else.
     #
@@ -838,11 +938,19 @@ def resolve(tokens, i, vocab):
         match = closest(spelled, vocab.by_call)
         if match:
             return n, match
-    for n in range(min(vocab.tactical_span, len(tokens) - i), 0, -1):
+    #
+    # A span is only ever compared with phrases of the same number of words, which is the
+    # phrase-shaped version of the guard above. difflib scores "at cardiac" against
+    # "cardiac" at 0.82 — one short extra word barely moves the ratio — so a one-word
+    # place name on the list will happily eat the word in front of it and the log loses a
+    # word with no sign that anything happened. A mishearing of an n-word phrase is n
+    # words; the one case where it is not — a word whisper split in two — is already
+    # settled exactly, above, so nothing is given up by declining it here.
+    for n in range(min(vocab.phrase_span, len(tokens) - i), 0, -1):
         key = phrase_key(tokens[i:i + n])
         if not key:
             continue
-        match = closest(key, vocab.by_tactical)
+        match = closest(key, vocab.by_phrase_n.get(n, {}))
         if match:
             return n, match
 

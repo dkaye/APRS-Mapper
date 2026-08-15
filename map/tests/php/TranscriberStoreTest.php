@@ -226,6 +226,29 @@ class TranscriberStoreTest extends TestCase
         TXT;
     }
 
+    /** The same sheet with the section the author is being asked to add. Appended rather
+     *  than woven in, because that is how it will arrive: a heading at the end of a
+     *  document nobody wants to restructure.
+     *
+     *  Every awkwardness here is one the export produces or one an author produces: a term
+     *  in a table cell arrives with a leading tab, a bulleted list arrives as "* term",
+     *  and the section is followed by more document that must not be swallowed. */
+    private function sheetWithSection(): string
+    {
+        return $this->sheet() . "\n" . <<<TXT
+
+        Transcriber Vocabulary:
+        Windy Gap
+        \tCardiac
+        * Bootjack
+        Cardiac Hill = Cardiac
+        Stinson Beach
+
+        Parking passes
+        Only required at Muir Woods road crossing.
+        TXT;
+    }
+
     /** Nobody types an export URL. They paste whatever the browser had, which is the
      *  /edit link — or, occasionally, just the id out of the middle of it. */
     public function testAnExportUrlIsDerivedFromWhateverWasPasted(): void
@@ -311,6 +334,113 @@ class TranscriberStoreTest extends TestCase
         }
     }
 
+    // ── the vocabulary section ────────────────────────────────────────────────
+
+    /** Place names are the one thing no pattern can find. "Windy Gap", "Bootjack" and
+     *  "Stinson Beach" are multi-word proper nouns with no shape to them, and any regex
+     *  wide enough to catch them would catch half the document — so the sheet states them,
+     *  and this reads what it was told rather than guessing. */
+    public function testTheVocabularySectionIsReadWhenTheSheetHasOne(): void
+    {
+        $v = transcriber_extract_vocabulary($this->sheetWithSection());
+
+        $this->assertTrue($v['section_found']);
+        $this->assertSame(['Windy Gap', 'Cardiac', 'Bootjack', 'Stinson Beach'], $v['terms'],
+                          'a tab from a table cell and a bullet from a list are decoration');
+        $this->assertSame(['cardiac hill' => 'Cardiac'], $v['corrections']);
+    }
+
+    /** The section ends at the first blank line, so the rest of the document is not
+     *  swallowed into it. Without this a section near the top of a sheet would take
+     *  everything below it, including the operators' names. */
+    public function testTheSectionEndsAtTheFirstBlankLine(): void
+    {
+        $v = transcriber_extract_vocabulary($this->sheetWithSection());
+
+        $this->assertNotContains('Parking passes', $v['terms']);
+        $this->assertNotContains('Only required at Muir Woods road crossing.', $v['terms']);
+    }
+
+    /** The heading is a heading, not any line with the word in it. The sheet is prose as
+     *  well as tables, and a sentence about vocabulary is not an instruction to read the
+     *  next twenty lines as terms. */
+    public function testASentenceMentioningVocabularyIsNotAHeading(): void
+    {
+        $prose = "Rob will send the vocabulary for the transcribers by Friday.\n"
+               . "Alice Fictional\nBob Invented\n";
+        $v = transcriber_extract_vocabulary($prose);
+
+        $this->assertFalse($v['section_found']);
+        $this->assertSame([], $v['terms']);
+    }
+
+    /** The real sheet has no section yet — that is the state every existing event is in,
+     *  and it must extract exactly what it always did and say the section is missing.
+     *
+     *  Fetched rather than committed. The document is somebody's working file, full of
+     *  operators' names and a mobile number, and a copy of it in a repository would be the
+     *  leak this whole feature is written to avoid. Skipped when there is no network, so a
+     *  test run on a train is not a failure. */
+    public function testTheRealSheetStillYieldsItsRosterAndReportsNoSection(): void
+    {
+        [$text, $err] = transcriber_sheet_fetch(transcriber_sheet_export_url(
+            'https://docs.google.com/document/d/11V2CoecKBKh9BthIphutW6V8qLZ5FsYKjZpqsR-U1rc/edit'));
+        if ($err !== '') $this->markTestSkipped("the live sheet is unreachable: $err");
+
+        $v = transcriber_extract_vocabulary($text);
+
+        $this->assertCount(35, $v['callsigns'], 'every callsign on the real sheet');
+        $this->assertCount(12, $v['tactical'], 'every tactical call on the real sheet');
+        $this->assertContains('K6DRK', $v['callsigns']);
+        $this->assertContains('Net Control', $v['tactical']);
+
+        $this->assertFalse($v['section_found'], 'and it says the section is missing');
+        $this->assertSame([], $v['terms']);
+        $this->assertSame([], $v['corrections']);
+    }
+
+    /** A correction is keyed by what a mishearing has to be compared against, so the
+     *  worker can look one up instead of scanning. Case and punctuation go; the written
+     *  form is kept exactly as it was typed, because that is what lands in the log. */
+    public function testACorrectionIsKeyedByTheNormalizedHeardForm(): void
+    {
+        $block = "Cardiff = Cardiac\nPan Toll's = Pantoll\nWINDY  GAP=Windy Gap\n";
+        $v = transcriber_vocabulary_lines($block);
+
+        $this->assertSame([
+            'cardiff'    => 'Cardiac',
+            'pan toll s' => 'Pantoll',
+            'windy gap'  => 'Windy Gap',
+        ], $v['corrections']);
+    }
+
+    /** Half a rule is not a rule. A line with nothing on one side of the "=" is a typo,
+     *  and acting on it would either rewrite text into nothing or match everything.
+     *
+     *  A heard-form of nothing but digits goes the same way, for a different reason: it
+     *  would fire on every reading of that number on the air, and it is also the one shape
+     *  that turns the map into a JSON array on the way out — where the worker, which
+     *  requires an object, drops every rule in it. */
+    public function testARuleThatCouldNotWorkIsIgnored(): void
+    {
+        $v = transcriber_vocabulary_lines(
+            "= Cardiac\nCardiff =\n  =  \n0 = zero\n147 = 147.33\nCardiff = Cardiac\n");
+
+        $this->assertSame(['cardiff' => 'Cardiac'], $v['corrections']);
+        // And what is left encodes as an object, which is what the worker looks up in.
+        $this->assertSame('{"cardiff":"Cardiac"}', json_encode($v['corrections']));
+    }
+
+    /** The written form of a correction is also a term. Somebody who says "Cardiac Hill
+     *  comes out as Cardiff" has told us Cardiac is a phrase this event says, and there is
+     *  no reason to make them type it twice for the prompt to know it. */
+    public function testTheWrittenFormOfACorrectionIsAlsoATerm(): void
+    {
+        $v = transcriber_vocabulary_lines("Cardiff = Cardiac\n");
+
+        $this->assertSame(['Cardiac'], $v['terms']);
+    }
+
     // ── refreshing it ─────────────────────────────────────────────────────────
 
     /** A refresh stores the two lists and nothing else — the document itself is never
@@ -380,17 +510,95 @@ class TranscriberStoreTest extends TestCase
                           transcriber_load($this->file)['settings']['sheet_url']);
     }
 
-    /** The devices are promised two keys and given two keys. `fetched_at`, the source URL
-     *  and the last error are the manager's business, not a receiver's. */
-    public function testDevicesAreGivenOnlyTheTwoLists(): void
+    /** A refresh keeps the section flag and the terms with the rest, so a sheet that had a
+     *  section this morning and lost it is visible as having lost it. */
+    public function testARefreshStoresTheSectionAndWhatItSaid(): void
     {
         $this->setSheet();
-        transcriber_vocabulary_refresh($this->file, fn($u) => [$this->sheet(), '']);
+        $v = transcriber_vocabulary_refresh($this->file, fn($u) => [$this->sheetWithSection(), '']);
+
+        $this->assertTrue($v['section_found']);
+        $this->assertContains('Windy Gap', $v['terms']);
+        $this->assertSame(['cardiac hill' => 'Cardiac'], $v['corrections']);
+
+        $again = transcriber_vocabulary_refresh($this->file, fn($u) => [$this->sheet(), '']);
+        $this->assertFalse($again['section_found'], 'a section that went away is reported gone');
+        $this->assertSame([], $again['terms']);
+    }
+
+    /** The devices are promised four keys and given four keys. `fetched_at`, the source URL
+     *  and the last error are the manager's business, not a receiver's. */
+    public function testDevicesAreGivenOnlyTheFourLists(): void
+    {
+        $this->setSheet();
+        transcriber_vocabulary_refresh($this->file, fn($u) => [$this->sheetWithSection(), '']);
 
         $words = transcriber_vocabulary_words($this->file);
 
-        $this->assertSame(['callsigns', 'tactical'], array_keys($words));
+        $this->assertSame(['callsigns', 'tactical', 'terms', 'corrections'], array_keys($words));
         $this->assertContains('Sweep 2', $words['tactical']);
+        $this->assertContains('Windy Gap', $words['terms']);
+        $this->assertSame(['cardiac hill' => 'Cardiac'], $words['corrections']);
+    }
+
+    // ── the manager's supplement box ──────────────────────────────────────────
+
+    /** The box is for the case the sheet cannot serve: it is mid-event, "Cardiac" is
+     *  coming out as "Cardiff", and the shared document is not yours to edit right then.
+     *  So it is merged with the sheet rather than replacing it. */
+    public function testTheSupplementBoxIsMergedWithWhatTheSheetGave(): void
+    {
+        $this->setSheet();
+        transcriber_vocabulary_refresh($this->file, fn($u) => [$this->sheetWithSection(), '']);
+        $this->setExtra("Pantoll\nCardiff = Cardiac\n");
+
+        $words = transcriber_vocabulary_words($this->file);
+
+        $this->assertContains('Windy Gap', $words['terms'], 'still what the sheet said');
+        $this->assertContains('Pantoll', $words['terms'], 'and what was typed in the box');
+        $this->assertSame(['cardiac hill' => 'Cardiac', 'cardiff' => 'Cardiac'],
+                          $words['corrections']);
+    }
+
+    /** It takes effect on Save, with no refresh and no fetch. The whole point of the box is
+     *  that the document is unreachable or uneditable at that moment; making it wait on a
+     *  successful read of that document would be answering a different problem. */
+    public function testTheSupplementBoxWorksWithNoSheetAtAll(): void
+    {
+        $this->setExtra("Windy Gap\nCardiff = Cardiac\n");
+
+        $words = transcriber_vocabulary_words($this->file);
+
+        $this->assertSame(['Windy Gap', 'Cardiac'], $words['terms']);
+        $this->assertSame(['cardiff' => 'Cardiac'], $words['corrections']);
+    }
+
+    /** Same rule, same key: the box wins. It was typed later and it was typed by somebody
+     *  watching the log go wrong. */
+    public function testTheBoxOverridesTheSheetOnTheSameCorrection(): void
+    {
+        $this->setSheet();
+        transcriber_vocabulary_refresh($this->file, fn($u) => [$this->sheetWithSection(), '']);
+        $this->setExtra("Cardiac Hill = Pantoll\n");
+
+        $this->assertSame(['cardiac hill' => 'Pantoll'],
+                          transcriber_vocabulary_words($this->file)['corrections']);
+    }
+
+    /** An empty box, an absent one, and a registry hand-edited into nonsense all mean the
+     *  same thing: nothing extra. This runs inside the device poll, where an exception is
+     *  a receiver that does not get its channels. */
+    public function testAnEmptyOrMissingSupplementIsNotAFailure(): void
+    {
+        foreach (['', "\n \n\t\n", null, ['not', 'a', 'string']] as $junk) {
+            $reg = transcriber_load($this->file);
+            $reg['settings']['vocabulary_extra'] = $junk;
+            transcriber_save($reg, $this->file);
+
+            $words = transcriber_vocabulary_words($this->file);
+            $this->assertSame([], $words['terms']);
+            $this->assertSame([], $words['corrections']);
+        }
     }
 
     /** The unattended half: the device poll refreshes a stale vocabulary and leaves a
@@ -422,7 +630,14 @@ class TranscriberStoreTest extends TestCase
     private function setSheet(string $url = 'https://docs.google.com/document/d/11V2CoecKBKh9BthIphutW6V8qLZ5FsYKjZpqsR-U1rc/edit'): void
     {
         $reg = transcriber_load($this->file);
-        $reg['settings'] = ['sheet_url' => $url];
+        $reg['settings']['sheet_url'] = $url;
+        transcriber_save($reg, $this->file);
+    }
+
+    private function setExtra(string $text): void
+    {
+        $reg = transcriber_load($this->file);
+        $reg['settings']['vocabulary_extra'] = $text;
         transcriber_save($reg, $this->file);
     }
 }

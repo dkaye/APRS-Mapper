@@ -50,5 +50,11 @@ echo json_encode([
     'update_requested' => $state['update_requested'],
     // Fleet-wide, not per device: the whole event runs one assignment sheet, and a
     // receiver on any frequency may hear any station on it.
+    //
+    // Four keys: callsigns, tactical, terms, corrections. The first two are unchanged and
+    // stay unchanged, because the field is never all on one version at once — a device
+    // fetches this before its worker knows what `terms` is, and a worker on new code polls
+    // a server that has not been deployed yet. Extra keys are ignored and absent ones read
+    // as empty, at both ends.
     'vocabulary'       => transcriber_vocabulary_words(),
 ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
