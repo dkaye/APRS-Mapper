@@ -141,6 +141,246 @@ def test_a_transcription_that_is_mostly_loop_is_rejected_whole():
           transcriber.loggable(LOOP_LOVE), "")
 
 
+# ── callsigns ────────────────────────────────────────────────────────────────
+
+# What this event expects to hear, in the shape the manager delivers it.
+ROSTER = {"callsigns": ["K6DRK", "KM6AOW", "W6ABC"],
+          "tactical": ["Sweep 1", "Net Control"]}
+
+
+def vocab(d=None):
+    return transcriber.Vocabulary(d)
+
+
+def corrected(text, d=None):
+    return transcriber.correct_callsigns(text, vocab(d))
+
+
+def test_a_callsign_is_recognized_by_its_shape_not_by_how_many_words_it_took():
+    """A US callsign is one or two letters, a digit, one to three letters — so three
+    characters is a legal callsign and TWO phonetic words with a digit between them is a
+    legitimate one. W6P is "whiskey six papa" and belongs to somebody.
+
+    The first version of this required three or more phonetic words, which would have
+    quietly dropped every 1x1 holder on the band. It tests the shape.
+    """
+    print("callsigns — the shape, not the word count")
+    check("two phonetic words with a digit between them is a callsign",
+          corrected("whiskey six papa listening"), "W6P listening")
+    check("and so is the full five",
+          corrected("kilo six delta romeo kilo monitoring"), "K6DRK monitoring")
+    check("a written digit works as well as a spoken one",
+          corrected("kilo mike 6 alpha oscar whiskey"), "KM6AOW")
+    check("as does what whisper capitalizes for itself",
+          corrected("K-6 DRK on West Marin"), "K6DRK on West Marin")
+    # Two letters, a digit, and nothing after it is not a callsign, whatever it sounds
+    # like — the shape needs a letter on the far side of the digit.
+    check("but a letter and a digit alone is not", corrected("alpha six"), "alpha six")
+    check("nor is a digit and a letter", corrected("six alpha"), "six alpha")
+
+    # And the threshold has to sit clear of the alphabet it is telling apart, or a
+    # mangled phonetic word could land on the wrong letter and produce a callsign that
+    # is well-formed, plausible, and somebody else's.
+    worst = max(
+        __import__("difflib").SequenceMatcher(None, a, b).ratio()
+        for a in transcriber.NATO for b in transcriber.NATO
+        if transcriber.NATO[a] != transcriber.NATO[b])
+    check("no two phonetic letters are within the threshold of each other",
+          worst < transcriber.SIMILARITY, True)
+
+
+def test_ordinary_speech_is_not_turned_into_a_callsign():
+    """The expensive mistake, and the one this feature invites. "six" and "alpha" are
+    ordinary words that people say on the radio all day, and a rule that reaches for a
+    callsign whenever it sees one would rewrite the traffic it was meant to clarify.
+
+    Every line here is real net traffic or comes off this repeater's own tape."""
+    print("callsigns — what must not be touched")
+    for real in ["we have six alpha riders at the aid station",
+                 "aid three we have a rider down",
+                 "copy that sending medical",
+                 "roger roger",
+                 "break break break",
+                 "seven seven seven, that is seven seven seven",
+                 "That's right, that's right, that's right, that's right.",
+                 "No, wait, wait, wait, wait.",
+                 # A callsign next to a short word: the word must not be swallowed into
+                 # it. "K6DRK on" scores 0.83 against K6DRK on its own, which is easily
+                 # enough to eat the "on" if spans are matched without care.
+                 "K6DRK I am mobile at the start",
+                 "K6DRK on West Marin",
+                 # Three callsigns in a row are three callsigns, not one long one.
+                 "K6DRK K6DRK K6DRK"]:
+        check(f"leaves {real[:34]!r}", corrected(real, ROSTER), real)
+
+
+def test_the_event_vocabulary_answers_what_a_guess_only_asks():
+    """Knowing the roster turns "did I hear a callsign" into "which of these did I hear",
+    which is a far easier question and a far safer answer. All four spellings below came
+    off this receiver, and all four are the same station."""
+    print("callsigns — matched against the event's own list")
+    check("exactly what was heard, joined up",
+          corrected("K-6 DRK testing on West Marin K-6 DRK", ROSTER),
+          "K6DRK testing on West Marin K6DRK")
+    check("a wrong character is corrected to the station on the list",
+          corrected("K-60RK", ROSTER), "K6DRK")
+    check("punctuation stays where it was",
+          corrected("K-60RK, are you mobile?", ROSTER), "K6DRK, are you mobile?")
+    # Tactical calls are the same idea for phrases. "sweet one" is a real mishearing of
+    # a real tactical call, and it is only correctable because the event has a Sweep 1.
+    check("a tactical call is matched the same way",
+          corrected("sweet one is clear of the course", ROSTER),
+          "Sweep 1 is clear of the course")
+    check("and written the way the event writes it",
+          corrected("net control this is whiskey six sierra golf", ROSTER),
+          "Net Control this is W6SG")
+
+
+def test_a_partial_match_is_left_exactly_as_it_was_heard():
+    """A wrong callsign in a log is worse than a mangled one. "K-60RK" is obviously
+    damaged and anybody reading it knows to be careful; "KM6AOW" is authoritative, and
+    if it is the wrong station nobody will ever find out from the log.
+
+    So nothing here guesses. Four ways of not knowing, all of which leave the words
+    alone."""
+    print("callsigns — the cases where guessing is the failure")
+    check("text that is not close to anything on the list",
+          corrected("K-60 Arcade", ROSTER), "K-60 Arcade")
+    check("a phonetic run that does not spell a callsign",
+          corrected("6 delta rho mu", ROSTER), "6 delta rho mu")
+
+    # Two roster entries the same distance away is a coin toss, and a coin toss recorded
+    # as a fact is exactly what must not happen. K6DR0 is 0.80 from both.
+    check("two equally good answers means no answer",
+          corrected("K-6DR0 mobile", {"callsigns": ["K6DRK", "K6DRJ"]}), "K-6DR0 mobile")
+
+    # And the one that matters most in the field: the roster is never the whole band.
+    # K6DRJ scores 0.80 against K6DRK, so a visitor one letter away from a club member
+    # would be logged as the club member. A well-formed callsign is not evidence of
+    # mangling — it is a callsign.
+    check("a valid callsign that is not on the list is still that callsign",
+          corrected("K6DRJ mobile", ROSTER), "K6DRJ mobile")
+    check("even when the list has a near neighbour",
+          corrected("W6ABD standing by", ROSTER), "W6ABD standing by")
+
+
+def test_an_event_with_no_vocabulary_is_the_normal_case():
+    """Both keys are optional and most events have neither. Nothing here may treat that
+    as an error, and the shape rule still has to work without a list — it is all a first
+    event on a new frequency ever has."""
+    print("callsigns — no vocabulary at all")
+    for empty in [None, {}, {"callsigns": [], "tactical": []},
+                  {"callsigns": None, "tactical": None}]:
+        v = vocab(empty)
+        check(f"{empty} is an empty vocabulary, not a failure", bool(v), False)
+        check("and the shape rule still applies",
+              transcriber.correct_callsigns("whiskey six papa listening", v),
+              "W6P listening")
+        check("while nothing is invented to match",
+              transcriber.correct_callsigns("K-60RK", v), "K-60RK")
+    check("and no vocabulary at all is the same as an empty one",
+          transcriber.correct_callsigns("kilo six delta romeo kilo"), "K6DRK")
+
+    # The config file need not mention it, which is the shape of every channels.json
+    # written before this existed.
+    with tempfile.TemporaryDirectory() as tmp:
+        config = os.path.join(tmp, "channels.json")
+        with open(config, "w") as fh:
+            json.dump({"channels": [{"id": "rx1", "frequency": "1", "serial": "1"}]}, fh)
+        ch = transcriber.load_channel(config, "rx1")
+        check("a config with no vocabulary key loads", bool(ch.vocabulary), False)
+
+        with open(config, "w") as fh:
+            json.dump({"channels": [{"id": "rx1", "frequency": "1", "serial": "1"}],
+                       "vocabulary": ROSTER}, fh)
+        ch = transcriber.load_channel(config, "rx1")
+        check("and one with it reaches the channel", ch.vocabulary.callsigns[0], "K6DRK")
+
+
+def test_the_initial_prompt_is_off_unless_a_channel_asks_for_it():
+    """Priming whisper with the roster makes it likelier to emit those exact words —
+    which is the point, and the danger. The worst failure this device has is confident
+    text invented from static, and "KM6AOW mobile" off a hiss burst passes every filter
+    downstream, because it is a short, unrepetitive, entirely reasonable sentence.
+
+    So it ships off. It is turned on for one channel, measured with compare-models.py
+    against that channel's real traffic AND against real static, and only then argued
+    about."""
+    print("whisper — the initial prompt")
+    base = {"id": "rx1", "frequency": "1", "serial": "1"}
+    check("off by default", transcriber.Channel(base).initial_prompt, False)
+    check("on only when the channel says so",
+          transcriber.Channel(dict(base, initial_prompt=True)).initial_prompt, True)
+
+    v = vocab(ROSTER)
+    check("the prompt names the stations", "K6DRK" in v.prompt(), True)
+    check("and the tactical calls", "Sweep 1" in v.prompt(), True)
+    check("an empty vocabulary has nothing to prompt with", vocab().prompt(), "")
+
+    # whisper.cpp truncates at n_text_ctx/2 and drops the tail silently, so the trimming
+    # happens here, where it can drop whole callsigns instead of half of one.
+    crowded = vocab({"callsigns": ["K6DRK%02d" % i for i in range(200)]}).prompt()
+    check("a long roster is trimmed to the token budget",
+          len(crowded) // 2 <= transcriber.PROMPT_MAX_TOKENS, True)
+    check("dropping whole callsigns, not half of one",
+          crowded.endswith("."), True)
+    check("and every term in it is one somebody could say",
+          all(t.strip(" .") in ["K6DRK%02d" % i for i in range(200)]
+              for t in crowded.split(":")[1].split(",")), True)
+
+
+def test_the_prompt_flags_are_only_passed_to_a_build_that_has_them():
+    """whisper.cpp treats an unknown option as fatal — usage and a non-zero exit — so a
+    flag passed blind turns better text into a channel that transcribes nothing at all,
+    on the oldest device and the one least likely to be watched.
+
+    --carry-initial-prompt is asked about separately from --prompt because it is the
+    newer of the two, and a build can have one without the other. Our clips run past one
+    30-second window, so without it the prompt only reaches the first."""
+    print("whisper — the prompt flags")
+
+    class Ran:
+        returncode, stdout, stderr = 0, "K6DRK on West Marin", ""
+
+    def whisper_that(help_text):
+        def run(argv, **kw):
+            if argv[1:] == ["-h"]:
+                return type("Help", (), {"returncode": 0, "stdout": help_text,
+                                         "stderr": ""})()
+            seen.append(argv)
+            return Ran()
+        return run
+
+    both = ("  --prompt PROMPT        initial prompt (max n_text_ctx/2 tokens)\n"
+            "  --carry-initial-prompt  [false] always prepend initial prompt\n")
+    older = "  --prompt PROMPT        initial prompt (max n_text_ctx/2 tokens)\n"
+    ancient = "  -np,  --no-prints      [false] do not print anything\n"
+
+    real = transcriber.subprocess.run
+    try:
+        for label, help_text, prompt, want in [
+                ("no prompt means no flags", both, None, []),
+                ("both flags on a build that has both", both, "K6DRK",
+                 [transcriber.PROMPT_FLAG, transcriber.CARRY_PROMPT]),
+                ("only the one an older build advertises", older, "K6DRK",
+                 [transcriber.PROMPT_FLAG]),
+                ("and neither on a build that has never heard of them", ancient,
+                 "K6DRK", [])]:
+            seen = []
+            transcriber._flag_support.clear()
+            transcriber.subprocess.run = whisper_that(help_text)
+            transcriber.transcribe("whisper-cli", "model.bin", "clip.wav", prompt=prompt)
+            check(label,
+                  [f for f in seen[0]
+                   if f in (transcriber.PROMPT_FLAG, transcriber.CARRY_PROMPT)], want)
+            if prompt and transcriber.PROMPT_FLAG in seen[0]:
+                check("  the prompt itself follows the flag",
+                      seen[0][seen[0].index(transcriber.PROMPT_FLAG) + 1], prompt)
+    finally:
+        transcriber.subprocess.run = real
+        transcriber._flag_support.clear()
+
+
 # ── capture must not wait for transcription ──────────────────────────────────
 
 def test_transcription_runs_off_the_capture_thread():
@@ -914,7 +1154,7 @@ def stub_whisper(directory, says):
     return path
 
 
-def run_pipeline(tmp, says, clip_seconds=3.0):
+def run_pipeline(tmp, says, clip_seconds=3.0, vocabulary=None):
     """One --spool-only pass over a single clip. Returns the entries the server got."""
     spool = os.path.join(tmp, "spool")
     os.makedirs(spool, exist_ok=True)
@@ -941,7 +1181,7 @@ def run_pipeline(tmp, says, clip_seconds=3.0):
             "id": "rx1-146520", "label": "146.520", "token": "tok-rx",
             "frequency": "146520000", "serial": "00000001",
             "server": f"http://127.0.0.1:{port}",
-        }]}, fh)
+        }], "vocabulary": vocabulary or {}}, fh)
 
     rc = transcriber.main([
         "--channel", "rx1-146520", "--config", config, "--spool", spool,
@@ -1041,6 +1281,52 @@ def test_pipeline_logs_speech():
         rc, sent = run_pipeline(tmp, "aid three we have a rider down")
         check("exit 0", rc, 0)
         check("one entry", sent, ["aid three we have a rider down"])
+
+
+def test_pipeline_corrects_a_callsign_but_only_after_the_guards():
+    """Where the correction sits in the pipeline is the whole of its safety.
+
+    It runs on an entry loggable() has already accepted, never before it. Both guards
+    are calibrated on what whisper emits — HALLUCINATIONS on its exact wording,
+    loop_ratio on its repetition — so rewriting the words underneath them changes what
+    they are measuring, and the cost of that is a real transmission thrown away.
+
+    Net control working down a list is the case that shows it, and it is an ordinary
+    evening's traffic: the same station answered four times, spelled four different ways
+    by whisper because it heard four different manglings. As heard, every trigram in it
+    is distinct and it is plainly real. Corrected, it is the same six words four times
+    over and scores 0.30 — well under LOOP_RATIO — so correcting first hands the guard a
+    text that looks exactly like the failure it exists to catch, and the whole entry
+    goes in the bin.
+    """
+    print("pipeline — a callsign on the way to the log")
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, sent = run_pipeline(tmp, "K-6 DRK testing on West Marin",
+                                vocabulary=ROSTER)
+        check("exit 0", rc, 0)
+        check("the entry reaches the log spelled properly",
+              sent, ["K6DRK testing on West Marin"])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, sent = run_pipeline(
+            tmp, "K-60RK go ahead. K-6 DRK go ahead. kilo six delta romeo kilo go "
+                 "ahead. K-60 RK go ahead.", vocabulary=ROSTER)
+        check("a roll call survives being corrected, because it is judged first",
+              sent, ["K6DRK go ahead. K6DRK go ahead. K6DRK go ahead. K6DRK go ahead."])
+
+    # The same roster, over text the guards reject. Nothing is posted, and in particular
+    # nothing is posted with a tidied-up callsign in it.
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, sent = run_pipeline(
+            tmp,
+            "K-6 DRK. I love you. I love you. I love you. I love you. I love you. "
+            "I love you. I love you.",
+            vocabulary=ROSTER)
+        check("a looping transcription is still rejected whole", sent, [])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, sent = run_pipeline(tmp, "Thank you.", vocabulary=ROSTER)
+        check("and so is squelch noise", sent, [])
 
 
 def test_pipeline_discards_hallucination():
@@ -1184,6 +1470,13 @@ if __name__ == "__main__":
         test_repetition_on_the_air_is_not_a_hallucination,
         test_a_loop_on_the_end_is_trimmed_rather_than_thrown_away,
         test_a_transcription_that_is_mostly_loop_is_rejected_whole,
+        test_a_callsign_is_recognized_by_its_shape_not_by_how_many_words_it_took,
+        test_ordinary_speech_is_not_turned_into_a_callsign,
+        test_the_event_vocabulary_answers_what_a_guess_only_asks,
+        test_a_partial_match_is_left_exactly_as_it_was_heard,
+        test_an_event_with_no_vocabulary_is_the_normal_case,
+        test_the_initial_prompt_is_off_unless_a_channel_asks_for_it,
+        test_the_prompt_flags_are_only_passed_to_a_build_that_has_them,
         test_open_carrier_tells_a_stuck_transmitter_from_a_busy_channel,
         test_only_a_capped_clip_answers_the_open_carrier_question,
         test_a_carrier_that_does_not_drop_is_cut_at_exactly_the_cap,
@@ -1204,6 +1497,7 @@ if __name__ == "__main__":
         test_posting, test_unreachable_server_is_retried,
         test_a_clip_is_queued_once_not_once_per_loop,
         test_pipeline_logs_speech, test_pipeline_discards_hallucination,
+        test_pipeline_corrects_a_callsign_but_only_after_the_guards,
         test_pipeline_discards_short_clip,
         test_pipeline_transcribes_a_capped_clip_rather_than_binning_it,
         test_an_idle_frequency_is_not_fatal,

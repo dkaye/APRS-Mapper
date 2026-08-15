@@ -1231,6 +1231,41 @@ than one that misses a transmission, because nobody thinks to question it. Entri
 on disk and flush in order, stopping at the first failure so a later one cannot overtake
 an earlier.
 
+**Callsigns are what a net log most needs right, and what whisper is worst at.** One
+station on this receiver came back as `K-60RK`, `K-6 DRK`, `6 delta rho mu` and
+`K-60 Arcade` — all four are K6DRK. So the worker fixes them up, in four layers, and
+stops at the first that fits: exactly a callsign or tactical call this event knows; close
+enough to one of them and to nothing else; something with the *shape* of a US callsign
+(one or two letters, a digit, one to three letters), which is what collapses "whiskey six
+sierra golf" into W6SG; and otherwise the words exactly as they were heard.
+
+That last layer is the point rather than the fallback. **A wrong callsign in a log is
+worse than a mangled one** — it reads as authoritative, it points at the wrong person, and
+nobody has any reason to doubt it, while `K-60RK` warns you itself. So nothing guesses:
+not on a near miss, not when two roster entries sit the same distance away, and never over
+text that already reads as a legal callsign, because the roster is not the band and a
+visiting K6DRJ must not be filed as the club's K6DRK.
+
+Knowing the event's roster is what makes the middle two layers safe at all: it turns "did
+I hear a callsign" into "which of these thirty-five did I hear". It arrives as a
+`vocabulary` key beside `channels` in the same config the channels come from, since it
+belongs to the event rather than to any one receiver, and it is routinely absent — an
+event with no roster is the normal case, and there only the shape layer applies, which
+can do no more than join up what was already said. Correction runs *after* the filters
+above have accepted an entry, never before: they are calibrated on what whisper emits,
+and a roll call corrected first reads as the same six words four times over and is thrown
+out as a loop.
+
+**Priming whisper with that vocabulary is implemented and switched off.** An initial
+prompt (`--prompt`, plus `--carry-initial-prompt` because a clip can run past one
+30-second window) makes the model likelier to emit those exact words, which is both the
+point and the danger. The worst failure this device has is confident text invented from
+static, and "KM6AOW mobile" off a hiss burst passes every filter here, because it is a
+short, unrepetitive, entirely reasonable sentence. It is a per-channel switch that is off
+unless explicitly enabled; turn it on for one channel, measure it with
+`compare-models.py` against that channel's real traffic **and** against real static, and
+argue about it afterwards.
+
 **A gap in the byte stream is the boundary between transmissions, and that is the whole
 of the segmentation.** `rtl_fm`'s squelch gates on RF power *before* demodulation, so
 while it is closed the process emits nothing at all — measured on a real receiver at

@@ -26,6 +26,7 @@
 
 import argparse
 import collections
+import difflib
 import json
 import logging
 import os
@@ -175,7 +176,7 @@ log = logging.getLogger("transcriber")
 class Channel:
     """One frequency on one device, as the channel manager defined it."""
 
-    def __init__(self, d):
+    def __init__(self, d, vocabulary=None):
         self.id = d["id"]
         self.label = d.get("label") or d["id"]
         self.token = d.get("token") or ""
@@ -189,14 +190,22 @@ class Channel:
         self.model = d.get("model") or "ggml-tiny.en.bin"
         self.enabled = bool(d.get("enabled", True))
         self.server = (d.get("server") or SERVER).rstrip("/")
+        # What this event expects to hear. A property of the event, so it arrives beside
+        # the channels rather than inside one, and it is routinely absent.
+        self.vocabulary = vocabulary or Vocabulary()
+        # Whether to prime whisper with that vocabulary before it listens. Off unless the
+        # channel says otherwise, and PROMPT_FLAG explains at length why the default is
+        # the one that matters here.
+        self.initial_prompt = bool(d.get("initial_prompt", False))
 
 
 def load_channel(path, channel_id):
     with open(path, encoding="utf-8") as fh:
         raw = json.load(fh)
+    vocabulary = Vocabulary(raw.get("vocabulary"))
     for entry in raw.get("channels", []):
         if entry.get("id") == channel_id:
-            return Channel(entry)
+            return Channel(entry, vocabulary)
     raise SystemExit(f"channel {channel_id!r} is not in {path}")
 
 
@@ -345,6 +354,35 @@ def clip_seconds(path):
 # all, and the cost of being wrong is an invented line in an event log.
 SUPPRESS_NON_SPEECH = "--suppress-nst"
 
+# Priming the decoder with the event's own vocabulary. OFF unless a channel asks for it,
+# and the reason is the same one the rest of this file is built around.
+#
+# An initial prompt makes the model more likely to emit the exact words it was given —
+# which is the point, and also the danger. Our worst failure is not a mangled callsign;
+# it is confident text invented from static, because that reads as authoritative and
+# nobody questions it. Handing whisper thirty-five callsigns before it listens to a
+# squelch tail is handing it a plausible net log to hallucinate, and the filters
+# downstream cannot help: "KM6AOW mobile" off a hiss burst passes worth_logging()
+# perfectly, because it is a short, unrepetitive, entirely reasonable sentence.
+#
+# So it ships implemented and switched off. Turn it on for one channel, run
+# compare-models.py over that channel's real traffic AND over a stretch of real static,
+# and compare both — the accuracy it buys on speech is worth nothing if it also invents
+# a check-in from noise. Until somebody has done that measurement on this site, the
+# default stands. (compare-models.py calls transcribe() without a prompt today, so that
+# measurement starts by handing it one.)
+#
+# --carry-initial-prompt matters because a clip here can run past one 30-second window
+# (MAX_CLIP_SECONDS is 120), and without it the prompt applies only to the first.
+PROMPT_FLAG = "--prompt"
+CARRY_PROMPT = "--carry-initial-prompt"
+
+# whisper.cpp caps the initial prompt at n_text_ctx/2 — 224 tokens on every model we run
+# — and silently drops the rest. Trimmed here instead, so what goes is a whole callsign
+# off the end rather than half of one, and the words the decoder is primed with are
+# always words somebody could actually say.
+PROMPT_MAX_TOKENS = 224
+
 _flag_support = {}
 
 
@@ -366,7 +404,7 @@ def supports_flag(binary, flag, timeout=30):
     return _flag_support[(binary, flag)]
 
 
-def transcribe(binary, model, path, seconds=0):
+def transcribe(binary, model, path, seconds=0, prompt=None):
     """Text for one clip, or '' if there is nothing worth saying.
 
     The timeout follows the recording rather than sitting at a fixed number. The
@@ -374,11 +412,22 @@ def transcribe(binary, model, path, seconds=0):
     for anything the capture loop produces and far too little for a long file handed
     over by the bench tool or by hand — and a timeout here raises, which loses the clip
     and leaves it on disk to be found again.
+
+    `prompt` is only ever set when a channel has explicitly asked for it. See
+    PROMPT_FLAG for why that is not a default.
     """
     argv = [binary, "-m", model, "-f", path, "--no-timestamps", "--no-prints",
             "--language", "en", "--threads", str(max(1, (os.cpu_count() or 2) - 1))]
     if supports_flag(binary, SUPPRESS_NON_SPEECH):
         argv.append(SUPPRESS_NON_SPEECH)
+    if prompt and supports_flag(binary, PROMPT_FLAG):
+        argv += [PROMPT_FLAG, prompt]
+        # A clip can run past one 30-second window, and by default the prompt only
+        # reaches the first. Asked for separately because it is the newer flag of the
+        # two: a build that has --prompt may not have this one, and an unknown option
+        # is fatal to whisper.cpp.
+        if supports_flag(binary, CARRY_PROMPT):
+            argv.append(CARRY_PROMPT)
     out = subprocess.run(
         argv, capture_output=True, text=True, timeout=max(300, seconds * 5),
     )
@@ -524,6 +573,313 @@ def loggable(text):
         return ""
     trimmed = collapse_loops(text)
     return trimmed if worth_logging(trimmed) else ""
+
+
+# ── callsigns ────────────────────────────────────────────────────────────────
+#
+# The words a net log most needs right are the ones whisper is worst at. Real output
+# from this receiver, all of it one station:
+#
+#   "K-60RK"   "K-6 DRK"   "6 delta rho mu"   "K-60 Arcade"
+#
+# All four are K6DRK. The model has no idea callsigns exist; it is spelling out sounds
+# and reaching for English words, and a log full of K-60RK is a log nobody can search.
+#
+# Three things happen here, in descending order of confidence, and the first that fits
+# wins:
+#
+#   1. the span is exactly a callsign or tactical call this event knows      → use it
+#   2. it is close enough to one of them, and to nothing else                → use it
+#   3. it spells out something with the SHAPE of a US callsign               → collapse
+#   4. none of the above                                                     → untouched
+#
+# Knowing the event's own list is what makes this safe, and it is the whole reason the
+# manager collects one: "did I hear a callsign" is a guess, while "which of these
+# thirty-five did I hear" is a choice between known answers. Where there is no list,
+# only rule 3 applies, and it can do no more than join up what was already said.
+#
+# Rule 4 is not a fallback, it is the point. A wrong callsign in a log is worse than a
+# mangled one — it reads as authoritative and it points at the wrong person, and unlike
+# "K-60RK" nobody reading it later has any reason to doubt it. Nothing here guesses on a
+# partial match.
+
+# The NATO alphabet, which is what hams actually say. Fixed, not configurable: it has
+# been the same 26 words since 1956 and a site that changed it would be talking to
+# itself. Both spellings of the two that have them, because whisper writes what it hears
+# and people say both.
+NATO = {
+    "alfa": "A", "alpha": "A", "bravo": "B", "charlie": "C", "delta": "D", "echo": "E",
+    "foxtrot": "F", "golf": "G", "hotel": "H", "india": "I", "juliet": "J",
+    "juliett": "J", "kilo": "K", "lima": "L", "mike": "M", "november": "N",
+    "oscar": "O", "papa": "P", "quebec": "Q", "romeo": "R", "sierra": "S",
+    "tango": "T", "uniform": "U", "victor": "V", "whiskey": "W", "whisky": "W",
+    "xray": "X", "yankee": "Y", "zulu": "Z",
+}
+
+# Spoken digits. "niner" because that is how it is said on the air, and whisper writes it
+# down as it hears it. Not "oh" for zero, however common that is in speech — "oh" is a
+# word people use constantly and admitting it would put a digit in the middle of half the
+# sentences on the band.
+SPOKEN_DIGITS = {
+    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+    "six": "6", "seven": "7", "eight": "8", "nine": "9", "niner": "9",
+}
+
+# A US amateur callsign: one or two letters, a digit, one to three letters.
+#
+# Three characters is therefore a legal callsign, and TWO spoken words with a digit
+# between them is a legitimate one — W6P is "whiskey six papa" and belongs to somebody.
+# So this tests the shape and never the number of words; requiring three phonetic words
+# would silently drop every 1x1 holder on the band.
+CALLSIGN_RE = re.compile(r"[A-Z]{1,2}[0-9][A-Z]{1,3}")
+
+# The longest run of spoken words that can be one callsign: "kilo mike six alpha oscar
+# whiskey" is KM6AOW, and that is the maximum a 2x3 can take.
+MAX_SPAN = 6
+
+# How close two strings must be to count as the same thing, on difflib's ratio.
+#
+# Measured against the table above rather than picked: the closest any two NATO words
+# come to each other is alpha/papa at 0.67, and every other pair that stands for a
+# different letter is below that. 0.80 therefore sits clear of the whole alphabet, so no
+# amount of mangling turns one phonetic word into a different letter — it either matches
+# what was said or matches nothing.
+#
+# On the callsigns themselves 0.80 is one wrong character in five, which is exactly the
+# failure being corrected: "K60RK" against "K6DRK" scores 0.80, and "K60 Arcade" against
+# it scores 0.43 and is left alone, as it should be. Lower would start accepting the
+# second sort; higher would reject the first.
+SIMILARITY = 0.80
+
+# And it must be a clear winner. Two known callsigns can easily sit the same distance
+# from the same mangled text — with K6DRK and K6DRJ both on the roster, "K6DR0" is 0.80
+# from each — and picking either one is a coin toss recorded as a fact. If nothing stands
+# out, the words stay exactly as they were heard.
+AMBIGUITY_MARGIN = 0.05
+
+
+class Vocabulary:
+    """The callsigns and tactical calls this event expects to hear.
+
+    Delivered in channels.json beside the channels, because it is a property of the
+    event rather than of any one receiver. Both keys are optional and both are routinely
+    empty — an event with no roster is the normal case, not an error, and everything
+    here degrades to "leave the words alone".
+    """
+
+    def __init__(self, d=None):
+        d = d or {}
+        self.callsigns = [str(c).strip() for c in (d.get("callsigns") or []) if str(c).strip()]
+        self.tactical = [str(t).strip() for t in (d.get("tactical") or []) if str(t).strip()]
+        # Keyed by what a mishearing would have to be compared against: callsigns with
+        # punctuation and case removed, tactical calls as lower-case words with spoken
+        # numbers written as digits, so "sweet one" and "Sweep 1" are the same shape of
+        # thing before they are ever compared.
+        self.by_call = {}
+        for call in self.callsigns:
+            key = re.sub(r"[^0-9A-Za-z]", "", call).upper()
+            if key:
+                self.by_call.setdefault(key, call)
+        self.by_tactical = {}
+        for term in self.tactical:
+            key = phrase_key(term.split())
+            if key:
+                self.by_tactical.setdefault(key, term)
+        self.tactical_span = max([len(k.split()) for k in self.by_tactical] or [0])
+
+    def __bool__(self):
+        return bool(self.by_call or self.by_tactical)
+
+    def prompt(self):
+        """The initial prompt for whisper, or "" if there is nothing to say.
+
+        Only reached when a channel has explicitly turned it on — see PROMPT_FLAG for
+        why that is off by default and what has to be measured before it is not.
+
+        Callsigns first, because they are what the model gets wrong and what the log
+        most needs right; tactical calls fill whatever budget is left. Terms are dropped
+        whole rather than truncated, since half a callsign is a word nobody says.
+        """
+        if not self:
+            return ""
+        lead = "Amateur radio net traffic. Stations and tactical calls on this net:"
+        # A rough token count, deliberately pessimistic. whisper's tokenizer breaks an
+        # upper-case alphanumeric run like K6DRK into several tokens, so counting one per
+        # two characters over-estimates — which is the right direction to be wrong in,
+        # because the cost of over-estimating is one callsign left out and the cost of
+        # under-estimating is the tail being cut off silently inside whisper.
+        budget = PROMPT_MAX_TOKENS - (len(lead) // 4 + 1)
+        terms = []
+        for term in self.callsigns + self.tactical:
+            cost = max(1, (len(term) + 1) // 2) + 1        # +1 for the separator
+            if cost > budget:
+                continue
+            budget -= cost
+            terms.append(term)
+        return f"{lead} {', '.join(terms)}." if terms else ""
+
+
+def phrase_key(tokens):
+    """A tactical call reduced to what it sounds like: lower case, no punctuation,
+    spoken numbers as digits. "sweet one" and "Sweep 1" both come out comparable."""
+    words = []
+    for token in tokens:
+        bare = re.sub(r"[^0-9A-Za-z]", "", token).lower()
+        if not bare:
+            return ""
+        words.append(SPOKEN_DIGITS.get(bare, bare))
+    return " ".join(words)
+
+
+def closest(key, table):
+    """What `key` clearly matches in `table` — a dict of what-it-sounds-like → what-it-is
+    — or None if nothing does.
+
+    Clearly: at or above SIMILARITY, and AMBIGUITY_MARGIN ahead of anything that would
+    mean something different. Two equally good answers is not a near miss to be settled
+    by ordering; it is the case where guessing puts somebody else's callsign in the log.
+
+    Runners-up that mean the SAME thing do not count as competition, which is why the
+    table maps to answers rather than being a list of keys — "alfa" and "alpha" are both
+    A, and a mishearing sitting between them is not ambiguous about anything.
+    """
+    scored = sorted(
+        ((difflib.SequenceMatcher(None, key, k).ratio(), k) for k in table), reverse=True)
+    if not scored or scored[0][0] < SIMILARITY:
+        return None
+    best = table[scored[0][1]]
+    for score, other in scored[1:]:
+        if table[other] != best:
+            return None if scored[0][0] - score < AMBIGUITY_MARGIN else best
+    return best
+
+
+def spell(tokens):
+    """The letters and digits a run of spoken words stands for, or "" if it is not the
+    sort of thing a callsign is made of.
+
+    Three kinds of token qualify, and nothing else does:
+
+      "kilo", "delta"   a NATO word, matched loosely because whisper will not hand us a
+                        clean one. A wrong letter here cannot invent a callsign out of
+                        ordinary speech, because whatever comes out still has to have the
+                        shape of one — and CALLSIGN_RE needs a digit with letters either
+                        side of it, which conversation does not produce.
+      "six", "9"        a spoken or written digit
+      "DRK", "K-60RK"   text already in capitals, which is how whisper writes the letters
+                        it does recognize as letters
+
+    The capitals are belt and braces rather than the thing holding this up — what
+    actually stops "K6DRK on West Marin" collapsing into "K6DRK" and eating the "on" is
+    the layer order in resolve(), which finds the exact callsign in one word before any
+    two-word span is scored. But a run assembled out of ordinary lower-case words is not
+    a callsign whatever it scores, and it should never be offered to the matcher at all.
+    """
+    out = []
+    for token in tokens:
+        bare = re.sub(r"[^0-9A-Za-z]", "", token)
+        if not bare:
+            return ""
+        low = bare.lower()
+        if low in SPOKEN_DIGITS:
+            out.append(SPOKEN_DIGITS[low])
+        elif low in NATO:
+            out.append(NATO[low])
+        elif bare == bare.upper() and len(bare) <= 6:
+            out.append(bare)
+        else:
+            letter = closest(low, NATO)
+            if letter is None:
+                return ""
+            out.append(letter)
+    return "".join(out)
+
+
+def tail(token):
+    """Trailing punctuation, kept so replacing "K-6 DRK." does not lose the full stop."""
+    m = re.search(r"[^0-9A-Za-z]+$", token)
+    return m.group(0) if m else ""
+
+
+def resolve(tokens, i, vocab):
+    """What the words at `tokens[i]` turn out to be: (how many words, what to write), or
+    (0, None) to leave this word exactly as it was heard.
+
+    Strictly by confidence, stopping at the first layer that fits — and the layers are
+    tried in order across every span length, not span by span. That distinction is the
+    difference between "K6DRK I" finding the exact callsign in one word and finding a
+    fuzzy match across two, which scores 0.91 and swallows the "I".
+    """
+    spans = []
+    for n in range(min(MAX_SPAN, len(tokens) - i), 0, -1):
+        spelled = spell(tokens[i:i + n])
+        if spelled:
+            spans.append((n, spelled))
+
+    # 1. Exactly something this event knows. Nothing to decide.
+    for n, spelled in spans:
+        if spelled in vocab.by_call:
+            return n, vocab.by_call[spelled]
+    for n in range(min(vocab.tactical_span, len(tokens) - i), 0, -1):
+        key = phrase_key(tokens[i:i + n])
+        if key in vocab.by_tactical:
+            return n, vocab.by_tactical[key]
+
+    # 2. Close enough to something this event knows, and to nothing else.
+    #
+    # Never over text that already reads as a callsign, which is the guard that keeps
+    # this honest. K6DRJ scores 0.80 against K6DRK, so a visiting station whose call is
+    # one letter away from a roster entry would be rewritten into that entry and logged
+    # as somebody else — and the roster is never the whole band. A well-formed callsign
+    # is not evidence of mangling; it is a callsign. It goes in as heard.
+    for n, spelled in spans:
+        if CALLSIGN_RE.fullmatch(spelled):
+            continue
+        match = closest(spelled, vocab.by_call)
+        if match:
+            return n, match
+    for n in range(min(vocab.tactical_span, len(tokens) - i), 0, -1):
+        key = phrase_key(tokens[i:i + n])
+        if not key:
+            continue
+        match = closest(key, vocab.by_tactical)
+        if match:
+            return n, match
+
+    # 3. No list to check against, or nothing on it fits — but the words have the shape
+    # of a callsign, so join them up. This is all that is available on an event with no
+    # roster, and it cannot invent anything: every character it writes was spoken.
+    for n, spelled in spans:
+        if CALLSIGN_RE.fullmatch(spelled):
+            return n, spelled
+
+    # 4. Leave it alone.
+    return 0, None
+
+
+def correct_callsigns(text, vocab=None):
+    """The same text with callsigns and tactical calls written the way they are written.
+
+    Runs on the transcription AFTER loggable() has passed it, never before. Both of the
+    guards against invented speech are calibrated on what whisper actually emits —
+    HALLUCINATIONS on its exact wording, loop_ratio on its repetition — and rewriting
+    words underneath them would be quietly changing what they measure. Correcting text
+    that is about to be discarded would also be work for nothing. This tidies up an
+    entry that has already been judged real; it has no vote in that judgement, and it
+    must never be able to turn something into an entry that would not have been one.
+    """
+    vocab = vocab or Vocabulary()
+    tokens = text.split()
+    out, i = [], 0
+    while i < len(tokens):
+        n, replacement = resolve(tokens, i, vocab)
+        if replacement is None:
+            out.append(tokens[i])
+            i += 1
+        else:
+            out.append(replacement + tail(tokens[i + n - 1]))
+            i += n
+    return " ".join(out)
 
 
 # ── capture ──────────────────────────────────────────────────────────────────
@@ -1101,7 +1457,9 @@ def handle_clip(channel, path, whisper, model, outbox):
         log.warning("%.0fs of carrier without a break — a stuck transmitter, or a "
                     "squelch that is no longer gating. Transcribing it anyway; check "
                     "the squelch level for this site if it keeps happening.", seconds)
-    text = clean(transcribe(whisper, model, path, seconds))
+    vocabulary = getattr(channel, "vocabulary", None) or Vocabulary()
+    prompt = vocabulary.prompt() if getattr(channel, "initial_prompt", False) else None
+    text = clean(transcribe(whisper, model, path, seconds, prompt=prompt))
     os.unlink(path)
     keep = loggable(text)
     if not keep:
@@ -1109,8 +1467,13 @@ def handle_clip(channel, path, whisper, model, outbox):
         return False
     if keep != text:
         log.info("trimmed a repeated phrase out of (%.1fs): %r", seconds, text[:60])
-    log.info("logging (%.1fs): %s", seconds, keep[:80])
-    outbox.add(keep, time.time())
+    # After the guards, never before: they are calibrated on what whisper emits, and this
+    # has no vote in whether the entry is real. See correct_callsigns.
+    written = correct_callsigns(keep, vocabulary)
+    if written != keep:
+        log.info("callsigns (%.1fs): %r → %r", seconds, keep[:60], written[:60])
+    log.info("logging (%.1fs): %s", seconds, written[:80])
+    outbox.add(written, time.time())
     return True
 
 
