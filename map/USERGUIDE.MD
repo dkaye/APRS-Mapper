@@ -68,6 +68,7 @@ This document is a guide for users of the MARS APRS system. For technical detail
     - [Adding, Editing, and Deleting Devices](#adding-editing-and-deleting-devices)
 - [WiFi Manager](#wifi-manager)
 - [Transcriber Channels](#transcriber-channels)
+  - [Event vocabulary](#event-vocabulary)
 - [Cloudflare Tunnel](#cloudflare-tunnel)
 - [Troubleshooting](#troubleshooting)
   - [Is my iGate working?](#is-my-igate-working)
@@ -1215,6 +1216,65 @@ You do not have to do anything for this to happen. The page at **marsaprs.org/tr
 **Update devices** is a different thing and you will rarely need it: it asks the receivers to fetch new *software*, rather than waiting for the nightly update. Settings do not need it.
 
 If the page has been open a while and somebody else has changed something, Save is refused with a note asking you to reload. It will not quietly overwrite work you cannot see.
+
+### Event vocabulary
+
+Radio voice is hard to transcribe, and the words it gets wrong are the ones a log most
+needs right — callsigns, aid stations, the names of places. Telling it what to expect
+fixes most of that.
+
+It learns those from **the event's radio assignment sheet**, the Google Doc you already
+write for every event. Paste the sheet's address into the box on the transcriber page and
+press **Save**, then **Read sheet now**.
+
+> **Save before you read.** The sheet is fetched from the address that has been *saved*,
+> not the one showing in the box. If you press Read sheet now with an unsaved address it
+> will read the previous sheet and tell you what was in that one, which looks exactly like
+> the new sheet being wrong.
+
+**Some of it is picked up on its own.** Callsigns are recognisable by their shape, so
+every one in the document is found without anyone listing them — 35 of them, on a recent
+Dipsea sheet. Tactical calls like *Sweep 1*, *Hiker 3* and *Net Control* are found the
+same way.
+
+**Place names are not, and never will be.** *Windy Gap*, *Cardiac*, *Moors* and *Steep
+Ravine* are ordinary words in an ordinary order, and anything that could pick them out of
+the document would drag half the prose along with it. So they are listed explicitly, in a
+section at the end of the sheet:
+
+```
+Transcriber Vocabulary
+Windy Gap
+Cardiac
+Muir Woods
+Sequoia Valley Road
+Steep Ravine = Bridge
+Insult Hill = White Gate
+```
+
+A heading with the word *Vocabulary* in it, then one name per line, ending at the first
+blank line. Bullets are fine.
+
+A line with an **`=`** in it is a correction: the left side is what the transcription
+keeps producing, the right side is what it should say. `Steep Ravine = Bridge` means "when
+you hear Steep Ravine, write Bridge" — useful when the net calls a place something other
+than its name on the map, and for a mishearing you have actually watched happen.
+
+**Check that it found the section.** Under the sheet address the page says either
+*Vocabulary section: found, 31 terms and 4 corrections* or, in amber, *not found*. If it
+says not found and you believe it should not, the heading has probably been renamed, or
+the edit is still a *suggestion* in the document rather than accepted text — suggestions
+look identical on screen and are invisible to anything reading the document.
+
+**The box below is for the middle of an event**, when *Cardiac* is coming out as *Cardiff*
+and you would rather not edit a shared document with twenty people in it. Same format, one
+per line, and it adds to whatever the sheet gave rather than replacing it.
+
+Two things worth knowing when you write the list. A **single common word** — *Runner*,
+*Bib*, *Cardiac* — will be capitalised wherever it appears, so "a cardiac arrest on the
+trail" becomes "a Cardiac arrest". Harmless, but it is why longer names behave better.
+And the **spelling in your sheet is the spelling in the log**: write *FInish* and that is
+what the entries will say.
 
 ### Tokens
 

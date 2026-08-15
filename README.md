@@ -1691,6 +1691,26 @@ model's speed against real time. Above 1.0x a model cannot keep up with a busy n
 It stops the channel while it runs, because there is one dongle per channel, and starts
 it again however it exits.
 
+**A diagnostic that owns the dongle says so.** There is one SDR per channel, and several
+things want it: the nightly self-noise sweep, `compare-models.py`, `sdr-usb-test` on the
+gates. Meanwhile each fleet has something that puts a stopped receiver back within a
+minute — the iGate's watchdog from cron, the Transcriber's 60-second config poll. Left to
+themselves the two fight, and the symptom is not a crash but a measurement quietly taken
+against a contended device.
+
+So a tool that stops a receiver leaves a flag while it works, and the supervisors stand
+down when they see one:
+
+| Flag | Set by | Honoured by |
+|------|--------|-------------|
+| `/tmp/sdr-usb-test.pause` | `sdr-usb-test`, `sdr-selftest.sh` (iGate) | `igate-watchdog.sh` |
+| `/tmp/transcriber-bench.pause` | `compare-models.py`, `sdr-selftest.sh` (Transcriber) | `auto-update.sh` |
+
+Both are ignored once stale — eight hours for the Transcriber's, and the iGates clear
+`/tmp` on their nightly reboot — so a tool that dies without cleaning up cannot keep a
+receiver off the air indefinitely. Anything new that takes the dongle should set the one
+its fleet already watches rather than inventing a third.
+
 **Key files on a Transcriber Pi:**
 
 | File | Purpose |
