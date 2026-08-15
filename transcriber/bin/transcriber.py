@@ -107,6 +107,41 @@ HALLUCINATIONS = {
     "[ silence ]", "so", "so.", "uh", "um", ".", "...",
 }
 
+# whisper's other failure on marginal audio: not one invented sentence but the same one
+# over and over, in phrases rather than single words. Two off this repeater, both of
+# which the old "every word identical" test let through and both of which would have
+# been filed as real traffic:
+#
+#   "I love it. I love it. I love it. It's good. I love it. … I love you. I love you.
+#    I love you. I love you. I love you. I love you. I love you. I love you."
+#
+#   "I don't know if they have a piano, I don't think it's a place to get out of the
+#    way. I think it's a place to get out of the way. I think that's a place to get out
+#    of the way. I think that's a place to get out of the way."
+#
+# The numbers below were measured against 124 transcriptions from a six-hour bench run,
+# not chosen: genuine traffic on that tape sits at a distinct-trigram ratio of 0.85 and
+# above, and everything under 0.45 was invented. 0.45 leaves the margin on the safe
+# side, which is where it belongs — losing a real transmission costs the log one line,
+# and admitting an invented one costs it credibility.
+LOOP_RATIO = 0.45
+# Nothing shorter than this is judged by that ratio at all. Radio traffic repeats:
+# "roger roger", "break break break", a callsign said three times, a number read back
+# for clarity. All of it is short, and a short text can be almost entirely repetition
+# and still be exactly what somebody said. Twelve words is about five seconds of speech.
+LOOP_MIN_WORDS = 12
+
+# What counts as a degenerate run when trimming one out of an otherwise real entry:
+# the same phrase at least three times over, filling at least twelve words. Both
+# conditions, because either alone catches real speech — "that's right, that's right,
+# that's right, that's right" is off this repeater and is eight words, and a phrase
+# said twice is a person making a point.
+REPEAT_MIN_TIMES = 3
+REPEAT_MIN_WORDS = 12
+# The longest phrase looked at. Longer than a sentence somebody might repeat, short
+# enough that the scan stays cheap.
+REPEAT_MAX_PHRASE = 12
+
 log = logging.getLogger("transcriber")
 
 
@@ -272,12 +307,48 @@ def clip_seconds(path):
         return 0.0
 
 
+# Non-speech tokens are whisper's own vocabulary for sounds rather than words:
+# "(buzzing)", "(machine whirring)", "[BLANK_AUDIO]", "*BANG*", "*gunshot*". All of
+# those are real, off this receiver, and clean() and worth_logging() delete them after
+# the fact — but suppressing them at the decoder is a better thing to do than tidying
+# up afterwards. A non-speech token does not simply sit at the end of an entry; it takes
+# part in the decode and pulls the words around it out of shape, and deleting it later
+# leaves that damage behind.
+#
+# The filters stay regardless, and that is deliberate. There is no way to prove the flag
+# catches everything, a device built later against an older whisper may not have it at
+# all, and the cost of being wrong is an invented line in an event log.
+SUPPRESS_NON_SPEECH = "--suppress-nst"
+
+_flag_support = {}
+
+
+def supports_flag(binary, flag, timeout=30):
+    """Whether this whisper build knows a flag. Asked once per binary, then remembered.
+
+    Worth asking, because whisper.cpp treats an unknown option as fatal — it prints its
+    usage and exits non-zero. Passing one blind would turn an improvement in the text
+    into a channel that transcribes nothing at all, on exactly the older device least
+    likely to be watched.
+    """
+    if (binary, flag) not in _flag_support:
+        try:
+            probe = subprocess.run([binary, "-h"], capture_output=True, text=True,
+                                   timeout=timeout)
+            _flag_support[(binary, flag)] = flag in (probe.stdout + probe.stderr)
+        except (OSError, subprocess.SubprocessError):
+            _flag_support[(binary, flag)] = False
+    return _flag_support[(binary, flag)]
+
+
 def transcribe(binary, model, path):
     """Text for one clip, or '' if there is nothing worth saying."""
+    argv = [binary, "-m", model, "-f", path, "--no-timestamps", "--no-prints",
+            "--language", "en", "--threads", str(max(1, (os.cpu_count() or 2) - 1))]
+    if supports_flag(binary, SUPPRESS_NON_SPEECH):
+        argv.append(SUPPRESS_NON_SPEECH)
     out = subprocess.run(
-        [binary, "-m", model, "-f", path, "--no-timestamps", "--no-prints",
-         "--language", "en", "--threads", str(max(1, (os.cpu_count() or 2) - 1))],
-        capture_output=True, text=True, timeout=300,
+        argv, capture_output=True, text=True, timeout=300,
     )
     if out.returncode != 0:
         log.error("whisper failed: %s", (out.stderr or "").strip()[:200])
@@ -328,7 +399,99 @@ def worth_logging(text):
     words = bare.split()
     if len(words) >= 4 and len(set(words)) == 1:
         return False
+    # The same thing over and over in phrases rather than in single words, which is
+    # what the fast model actually produces on marginal audio. Judged by how much of
+    # the text is a copy of the rest of it, because there is no list of these to keep —
+    # the loop invents a different sentence every time and then sticks on it.
+    if len(words) >= LOOP_MIN_WORDS and loop_ratio(words) < LOOP_RATIO:
+        return False
     return True
+
+
+def loop_ratio(words, n=3):
+    """How much of this text is different from the rest of it: distinct n-word runs
+    over total n-word runs, 1.0 when nothing repeats.
+
+    A transcription that has fallen into a loop says the same handful of things
+    repeatedly, so most of its trigrams are copies of earlier ones. Speech does not do
+    that, even when somebody is repeating themselves — the words either side of the
+    repeat are different, so the trigrams spanning it are too. Measured over a six-hour
+    tape off a real repeater: genuine traffic 0.85 and above, invented text 0.43 and
+    below, and nothing at all in between.
+    """
+    if len(words) < n + 1:
+        return 1.0
+    runs = [tuple(words[i:i + n]) for i in range(len(words) - n + 1)]
+    return len(set(runs)) / len(runs)
+
+
+def collapse_loops(text):
+    """The same text with any degenerate repeated run cut back to a single copy.
+
+    For the entry that is real up to a point and then sticks — "K6DRK monitoring, 73.
+    I love you. I love you. I love you. I love you." Rejecting that whole would throw
+    away a transmission that happened; keeping it whole files an invented sentence four
+    times. Trimming keeps what was said and drops the groove, and it is the only one of
+    the three that is right.
+
+    A run must repeat REPEAT_MIN_TIMES over and cover REPEAT_MIN_WORDS before it counts.
+    Both, because either on its own takes real speech: "that's right, that's right,
+    that's right, that's right" came off this repeater and is four repeats of eight
+    words, and "get out of the way, get out of the way" is a person meaning it. Thirty
+    words of one sentence three times over is not.
+
+    The shortest repeating phrase wins, so "I love it" six times collapses to "I love
+    it" rather than to "I love it. I love it." Punctuation and case are ignored when
+    matching but kept in what is returned, since whisper spells the loop differently
+    each time round and the log should read as it was heard.
+    """
+    words = text.split()
+    keys = [re.sub(r"[^\w]", "", w).lower() for w in words]
+    out, i = [], 0
+    while i < len(words):
+        run = None
+        for n in range(1, REPEAT_MAX_PHRASE + 1):
+            if i + 2 * n > len(keys):
+                break
+            times = 1
+            while keys[i + times * n:i + (times + 1) * n] == keys[i:i + n]:
+                times += 1
+            if times >= REPEAT_MIN_TIMES and times * n >= REPEAT_MIN_WORDS:
+                run = (n, times)
+                break
+        if run:
+            n, times = run
+            out += words[i:i + n]
+            i += n * times
+        else:
+            out.append(words[i])
+            i += 1
+    return " ".join(out)
+
+
+def loggable(text):
+    """What of this transcription belongs in the log, or "" if none of it does.
+
+    Judge the whole text first and trim afterwards, never the other way round.
+    Collapsing the loop first destroys the evidence: "I love it" ten times over reads
+    as an unremarkable short entry once it has been reduced to one copy, and the
+    repetition was the only thing that showed it was invented.
+
+    That ordering is also the answer to the harder question — whether an entry that is
+    plausible up to a point and then loops should be trimmed or thrown out. Both,
+    depending on which part is the exception. A mostly-real entry with a groove stuck
+    on the end is a transcription that worked and then failed, and the part that worked
+    is a transmission somebody made: trim it and keep it. An entry that is mostly loop
+    is a transcription that failed, and its opening words are no more trustworthy than
+    its last ones — "I don't know if they have a piano" is not a real sentence rescued
+    from a bad recording, it is the same failure a few words earlier. LOOP_RATIO is
+    where that line sits, and it sits well clear of anything real: on a six-hour tape
+    nothing genuine came below 0.85 and nothing invented came above 0.43.
+    """
+    if not worth_logging(text):
+        return ""
+    trimmed = collapse_loops(text)
+    return trimmed if worth_logging(trimmed) else ""
 
 
 # ── capture ──────────────────────────────────────────────────────────────────
@@ -804,11 +967,14 @@ def handle_clip(channel, path, whisper, model, outbox):
         return
     text = clean(transcribe(whisper, model, path))
     os.unlink(path)
-    if not worth_logging(text):
+    keep = loggable(text)
+    if not keep:
         log.info("discarded (%.1fs): %r", seconds, text[:60])
         return
-    log.info("logging (%.1fs): %s", seconds, text[:80])
-    outbox.add(text, time.time())
+    if keep != text:
+        log.info("trimmed a repeated phrase out of (%.1fs): %r", seconds, text[:60])
+    log.info("logging (%.1fs): %s", seconds, keep[:80])
+    outbox.add(keep, time.time())
 
 
 def main(argv=None):

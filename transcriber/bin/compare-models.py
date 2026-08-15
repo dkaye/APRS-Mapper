@@ -132,10 +132,14 @@ def main():
                     text = tr.clean(tr.transcribe(whisper, os.path.join(args.models, fname), path))
                     took = time.time() - t0
                     totals[name] += took
-                    kept = tr.worth_logging(text)
-                    row[name] = (text, took, kept)
+                    # What the channel would actually file, not what whisper said: the
+                    # filters reject a transcription that has looped and trim a loop off
+                    # the end of one that has not, and a comparison that ignored that
+                    # would credit a model for text the log would never have shown.
+                    kept = tr.loggable(text)
+                    row[name] = (kept, took, bool(kept))
                     mark = " " if kept else "✗"   # ✗ = the filters would drop this
-                    print(f"   {name:<8}{took:5.1f}s {mark} {text or '(nothing)'}")
+                    print(f"   {name:<8}{took:5.1f}s {mark} {kept or '(nothing)'}")
                 # Slower is only worth it if it says something different.
                 if row["Fast"][0] == row["Careful"][0]:
                     print("   → identical")

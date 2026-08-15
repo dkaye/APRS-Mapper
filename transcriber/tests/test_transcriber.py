@@ -56,6 +56,91 @@ def test_worth_logging():
         check(f"keeps {real[:24]!r}", transcriber.worth_logging(real), True)
 
 
+# The two whisper actually produced on this repeater, off the six-hour bench tape.
+# Neither is caught by "every word is identical" — the model does not repeat words when
+# it loops, it repeats phrases — and both would have been filed as real traffic.
+LOOP_LOVE = (
+    "I love it. I love it. I love it. It's good. I love it. I love it. I love it. "
+    "I love it. I love it. I love it. You rap. Oh, damn. I love you. I love you. "
+    "I love you. I love you. I love you. I love you. I love you. I love you."
+)
+LOOP_PIANO = (
+    "I don't know if they have a piano, I don't think it's a place to get out of the "
+    "way. I think it's a place to get out of the way. I think that's a place to get "
+    "out of the way. I think that's a place to get out of the way. I think that's a "
+    "place to get out of the way."
+)
+
+
+def test_a_looping_transcription_does_not_reach_the_log():
+    """whisper's other failure on marginal audio: not one invented sentence but the
+    same one over and over. The old rule only caught "you you you you" — every word
+    identical — and the fast model does not do that. It repeats phrases."""
+    print("loops — what must not reach the log")
+    for junk in [LOOP_LOVE, LOOP_PIANO,
+                 # More off the same tape, all of them from real captures.
+                 "I'm going to be in the next control. I'm going to be in the next "
+                 "control. I'm going to be in the next control. I'm going to be in "
+                 "the next control.",
+                 "I don't know if I'm going to be doing it for a while, but I don't "
+                 "know if I'm going to be doing it for a while, but I don't know if "
+                 "I'm going to be doing it for a while."]:
+        check(f"rejects {junk[:28]!r}...", transcriber.loggable(junk), "")
+
+
+def test_repetition_on_the_air_is_not_a_hallucination():
+    """The expensive mistake would be the other one. Radio traffic repeats: a callsign
+    said three times, "roger roger", "break break break", a number read back for
+    clarity, net control working down a list. Losing one of those costs the log a line;
+    the rule has to be about degenerate repetition — the same phrase many times over —
+    and not about repetition."""
+    print("loops — what must survive")
+    for real in ["roger roger",
+                 "break break break",
+                 "K6DRK K6DRK K6DRK",
+                 "say again, say again",
+                 "No, wait, wait, wait, wait.",
+                 "seven seven seven, that is seven seven seven",
+                 # Off the same tape, inside a real conversation.
+                 "That's right, that's right, that's right, that's right.",
+                 "W6ABC W6ABC please come back. W6DEF W6DEF please come back. "
+                 "W6GHI W6GHI please come back.",
+                 "aid three we have a rider down"]:
+        check(f"keeps {real[:28]!r}", transcriber.loggable(real), real)
+
+
+def test_a_loop_on_the_end_is_trimmed_rather_than_thrown_away():
+    """A transcription that worked and then stuck is a transmission somebody made with
+    a groove on the end of it. Rejecting the entry loses what was said; keeping it whole
+    files the invented sentence five times. Trim it."""
+    print("loops — a real transmission with a groove on the end")
+    text = ("K6DRK monitoring the repeater and I will be back on after the net this "
+            "evening. I love you. I love you. I love you. I love you. I love you.")
+    got = transcriber.loggable(text)
+    check("keeps the transmission",
+          got.startswith("K6DRK monitoring the repeater"), True)
+    check("with one copy of the loop, not five", got.count("I love you"), 1)
+
+
+def test_a_transcription_that_is_mostly_loop_is_rejected_whole():
+    """And the decision that goes with it: trimming is for an entry that is mostly real,
+    not for one that is mostly loop. Where the loop is most of the text the
+    transcription failed, and its opening words are no more trustworthy than its last
+    ones — "I don't know if they have a piano" is not a real sentence rescued from a bad
+    recording, it is the same failure a few words earlier.
+
+    Which is why the whole text is judged before anything is trimmed. The other order
+    destroys the evidence: reduced to one copy each, LOOP_LOVE reads as an ordinary
+    short entry, and the repetition was the only thing that showed it was invented.
+    """
+    print("loops — order of the two rules")
+    trimmed = transcriber.collapse_loops(LOOP_LOVE)
+    check("trimming alone would leave something that reads as real",
+          len(trimmed.split()) < len(LOOP_LOVE.split()) and bool(trimmed), True)
+    check("so the whole text is judged first, and rejected",
+          transcriber.loggable(LOOP_LOVE), "")
+
+
 # ── capture must not wait for transcription ──────────────────────────────────
 
 def test_transcription_runs_off_the_capture_thread():
@@ -437,6 +522,46 @@ def test_a_single_over_is_one_clip():
     check("one clip", len(got), 1)
     if got:
         check("of about the right length", 1.7 <= got[0] <= 2.4, True)
+
+
+def test_non_speech_tokens_are_suppressed_at_the_decoder_where_the_build_allows():
+    """Better than deleting them afterwards, which is what clean() does: a non-speech
+    token takes part in the decode and pulls the words around it out of shape, so
+    removing it later leaves the damage behind.
+
+    But only where the build has the flag. whisper.cpp treats an unknown option as
+    fatal — usage and a non-zero exit — so passing it blind would turn better text into
+    a channel that transcribes nothing, on the oldest and least watched device.
+    """
+    print("whisper — non-speech tokens")
+
+    class Ran:
+        returncode, stdout, stderr = 0, "K6DRK on West Marin", ""
+
+    def whisper_that(help_text):
+        def run(argv, **kw):
+            if argv[1:] == ["-h"]:
+                return type("Help", (), {"returncode": 0, "stdout": help_text,
+                                         "stderr": ""})()
+            seen.append(argv)
+            return Ran()
+        return run
+
+    real = transcriber.subprocess.run
+    try:
+        for label, help_text, want in [
+                ("passes the flag when the build advertises it",
+                 "  -sns, --suppress-nst  [false] suppress non-speech tokens", True),
+                ("and leaves it off a build that has never heard of it",
+                 "  -np,  --no-prints     [false] do not print anything", False)]:
+            seen = []
+            transcriber._flag_support.clear()
+            transcriber.subprocess.run = whisper_that(help_text)
+            transcriber.transcribe("whisper-cli", "model.bin", "clip.wav")
+            check(label, transcriber.SUPPRESS_NON_SPEECH in seen[0], want)
+    finally:
+        transcriber.subprocess.run = real
+        transcriber._flag_support.clear()
 
 
 def test_clean_strips_sound_effects():
@@ -873,6 +998,11 @@ def test_unknown_channel_is_fatal():
 if __name__ == "__main__":
     for fn in [
         test_worth_logging, test_clean_strips_sound_effects, test_clip_seconds,
+        test_non_speech_tokens_are_suppressed_at_the_decoder_where_the_build_allows,
+        test_a_looping_transcription_does_not_reach_the_log,
+        test_repetition_on_the_air_is_not_a_hallucination,
+        test_a_loop_on_the_end_is_trimmed_rather_than_thrown_away,
+        test_a_transcription_that_is_mostly_loop_is_rejected_whole,
         test_transcription_runs_off_the_capture_thread,
         test_backlog_is_bounded_by_size_not_just_count,
         test_start_capture_builds_a_command_and_keeps_the_two_directories_straight,
