@@ -207,16 +207,66 @@ direwolf  (TNC + iGate daemon)
 
 igate-watchdog.sh  (cron, every minute)
       ├── SDR presence check → dw-nosdr.py (every 2 min, then 2-min countdown + reboot)
+      ├── Decode check (every 10 min) → restart direwolf, then report a dead receiver
       └── Internet check (every 5 min) → dw-nointernet.py (2-min countdown + reboot)
 ```
 
 **Watchdog:**
 
-`igate-watchdog.sh` runs every minute via cron and handles three health checks:
+`igate-watchdog.sh` runs every minute via cron and handles four health checks:
 
 - **SDR** — runs `lsusb` looking for RTL-SDR USB IDs (`0bda:2838`, `0bda:2832`, `RTL28`). If the SDR is absent, logs the event and (if a TFT display is attached) launches `dw-nosdr.py`, which shows a 2-minute countdown and reboots. If the SDR reappears while direwolf is down, restarts direwolf immediately.
+- **Decode** — every 10 minutes, checks that packets are actually being decoded. See [Decode check](#decode-check) below.
 - **IP address** — logs a warning if the device has no IP address.
 - **Internet** — every 5 minutes, if NetBird is connected, pings `8.8.8.8`. On failure, launches `dw-nointernet.py` (same 2-minute countdown + reboot pattern).
+
+#### Decode check
+
+The SDR check proves the dongle is on the USB bus and direwolf is running. Neither proves
+anything is being *received*. An RTL-SDR's R820T tuner can stop locking while every other
+indicator stays healthy: the dongle stays enumerated, `rtl_test` exits 0 while printing
+`[R82XX] PLL not locked!`, `rtl_fm` reports the frequency it tuned to and the sample rate it
+allocated — and then delivers zero bytes, forever. direwolf reads nothing and stays
+`active`. The gate looks perfect from every angle and gates no packets. Recovery is a USB
+re-bind or a replug. We hit this twice in one day on the Transcribers, which use the same
+dongles.
+
+So the watchdog also asks how long it has been since anything was decoded. It reads that
+from **direwolf's own APRS traffic log** (`LOGDIR /home/pi/aprslogs`, one line per received
+packet, pruned at 14 days by `auto-update.sh`): the newest file's mtime is the moment of the
+last decode. Received packets, not gated ones — the `FILTER` in `direwolf.conf` drops most
+traffic before it reaches APRS-IS, so a gated-packet count would read as silence on a healthy
+gate. `/var/log/direwolf/console.log` is used as a second opinion, since direwolf prints an
+`audio level` line for every frame it demodulates and the traffic log's mtime can lag on a
+quiet gate whose stdio buffer has not filled. The console log can only push the last-decode
+time later — it can prevent a restart, never cause one.
+
+**Thresholds.** Six hours of complete silence triggers one direwolf restart; three further
+hours of silence after that restart ends the escalation. 144.39 here is never quiet for six
+hours — even a poorly sited gate hears a beacon within minutes — while the cost of being
+wrong is a few seconds of direwolf downtime. A receiver that died at 2 am is no worse for
+being found at 8 am than at 4 am.
+
+**It restarts once, not repeatedly.** A restart resets both things being measured, so the
+window is anchored on the later of the last decode and direwolf's own start time (from
+`ActiveEnterTimestampMonotonic`, compared against `/proc/uptime`) — otherwise a gate in a
+quiet spot would be restarted every six hours forever. `/tmp/igate-rx-restarted` records the
+one restart, and **only an actual decode clears it**; no amount of elapsed time will. The
+markers live in `/tmp`, so the nightly reboot clears them and the worst case on a gate that
+genuinely hears nothing is one restart per day. The check is also skipped entirely while
+`sdr-usb-test` holds the SDR, during the boot sequence, and while a reboot is pending.
+
+Log lines, in `/var/log/direwolf/watchdog.log`:
+
+| Line | Meaning |
+|------|---------|
+| `Nothing decoded for 6h — restarting direwolf.` | Six hours of silence with the dongle present and direwolf running. direwolf (and with it `rtl_fm`, and the dongle's tuner) has been restarted once. |
+| `Decoding again N min after the restart — receiver recovered.` | Traffic returned. The gate was in the stuck-tuner state and the restart cleared it; nothing to do. |
+| `RECEIVER DEAD: nothing decoded in the 3h since direwolf was restarted…` | The restart did not help. The dongle is enumerated and direwolf is running, so this is hardware, not software — **go power-cycle or replug the dongle**. The watchdog will not restart direwolf again until something is decoded. |
+
+State files: `/tmp/igate-rx.state` (console log line count and when it last rose),
+`/tmp/igate-rx-restarted` (epoch of the one restart), `/tmp/igate-rx-dead` (set once the
+receiver has been reported dead, to keep it from being reported every ten minutes).
 
 The watchdog suppresses all checks while `dw-startup.py` is running (boot sequence), while a reboot is already pending (`/tmp/aprs-rebooting`), or while `sdr-usb-test` is running (`/tmp/sdr-usb-test.pause` — see [iGate Diagnostics](#igate-diagnostics) below), so a diagnostic that owns the SDR is never fought by the watchdog restarting direwolf. TFT presence is detected by reading GPIO 23: `pinctrl get 23 | grep -q hi`.
 
@@ -224,7 +274,10 @@ Log: `/var/log/direwolf/watchdog.log`
 
 ### iGate Diagnostics
 
-Two tools help keep the fleet's receivers healthy — one automatic, one on demand.
+Two tools help keep the fleet's receivers healthy — one automatic, one on demand. A third
+check, the watchdog's [decode check](#decode-check), catches the receiver that has gone deaf
+while still reporting itself healthy; when it logs `RECEIVER DEAD`, `sdr-usb-test` below is
+the next thing to run.
 
 **SDR self-noise self-test (automatic).** `sdr-selftest.sh` runs nightly (from
 `auto-update.sh`, before the 4:10 am reboot) and can also be run by hand
@@ -266,7 +319,7 @@ from anywhere. Log: `~/sdr-usb-test.log`.
 | `direwolf.conf` | `/home/pi/` | TNC frequency, callsign, APRS-IS login, filter |
 | `configure.sh` | `/home/pi/` | Interactive configuration wizard |
 | `auto-update.sh` | `/home/pi/` | Nightly script + WiFi credential update |
-| `igate-watchdog.sh` | `/home/pi/` | Cron watchdog (SDR + internet checks) |
+| `igate-watchdog.sh` | `/home/pi/` | Cron watchdog (SDR, decode, IP and internet checks) |
 | `direwatch.py` | `/home/pi/direwatch/` | APRS-IS connection + TFT display manager |
 | `dw-startup.py` | `/home/pi/direwatch/` | Boot sequence display (stats + SDR check) |
 | `dw-nosdr.py` | `/home/pi/direwatch/` | "No SDR found" countdown display |
