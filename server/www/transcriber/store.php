@@ -93,6 +93,13 @@ function transcriber_channels_for(string $device, ?string $path = null): array
             'squelch'   => (int)($c['squelch'] ?? 0),
             'model'     => (string)($c['model'] ?? 'ggml-tiny.en.bin'),
             'enabled'   => (bool)($c['enabled'] ?? true),
+            // Passed through so it can be set here rather than on the device. A value
+            // written straight into the Pi's channels.json is erased within the minute:
+            // the config poll rebuilds that file from exactly this list, so a key missing
+            // here is a key the device silently loses. Anything a channel should know has
+            // to be named in this array — a setting that only works until the next poll
+            // is worse than one that never worked, because it is believed.
+            'record_until' => (string)($c['record_until'] ?? ''),
         ];
     }
     return $out;
