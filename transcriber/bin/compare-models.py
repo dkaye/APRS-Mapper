@@ -358,6 +358,13 @@ def parser():
                         "this channel is configured to use")
     p.add_argument("--whisper", default="whisper-cli")
     p.add_argument("--clips", type=int, default=6, help="stop after this many transmissions")
+    p.add_argument("--replay", nargs="?", const="", default=None,
+                   help="compare over clips retention already kept, instead of "
+                        "listening. Defaults to this channel's recordings directory. "
+                        "Does not touch the dongle and does not delete the clips.")
+    p.add_argument("--since", default=None,
+                   help="with --replay, only clips whose filename sorts at or after "
+                        "this (the names are timestamps, so a prefix works)")
     p.add_argument("--minutes", type=float, default=15, help="give up after this long")
     p.add_argument("--static-clips", type=int, default=STATIC_CLIPS,
                    help="clips of deliberate noise to capture afterwards; 0 to skip")
@@ -407,6 +414,20 @@ def main(argv=None):
     elif not vocabulary:
         print(f"\n   No vocabulary in {args.config}. The static pass can still say "
               f"whether noise reached the log,\n   but not whether it named anybody.")
+
+    # Replay needs no radio, so it takes none of the dongle machinery below: the channel
+    # keeps running and keeps logging while this reads files off the card. That also
+    # means no PAUSE flag and no restart-on-exit, because nothing was stopped.
+    if args.replay is not None:
+        rows = []
+        try:
+            replay_pass(args, channel, arms, whisper, vocabulary, rows)
+        except KeyboardInterrupt:
+            print("\nstopped — reporting what was compared so far")
+        print()
+        for line in traffic_lines(arms, rows):
+            print(line)
+        return 0
 
     print(f"\nStopping {unit} — there is one dongle, so the channel cannot listen "
           f"while this does.")
@@ -491,6 +512,56 @@ def traffic_pass(args, channel, arms, whisper, spool, vocabulary, rows):
             print()
             rows.append(row)
             os.unlink(path)
+
+
+def replay_pass(args, channel, arms, whisper, vocabulary, rows):
+    """Both arms over clips already on the card. Appends to `rows`.
+
+    The comparison this was built for is the live one — capture each transmission once,
+    run both arms over that same file — and replay answers the same question from
+    audio a channel kept earlier. It is strictly better where the audio exists: the
+    arms see byte-identical input, it costs no airtime, it can be re-run after a
+    filter changes, and it does not take the receiver off the air to do it.
+    Retention (`record_until`) is what makes it possible.
+
+    Two things this must not do, both of which the live path does and is right to:
+    it must not touch the dongle, and it must NOT unlink the clips. They are the
+    archive; deleting them would consume the evidence in the act of examining it.
+    """
+    d = args.replay or os.path.join(tr.SPOOL, channel.id, tr.RECORDINGS)
+    if not os.path.isdir(d):
+        raise SystemExit(f"no recordings directory at {d} — was record_until set?")
+    clips = sorted(f for f in os.listdir(d) if f.endswith(".wav"))
+    if args.since:
+        clips = [f for f in clips if f >= args.since]
+    if args.clips > 0:
+        clips = clips[-args.clips:]          # the most recent, not the first
+    if not clips:
+        raise SystemExit(f"no clips to replay in {d}")
+
+    print(f"\nReplaying {counted(len(clips), 'kept clip')} from {d}\n")
+    for name in clips:
+        path = os.path.join(d, name)
+        secs = tr.clip_seconds(path)
+        if secs < tr.MIN_CLIP_SECONDS:
+            # Kept by retention on purpose, but the channel never transcribed it, so
+            # neither arm has anything to be judged on.
+            continue
+        print(f"── {name}  {secs:.1f}s " + "─" * 30)
+        row = {"seconds": secs, "file": name}
+        for arm in arms:
+            result = run_arm(arm, whisper, args.models, path, secs, vocabulary)
+            row[arm.name] = result
+            mark = " " if result.text else "✗"
+            print(f"   {arm.name:<8}{result.took:5.1f}s {mark} {result.text or '(nothing)'}")
+            if result.written != result.text:
+                print(f"   {'':<8}      → {result.written}")
+        if row[arms[0].name].text == row[arms[1].name].text:
+            print("   → identical")
+        elif row[arms[0].name].written == row[arms[1].name].written:
+            print("   → identical once callsigns are corrected")
+        print()
+        rows.append(row)
 
 
 def static_pass(args, channel, arms, whisper, vocabulary, rows):

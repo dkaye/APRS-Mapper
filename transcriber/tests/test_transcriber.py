@@ -209,6 +209,41 @@ def test_a_callsign_is_recognized_by_its_shape_not_by_how_many_words_it_took():
           worst < transcriber.SIMILARITY, True)
 
 
+def test_a_short_roster_word_does_not_eat_ordinary_english():
+    """The one that got into a real log.
+
+    A roll-call roster carries first names, and a first name is short. "and" against the
+    roster name "Andy" is a single inserted character and scores 0.857 — past SIMILARITY
+    — so a live net entry came out as "at least 125 hundred Andy fifty". That is the
+    failure this file guards against everywhere else: a wrong name reads as
+    authoritative and nobody questions it, while a mangled one warns you itself.
+
+    A single ratio is systematically too generous at the short end, because one
+    character is a much larger share of a short word. Below SHORT_EXACT, exact or
+    nothing. The rest of this checks that the fix took nothing useful with it."""
+    print("callsigns — short roster words")
+    d = {"terms": ["Andy", "Alexander", "Cardiac", "Pantoll"],
+         "tactical": ["SAG", "Net Control"], "callsigns": ["K6DRK"]}
+
+    check("'and' is not the name Andy",
+          corrected("at least 125 hundred and fifty", d),
+          "at least 125 hundred and fifty")
+    check("nor is 'sack' the tactical call SAG", corrected("the sack is full", d),
+          "the sack is full")
+    check("nor 'are' anything at all", corrected("are you there", d), "are you there")
+
+    # What the fix must not have cost: the name said properly, and the fuzzy matching
+    # that earns its place on longer entries.
+    check("the name still lands when it is actually said",
+          corrected("this is Andy mobile", d), "this is Andy mobile")
+    check("a long place name still tolerates a mishearing",
+          corrected("we are at cardiack now", d), "we are at Cardiac now")
+    check("and a word whisper split in two is still joined",
+          corrected("meet at pan toll", d), "meet at Pantoll")
+    check("callsigns are untouched by any of it",
+          corrected("K6 DRK testing", d), "K6DRK testing")
+
+
 def test_ordinary_speech_is_not_turned_into_a_callsign():
     """The expensive mistake, and the one this feature invites. "six" and "alpha" are
     ordinary words that people say on the radio all day, and a rule that reaches for a
@@ -2571,6 +2606,7 @@ if __name__ == "__main__":
         test_a_loop_on_the_end_is_trimmed_rather_than_thrown_away,
         test_a_transcription_that_is_mostly_loop_is_rejected_whole,
         test_a_callsign_is_recognized_by_its_shape_not_by_how_many_words_it_took,
+        test_a_short_roster_word_does_not_eat_ordinary_english,
         test_ordinary_speech_is_not_turned_into_a_callsign,
         test_the_event_vocabulary_answers_what_a_guess_only_asks,
         test_a_partial_match_is_left_exactly_as_it_was_heard,

@@ -927,6 +927,8 @@ SIMILARITY = 0.80
 # from each — and picking either one is a coin toss recorded as a fact. If nothing stands
 # out, the words stay exactly as they were heard.
 AMBIGUITY_MARGIN = 0.05
+# Shorter than this, a vocabulary entry must be matched exactly. See closest().
+SHORT_EXACT = 5
 
 
 class Vocabulary:
@@ -1082,8 +1084,26 @@ def closest(key, table):
     table maps to answers rather than being a list of keys — "alfa" and "alpha" are both
     A, and a mishearing sitting between them is not ambiguous about anything.
     """
+    # Short entries are matched exactly or not at all.
+    #
+    # One fixed ratio is systematically too generous at the short end, because a single
+    # character is a much larger share of a short word: "and" against the roster name
+    # "Andy" is one inserted letter and scores 0.857, sailing past SIMILARITY. That
+    # rewrote an ordinary English word into a person's name in a real log entry —
+    # "at least 125 hundred Andy fifty" — which is the failure this whole file is most
+    # careful about everywhere else. A wrong name reads as authoritative and nobody
+    # thinks to question it, while a mangled one warns you itself.
+    #
+    # Below SHORT_EXACT there is no room for a near miss to mean anything: at four
+    # characters, one edit away covers a large part of the language. Long entries keep
+    # the fuzzy match, which is where it earns its place — "Pan Toll" for Pantoll,
+    # "cardiack" for Cardiac. Callsigns are unaffected either way: they arrive through
+    # by_call and the shape layer, both of which are exact.
+    candidates = [k for k in table
+                  if k == key or min(len(k), len(key)) >= SHORT_EXACT]
     scored = sorted(
-        ((difflib.SequenceMatcher(None, key, k).ratio(), k) for k in table), reverse=True)
+        ((difflib.SequenceMatcher(None, key, k).ratio(), k) for k in candidates),
+        reverse=True)
     if not scored or scored[0][0] < SIMILARITY:
         return None
     best = table[scored[0][1]]
