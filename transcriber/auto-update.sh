@@ -115,6 +115,28 @@ chmod +x /opt/transcriber/bin/*.py
 # device and nowhere else.
 chmod +x /opt/transcriber/bin/*.sh
 
+# ── packages the new code needs ──────────────────────────────────────────────
+# This script carries new CODE to a device that already exists, and new code can want a
+# package the device was never given. install.sh gained ffmpeg when channels learned to
+# send their audio; nothing installed it on the receivers already in the field, so those
+# would have taken the new worker, offered the Audio setting in the manager, and then
+# quietly logged text only — one warning line in a journal nobody reads, and a feature
+# that looks switched on and is not.
+#
+# Only what is actually missing, and never a general upgrade: an unattended 4am apt
+# that decides to replace the kernel on a receiver is a far worse failure than the one
+# being fixed here. A device with no network simply keeps what it has.
+for pkg in ffmpeg; do
+    command -v "$pkg" >/dev/null 2>&1 && continue
+    log "$pkg is missing; installing it"
+    if DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$pkg" \
+           >/dev/null 2>&1; then
+        log "  installed $pkg"
+    else
+        log "  could not install $pkg — channels will run without it"
+    fi
+done
+
 # configure.sh, kept current so a device that has been in the field for a year still has
 # today's wizard on it when somebody finally SSHes in to move it. Everything it writes
 # lives outside itself — hostname, token, dongle serials — so replacing it is safe.
