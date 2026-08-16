@@ -37,6 +37,7 @@ import 'tracker_data.dart';
 import 'tracker_layer.dart';
 import 'messaging_client.dart';
 import 'messaging_screen.dart';
+import 'monitor_service.dart';
 import 'speaker.dart';
 import 'watch_bridge.dart';
 import 'widgets/mode_indicator.dart';
@@ -247,6 +248,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       if (!mounted) return;
       _handleInboundMessage(msg);
     };
+    _initMonitor();
     _config = widget.config;
     // Base layer follows the server's offline-map tile source, so it matches the
     // offline download URL (shared FMTC cache) and an event can retarget both by
@@ -406,6 +408,73 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => MessagingScreen(client: _msgClient)));
   }
 
+  // ── Monitored traffic ─────────────────────────────────────────────────────
+
+  Timer? _monitorTimer;
+  StreamSubscription<List<MsgMessage>>? _monitorSub;
+  StreamSubscription<int>? _monitorSkipSub;
+
+  Future<void> _initMonitor() async {
+    await MonitorService.instance.load();
+    _monitorSub = MonitorService.instance.messages.listen(_handleMonitoredBatch);
+    _monitorSkipSub = MonitorService.instance.skipped.listen((n) {
+      if (!mounted) return;
+      // Said in the UI, not spoken: it is context for what is missing, and reading
+      // it aloud would itself be an interruption on a busy net.
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('$n monitored message${n == 1 ? '' : 's'} skipped while offline'),
+        duration: const Duration(seconds: 4),
+      ));
+    });
+    // One timer, at the pace of the slower existing poll. The phone already runs
+    // several and this is not urgent traffic — it was not addressed to us.
+    _monitorTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (!_isSharing) return;
+      unawaited(MonitorService.instance.poll(_msgClient));
+    });
+  }
+
+  Future<void> _handleMonitoredBatch(List<MsgMessage> batch) async {
+    if (!mounted || batch.isEmpty) return;
+    // NO NOTIFICATION, deliberately, and this is the constraint the whole feature
+    // lives inside. None of this was addressed to this operator; on a busy net it is
+    // a message every few seconds, and a phone that buzzed for each would be unusable
+    // within a minute. Speech is the entire channel.
+    //
+    // Note what is NOT here: the "skip if the Messages screen is open" rule that
+    // _handleInboundMessage uses. That rule is right for a delivered message, because
+    // the open screen is already showing it. Monitored traffic is not shown anywhere
+    // — there is no monitor view yet — so applying the same rule would make the
+    // feature do nothing at all for anyone with the screen open, which is precisely
+    // the person following the net.
+    final p = await SharedPreferences.getInstance();
+    if (!(p.getBool('aprs_msg_speak') ?? true)) return;   // muted: the same switch as the rest
+    if (!mounted) return;
+
+    // A batch arrives after an outage or a slow poll. Reading out fifteen messages
+    // back to back is not hands-free operation, it is a phone that cannot be
+    // interrupted — so past a handful, say what happened instead of reciting it.
+    if (batch.length > _kMaxSpokenBatch) {
+      unawaited(Speaker.instance.speakMessage(
+        senderLabel: '',
+        text: '${batch.length} monitored messages received.',
+      ));
+      return;
+    }
+    for (final m in batch) {
+      unawaited(Speaker.instance.speakMessage(
+        senderLabel: m.senderLabel,
+        text: m.text,
+        radio: m.isRadio,
+        monitored: true,
+      ));
+    }
+  }
+
+  /// Past this many at once, the batch is summarised rather than read out. Speech is
+  /// real time and a backlog is not.
+  static const _kMaxSpokenBatch = 3;
+
   Future<void> _handleInboundMessage(InboundMessage msg) async {
     // The chat screen is open and shows arriving messages live via its own poll,
     // so don't also raise a notification/banner. (background_location still acks
@@ -521,6 +590,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _positionSub?.cancel();
     _stationaryCheckTimer?.cancel();
     _blinkTimer?.cancel();
+    _monitorTimer?.cancel();
+    _monitorSub?.cancel();
+    _monitorSkipSub?.cancel();
     _audioPlayer.dispose();
     _bgLocation.dispose();
     _mapController.dispose();

@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'messaging_client.dart';
+import 'monitor_service.dart';
 import 'speaker.dart';
 import 'watch_bridge.dart';
 
@@ -299,6 +300,76 @@ class _MessagingScreenState extends State<MessagingScreen> {
     }
   }
 
+  // ── Monitoring the whole event ─────────────────────────────────────────────
+
+  /// Three independent choices, and they are independent on purpose.
+  ///
+  /// Following the event as text costs almost nothing; the audio is the part that
+  /// costs cellular data, so it is never implied by either of the others. Nothing is
+  /// ever pushed to a device that did not ask — the feed carries a flag, and a phone
+  /// with audio off simply never makes the request.
+  Future<void> _openMonitorSettings() async {
+    final m = MonitorService.instance;
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const ListTile(
+                title: Text('Monitor the event', style: TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text(
+                  'Normally you see only what was sent to you. These add everything '
+                  'else. Monitored traffic never buzzes or alerts — it appears here, '
+                  'and is read aloud if you have that on.',
+                ),
+              ),
+              const Divider(height: 1),
+              SwitchListTile(
+                title: const Text('All messages'),
+                subtitle: const Text("Everything anyone sends, whoever it was addressed to"),
+                value: m.monitoringAll,
+                onChanged: (v) async {
+                  await m.setAll(v);
+                  setSheet(() {});
+                  if (mounted) setState(() {});
+                },
+              ),
+              SwitchListTile(
+                title: const Text('Radio traffic'),
+                subtitle: const Text('What the receivers heard on the air, transcribed'),
+                value: m.monitoringRadio,
+                onChanged: (v) async {
+                  await m.setRadio(v);
+                  setSheet(() {});
+                  if (mounted) setState(() {});
+                },
+              ),
+              SwitchListTile(
+                title: const Text('Play radio audio'),
+                subtitle: const Text(
+                  'Fetch the recording when you tap an entry, to hear what was '
+                  'actually said. Uses cellular data; off by default.',
+                ),
+                value: m.playingAudio,
+                onChanged: m.monitoringRadio
+                    ? (v) async {
+                        await m.setAudio(v);
+                        setSheet(() {});
+                        if (mounted) setState(() {});
+                      }
+                    : null,
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   // ── Recipient picker (new message) ─────────────────────────────────────────
   Future<void> _openPicker() async {
     final pr = await widget.client.participants();
@@ -348,6 +419,12 @@ class _MessagingScreenState extends State<MessagingScreen> {
               icon: Icon(_speak ? Icons.volume_up : Icons.volume_off),
               onPressed: _toggleSpeak,
             ),
+            if (!inThread)
+              IconButton(
+                tooltip: 'Monitor the whole event',
+                icon: Icon(MonitorService.instance.enabled ? Icons.hearing : Icons.hearing_disabled),
+                onPressed: _openMonitorSettings,
+              ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 6),
               child: TextButton.icon(
@@ -543,16 +620,76 @@ class _MessagingScreenState extends State<MessagingScreen> {
               padding: EdgeInsets.only(top: m.hasPhoto ? 6 : 0),
               child: Text(m.text, style: TextStyle(fontSize: 14, color: me ? Colors.white : Colors.black87)),
             ),
+          if (m.hasAudio && MonitorService.instance.playingAudio) _bubbleAudio(m),
           Padding(
             padding: const EdgeInsets.only(top: 2),
             child: Text(
-              _clockTime(m.ts) + (me ? '   ${_ackLabel(rec)}' : ''),
+              _clockTime(m.ts)
+                  // Who it went to, but only where that is not obvious. In a thread
+                  // you opened, everything went to the same people; monitored traffic
+                  // is the case where half of it was addressed to somebody else.
+                  + (m.monitored && (m.toLabel ?? '').isNotEmpty ? '  → ${m.toLabel}' : '')
+                  + (me ? '   ${_ackLabel(rec)}' : ''),
               style: TextStyle(fontSize: 10, color: me ? Colors.white70 : Colors.grey),
             ),
           ),
         ]),
       ),
     );
+  }
+
+  /// "Play 4s" for a radio entry that has its recording.
+  ///
+  /// Fetched on tap, never ahead of time. That is the difference between a hands-free
+  /// phone costing a few kB an hour and costing a few MB: the transcription is what
+  /// you follow, and the audio answers "what did they actually say" about the one
+  /// line in fifty that came out garbled. Downloading the other forty-nine is pure
+  /// cellular data spent on clips nobody will play.
+  Widget _bubbleAudio(MsgMessage m) {
+    final url = MessagingClient.audioUrl(m);
+    if (url == null) return const SizedBox.shrink();
+    final playing = _playingAudioId == m.id;
+    final secs = m.audioSecs;
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: InkWell(
+        onTap: () => _playClip(m.id, url),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(playing ? Icons.stop_circle_outlined : Icons.play_circle_outline,
+              size: 20, color: _kBlue),
+          const SizedBox(width: 4),
+          Text(
+            playing ? 'Playing…' : (secs != null ? 'Play ${secs.round()}s' : 'Play'),
+            style: const TextStyle(fontSize: 12, color: _kBlue, fontWeight: FontWeight.w500),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  int? _playingAudioId;
+
+  Future<void> _playClip(int id, String url) async {
+    if (_playingAudioId == id) {
+      await _player.stop();
+      if (mounted) setState(() => _playingAudioId = null);
+      return;
+    }
+    setState(() => _playingAudioId = id);
+    try {
+      // just_audio caches by URL, and the clip is served immutable, so replaying one
+      // costs nothing after the first fetch.
+      await _player.setUrl(url);
+      await _player.play();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Could not play that recording'),
+          duration: Duration(seconds: 2),
+        ));
+      }
+    }
+    if (mounted) setState(() => _playingAudioId = null);
   }
 
   // Attached-photo thumbnail inside a bubble; tap opens the full-screen viewer.

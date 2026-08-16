@@ -235,8 +235,19 @@ class WatchBridge {
   /// the background session left the watch silent whenever the phone's Messages
   /// screen happened to be open. Relaying from both is safe — the watch dedupes by
   /// message id, so whichever arrives second is dropped.
-  void pushSeenInChat(MsgMessage m, {required bool isSelf}) =>
-      _relay(_msgMessageDict(m, isSelf: isSelf));
+  void pushSeenInChat(MsgMessage m, {required bool isSelf}) {
+    // Monitored traffic stops at the phone. AppState.swift is an explicit commitment
+    // that every message the watch holds is announced, and on a busy net the monitor
+    // feed is a message every few seconds: the wrist would buzz continuously,
+    // `messagesCap` would churn through a hundred entries in minutes, and `_aimAt`
+    // would keep re-pointing Talk at whichever stranger spoke last — so a
+    // push-to-talk reply would go to somebody the operator never meant to answer.
+    //
+    // The wrist still hears everything the phone does, because the phone speaks it.
+    // What it does not do is treat it as mail addressed here.
+    if (m.monitored) return;
+    _relay(_msgMessageDict(m, isSelf: isSelf));
+  }
 
   void _relay(Map<String, dynamic> dict) {
     if (!Platform.isIOS || !_started) return;

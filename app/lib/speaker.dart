@@ -17,6 +17,11 @@ import 'package:flutter_tts/flutter_tts.dart';
 /// blurs into the opening of the message and the listener loses both halves.
 const _kSpeakGap = Duration(milliseconds: 500);
 
+/// How long an utterance may wait before it is no longer worth saying. Matches the
+/// server's monitor catch-up window, so what the phone speaks and what the server
+/// considers current mean the same thing.
+const _kMaxSpeechAge = Duration(minutes: 5);
+
 class Speaker {
   Speaker._();
   static final Speaker instance = Speaker._();
@@ -54,14 +59,42 @@ class Speaker {
   }
 
   /// "Message from <who>." — pause — the text.
-  Future<void> speakMessage({required String senderLabel, required String text}) {
+  ///
+  /// [radio] marks a Transcriber entry: something a receiver heard on the air and a
+  /// speech model guessed at, rather than something a person typed. It is announced
+  /// differently because a synthesised voice reads a garbled machine transcription in
+  /// exactly the same confident tone as a real message, and the preamble is the only
+  /// thing left distinguishing the two.
+  ///
+  /// [monitored] marks traffic that was not addressed to this operator. Said aloud so
+  /// nobody answers a question that was asked of somebody else.
+  Future<void> speakMessage({
+    required String senderLabel,
+    required String text,
+    bool radio = false,
+    bool monitored = false,
+  }) {
     final who = senderLabel.trim();
     final body = text.trim();
     if (body.isEmpty && who.isEmpty) return Future.value();
+    // Stamped when the utterance is queued, not when it is spoken — the whole point
+    // is to measure how long it waited.
+    final queuedAt = DateTime.now();
     _queue = _queue.then((_) async {
+      // Speech is real time and a backlog is not. Two messages take longer to read
+      // than they took to arrive, so on a busy net the queue grows without bound and
+      // the phone ends up narrating a net that finished ten minutes ago — steadily
+      // further behind, and impossible to interrupt. Anything that has waited this
+      // long has been overtaken by events; the text is still on screen.
+      if (DateTime.now().difference(queuedAt) > _kMaxSpeechAge) return;
       await _ensureReady();
-      if (who.isNotEmpty) {
-        await _speak('Message from $who.');
+      final preamble = radio
+          ? (who.isNotEmpty ? 'Heard on $who.' : 'Heard on the radio.')
+          : monitored
+              ? (who.isNotEmpty ? 'Monitored, from $who.' : '')
+              : (who.isNotEmpty ? 'Message from $who.' : '');
+      if (preamble.isNotEmpty) {
+        await _speak(preamble);
         await Future.delayed(_kSpeakGap);
       }
       await _speak(body);

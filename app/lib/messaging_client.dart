@@ -143,7 +143,42 @@ class MsgMessage {
   final bool hasPhoto;
   final int? photoW;
   final int? photoH;
-  const MsgMessage({required this.id, required this.conversationId, required this.ts, required this.text, this.broadcast = false, required this.fromId, this.fromKind, this.fromKey, this.fromShort, this.fromName = '', this.lat, this.lon, this.hasPhoto = false, this.photoW, this.photoH});
+
+  /// Who it went to — "All Trackers", "Log", or the recipient list. The server has
+  /// always sent this on history() and thread() and the app has always thrown it
+  /// away, because a message you received needed no explaining. Monitored traffic
+  /// does: half of it was addressed to somebody else.
+  final String? toLabel;
+
+  /// Recorded radio audio for a Transcriber entry. A flag and a URL, never bytes —
+  /// a phone that has not opted into audio simply never fetches it and so spends
+  /// nothing, which is the whole reason this is an attachment and not a stream.
+  final bool hasAudio;
+  final String? audioUrl;
+  final double? audioSecs;
+
+  /// True when this arrived through the monitor feed rather than being addressed to
+  /// us. Not from the server — the client knows which call it made. It exists so the
+  /// rest of the app can tell the difference at a glance, because almost everything
+  /// downstream needs to: no notification, no re-aiming a reply, its own cap on the
+  /// watch, and a different spoken preamble.
+  final bool monitored;
+
+  const MsgMessage({required this.id, required this.conversationId, required this.ts, required this.text, this.broadcast = false, required this.fromId, this.fromKind, this.fromKey, this.fromShort, this.fromName = '', this.lat, this.lon, this.hasPhoto = false, this.photoW, this.photoH, this.toLabel, this.hasAudio = false, this.audioUrl, this.audioSecs, this.monitored = false});
+
+  MsgMessage asMonitored() => MsgMessage(
+        id: id, conversationId: conversationId, ts: ts, text: text, broadcast: broadcast,
+        fromId: fromId, fromKind: fromKind, fromKey: fromKey, fromShort: fromShort,
+        fromName: fromName, lat: lat, lon: lon, hasPhoto: hasPhoto, photoW: photoW,
+        photoH: photoH, toLabel: toLabel, hasAudio: hasAudio, audioUrl: audioUrl,
+        audioSecs: audioSecs, monitored: true,
+      );
+
+  /// A Transcriber entry — something heard on the radio rather than typed by a person.
+  /// The distinction matters most when spoken: a synthesised voice reading a garbled
+  /// machine transcription sounds exactly as authoritative as a real message.
+  bool get isRadio => fromKind == 'transcriber' || toLabel == 'Log';
+
   factory MsgMessage.fromJson(Map<String, dynamic> j) => MsgMessage(
         id: (j['id'] as num).toInt(),
         conversationId: (j['conversation_id'] as num?)?.toInt() ?? 0,
@@ -160,6 +195,10 @@ class MsgMessage {
         hasPhoto: j['photo'] as bool? ?? false,
         photoW: (j['photo_w'] as num?)?.toInt(),
         photoH: (j['photo_h'] as num?)?.toInt(),
+        toLabel: j['to_label'] as String?,
+        hasAudio: j['has_audio'] as bool? ?? false,
+        audioUrl: j['audio_url'] as String?,
+        audioSecs: (j['audio_secs'] as num?)?.toDouble(),
       );
   String get senderLabel {
     if (fromKind == 'mobile' && fromShort != null && fromShort!.isNotEmpty) {
@@ -188,6 +227,21 @@ class PollResult {
   final List<MsgReceipt> receipts;
   final int lastId;
   const PollResult({required this.messages, required this.receipts, required this.lastId});
+}
+
+class MonitorResult {
+  final List<MsgMessage> messages;
+
+  /// How many the server declined to send — too old, or past the per-poll limit.
+  /// Shown rather than swallowed: a silently truncated catch-up reads to the user as
+  /// "nothing happened while I was away", which is the opposite of the truth.
+  final int skipped;
+
+  /// The high-water mark of everything the server matched, including what it
+  /// skipped. Advancing past the gap is what stops the same backlog being reported
+  /// on every poll for the rest of the event.
+  final int lastId;
+  const MonitorResult({required this.messages, required this.skipped, required this.lastId});
 }
 
 class SendResult {
@@ -281,6 +335,32 @@ class MessagingClient {
       return const SendResult(ok: false, error: 'Network error');
     }
   }
+
+  /// Read-only feed of the event's traffic, for a phone that wants to follow
+  /// everything rather than only what was addressed to it.
+  ///
+  /// Deliberately not part of poll(): this must never mark anything delivered or
+  /// read. Monitoring somebody else's message has to leave no trace on it, or their
+  /// sender's receipts start counting us as a recipient.
+  Future<MonitorResult> monitor(int sinceId, {required bool all, required bool radio}) async {
+    if (!all && !radio) return MonitorResult(messages: const [], skipped: 0, lastId: sinceId);
+    final d = await _post('monitor', {'since_id': sinceId, 'all': all, 'log': radio});
+    if (d == null) return MonitorResult(messages: const [], skipped: 0, lastId: sinceId);
+    return MonitorResult(
+      messages: ((d['messages'] as List?) ?? [])
+          .map((m) => MsgMessage.fromJson(m as Map<String, dynamic>).asMonitored())
+          .toList(),
+      skipped: (d['skipped'] as num?)?.toInt() ?? 0,
+      lastId: (d['last_id'] as num?)?.toInt() ?? sinceId,
+    );
+  }
+
+  /// Absolute URL for a radio clip. Unlike photoUrl() this carries no token: radio
+  /// audio is a static file served by Apache so that Cloudflare can cache it, which
+  /// is what keeps the origin out of the way when fifty phones want the same clip.
+  /// The URL is unguessable and only obtainable from the authenticated feed.
+  static String? audioUrl(MsgMessage m) =>
+      m.audioUrl == null ? null : '${MapConfig.serverBaseUrl}${m.audioUrl}';
 
   /// Auth-gated URL for a message's attached photo (token in the query so it can
   /// be loaded directly by an Image widget).
