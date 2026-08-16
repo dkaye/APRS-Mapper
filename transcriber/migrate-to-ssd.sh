@@ -196,7 +196,20 @@ if [ "$SET_BOOT" -eq 1 ]; then
     # by then and there is nothing left to fall back to — the recovery is to unplug the
     # SSD and power-cycle, which is why the first boot after this wants somebody within
     # reach of the machine.
+    # WARNING, and it is not obvious: this does not write the EEPROM. It writes
+    # recovery.bin and pieeprom.upd onto /boot/firmware -- the SD CARD -- and the
+    # firmware applies them on the next boot. So the change belongs to the CARD until
+    # it has been consumed, not to the machine.
+    #
+    # Move that card to another Pi before rebooting, and the other Pi reflashes its own
+    # EEPROM from it. That is how a boot-order change intended for a spare ended up on
+    # the production receiver, whose EEPROM this script had never been pointed at.
+    #
+    # So: reboot this machine before moving its card anywhere. `rpi-eeprom-update -r`
+    # cancels a pending update if you change your mind.
     echo "Setting BOOT_ORDER=0xf14 (USB first, SD second)..."
+    echo "NOTE: this stages an EEPROM update ON THE SD CARD. Reboot THIS Pi before"
+    echo "      moving the card to another machine, or that machine will apply it too."
     CFG=$(mktemp)
     rpi-eeprom-config > "$CFG"
     if grep -q '^BOOT_ORDER=' "$CFG"; then
