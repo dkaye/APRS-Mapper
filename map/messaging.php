@@ -89,10 +89,13 @@ function _msg_resolve_sender(MessagingDb $db, array $ctx, string $token): ?array
     // from their side -- messages sent and arrived -- while the new event had no
     // operator in it at all, so `participants` offered mobiles nobody to write to.
     //
-    // Mobiles do not have this problem: a session mints a fresh token, the old one stops
-    // matching, and the fallback below registers them in the current event. Only the
-    // operator's long-lived token needs moving across.
-    if ($p && in_array($p['kind'] ?? '', ['operator', 'transcriber'], true)
+    // Mobiles were left out of this on the reasoning that a session mints a fresh token
+    // each time. It does — but the app persists that token and restores it on launch, so
+    // a phone that was running when the event changed goes on resolving to its old-event
+    // participant exactly as an operator did. Nothing showed it, because pollFor() joins
+    // on deliveries and has no event predicate at all. The monitor feed IS event-scoped,
+    // and would have served the new event's traffic to a row sitting in the old one.
+    if ($p && in_array($p['kind'] ?? '', ['operator', 'transcriber', 'mobile'], true)
         && ($p['event'] ?? '') !== $ctx['event']) {
         return $db->participantById($db->rehomeSession($ctx['event'], $p, $token));
     }
@@ -541,6 +544,28 @@ function messaging_handle(string $action, array $body, array $ctx): void
             'messages'       => $db->history($event),
             'participants'   => $db->listParticipants($event),
             'can_manage'     => (bool)($ctx['authPerm']('messages.manage')),
+        ]);
+        exit;
+    }
+
+    case 'monitor': {
+        // Opt-in read-only feed of the event's traffic, for a phone that wants to hear
+        // everything rather than only what was addressed to it. Any subscribed
+        // participant may call it; the two flags are the client's own subscription
+        // settings ("all messages" / "radio traffic") passed through as filters.
+        //
+        // Note what is NOT here: no markDelivered, no markRead, no delivery rows of any
+        // kind. Monitoring a message must leave no trace on it, or the sender's receipts
+        // start counting strangers. MessagingDb::monitor() carries the full argument.
+        $sinceId = (int)($_GET['since_id'] ?? $body['since_id'] ?? 0);
+        $all     = !empty($_GET['all'] ?? $body['all'] ?? false);
+        $log     = !empty($_GET['log'] ?? $body['log'] ?? false);
+        $res     = $db->monitor($event, $sinceId, $all, $log);
+        echo json_encode([
+            'messages' => $res['messages'],
+            'skipped'  => $res['skipped'],
+            'last_id'  => $res['last_id'],
+            'max_age'  => MessagingDb::MONITOR_MAX_AGE,
         ]);
         exit;
     }

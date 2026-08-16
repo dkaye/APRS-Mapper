@@ -21,6 +21,11 @@
 if (!defined('MARSAPRS_MESSAGES_DB')) {
     define('MARSAPRS_MESSAGES_DB', getenv('MARSAPRS_MESSAGES_DB') ?: '/var/lib/marsaprs/messages.db');
 }
+// Radio audio, unlike every other attachment, lives INSIDE the web root so Apache
+// can serve it without PHP in the path. See the audioDir() comment for why.
+if (!defined('MARSAPRS_AUDIO_ROOT')) {
+    define('MARSAPRS_AUDIO_ROOT', getenv('MARSAPRS_AUDIO_ROOT') ?: '/var/www/html/radio');
+}
 
 class MessagingDb
 {
@@ -119,6 +124,16 @@ class MessagingDb
             $this->db->exec('ALTER TABLE messages ADD COLUMN prev_conversation_id INTEGER');
         if (!isset($cols['merged_ts']))
             $this->db->exec('ALTER TABLE messages ADD COLUMN merged_ts INTEGER');
+        // Migration: recorded radio audio for a Transcriber log entry. Deliberately
+        // NOT the `attachment` column. Overloading it and telling the two apart by
+        // file extension would mean `photo => !empty($m['attachment'])` reports true
+        // for an audio clip, and attachmentsForEvent() -- which flushEvent() uses to
+        // delete photos out of photoDir() -- would hand it filenames that live in the
+        // web root instead. Two kinds of file in two places want two columns.
+        if (!isset($cols['audio']))
+            $this->db->exec('ALTER TABLE messages ADD COLUMN audio TEXT');
+        if (!isset($cols['audio_secs']))
+            $this->db->exec('ALTER TABLE messages ADD COLUMN audio_secs REAL');
     }
 
     // ── Photo attachments ──────────────────────────────────────────────────────
@@ -144,6 +159,51 @@ class MessagingDb
     {
         return $this->one('SELECT * FROM messages WHERE id=:id', [':id'=>$mid]);
     }
+    // ── Radio audio ────────────────────────────────────────────────────────────
+    // Recorded radio audio is the one attachment served straight off disk by Apache,
+    // with no PHP and no auth check, and that is a deliberate departure from photos.
+    //
+    // The reason is fan-out. Fifty hands-free phones each fetching every clip of a
+    // busy net is on the order of ten thousand PHP invocations an hour, arriving in
+    // bursts because every client polls on a similar cadence — the bytes are nothing,
+    // but that request rate is not what you want in front of mod_php on an SD card.
+    // There is no multicast over HTTP; caching at the edge is the substitute, and an
+    // immutable public URL lets Cloudflare serve each clip while the origin serves it
+    // roughly once.
+    //
+    // That is available here only because amateur radio transmissions are public by
+    // law. The clip is not somebody's private attachment, which is exactly what a
+    // photo is — so PHOTOS DO NOT MOVE. They stay outside the web root, PHP-gated and
+    // Cache-Control: private. The filename still carries 6 random bytes, so the URL is
+    // a capability obtainable only from the authenticated feed rather than an index.
+    public static function audioDir(string $event): string
+    {
+        $safe = preg_replace('/[^A-Za-z0-9_\-]/', '_', $event);
+        if ($safe === '' || $safe === null) $safe = 'default';
+        return MARSAPRS_AUDIO_ROOT . '/' . $safe;
+    }
+    /** Public URL path for a stored clip — what the client actually fetches. */
+    public static function audioUrl(string $event, string $filename): string
+    {
+        $safe = preg_replace('/[^A-Za-z0-9_\-]/', '_', $event);
+        if ($safe === '' || $safe === null) $safe = 'default';
+        return '/radio/' . $safe . '/' . basename($filename);
+    }
+    public function setAudio(int $mid, string $filename, ?float $secs): void
+    {
+        $this->run('UPDATE messages SET audio=:a, audio_secs=:s WHERE id=:id',
+                   [':a'=>$filename, ':s'=>$secs, ':id'=>$mid]);
+    }
+    /** [id => audio filename] for every message in the event that has a clip. */
+    public function audioForEvent(string $event): array
+    {
+        $out = [];
+        foreach ($this->all("SELECT id, audio FROM messages WHERE event=:e AND audio IS NOT NULL AND audio<>''", [':e'=>$event]) as $r) {
+            $out[(int)$r['id']] = $r['audio'];
+        }
+        return $out;
+    }
+
     /** [id => attachment filename] for every message in the event that has a photo. */
     public function attachmentsForEvent(string $event): array
     {
@@ -566,9 +626,22 @@ class MessagingDb
     /** Hydrate message rows with sender identity + conversation info for the API. */
     private function hydrate(array $rows): array
     {
+        // Senders are fetched in one statement rather than one per message. This was a
+        // query per row, which nobody noticed while history() was an operator's
+        // occasional click; the monitor feed is polled by every subscribed phone, and a
+        // busy net makes that hundreds of statements a second against an SD card.
+        $senders = [];
+        $ids = array_values(array_unique(array_map(fn($m) => (int)$m['sender_id'], $rows)));
+        if ($ids) {
+            $ph = implode(',', array_fill(0, count($ids), '?'));
+            $st = $this->db->prepare("SELECT * FROM participants WHERE id IN ($ph)");
+            foreach ($ids as $i => $id) $st->bindValue($i + 1, $id, SQLITE3_INTEGER);
+            $r = $st->execute();
+            while ($row = $r->fetchArray(SQLITE3_ASSOC)) $senders[(int)$row['id']] = $row;
+        }
         $out = [];
         foreach ($rows as $m) {
-            $s = $this->participantById((int)$m['sender_id']);
+            $s = $senders[(int)$m['sender_id']] ?? null;
             $out[] = [
                 'id'              => (int)$m['id'],
                 'conversation_id' => (int)$m['conversation_id'],
@@ -586,6 +659,13 @@ class MessagingDb
                 'photo'           => !empty($m['attachment']),
                 'photo_w'         => isset($m['attach_w']) ? (int)$m['attach_w'] : null,
                 'photo_h'         => isset($m['attach_h']) ? (int)$m['attach_h'] : null,
+                // A flag and a URL, never the bytes. A phone that has not opted into
+                // audio simply never issues the fetch, and so spends nothing on it —
+                // which is the whole reason this is an attachment and not a stream.
+                'has_audio'       => !empty($m['audio']),
+                'audio_url'       => !empty($m['audio'])
+                                        ? self::audioUrl((string)$m['event'], (string)$m['audio']) : null,
+                'audio_secs'      => isset($m['audio_secs']) ? (float)$m['audio_secs'] : null,
             ];
         }
         return $out;
@@ -646,14 +726,18 @@ class MessagingDb
         return $msgs;
     }
 
-    /** Every message in the event (all-messages / admin view), each tagged with a
-     *  recipient (`to_label`) derived from its conversation. */
-    public function history(string $event): array
+    /** Tag each hydrated message with who it went TO, derived from its conversation.
+     *
+     *  Shared by history() and monitor(): both need the same answer over an event's
+     *  worth of messages, and both would otherwise pay a query per row for it. Two
+     *  statements cover the whole event regardless of how many messages there are. */
+    private function tagRecipients(string $event, array $msgs): array
     {
-        $msgs = $this->hydrate($this->all('SELECT * FROM messages WHERE event=:e ORDER BY id', [':e'=>$event]));
-        $kind = []; $members = [];
-        foreach ($this->all('SELECT id,kind FROM conversations WHERE event=:e', [':e'=>$event]) as $c) {
-            $kind[(int)$c['id']] = $c['kind'];
+        if (!$msgs) return $msgs;
+        $kind = []; $title = []; $members = [];
+        foreach ($this->all('SELECT id,kind,title FROM conversations WHERE event=:e', [':e'=>$event]) as $c) {
+            $kind[(int)$c['id']]  = $c['kind'];
+            $title[(int)$c['id']] = $c['title'];
         }
         foreach ($this->all(
             'SELECT cm.conversation_id AS cid, p.id, p.kind, p.key, p.short_id, p.display_name
@@ -666,12 +750,98 @@ class MessagingDb
             : $p['display_name'];
         foreach ($msgs as &$msg) {
             $cid = $msg['conversation_id'];
-            if (($kind[$cid] ?? '') === 'broadcast' || $msg['broadcast']) { $msg['to_label'] = 'All Trackers'; continue; }
-            if (($kind[$cid] ?? '') === 'log') { $msg['to_label'] = 'Log'; continue; }
+            $k   = $kind[$cid] ?? '';
+            if ($k === 'broadcast' || $msg['broadcast']) { $msg['to_label'] = 'All Trackers'; continue; }
+            // The log is where it went, and it is the only honest answer: the thread
+            // has no members, so deriving a recipient the usual way yields nothing.
+            if ($k === 'log') { $msg['to_label'] = 'Log'; continue; }
+            // Entity threads name the person, not the devices. thread() has always done
+            // this; history() did not, so the all-messages view labelled a multi-device
+            // recipient with a list of their phones.
+            if ($k === 'entity' || $k === 'entity_multi') {
+                $msg['to_label'] = (string)($title[$cid] ?? '');
+                continue;
+            }
             $others = array_filter($members[$cid] ?? [], fn($p) => (int)$p['id'] !== $msg['from_id']);
             $msg['to_label'] = implode(', ', array_map($label, $others));
         }
+        unset($msg);
         return $msgs;
+    }
+
+    /** Every message in the event (all-messages / admin view), each tagged with a
+     *  recipient (`to_label`) derived from its conversation. */
+    public function history(string $event): array
+    {
+        return $this->tagRecipients($event, $this->hydrate(
+            $this->all('SELECT * FROM messages WHERE event=:e ORDER BY id', [':e'=>$event])));
+    }
+
+    // How much history a reconnecting monitor is given. A device that has been off the
+    // network for an hour of a busy net must not come back to a thousand messages it
+    // will read aloud one after another, so the firehose is bounded — but the bound is
+    // reported rather than applied silently (see monitor()).
+    public const MONITOR_MAX_AGE     = 300;   // seconds
+    public const MONITOR_MAX_RESULTS = 50;
+
+    /**
+     * Read-only feed of an event's traffic for a subscribed monitor. Returns
+     * ['messages'=>[], 'skipped'=>int, 'last_id'=>int].
+     *
+     * THIS MUST NEVER WRITE A `deliveries` ROW. It is tempting to implement monitoring
+     * by giving the monitoring device delivery rows and reusing pollFor(), and that
+     * would corrupt every sender's receipts event-wide: receiptsForSender() counts all
+     * delivery rows for a message, so a 1:1 would start reporting "Delivered to 1 of 2"
+     * and its `pending` state would never clear. conversationsFor()'s unread subquery
+     * and recentInboundConversation() would likewise start pointing the monitor at
+     * strangers' threads. Reading is the entire contract.
+     *
+     * $includeMessages / $includeLog are the two subscriptions ("everything" and "radio
+     * traffic") expressed as filters over one query; with both false there is nothing
+     * to send and the caller gets an empty result without touching the database.
+     */
+    public function monitor(string $event, int $sinceId, bool $includeMessages, bool $includeLog): array
+    {
+        $empty = ['messages'=>[], 'skipped'=>0, 'last_id'=>$sinceId];
+        if (!$includeMessages && !$includeLog) return $empty;
+
+        // Which conversations are the log. Usually one; not assumed to be.
+        $logIds = [];
+        foreach ($this->all("SELECT id FROM conversations WHERE event=:e AND kind='log'", [':e'=>$event]) as $c) {
+            $logIds[] = (int)$c['id'];
+        }
+        $where = 'event = :e AND id > :since';
+        if (!$includeMessages) {
+            if (!$logIds) return $empty;                       // radio only, no log thread yet
+            $where .= ' AND conversation_id IN (' . implode(',', $logIds) . ')';
+        } elseif (!$includeLog && $logIds) {
+            $where .= ' AND conversation_id NOT IN (' . implode(',', $logIds) . ')';
+        }
+        $params = [':e'=>$event, ':since'=>$sinceId];
+
+        // Everything the cursor has not seen, before bounding. Both numbers come from
+        // the same predicate so `skipped` cannot disagree with what was returned, and
+        // last_id is the high-water mark of the WHOLE set — not of the rows sent — or a
+        // client that was bounded would re-request the same skipped range forever.
+        $agg     = $this->one("SELECT COUNT(*) AS n, MAX(id) AS hi FROM messages WHERE $where", $params);
+        $total   = (int)($agg['n'] ?? 0);
+        if ($total === 0) return $empty;
+        $lastId  = (int)($agg['hi'] ?? $sinceId);
+
+        // Newest first, then reversed: after a long outage the recent minutes are what
+        // is worth hearing, not the start of a backlog the event has already moved past.
+        $rows = $this->all(
+            "SELECT * FROM messages WHERE $where AND ts >= :cutoff ORDER BY id DESC LIMIT :n",
+            $params + [':cutoff'=>time() - self::MONITOR_MAX_AGE, ':n'=>self::MONITOR_MAX_RESULTS]);
+        $rows = array_reverse($rows);
+
+        return [
+            'messages' => $this->tagRecipients($event, $this->hydrate($rows)),
+            // Never silently truncated: the client says "42 messages skipped" so the
+            // gap is visible rather than looking like nothing happened.
+            'skipped'  => max(0, $total - count($rows)),
+            'last_id'  => $lastId,
+        ];
     }
 
     /** Conversation list for a participant: last message + unread count + the other

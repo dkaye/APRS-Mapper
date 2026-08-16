@@ -2,7 +2,7 @@
 
 **Author:** Doug Kaye (K6DRK) · **Copyright:** 2026 Doug Kaye. All Rights Reserved.
 
-**Version:** Server & Displays (v1.22.1); Mobile App (v1.22.1); iGates (v5.2); Transcribers (v1.1) — see [Versioning](#versioning)
+**Version:** Server & Displays (v1.23.0); Mobile App (v1.23.0); iGates (v5.2); Transcribers (v1.1) — see [Versioning](#versioning)
 
 ---
 
@@ -16,11 +16,11 @@
    - [iGate Diagnostics](#igate-diagnostics)
 5. [iGate Aggregation Relay](#igate-aggregation-relay)
    - [The problem it solves](#the-problem-it-solves) · [How it works](#how-it-works-the-data-path) · [Why it runs on a VPS](#why-it-runs-on-a-vps-not-at-home) · [Cloudflare DNS](#cloudflare-dns-for-the-relay) · [Unique per-gate logins](#unique-per-gate-logins-required) · [Turning it on/off](#turning-it-on-or-off-for-a-gate) · [Components](#components-and-where-they-live)
-6. [APRS Server (v1.22.1)](#aprs-server-v1221)
+6. [APRS Server (v1.23.0)](#aprs-server-v1230)
    - [Cloudflare Tunnel](#cloudflare-tunnel)
-7. [Display Pis (v1.22.1)](#display-pis-v1221)
+7. [Display Pis (v1.23.0)](#display-pis-v1230)
    - [Running a display Pi on Starlink](#running-a-display-pi-on-starlink)
-8. [Mobile Apps (v1.22.1)](#mobile-apps-v1221)
+8. [Mobile Apps (v1.23.0)](#mobile-apps-v1230)
    - [Architecture](#app-architecture) · [Location Sharing Flow](#location-sharing-flow) · [Smart Track](#smart-track) · [Building & Distributing](#building-distributing) · [Background Location](#background-location)
 9. [Transcribers](#transcribers)
    - [Calibration](#calibration) · [Transcriber Diagnostics](#transcriber-diagnostics)
@@ -70,7 +70,7 @@ sharing a number are things that ship together**, and everything else carries it
 
 | What | Version | Cadence |
 |------|---------|---------|
-| Server, Display Pis, web map, mobile apps | `1.22.1+42` | One release. They are one API contract and one deploy. |
+| Server, Display Pis, web map, mobile apps | `1.23.0+43` | One release. They are one API contract and one deploy. |
 | iGates | `5.2` | Independent. Its own image, its own nightly update. |
 | Transcribers | `1.1` | Independent, and new. |
 
@@ -90,7 +90,7 @@ anyone asks of it: which build is on that Pi in the field. `IGATE_VERSION` in
 dashboard so it reports what it is actually running.
 
 **Transcribers start at 1.0** for the same reason, and because starting a brand-new
-device at 1.22.1 would assert twenty-two releases that never happened. `VERSION` in
+device at 1.23.0 would assert twenty-three releases that never happened. `VERSION` in
 `transcriber/bin/transcriber.py` is the source of truth; `auto-update.sh` writes it to
 `/etc/transcriber/version` so a device can be identified without running anything.
 
@@ -120,18 +120,18 @@ APRS Radio (144.39 MHz)
            ▼
 ┌──────────────────────────────────────┐     ┌──────────────────────────────┐
 │           APRS-IS Network            │◀────│  Mobile App  (iOS/Android)   │
-│         noam.aprs2.net:14580         │     │  Flutter v1.22.1               │
+│         noam.aprs2.net:14580         │     │  Flutter v1.23.0               │
 └────────────────┬─────────────────────┘     │  TCP 14580 (inject position) │
                  │ TCP 14580                 └──────────────┬───────────────┘
 ┌────────────────▼─────────────────────┐                    │ HTTPS (map + config + session)
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.22.1      │
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.23.0      │
 │  aprsDaemon.php → trackers.json      │◀───────────────────┘
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.22.1
+│  Display Pi  (×2)      │  Pi 4 · v1.23.0
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -609,7 +609,7 @@ No gate's ability to gate ever depended on any of this.
 
 ---
 
-## APRS Server (v1.22.1)
+## APRS Server (v1.23.0)
 
 The server is a Raspberry Pi 4 running Apache and PHP. It receives APRS packets from
 APRS-IS, maintains live tracker state, serves the web map and admin tools, and hosts the
@@ -695,7 +695,7 @@ The tunnel token is obtained from the **Cloudflare Zero Trust dashboard**:
 
 ---
 
-## Display Pis (v1.22.1)
+## Display Pis (v1.23.0)
 
 A display Pi is a Raspberry Pi 4 running Chromium in fullscreen mode, pointed at
 `marsaprs.org`. It is a read-only display device — no long-term local configuration or data storage.
@@ -832,7 +832,7 @@ For details on using the map, see [USERGUIDE.MD](https://marsaprs.org/userguide.
 
 ---
 
-## Mobile Apps (v1.22.1)
+## Mobile Apps (v1.23.0)
 
 Native iOS and Android apps are available as an alternative to the web map. The apps provide the same live tracker display as the web map, and support background location sharing — GPS position continues to be reported even when the screen is locked or the app is not in the foreground.
 
