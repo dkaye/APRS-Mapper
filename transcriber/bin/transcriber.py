@@ -124,16 +124,26 @@ MAX_CLIP_SECONDS = 120
 # now and then finds it and switches transcription back on.
 BARREN_SEGMENTS = 2
 RECHECK_SEGMENTS = 5
-# How far transcription may fall behind before clips start being dropped. At a
-# transmission every few seconds this is minutes of backlog — far more than the careful
-# model needs to catch up between overs.
+# How far transcription may fall behind before clips start being dropped.
 #
 # Two limits, because the backlog is held in RAM. A count alone does not bound anything:
 # a clip runs to MAX_CLIP_SECONDS, so a hundred of them is nearly 400 MB, and /run is
-# smaller than that. Whichever limit is reached first, the oldest clips go — they are the
-# least worth keeping, and by then the log is minutes behind the radio anyway.
-CLIP_BACKLOG_CAP = 100
-CLIP_BACKLOG_BYTES = 128 * 1024 * 1024
+# smaller than that. Whichever limit is reached first, the oldest clips go.
+#
+# The count was 100, which sounded generous and was not. whisper.cpp costs the same per
+# CLIP whatever its length — it pads to a 30-second window — and on a Pi 4 that is ~13 s
+# for base.en against ~6 s for tiny.en (measured). A roll call is the worst case for
+# that: three short overs per station, one clip every ~8 s, so with the careful model
+# the backlog GROWS by about 5 s for every 8 s of net. An hour of it runs ~150 clips
+# behind, and at a cap of 100 the oldest were being discarded from roughly minute 40 —
+# transmissions gone from the log with nothing to show they ever existed, which is worst
+# precisely when somebody is measuring transcription quality.
+#
+# The bytes are not the binding limit and never were: a whole hour of a busy net is only
+# ~46 MB of 16 kHz mono. The count is what mattered, so it now covers a full net's worth
+# of clips even if whisper never finished one. Late is recoverable; dropped is not.
+CLIP_BACKLOG_CAP = 500
+CLIP_BACKLOG_BYTES = 256 * 1024 * 1024
 
 # whisper does not return nothing when it hears nothing. Fed static or silence it
 # produces these with complete confidence, and a log quietly filling with "Thank you."
