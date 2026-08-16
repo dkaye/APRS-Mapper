@@ -107,6 +107,11 @@ function transcriber_channels_for(string $device, ?string $path = null): array
             // to be named in this array — a setting that only works until the next poll
             // is worse than one that never worked, because it is believed.
             'record_until' => (string)($c['record_until'] ?? ''),
+            // Send the recorded audio to the server with each log entry, so a phone can
+            // hear what was actually said on a line that came out garbled. Named here,
+            // unlike record_until when it was first added, so the manager's checkbox
+            // actually reaches the device instead of surviving until the next poll.
+            'send_audio'   => (bool)($c['send_audio'] ?? false),
         ];
     }
     return $out;

@@ -49,7 +49,7 @@ import wave
 # 5.x — it is a separate device on its own cadence, and it is new. See Versioning in the
 # README. auto-update.sh copies this to /etc/transcriber/version so a device can be
 # identified without running anything.
-VERSION = "1.2"
+VERSION = "1.3"
 
 CONFIG = "/etc/transcriber/channels.json"
 # What must survive a reboot lives on the card: the outbox, so a transmission heard
@@ -245,6 +245,11 @@ class Channel:
         # duration and write down the deadline, never a switch somebody has to remember.
         self.record_until = record_deadline(d.get("record_until"))
         self.record_max_bytes = _cap(d.get("record_max_bytes"), RECORD_MAX_BYTES)
+        # Send the audio to the server alongside the transcription, so a phone can hear
+        # what was actually said on a line that came out garbled. Unlike record_until
+        # this IS in transcriber_channels_for()'s key list, so the manager's checkbox
+        # reaches the device on the next config poll rather than surviving a minute.
+        self.send_audio = bool(d.get("send_audio", False))
 
 
 def record_deadline(value):
@@ -304,6 +309,72 @@ def load_channel(path, channel_id):
     raise SystemExit(f"channel {channel_id!r} is not in {path}")
 
 
+# ── sending the audio ────────────────────────────────────────────────────────
+
+# AAC-LC in an .m4a, and not Opus, which is the better codec and the one this would
+# otherwise use. The clients are an iOS-heavy fleet plus a watchOS target, and Apple
+# does not decode Ogg Opus through AVFoundation — which is what just_audio uses on iOS.
+# AAC plays natively on all three. A five-second over is about 15 kB here against
+# Opus's 10: 1.5x on something already trivially small, to avoid a format that may
+# simply not play on most of the fleet.
+AUDIO_BITRATE = "24k"
+AUDIO_DIR = "audio"          # under the spool, on the card: the outbox may hold it for hours
+# A capped 120-second clip encodes to roughly 360 kB, so this is not close. It is here
+# because the server refuses anything larger and an entry must not be held back
+# retrying a clip that can never be accepted.
+AUDIO_MAX_BYTES = 8 * 1024 * 1024
+
+
+def encode_audio(wav_path, directory, when):
+    """Encode one clip for sending. Returns the .m4a path, or None.
+
+    None is an ordinary outcome, not an error worth failing over: the entry goes to the
+    log without audio. The transcription is the record and the recording is a check on
+    it, so there is no version of this where a missing encoder costs somebody a
+    transmission.
+    """
+    try:
+        os.makedirs(directory, exist_ok=True)
+        dest = os.path.join(directory, "%.6f.m4a" % when)
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+             "-i", wav_path, "-ac", "1", "-c:a", "aac", "-b:a", AUDIO_BITRATE, dest],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60)
+    except FileNotFoundError:
+        log.warning("ffmpeg is not installed, so entries will go to the log without "
+                    "audio. Install it (or re-run install.sh) to send it.")
+        return None
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning("could not encode the audio (%s); logging the text without it", e)
+        return None
+    if proc.returncode != 0:
+        log.warning("ffmpeg refused the clip (%s); logging the text without it",
+                    (proc.stderr or b"").decode("utf-8", "replace").strip()[:120])
+        _unlink(dest)
+        return None
+    try:
+        size = os.path.getsize(dest)
+    except OSError:
+        return None
+    if size <= 0 or size > AUDIO_MAX_BYTES:
+        log.warning("encoded clip is %s, which the server will not take; logging the "
+                    "text without it", size_text(size))
+        _unlink(dest)
+        return None
+    return dest
+
+
+def _unlink(path):
+    """Delete without caring. Used where a failure to clean up must not become the
+    failure being cleaned up after."""
+    if not path:
+        return
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
 # ── the outbox ───────────────────────────────────────────────────────────────
 
 class Outbox:
@@ -316,26 +387,56 @@ class Outbox:
 
     def __init__(self, directory):
         self.dir = directory
+        # Clips wait beside the entries that name them, and for the same reason: both
+        # have to outlive a reboot. Derived here rather than passed in so there is one
+        # answer to where a waiting clip lives — threading a spool path down through
+        # transcribe_loop's thread arguments to handle_clip is how a channel died with
+        # a NameError once already.
+        self.audio_dir = os.path.join(os.path.dirname(directory), AUDIO_DIR)
         os.makedirs(self.dir, exist_ok=True)
 
     # Retrying forever must not fill the disk. At roughly a transmission every few
     # seconds this is hours of backlog, far longer than any outage worth surviving.
     cap = 500
 
-    def add(self, text, ts):
+    def add(self, text, ts, audio=None, seconds=None):
         # Timestamp-named so the flush order is the order things were said.
+        #
+        # `audio` is a path, never the bytes: the entry may sit here for hours across an
+        # outage, and holding a few hundred kB of AAC in a JSON file per over is not
+        # what the card is for. The file it names lives under the spool for the same
+        # reason the outbox does — the clip itself is on tmpfs and will not survive a
+        # reboot, which is exactly the case the outbox exists to survive.
         path = os.path.join(self.dir, f"{ts:.6f}.json")
         with open(path, "w", encoding="utf-8") as fh:
-            json.dump({"text": text, "ts": ts, "attempts": 0, "next_try": 0}, fh)
+            json.dump({"text": text, "ts": ts, "attempts": 0, "next_try": 0,
+                       "audio": audio, "seconds": seconds}, fh)
         waiting = self.pending()
         for stale in waiting[:max(0, len(waiting) - self.cap)]:
             log.error("outbox full; dropping the oldest entry")
-            os.unlink(stale)
+            self._discard(stale)
 
     def pending(self):
         return sorted(
             os.path.join(self.dir, f) for f in os.listdir(self.dir) if f.endswith(".json")
         )
+
+    def _discard(self, path, entry=None):
+        """Drop an entry and the clip it named.
+
+        Every route out of the outbox comes through here, because the clip is the one
+        thing that does not clean itself up: the entry is a file this class made and the
+        audio is a file it was handed, and forgetting the second on any one of the four
+        exits (sent, refused, unreadable, evicted) fills the card over a long net.
+        """
+        if entry is None:
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    entry = json.load(fh)
+            except (OSError, ValueError):
+                entry = {}
+        _unlink(entry.get("audio"))
+        _unlink(path)
 
     def flush(self, post):
         """Send what is waiting, oldest first. Stops at the first entry that could not
@@ -347,15 +448,20 @@ class Outbox:
                 with open(path, encoding="utf-8") as fh:
                     entry = json.load(fh)
             except (OSError, ValueError):
-                os.unlink(path)          # unreadable: nothing to retry forever over
+                self._discard(path)      # unreadable: nothing to retry forever over
                 continue
 
             if entry.get("next_try", 0) > now:
                 return False             # backing off; later entries wait their turn
 
-            result = post(entry["text"])
+            # The whole entry, not its fields spread out: this signature has changed
+            # once already to carry the audio, and the next thing an entry needs to say
+            # should not change it again. An outbox written by an older build simply has
+            # no "audio" key, which reads as no clip rather than as an error — an upgrade
+            # mid-net must not strand whatever was already waiting.
+            result = post(entry)
             if result == POST_OK or result == POST_DROP:
-                os.unlink(path)
+                self._discard(path, entry)
                 continue
 
             # Back off so a wrong token or a dead server is not hammered every half
@@ -378,9 +484,52 @@ class Outbox:
 POST_OK, POST_RETRY, POST_DROP = "ok", "retry", "drop"
 
 
-def post_log_entry(channel, text, timeout=15):
-    """One log entry. POST_OK, POST_RETRY or POST_DROP."""
-    body = json.dumps({"token": channel.token, "text": text}).encode()
+def _multipart(fields, filename, blob):
+    """A multipart/form-data body. Returns (content_type, body).
+
+    Hand-built because this is the only multipart request the device makes and the
+    alternative is a dependency on the Pi for thirty lines. index.php already routes
+    multipart into $_POST/$_FILES, so the server end needs nothing.
+    """
+    boundary = "----MARSTranscriber" + os.urandom(12).hex()
+    out = bytearray()
+    for name, value in fields.items():
+        if value is None:
+            continue
+        out += (f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
+                f"{value}\r\n").encode()
+    out += (f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="audio"; filename="{filename}"\r\n'
+            f"Content-Type: audio/mp4\r\n\r\n").encode()
+    out += blob + b"\r\n"
+    out += f"--{boundary}--\r\n".encode()
+    return "multipart/form-data; boundary=" + boundary, bytes(out)
+
+
+def post_log_entry(channel, text, audio=None, seconds=None, timeout=15):
+    """One log entry, with its audio if there is any. POST_OK, POST_RETRY or POST_DROP.
+
+    A clip that has gone missing — the card cleared, an older outbox entry, a failed
+    encode — sends the entry without it rather than holding the text back. The
+    transcription is the record; the audio is a check on it.
+    """
+    blob = None
+    if audio:
+        try:
+            with open(audio, "rb") as fh:
+                blob = fh.read()
+        except OSError as e:
+            log.warning("could not read the clip for this entry (%s); sending the text "
+                        "on its own", e)
+    if blob:
+        content_type, body = _multipart(
+            {"token": channel.token, "text": text,
+             "audio_secs": ("%.2f" % seconds) if seconds else None},
+            os.path.basename(audio), blob)
+    else:
+        content_type = "application/json"
+        body = json.dumps({"token": channel.token, "text": text}).encode()
     req = urllib.request.Request(
         f"{channel.server}/index.php?messaging=log",
         data=body,
@@ -392,7 +541,7 @@ def post_log_entry(channel, text, timeout=15):
         #
         # Any explicit agent satisfies it, so this one says what it actually is rather
         # than impersonating a browser.
-        headers={"Content-Type": "application/json",
+        headers={"Content-Type": content_type,
                  "User-Agent": f"MARS-Transcriber/{VERSION} (+https://marsaprs.org)"},
         method="POST",
     )
@@ -2199,7 +2348,8 @@ def transcribe_loop(work, channel, whisper, model, outbox, stopping, carrier=Non
             # hundreds of those a day.
             if carrier is not None and is_capped(path):
                 carrier.verdict(bool(logged))
-            outbox.flush(lambda t: post_log_entry(channel, t))
+            outbox.flush(lambda e: post_log_entry(
+                channel, e["text"], e.get("audio"), e.get("seconds")))
         except Exception:                       # noqa: BLE001 - one bad clip must not
             log.exception("transcription failed")   # stop the channel transcribing
 
@@ -2254,7 +2404,15 @@ def handle_clip(channel, path, whisper, model, outbox, retention=None):
         if written != keep:
             log.info("callsigns (%.1fs): %r → %r", seconds, keep[:60], written[:60])
         log.info("logging (%.1fs): %s", seconds, written[:80])
-        outbox.add(written, time.time())
+        # Encoded here, before the clip is unlinked at the end of this function, and
+        # onto the card rather than tmpfs: the outbox may hold this for hours across an
+        # outage and /run does not survive a reboot. Only for an entry that is actually
+        # being logged — a clip whose transcription was discarded as a courtesy beep has
+        # nothing for anyone to listen back to.
+        clip = None
+        if getattr(channel, "send_audio", False):
+            clip = encode_audio(path, outbox.audio_dir, time.time())
+        outbox.add(written, time.time(), clip, seconds)
         logged = written
     # Last, after the entry is safely in the outbox, so nothing bound for the log waits
     # on the card. loggable() answered "" for one of several reasons and the manifest
@@ -2507,7 +2665,8 @@ def main(argv=None):
                 for path in settled_clips(clips):
                     if args.once:
                         handle_clip(channel, path, whisper, model, outbox, retention)
-                        outbox.flush(lambda t: post_log_entry(channel, t))
+                        outbox.flush(lambda e: post_log_entry(
+                            channel, e["text"], e.get("audio"), e.get("seconds")))
                     else:
                         enqueue(path)
             if args.once:

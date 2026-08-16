@@ -33,8 +33,12 @@ echo "=== Transcriber v1.0 install ==="
 # rtl-sdr gives rtl_fm and rtl_eeprom; sox does the silence splitting; the build
 # tools are for whisper.cpp, which has no usable ARM package.
 apt-get update -qq
+# ffmpeg encodes the clip a channel sends with its log entry. AAC rather than Opus, and
+# not because Opus is worse: Apple does not decode Ogg Opus through AVFoundation, which
+# is what the phone app's player uses on iOS, so on this fleet Opus is the codec that
+# might not play at all. See AUDIO_BITRATE in transcriber.py.
 apt-get install -y --no-install-recommends \
-    rtl-sdr sox libsox-fmt-all curl git build-essential cmake python3
+    rtl-sdr sox libsox-fmt-all curl git build-essential cmake python3 ffmpeg
 
 # The DVB-T driver claims the dongle on plug-in and rtl_fm then cannot open it.
 # Blacklisting is the standard fix and is what the iGates do.
@@ -72,6 +76,25 @@ if ! /usr/local/bin/whisper-cli -h >/dev/null 2>&1; then
     echo "  whisper.cpp installed and verified"
 else
     echo "whisper.cpp already installed and working; leaving it alone"
+fi
+
+# ── audio encoder ────────────────────────────────────────────────────────────
+# Checked by encoding something rather than by looking for the binary. A packaged
+# ffmpeg built without the AAC encoder would pass every test anyone thinks to run --
+# it is installed, it is executable, it reports a version -- and fail only when a
+# channel tries to send a clip, where the failure reads as "audio just doesn't work
+# on this device". The same shape of mistake as the whisper-cli one above.
+#
+# Not fatal. A receiver with no encoder still hears, transcribes and logs; it just
+# cannot send the audio, and the worker says so once and carries on.
+if printf '' | ffmpeg -hide_banner -loglevel error -nostdin -y \
+        -f lavfi -i "sine=frequency=440:duration=0.2" \
+        -ac 1 -c:a aac -b:a 24k "$TMP/probe.m4a" >/dev/null 2>&1 \
+        && [ -s "$TMP/probe.m4a" ]; then
+    echo "  ffmpeg can encode AAC"
+else
+    echo "  WARNING: ffmpeg cannot encode AAC here. Channels will log text only;" >&2
+    echo "           the mobile app will not be able to play back the audio." >&2
 fi
 
 # ── models ───────────────────────────────────────────────────────────────────

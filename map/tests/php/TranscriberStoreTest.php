@@ -124,11 +124,36 @@ class TranscriberStoreTest extends TestCase
     {
         $c = transcriber_channels_for('rx1', $this->file)[0];
 
-        foreach (['id','label','token','frequency','serial','squelch','model','enabled'] as $k) {
+        foreach (['id','label','token','frequency','serial','squelch','model','enabled',
+                  'record_until','send_audio'] as $k) {
             $this->assertArrayHasKey($k, $c);
         }
         $this->assertSame(0, $c['squelch'], 'squelch is an int, not the string JSON gave us');
         $this->assertIsBool($c['enabled']);
+    }
+
+    /** This array is the whole contract with the device: transcriber-config.timer
+     *  rebuilds /etc/transcriber/channels.json from exactly what comes back, so a key
+     *  missing here is a key the receiver silently loses within the minute. A setting
+     *  that works until the next poll is worse than one that never worked, because it
+     *  is believed. record_until spent a release like that. */
+    public function testASettingSavedInTheManagerReachesTheDevice(): void
+    {
+        $cfg = transcriber_load($this->file);
+        $cfg['channels'][0]['send_audio'] = true;
+        transcriber_save($cfg, $this->file);
+
+        $c = transcriber_channels_for('rx1', $this->file)[0];
+
+        $this->assertTrue($c['send_audio']);
+        $this->assertIsBool($c['send_audio']);
+    }
+
+    /** A channel that has never been asked reads as off, not as absent — the worker
+     *  takes a missing key as false, and the two must agree. */
+    public function testAudioIsOffUntilItIsAskedFor(): void
+    {
+        $this->assertFalse(transcriber_channels_for('rx1', $this->file)[0]['send_audio']);
     }
 
     // ── storage ───────────────────────────────────────────────────────────────

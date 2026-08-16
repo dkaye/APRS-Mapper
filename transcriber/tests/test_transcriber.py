@@ -21,6 +21,7 @@
 import json
 import math
 import os
+import re
 import struct
 import sys
 import tempfile
@@ -1629,9 +1630,9 @@ def test_outbox_order_and_retry():
 
         # Second send fails: everything after it must stay put, or a later entry would
         # overtake an earlier one and the log would be out of order.
-        def flaky(text):
-            sent.append(text)
-            return transcriber.POST_OK if text != "second" else transcriber.POST_RETRY
+        def flaky(entry):
+            sent.append(entry["text"])
+            return transcriber.POST_OK if entry["text"] != "second" else transcriber.POST_RETRY
 
         check("stops at the failure", box.flush(flaky), False)
         check("sent up to the failure", sent, ["first", "second"])
@@ -1645,7 +1646,7 @@ def test_outbox_order_and_retry():
 
         clear_backoff(box)
         sent.clear()
-        ok = lambda t: (sent.append(t), transcriber.POST_OK)[1]
+        ok = lambda e: (sent.append(e["text"]), transcriber.POST_OK)[1]
         check("drains once the server recovers", box.flush(ok), True)
         check("in order", sent, ["second", "third"])
         check("nothing left", box.pending(), [])
@@ -1659,7 +1660,7 @@ def test_outbox_drops_corrupt_entries():
             fh.write("{not json")
         box.add("good", 1001.0)
         sent = []
-        check("flushes past it", box.flush(lambda t: (sent.append(t), transcriber.POST_OK)[1]), True)
+        check("flushes past it", box.flush(lambda e: (sent.append(e["text"]), transcriber.POST_OK)[1]), True)
         check("kept the good one", sent, ["good"])
         check("removed the bad one", box.pending(), [])
 
@@ -1673,7 +1674,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         n = int(self.headers.get("Content-Length", 0))
-        entry = json.loads(self.rfile.read(n) or b"{}")
+        raw = self.rfile.read(n)
+        ct = self.headers.get("Content-Type", "")
+        if "multipart/form-data" in ct:
+            entry = parse_multipart(raw, ct)
+        else:
+            entry = json.loads(raw or b"{}")
+        entry["_ct"] = ct
         entry["_ua"] = self.headers.get("User-Agent", "")
         Handler.seen.append(entry)
         self.send_response(Handler.status)
@@ -1684,6 +1691,33 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, *_a):
         pass
+
+
+def parse_multipart(raw, content_type):
+    """Enough multipart to check what the device actually sent.
+
+    Deliberately parses the wire bytes rather than trusting the builder that produced
+    them: the point of these tests is that PHP's parser will find the fields, and a
+    round trip through the same code that made them would prove nothing about that.
+    """
+    boundary = content_type.split("boundary=", 1)[1].strip().encode()
+    out = {}
+    for part in raw.split(b"--" + boundary):
+        if not part.strip(b"-\r\n"):
+            continue
+        head, _, payload = part.partition(b"\r\n\r\n")
+        payload = payload.rstrip(b"\r\n")
+        m = re.search(rb'name="([^"]+)"', head)
+        if not m:
+            continue
+        name = m.group(1).decode()
+        if b"filename=" in head:
+            out["_file_" + name] = payload
+            fn = re.search(rb'filename="([^"]*)"', head)
+            out["_filename"] = fn.group(1).decode() if fn else ""
+        else:
+            out[name] = payload.decode("utf-8", "replace")
+    return out
 
 
 def serve():
@@ -1739,6 +1773,231 @@ def test_unreachable_server_is_retried():
     print("post_log_entry — server down")
     ch = channel_for(1)          # nothing listening on port 1
     check("retries", transcriber.post_log_entry(ch, "x", timeout=2), transcriber.POST_RETRY)
+
+
+# ── sending the audio ────────────────────────────────────────────────────────
+
+def test_an_entry_with_no_clip_is_still_plain_json():
+    print("post_log_entry — no audio")
+    srv = serve()
+    ch = channel_for(srv.server_address[1])
+    Handler.seen.clear()
+    Handler.status, Handler.body = 200, b'{"ok":true}'
+
+    transcriber.post_log_entry(ch, "aid three clear")
+
+    # The overwhelmingly common case, and it must not have grown a multipart envelope
+    # around it just because the code can now build one.
+    check("stays JSON", Handler.seen[-1]["_ct"], "application/json")
+    check("and carries the text", Handler.seen[-1]["text"], "aid three clear")
+    srv.shutdown()
+
+
+def test_a_clip_is_sent_alongside_the_text():
+    print("post_log_entry — with audio")
+    srv = serve()
+    ch = channel_for(srv.server_address[1])
+    Handler.seen.clear()
+    Handler.status, Handler.body = 200, b'{"ok":true}'
+
+    with tempfile.TemporaryDirectory() as d:
+        clip = os.path.join(d, "1000.500000.m4a")
+        with open(clip, "wb") as fh:
+            fh.write(b"\x00\x00\x00\x20ftypM4A ")
+        check("accepted", transcriber.post_log_entry(ch, "aid three clear", clip, 4.5),
+              transcriber.POST_OK)
+
+    sent = Handler.seen[-1]
+    check("switches to multipart", "multipart/form-data" in sent["_ct"], True)
+    check("token is a field", sent["token"], "tok-rx")
+    check("text is a field", sent["text"], "aid three clear")
+    check("duration goes with it", sent["audio_secs"], "4.50")
+    check("the bytes arrive intact", sent["_file_audio"], b"\x00\x00\x00\x20ftypM4A ")
+    check("named .m4a", sent["_filename"].endswith(".m4a"), True)
+    # Still the explicit agent: Cloudflare's bot rule does not care that the body shape
+    # changed, and a 403 here would look exactly like a rejected token.
+    check("still identifies itself", sent["_ua"].startswith("MARS-Transcriber/"), True)
+    srv.shutdown()
+
+
+def test_a_missing_clip_does_not_hold_back_the_entry():
+    print("post_log_entry — clip gone")
+    srv = serve()
+    ch = channel_for(srv.server_address[1])
+    Handler.seen.clear()
+    Handler.status, Handler.body = 200, b'{"ok":true}'
+
+    # The card was cleared, or the entry outlived its clip. The transcription is the
+    # record; losing the audio must not lose the line.
+    check("sends anyway", transcriber.post_log_entry(ch, "aid three clear", "/nope/gone.m4a"),
+          transcriber.POST_OK)
+    check("as plain JSON", Handler.seen[-1]["_ct"], "application/json")
+    check("with the text intact", Handler.seen[-1]["text"], "aid three clear")
+    srv.shutdown()
+
+
+def test_the_outbox_carries_the_clip_and_cleans_it_up():
+    print("Outbox — audio")
+    with tempfile.TemporaryDirectory() as d:
+        box = transcriber.Outbox(os.path.join(d, "outbox"))
+        os.makedirs(box.audio_dir, exist_ok=True)
+        clip = os.path.join(box.audio_dir, "1000.000000.m4a")
+        with open(clip, "wb") as fh:
+            fh.write(b"audio")
+        box.add("heard this", 1000.0, clip, 3.25)
+
+        seen = []
+        check("delivered", box.flush(lambda e: (seen.append(e), transcriber.POST_OK)[1]), True)
+        check("the entry named its clip", seen[0]["audio"], clip)
+        check("and its duration", seen[0]["seconds"], 3.25)
+        # The clip is the one thing that does not clean itself up: the entry is a file
+        # the outbox made, the audio is a file it was handed. Leaking it on any exit
+        # fills the card over a long net.
+        check("the clip is gone once sent", os.path.exists(clip), False)
+        check("and so is the entry", box.pending(), [])
+
+
+def test_a_refused_entry_takes_its_clip_with_it():
+    print("Outbox — audio, entry refused")
+    with tempfile.TemporaryDirectory() as d:
+        box = transcriber.Outbox(os.path.join(d, "outbox"))
+        os.makedirs(box.audio_dir, exist_ok=True)
+        clip = os.path.join(box.audio_dir, "1000.000000.m4a")
+        with open(clip, "wb") as fh:
+            fh.write(b"audio")
+        box.add("malformed somehow", 1000.0, clip, 1.0)
+
+        box.flush(lambda e: transcriber.POST_DROP)
+        check("dropped entries do not leak their audio", os.path.exists(clip), False)
+
+
+def test_a_clip_survives_while_its_entry_is_still_waiting():
+    print("Outbox — audio, still retrying")
+    with tempfile.TemporaryDirectory() as d:
+        box = transcriber.Outbox(os.path.join(d, "outbox"))
+        os.makedirs(box.audio_dir, exist_ok=True)
+        clip = os.path.join(box.audio_dir, "1000.000000.m4a")
+        with open(clip, "wb") as fh:
+            fh.write(b"audio")
+        box.add("heard this", 1000.0, clip, 1.0)
+
+        box.flush(lambda e: transcriber.POST_RETRY)
+        # The whole reason the outbox exists is an outage. Deleting the clip on a failed
+        # attempt would mean everything sent after one blinks arrives without audio.
+        check("kept for the retry", os.path.exists(clip), True)
+        check("and so is the entry", len(box.pending()), 1)
+
+
+def test_evicting_an_old_entry_deletes_its_clip_too():
+    print("Outbox — audio, cap eviction")
+    with tempfile.TemporaryDirectory() as d:
+        box = transcriber.Outbox(os.path.join(d, "outbox"))
+        os.makedirs(box.audio_dir, exist_ok=True)
+        box.cap = 2
+        clips = []
+        for i in range(4):
+            c = os.path.join(box.audio_dir, "%d.m4a" % i)
+            with open(c, "wb") as fh:
+                fh.write(b"audio")
+            clips.append(c)
+            box.add("entry %d" % i, 1000.0 + i, c, 1.0)
+
+        check("only the cap is kept", len(box.pending()), 2)
+        check("the evicted clips went with them", [os.path.exists(c) for c in clips],
+              [False, False, True, True])
+
+
+def test_an_outbox_written_by_an_older_build_still_flushes():
+    print("Outbox — entry from an older build")
+    with tempfile.TemporaryDirectory() as d:
+        box = transcriber.Outbox(os.path.join(d, "outbox"))
+        # No "audio" or "seconds" key at all — exactly what upgrading mid-net leaves
+        # behind. It must read as "no clip", not as a broken entry.
+        with open(os.path.join(box.dir, "1000.000000.json"), "w") as fh:
+            json.dump({"text": "from before", "ts": 1000.0, "attempts": 0, "next_try": 0}, fh)
+
+        seen = []
+        check("flushes", box.flush(lambda e: (seen.append(e), transcriber.POST_OK)[1]), True)
+        check("with its text", seen[0]["text"], "from before")
+        check("and no clip", seen[0].get("audio"), None)
+
+
+def test_a_missing_encoder_costs_the_audio_and_nothing_else():
+    print("encode_audio — no ffmpeg")
+    with tempfile.TemporaryDirectory() as d:
+        wav = os.path.join(d, "a.wav")
+        write_wav(wav, 1.0)
+        real = transcriber.subprocess.run
+
+        def missing(*_a, **_k):
+            raise FileNotFoundError("ffmpeg")
+
+        transcriber.subprocess.run = missing
+        try:
+            # None is an ordinary outcome here, not an error to fail over. A Pi without
+            # ffmpeg must keep transcribing and logging exactly as it did before.
+            check("returns nothing rather than raising",
+                  transcriber.encode_audio(wav, os.path.join(d, "audio"), 1000.0), None)
+        finally:
+            transcriber.subprocess.run = real
+
+
+def test_a_failed_encode_leaves_nothing_behind():
+    print("encode_audio — encoder fails")
+    with tempfile.TemporaryDirectory() as d:
+        wav = os.path.join(d, "a.wav")
+        write_wav(wav, 1.0)
+        out = os.path.join(d, "audio")
+        real = transcriber.subprocess.run
+
+        class Failed:
+            returncode = 1
+            stderr = b"Invalid data found when processing input"
+
+        def fails(cmd, **_k):
+            # Half-write the destination, as a real encoder would before giving up.
+            os.makedirs(out, exist_ok=True)
+            with open(cmd[-1], "wb") as fh:
+                fh.write(b"partial")
+            return Failed()
+
+        transcriber.subprocess.run = fails
+        try:
+            check("no path returned",
+                  transcriber.encode_audio(wav, out, 1000.0), None)
+            # A truncated .m4a that reached the server would be a clip every subscribed
+            # phone fetches and fails to play.
+            check("and no half-written file left", os.listdir(out), [])
+        finally:
+            transcriber.subprocess.run = real
+
+
+def test_an_oversized_clip_is_refused_locally():
+    print("encode_audio — too big for the server")
+    with tempfile.TemporaryDirectory() as d:
+        wav = os.path.join(d, "a.wav")
+        write_wav(wav, 1.0)
+        out = os.path.join(d, "audio")
+        real = transcriber.subprocess.run
+
+        class Ok:
+            returncode = 0
+            stderr = b""
+
+        def huge(cmd, **_k):
+            os.makedirs(out, exist_ok=True)
+            with open(cmd[-1], "wb") as fh:
+                fh.write(b"x" * (transcriber.AUDIO_MAX_BYTES + 1))
+            return Ok()
+
+        transcriber.subprocess.run = huge
+        try:
+            # Caught here rather than at the server: an entry must never be held back
+            # retrying a clip that can never be accepted.
+            check("refused", transcriber.encode_audio(wav, out, 1000.0), None)
+            check("and deleted", os.listdir(out), [])
+        finally:
+            transcriber.subprocess.run = real
 
 
 # ── the whole pipeline, no radio ─────────────────────────────────────────────
@@ -2354,6 +2613,17 @@ if __name__ == "__main__":
         test_a_single_over_is_one_clip,
         test_outbox_order_and_retry, test_outbox_drops_corrupt_entries,
         test_posting, test_unreachable_server_is_retried,
+        test_an_entry_with_no_clip_is_still_plain_json,
+        test_a_clip_is_sent_alongside_the_text,
+        test_a_missing_clip_does_not_hold_back_the_entry,
+        test_the_outbox_carries_the_clip_and_cleans_it_up,
+        test_a_refused_entry_takes_its_clip_with_it,
+        test_a_clip_survives_while_its_entry_is_still_waiting,
+        test_evicting_an_old_entry_deletes_its_clip_too,
+        test_an_outbox_written_by_an_older_build_still_flushes,
+        test_a_missing_encoder_costs_the_audio_and_nothing_else,
+        test_a_failed_encode_leaves_nothing_behind,
+        test_an_oversized_clip_is_refused_locally,
         test_a_clip_is_queued_once_not_once_per_loop,
         test_pipeline_logs_speech, test_pipeline_discards_hallucination,
         test_pipeline_corrects_a_callsign_but_only_after_the_guards,

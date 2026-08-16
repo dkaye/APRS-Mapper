@@ -153,6 +153,7 @@ if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
             'model'     => in_array($c['model'] ?? '', ['ggml-tiny.en.bin', 'ggml-base.en.bin'], true)
                            ? $c['model'] : 'ggml-tiny.en.bin',
             'enabled'   => !empty($c['enabled']),
+            'send_audio' => !empty($c['send_audio']),
             'token'     => $chTokens[$id] ?? transcriber_token(),
         ];
     }
@@ -489,12 +490,18 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
         traffic. Worth it only if you are reading the log for identifiers rather than for
         the gist.</td></tr>
     <tr><th>On</th><td>Off stops it logging at once, without losing the setup.</td></tr>
+    <tr><th>Audio</th><td>Sends the recording along with the transcription, so someone on
+        the mobile app can hear what was actually said on a line that came out garbled.
+        The clip goes only to phones that asked for it — nothing is pushed — and is kept
+        for six hours, while the transcription stays in the log for good. Costs the
+        receiver a little upload per transmission, so leave it off on a channel nobody is
+        listening to on a phone.</td></tr>
   </table>
   <div class="table-wrap">
     <table>
       <thead><tr>
         <th>Receiver</th><th>Frequency (MHz)</th><th>Heard as</th><th>Dongle serial</th>
-        <th>Squelch</th><th>Calibration</th><th>Accuracy</th><th>On</th><th>Log token</th>
+        <th>Squelch</th><th>Calibration</th><th>Accuracy</th><th>On</th><th>Audio</th><th>Log token</th>
         <th></th>
       </tr></thead>
       <tbody id="channels"></tbody>
@@ -1379,6 +1386,10 @@ function renderRows() {
               ? `<input type="checkbox" ${c.enabled ? 'checked' : ''}
                         onchange="data.channels[${i}].enabled = this.checked; touch()">`
               : ro(c.enabled ? 'On' : 'Off')}</td>
+        <td>${CAN_EDIT
+              ? `<input type="checkbox" ${c.send_audio ? 'checked' : ''}
+                        onchange="data.channels[${i}].send_audio = this.checked; touch()">`
+              : ro(c.send_audio ? 'On' : 'Off')}</td>
         <td>${tokenCell(c, 'channel', c.id)}</td>
         <td>${CAN_EDIT ? `<button class="row-btn danger" onclick="delChannel(${i})">Remove</button>` : ''}</td>
     </tr>`).join('');
@@ -1405,7 +1416,7 @@ if (CAN_EDIT) {
     $('add-channel').onclick = () => {
         data.channels.push({id: '', device: data.devices[0]?.host || '', label: '',
                             mhz: '', serial: '', model: MODELS[0].file,
-                            enabled: true, has_token: false});
+                            enabled: true, send_audio: false, has_token: false});
         render(); touch();
     };
 }
