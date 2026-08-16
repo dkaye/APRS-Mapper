@@ -2,7 +2,7 @@
 
 **Author:** Doug Kaye (K6DRK) · **Copyright:** 2026 Doug Kaye. All Rights Reserved.
 
-**Version:** Server & Displays (v1.23.0); Mobile App (v1.23.0); iGates (v5.2); Transcribers (v1.1) — see [Versioning](#versioning)
+**Version:** Server & Displays (v1.23.0); Mobile App (v1.23.0); iGates (v5.2); Transcribers (v1.3) — see [Versioning](#versioning)
 
 ---
 
@@ -838,6 +838,47 @@ Native iOS and Android apps are available as an alternative to the web map. The 
 
 **Location:** the `app/` subdirectory of this repo (`app/lib`, `app/ios`, `app/android`, `app/pubspec.yaml`). It was merged in from the former standalone `aprs-map` repo, with history preserved.
 
+### Monitoring the whole event
+
+Normally a phone sees only what was addressed to it. That is not a policy — it is how
+the messaging core works: the delivered feed is a join on `deliveries`, and a message
+not addressed to you has no row there. Transcriber log entries have no rows at all, so
+the radio has always been invisible to phones.
+
+Three independent switches, in the 👂 sheet on the Messages screen:
+
+| | |
+|---|---|
+| **All messages** | everything anyone sends, whoever it was addressed to |
+| **Radio traffic** | what the receivers heard on the air, transcribed |
+| **Play radio audio** | fetch the recording when you tap an entry |
+
+They are independent because following the event as text costs almost nothing and the
+audio is the part that costs cellular data — so nothing is ever implied.
+
+**Monitored traffic never raises a notification.** None of it was sent to this
+operator, and on a busy net that is a message every few seconds; a phone that buzzed
+for each would be unusable inside a minute. It is read aloud (subject to the same mute
+switch as everything else) and it goes nowhere near the watch — `AppState.swift`
+promises that every message the wrist holds gets announced, and a firehose would break
+that, churn the message cap, and let a push-to-talk reply aim at whichever stranger
+spoke last. The wrist still hears it all, because the phone speaks it.
+
+**Speech says where a line came from** — "Heard on Simulcast:" rather than "Message
+from:". A synthesised voice reads a garbled machine transcription in exactly the same
+confident tone as a real message, and the preamble is the only thing telling them
+apart. The speech queue also drops anything that has waited five minutes: speech is
+real time and a backlog is not, so without that the phone narrates a net that finished
+ten minutes ago and cannot be interrupted.
+
+**Audio is pulled, never pushed, and never in bulk.** A clip is fetched when you tap
+it. The transcription is what you follow; the audio answers "what did they actually
+say" about the one line in fifty that came out garbled, and pre-fetching the other
+forty-nine is data spent on clips nobody plays.
+
+Catch-up after an outage is bounded and says so — "42 monitored messages skipped"
+rather than a silent hole where half an hour of the net used to be.
+
 **The Admin "Hide" toggle applies to both clients.** `index.php?json` has always carried a `hidden` flag per tracker; the app simply never read it, so a tracker hidden from the web map kept its marker on the phone. `TrackerData.showsOnMap` (position **and** not hidden — kept distinct from `hasPosition`, since a hidden tracker still has a position and the drawer still reports its age) now gates the marker, the drawer keeps the entry dimmed, and a tracker hidden while selected has its selection and breadcrumb trail dropped together — otherwise a trail is left drawn to nothing. Hiding is about map clutter, not reachability: a hidden tracker remains addressable in messaging on both clients.
 
 ### App Architecture
@@ -1252,6 +1293,35 @@ occupying the channel for minutes. A log quietly filling with invented lines is 
 than one that misses a transmission, because nobody thinks to question it. Entries queue
 on disk and flush in order, stopping at the first failure so a later one cannot overtake
 an earlier.
+
+**A channel can send the audio with the entry.** The **Audio** checkbox in the manager
+encodes each transmission it logs and posts the clip alongside the transcription, so
+someone on the phone can hear what was actually said on a line that came out garbled.
+Off by default: it costs the receiver a little upload per transmission and is only
+worth it on a channel somebody is actually following on a phone.
+
+AAC-LC in an `.m4a`, not Opus. Opus is the better codec and would be the obvious pick —
+but Apple does not decode Ogg Opus through AVFoundation, which is what the phone app's
+player uses on iOS, so on this fleet Opus is the format that might not play at all. AAC
+costs about 15 kB for a five-second over against Opus's 10, which is the right trade on
+something already trivially small.
+
+Nothing about the audio may cost a transmission. A missing `ffmpeg`, an encoder that
+refuses the clip, a file gone missing under a waiting outbox entry — each logs the text
+on its own and says so once. The transcription is the record; the recording is a check
+on it. Clips ride in the outbox as a *path* rather than as bytes, on the card beside the
+entries that name them, because an entry may wait there for hours across an outage and a
+reboot is exactly what the outbox exists to survive.
+
+On the server the clip lands **inside the web root** at an unguessable name and is served
+by Apache with `Cache-Control: public, immutable` — no PHP in the path. Fifty hands-free
+phones each fetching every clip of a busy net is on the order of ten thousand mod_php
+invocations an hour, in bursts, which is not what belongs in front of an SD card. There
+is no multicast over HTTP; edge caching is the substitute, and it means the Pi serves
+each clip roughly once however many phones want it. That is available only because
+amateur transmissions are public by law — **photos are private and do not move**; they
+stay outside the web root behind `?messaging=photo`. Clips expire after six hours; the
+log entry does not.
 
 **Callsigns are what a net log most needs right, and what whisper is worst at.** One
 station on this receiver came back as `K-60RK`, `K-6 DRK`, `6 delta rho mu` and

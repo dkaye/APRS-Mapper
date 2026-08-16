@@ -100,6 +100,36 @@ actions require the session token from `auth`/`join`.
 ### `POST index.php?messaging=<action>` — web messaging (browser client)
 `send`, `subscribe`, `rename` — used by the browser UI, not the app.
 
+### `POST index.php?messaging=monitor` — follow the whole event (opt-in)
+
+Read-only view of an event's traffic, for a client that wants everything rather than
+only what was addressed to it. Any subscribed participant may call it.
+
+Request: `{token, since_id, all, log}`. `all` includes ordinary messages, `log`
+includes Transcriber entries; they are independent filters, and with both false the
+result is empty. Response: `{messages, skipped, last_id, max_age}`.
+
+Two properties this endpoint guarantees, both of which matter more than they look:
+
+- **It writes nothing.** No `deliveries` row is created, updated or read. Monitoring a
+  message must leave no trace on it — `receiptsForSender()` counts every delivery row a
+  message has, so one extra would make a 1:1 report "Delivered to 1 of 2" to its sender
+  and never clear its pending state, silently and event-wide.
+- **`last_id` covers what was skipped.** Catch-up is bounded by age (`max_age`) and
+  count, and `skipped` says how many were dropped. `last_id` is the high-water mark of
+  everything matched, not of what was returned — otherwise a client that was bounded
+  re-requests the same gap on every poll forever.
+
+Messages carry `to_label` (who it went to) and, for a Transcriber entry with a
+recording, `has_audio` / `audio_url` / `audio_secs`. **Never the audio bytes** — a
+client that has not opted into audio simply never fetches it and so spends nothing.
+
+`audio_url` is a plain static path (`/radio/<event>/<id>-<hex>.m4a`) served by Apache
+with `Cache-Control: public, immutable`, not a PHP endpoint. Radio audio is public by
+law and cacheable at the edge, which is what lets one origin serve fifty listening
+phones. **Photos are the opposite** and stay on the auth-gated `?messaging=photo` path
+with `Cache-Control: private`.
+
 ### `GET index.php?clientstatus` — connected-client list (admin/Clients modal)
 
 ---
