@@ -60,18 +60,18 @@ class Speaker {
 
   /// "Message from <who>." — pause — the text.
   ///
-  /// [radio] marks a Transcriber entry: something a receiver heard on the air and a
-  /// speech model guessed at, rather than something a person typed. It is announced
-  /// differently because a synthesised voice reads a garbled machine transcription in
-  /// exactly the same confident tone as a real message, and the preamble is the only
-  /// thing left distinguishing the two.
-  ///
   /// [monitored] marks traffic that was not addressed to this operator. Said aloud so
   /// nobody answers a question that was asked of somebody else.
+  ///
+  /// There is deliberately no option here for radio traffic. It was tried: a
+  /// synthesised voice reading a machine transcript of an over is slower than the
+  /// traffic it describes, so it falls further behind all net; it discards tone and
+  /// urgency; and it pronounces a mangled callsign in exactly the same confident
+  /// cadence as a correct one. The recording itself is better on every count, so radio
+  /// is played rather than spoken — see MonitorService.kPrefRadioAudio.
   Future<void> speakMessage({
     required String senderLabel,
     required String text,
-    bool radio = false,
     bool monitored = false,
   }) {
     final who = senderLabel.trim();
@@ -88,11 +88,9 @@ class Speaker {
       // long has been overtaken by events; the text is still on screen.
       if (DateTime.now().difference(queuedAt) > _kMaxSpeechAge) return;
       await _ensureReady();
-      final preamble = radio
-          ? (who.isNotEmpty ? 'Heard on $who.' : 'Heard on the radio.')
-          : monitored
-              ? (who.isNotEmpty ? 'Monitored, from $who.' : '')
-              : (who.isNotEmpty ? 'Message from $who.' : '');
+      final preamble = monitored
+          ? (who.isNotEmpty ? 'Monitored, from $who.' : '')
+          : (who.isNotEmpty ? 'Message from $who.' : '');
       if (preamble.isNotEmpty) {
         await _speak(preamble);
         await Future.delayed(_kSpeakGap);

@@ -319,17 +319,38 @@ class _MessagingScreenState extends State<MessagingScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               const ListTile(
-                title: Text('Monitor the event', style: TextStyle(fontWeight: FontWeight.bold)),
+                title: Text('Follow the whole event',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
                 subtitle: Text(
-                  'Normally you see only what was sent to you. These add everything '
-                  'else. Monitored traffic never buzzes or alerts — it appears here, '
-                  'and is read aloud if you have that on.',
+                  'Normally you only get what was sent to you. These two add the rest. '
+                  'Neither one ever buzzes or alerts you — this is for listening in, '
+                  'not for being interrupted.',
                 ),
               ),
               const Divider(height: 1),
               SwitchListTile(
-                title: const Text('All messages'),
-                subtitle: const Text("Everything anyone sends, whoever it was addressed to"),
+                secondary: const Icon(Icons.radio),
+                title: const Text('Listen to the radio'),
+                subtitle: const Text(
+                  'Plays the off-air recording of each transmission a few seconds '
+                  'after it ends — the operators\' actual voices, not a computer '
+                  'reading a transcript. Uses cellular data.',
+                ),
+                value: m.playingRadioAudio,
+                onChanged: (v) async {
+                  await m.setRadioAudio(v);
+                  setSheet(() {});
+                  if (mounted) setState(() {});
+                },
+              ),
+              const Divider(height: 1),
+              SwitchListTile(
+                secondary: const Icon(Icons.forum_outlined),
+                title: const Text("See everyone's messages"),
+                subtitle: const Text(
+                  'Every message sent in this event, whoever it came from and whoever '
+                  'it was meant for.',
+                ),
                 value: m.monitoringAll,
                 onChanged: (v) async {
                   await m.setAll(v);
@@ -338,25 +359,18 @@ class _MessagingScreenState extends State<MessagingScreen> {
                 },
               ),
               SwitchListTile(
-                title: const Text('Radio traffic'),
-                subtitle: const Text('What the receivers heard on the air, transcribed'),
-                value: m.monitoringRadio,
-                onChanged: (v) async {
-                  await m.setRadio(v);
-                  setSheet(() {});
-                  if (mounted) setState(() {});
-                },
-              ),
-              SwitchListTile(
-                title: const Text('Play radio audio'),
-                subtitle: const Text(
-                  'Fetch the recording when you tap an entry, to hear what was '
-                  'actually said. Uses cellular data; off by default.',
+                secondary: const Icon(Icons.record_voice_over_outlined),
+                title: const Text('Read those messages aloud'),
+                subtitle: Text(
+                  m.monitoringAll
+                      ? 'A synthesised voice speaks each one as it arrives, so you can '
+                        'keep your hands and eyes on something else.'
+                      : "Turn on \"See everyone's messages\" first.",
                 ),
-                value: m.playingAudio,
-                onChanged: m.monitoringRadio
+                value: m.speakingAll && m.monitoringAll,
+                onChanged: m.monitoringAll
                     ? (v) async {
-                        await m.setAudio(v);
+                        await m.setSpeakAll(v);
                         setSheet(() {});
                         if (mounted) setState(() {});
                       }
@@ -620,7 +634,9 @@ class _MessagingScreenState extends State<MessagingScreen> {
               padding: EdgeInsets.only(top: m.hasPhoto ? 6 : 0),
               child: Text(m.text, style: TextStyle(fontSize: 14, color: me ? Colors.white : Colors.black87)),
             ),
-          if (m.hasAudio && MonitorService.instance.playingAudio) _bubbleAudio(m),
+          // Unconditional, unlike the auto-play setting: tapping this IS the request,
+          // so it needs no opt-in. Nothing is fetched until the tap.
+          if (m.hasAudio) _bubbleAudio(m),
           Padding(
             padding: const EdgeInsets.only(top: 2),
             child: Text(

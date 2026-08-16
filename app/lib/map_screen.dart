@@ -439,37 +439,88 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     // NO NOTIFICATION, deliberately, and this is the constraint the whole feature
     // lives inside. None of this was addressed to this operator; on a busy net it is
     // a message every few seconds, and a phone that buzzed for each would be unusable
-    // within a minute. Speech is the entire channel.
-    //
-    // Note what is NOT here: the "skip if the Messages screen is open" rule that
-    // _handleInboundMessage uses. That rule is right for a delivered message, because
-    // the open screen is already showing it. Monitored traffic is not shown anywhere
-    // — there is no monitor view yet — so applying the same rule would make the
-    // feature do nothing at all for anyone with the screen open, which is precisely
-    // the person following the net.
+    // within a minute.
+    final mon = MonitorService.instance;
+
+    // Radio entries are handled as SOUND, never as speech. The entry's text came from
+    // a speech model and is carrier for the clip URL; reading it aloud was tried and
+    // is strictly worse than the recording — slower than the traffic it describes, and
+    // it states a mangled callsign in the same confident voice as a correct one.
+    final radio = batch.where((m) => m.isRadio).toList();
+    if (mon.playingRadioAudio && radio.isNotEmpty) {
+      for (final m in radio) {
+        final url = MessagingClient.audioUrl(m);
+        if (url != null) _enqueueRadioClip(m, url);
+      }
+    }
+
+    // Typed traffic is the only thing spoken, and only if asked. Short, infrequent,
+    // and written by a person — the case where a synthesised voice actually helps.
+    if (!mon.monitoringAll || !mon.speakingAll) return;
+    final spoken = batch.where((m) => !m.isRadio).toList();
+    if (spoken.isEmpty) return;
     final p = await SharedPreferences.getInstance();
-    if (!(p.getBool('aprs_msg_speak') ?? true)) return;   // muted: the same switch as the rest
+    if (!(p.getBool('aprs_msg_speak') ?? true)) return;   // the global mute
     if (!mounted) return;
 
     // A batch arrives after an outage or a slow poll. Reading out fifteen messages
     // back to back is not hands-free operation, it is a phone that cannot be
     // interrupted — so past a handful, say what happened instead of reciting it.
-    if (batch.length > _kMaxSpokenBatch) {
+    if (spoken.length > _kMaxSpokenBatch) {
       unawaited(Speaker.instance.speakMessage(
         senderLabel: '',
-        text: '${batch.length} monitored messages received.',
+        text: '${spoken.length} monitored messages received.',
       ));
       return;
     }
-    for (final m in batch) {
+    for (final m in spoken) {
       unawaited(Speaker.instance.speakMessage(
-        senderLabel: m.senderLabel,
-        text: m.text,
-        radio: m.isRadio,
-        monitored: true,
-      ));
+        senderLabel: m.senderLabel, text: m.text, monitored: true));
     }
   }
+
+  // ── Radio audio playback ──────────────────────────────────────────────────
+
+  /// Clips waiting to be played, oldest first. A queue rather than a bare play() call
+  /// because overs arrive in bursts and two of them playing at once is noise.
+  final List<({int id, String url, int ts})> _radioQueue = [];
+  bool _radioPlaying = false;
+
+  void _enqueueRadioClip(MsgMessage m, String url) {
+    if (_radioQueue.any((c) => c.id == m.id)) return;
+    _radioQueue.add((id: m.id, url: url, ts: m.ts));
+    unawaited(_drainRadioQueue());
+  }
+
+  Future<void> _drainRadioQueue() async {
+    if (_radioPlaying) return;
+    _radioPlaying = true;
+    try {
+      while (_radioQueue.isNotEmpty && mounted) {
+        final clip = _radioQueue.removeAt(0);
+        // Stale clips are dropped rather than played. Audio is real time and a backlog
+        // is not: after an outage, working through ten minutes of old overs would put
+        // the listener further behind with every one, and the live traffic they
+        // actually want is at the back of the queue.
+        final age = DateTime.now().millisecondsSinceEpoch ~/ 1000 - clip.ts;
+        if (age > _kMaxRadioClipAge.inSeconds) continue;
+        try {
+          await _audioPlayer.setUrl(clip.url);
+          await _audioPlayer.play();
+          // just_audio's play() resolves when playback completes, which is what keeps
+          // these sequential.
+        } catch (_) {
+          // A clip that will not fetch or decode is skipped in silence. The radio is
+          // not worth an error dialog, and the next over is already on its way.
+        }
+      }
+    } finally {
+      _radioPlaying = false;
+    }
+  }
+
+  /// How old a recording may be before playing it does more harm than good.
+  static const _kMaxRadioClipAge = Duration(minutes: 3);
 
   /// Past this many at once, the batch is summarised rather than read out. Speech is
   /// real time and a backlog is not.

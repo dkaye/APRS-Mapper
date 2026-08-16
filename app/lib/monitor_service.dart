@@ -28,32 +28,44 @@ class MonitorService {
   MonitorService._();
   static final MonitorService instance = MonitorService._();
 
-  /// Receive every message in the event, not only those addressed to this device.
+  /// (a) Play the off-air recording of each transmission as it arrives.
+  ///
+  /// The actual radio, not a voice reading a transcription of it. Those are very
+  /// different products: a synthesised voice reading a machine transcript is slower
+  /// than the traffic it describes, loses every bit of tone, and states a mangled
+  /// callsign in the same confident cadence as a correct one. This plays what was
+  /// really said.
+  static const kPrefRadioAudio = 'monitor_radio_audio';
+
+  /// (b) Receive every message in the event, whoever sent it and whoever it was for.
   static const kPrefAll = 'monitor_all_messages';
 
-  /// Receive Transcriber entries — what the receivers heard on the air.
-  static const kPrefRadio = 'monitor_radio';
-
-  /// Fetch and play the recording attached to a radio entry. Independent of
-  /// [kPrefRadio] on purpose: following the radio as text costs almost nothing,
-  /// and the audio is the part that costs cellular data.
-  static const kPrefAudio = 'monitor_radio_audio';
+  /// (c) Speak those messages aloud. Only meaningful with [kPrefAll], and gated on it
+  /// in the UI — this is about typed traffic, which is short and arrives rarely enough
+  /// to be worth hearing. It is deliberately NOT offered for the radio, where the
+  /// recording itself is available and strictly better.
+  static const kPrefSpeakAll = 'monitor_speak_all';
 
   /// Where the monitor feed has read up to. Separate from the delivered feed's
   /// cursor, and persisted: an app restart mid-net must not replay the event.
   static const _kPrefCursor = 'monitor_last_id';
 
   bool _all = false;
-  bool _radio = false;
-  bool _audio = false;
+  bool _radioAudio = false;
+  bool _speakAll = false;
   int _cursor = 0;
   bool _loaded = false;
   bool _inFlight = false;
 
+  bool get playingRadioAudio => _radioAudio;
   bool get monitoringAll => _all;
-  bool get monitoringRadio => _radio;
-  bool get playingAudio => _audio;
-  bool get enabled => _all || _radio;
+  bool get speakingAll => _speakAll;
+  bool get enabled => _all || _radioAudio;
+
+  /// Log entries are requested whenever radio audio is wanted, because the clip URL
+  /// arrives on the log entry — that is the only way to learn a recording exists. The
+  /// entry's TEXT is not shown or spoken for this option; it is carrier for the audio.
+  bool get wantsLog => _radioAudio;
 
   final _messages = StreamController<List<MsgMessage>>.broadcast();
 
@@ -71,15 +83,21 @@ class MonitorService {
     if (_loaded) return;
     final p = await SharedPreferences.getInstance();
     _all = p.getBool(kPrefAll) ?? false;
-    _radio = p.getBool(kPrefRadio) ?? false;
-    _audio = p.getBool(kPrefAudio) ?? false;
+    _radioAudio = p.getBool(kPrefRadioAudio) ?? false;
+    _speakAll = p.getBool(kPrefSpeakAll) ?? false;
     _cursor = p.getInt(_kPrefCursor) ?? 0;
     _loaded = true;
   }
 
+  Future<void> setRadioAudio(bool v) => _setFlag(kPrefRadioAudio, v, (x) => _radioAudio = x);
   Future<void> setAll(bool v) => _setFlag(kPrefAll, v, (x) => _all = x);
-  Future<void> setRadio(bool v) => _setFlag(kPrefRadio, v, (x) => _radio = x);
-  Future<void> setAudio(bool v) => _setFlag(kPrefAudio, v, (x) => _audio = x);
+  // Speech changes nothing about what is fetched, so it does not reset the cursor the
+  // way a subscription does — turning it on mid-net should not replay anything.
+  Future<void> setSpeakAll(bool v) async {
+    _speakAll = v;
+    final p = await SharedPreferences.getInstance();
+    await p.setBool(kPrefSpeakAll, v);
+  }
 
   Future<void> _setFlag(String key, bool v, void Function(bool) assign) async {
     assign(v);
@@ -112,7 +130,7 @@ class MonitorService {
     if (!_loaded || !enabled || _inFlight) return;
     _inFlight = true;
     try {
-      final res = await client.monitor(_cursor, all: _all, radio: _radio);
+      final res = await client.monitor(_cursor, all: _all, radio: wantsLog);
       if (res.lastId != _cursor) {
         _cursor = res.lastId;
         final p = await SharedPreferences.getInstance();
