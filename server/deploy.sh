@@ -125,6 +125,14 @@ ssh "$REMOTE" "sudo mkdir -p /var/lib/marsaprs && \
     sudo chown www-data:www-data /var/lib/marsaprs/users.db 2>/dev/null || true && \
     sudo chmod 660 /var/lib/marsaprs/users.db 2>/dev/null || true"
 
+echo "Ensuring radio audio directory..."
+# Inside the web root, unlike every other attachment, so Apache serves clips without
+# PHP and Cloudflare can cache them — see MessagingDb::audioDir(). 755/644 rather than
+# the photos' 770/660 for the same reason: these are meant to be readable.
+ssh "$REMOTE" "sudo mkdir -p /var/www/html/radio && \
+    sudo chown www-data:www-data /var/www/html/radio && \
+    sudo chmod 755 /var/www/html/radio"
+
 echo "Updating Apache config..."
 ssh "$REMOTE" "sudo rsync -a $STAGING/apache/ /etc/apache2/sites-available/ && \
     sudo a2enmod proxy proxy_http 2>/dev/null || true && \

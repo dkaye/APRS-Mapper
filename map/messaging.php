@@ -248,6 +248,42 @@ function _msg_store_photo(string $event, int $mid, array $file): ?array
     return ['filename'=>$fn, 'w'=>(int)($info[0] ?? 0), 'h'=>(int)($info[1] ?? 0)];
 }
 
+/**
+ * Validate + store a recorded radio clip for message $mid. Returns metadata or null.
+ *
+ * Unlike a photo this lands INSIDE the web root, so Apache serves it without PHP and
+ * Cloudflare can cache it — see MessagingDb::audioDir() for why that is worth the
+ * departure, and why photos must not follow. Everything else about the shape is the
+ * photo path: 6 random bytes in the name so the URL is a capability, and validation
+ * that does not trust the uploader's word for what the file is.
+ *
+ * There is no getimagesize() equivalent, so the check is the ISO base media container
+ * signature: bytes 4..8 of an .m4a are the literal 'ftyp'. That is not a deep parse,
+ * but it is enough that a mislabelled or truncated upload is rejected here rather than
+ * becoming a clip that every subscribed phone fetches and fails to play.
+ */
+function _msg_store_audio(string $event, int $mid, array $file, ?float $secs = null): ?array
+{
+    if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) return null;
+    $size = (int)($file['size'] ?? 0);
+    if ($size <= 0 || $size > 8 * 1024 * 1024) return null;    // 8 MB: a capped over is ~400 KB
+    $tmp = $file['tmp_name'] ?? '';
+    if ($tmp === '' || !is_readable($tmp)) return null;
+    $ext = strtolower(pathinfo((string)($file['name'] ?? ''), PATHINFO_EXTENSION));
+    if ($ext !== 'm4a') return null;
+    $head = @file_get_contents($tmp, false, null, 0, 12);
+    if ($head === false || strlen($head) < 12 || substr($head, 4, 4) !== 'ftyp') return null;
+
+    $dir = MessagingDb::audioDir($event);
+    if (!is_dir($dir) && !@mkdir($dir, 0755, true)) return null;
+    $fn   = $mid . '-' . bin2hex(random_bytes(6)) . '.m4a';
+    $dest = $dir . '/' . $fn;
+    if (!@move_uploaded_file($tmp, $dest) && !@copy($tmp, $dest)) return null;
+    // World-readable, unlike a photo's 0660: Apache serves this one directly.
+    @chmod($dest, 0644);
+    return ['filename'=>$fn, 'secs'=>$secs];
+}
+
 function messaging_handle(string $action, array $body, array $ctx): void
 {
     header('Content-Type: application/json');
@@ -517,7 +553,22 @@ function messaging_handle(string $action, array $body, array $ctx): void
         // exists only as history, which is the whole point of it.
         $conv = $db->resolveLogConversation($event);
         $id   = $db->insertMessage($event, $conv, (int)$me['id'], $text, [], false);
-        echo json_encode(['ok'=>true, 'id'=>$id, 'conversation_id'=>$conv, 'kind'=>'log']);
+        // A Transcriber may attach the audio it transcribed. The entry is written
+        // first and stands on its own: a clip that fails to store leaves the
+        // transcription in the log rather than losing the entry with it, which is the
+        // right way round — the text is the record and the audio is the check on it.
+        $audio = null;
+        if (($me['kind'] ?? '') === 'transcriber' && !empty($_FILES['audio'])) {
+            $secs  = isset($body['audio_secs']) ? (float)$body['audio_secs'] : null;
+            $audio = _msg_store_audio($event, $id, $_FILES['audio'], $secs);
+            if ($audio) $db->setAudio($id, $audio['filename'], $audio['secs']);
+            // Expire old clips occasionally rather than on every over — the check is a
+            // query plus some unlinks, and on a busy net this runs every few seconds.
+            // Keyed off the id so it is spread evenly and needs no timer or cron.
+            if ($id % 20 === 0) $db->pruneAudio($event);
+        }
+        echo json_encode(['ok'=>true, 'id'=>$id, 'conversation_id'=>$conv, 'kind'=>'log',
+                          'audio'=>$audio ? MessagingDb::audioUrl($event, $audio['filename']) : null]);
         exit;
     }
 

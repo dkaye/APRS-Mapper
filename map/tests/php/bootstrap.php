@@ -6,6 +6,10 @@ $repoRoot = dirname(__DIR__, 3);
 // MessagingDb resolves its path from this constant when none is passed; tests always
 // pass an explicit temp file, but the constant must exist for the class to load.
 if (!defined('MARSAPRS_MESSAGES_DB')) define('MARSAPRS_MESSAGES_DB', sys_get_temp_dir() . '/marsaprs_test_messages.db');
+// Radio audio lives in the web root in production. Point it at a temp tree here, or a
+// test that stores or prunes a clip would reach for /var/www/html — silently doing
+// nothing on a dev Mac, and deleting real files on the server.
+if (!defined('MARSAPRS_AUDIO_ROOT')) define('MARSAPRS_AUDIO_ROOT', sys_get_temp_dir() . '/marsaprs_test_radio');
 require_once $repoRoot . '/map/messaging_db.php';
 // Only defines functions at load; the ?messaging= dispatch happens in index.php.
 require_once $repoRoot . '/map/messaging.php';

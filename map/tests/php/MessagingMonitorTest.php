@@ -349,6 +349,66 @@ class MessagingMonitorTest extends TestCase
         $this->assertSame(['this event traffic'], $texts);
     }
 
+    // ── audio storage and expiry ──────────────────────────────────────────────
+
+    /** Clips expire; the log entry does not. The transcription is the record and the
+     *  recording is a check on it, so losing the audio must not lose the line. */
+    public function testPruneRemovesOldClipsButKeepsTheEntry(): void
+    {
+        $dir = MessagingDb::audioDir($this->ev);
+        @mkdir($dir, 0755, true);
+        $old = $this->logEntry('an hour ago');
+        $new = $this->logEntry('just now');
+        foreach ([$old, $new] as $id) {
+            $fn = $id . '-aaaaaaaaaaaa.m4a';
+            file_put_contents($dir . '/' . $fn, 'x');
+            $this->db->setAudio($id, $fn, 3.0);
+        }
+        $this->backdate($old, time() - MessagingDb::AUDIO_MAX_AGE - 60);
+
+        $this->assertSame(1, $this->db->pruneAudio($this->ev));
+
+        // history(), not monitor(): the backdated entry is also outside the monitor
+        // feed's own age bound, which would hide it for an unrelated reason.
+        $msgs = $this->db->history($this->ev);
+        $this->assertCount(2, $msgs, 'the entries themselves must survive');
+        $this->assertFalse($msgs[0]['has_audio'], 'expired clip must not still be advertised');
+        $this->assertTrue($msgs[1]['has_audio']);
+        $this->assertFileDoesNotExist($dir . '/' . $old . '-aaaaaaaaaaaa.m4a');
+        $this->assertFileExists($dir . '/' . $new . '-aaaaaaaaaaaa.m4a');
+
+        foreach (glob($dir . '/*') ?: [] as $f) @unlink($f);
+        @rmdir($dir);
+    }
+
+    /** A URL is only ever advertised for a clip that is actually there. */
+    public function testPruneIsIdempotent(): void
+    {
+        $this->logEntry('no clip at all');
+        $this->assertSame(0, $this->db->pruneAudio($this->ev));
+        $this->assertSame(0, $this->db->pruneAudio($this->ev));
+    }
+
+    /** Radio audio lives inside the web root so Apache can serve it; photos must not
+     *  follow it there. If these two ever return the same tree, the reasoning in
+     *  audioDir() has been lost and private attachments have become public. */
+    public function testAudioAndPhotoStorageAreSeparateTrees(): void
+    {
+        $this->assertNotSame(MessagingDb::audioDir($this->ev), MessagingDb::photoDir($this->ev));
+        $this->assertStringNotContainsString(MessagingDb::photoBaseDir(), MessagingDb::audioDir($this->ev));
+    }
+
+    /** Event names reach the filesystem, so they are sanitised the same way photoDir()
+     *  does it — a path separator in an event name must not escape the audio root. */
+    public function testAudioDirSanitisesTheEventName(): void
+    {
+        $dir = MessagingDb::audioDir('../../etc');
+        $this->assertStringNotContainsString('..', $dir);
+        $this->assertStringStartsWith(MARSAPRS_AUDIO_ROOT . '/', $dir);
+        $url = MessagingDb::audioUrl('../../etc', 'x.m4a');
+        $this->assertStringNotContainsString('..', $url);
+    }
+
     /** Ordering is by id, ascending, like every other feed — a device with a skewed
      *  clock must not be able to reorder a net's traffic. */
     public function testOrdersByIdAscending(): void

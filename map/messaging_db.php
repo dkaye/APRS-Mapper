@@ -194,6 +194,37 @@ class MessagingDb
         $this->run('UPDATE messages SET audio=:a, audio_secs=:s WHERE id=:id',
                    [':a'=>$filename, ':s'=>$secs, ':id'=>$mid]);
     }
+    // How long a clip is kept. Audio exists to answer "what did they actually say" on
+    // a line that came out garbled, and nobody asks that about something they heard six
+    // hours ago — the transcription is the record, and it is not deleted. A busy net at
+    // ~40% duty is roughly 4 MB/hour, so this bounds an event at about 25 MB whether it
+    // runs for a day or a week.
+    public const AUDIO_MAX_AGE = 6 * 3600;
+
+    /**
+     * Delete clips older than AUDIO_MAX_AGE and forget them. Returns the number removed.
+     *
+     * The row survives, with `audio` cleared: the transcription is the log entry and
+     * outlives its recording. A client holding a stale URL gets a 404 rather than a
+     * file that silently reappeared as something else.
+     */
+    public function pruneAudio(string $event, ?int $maxAge = null): int
+    {
+        $cut  = time() - ($maxAge ?? self::AUDIO_MAX_AGE);
+        $rows = $this->all(
+            "SELECT id, audio FROM messages
+              WHERE event=:e AND audio IS NOT NULL AND audio<>'' AND ts < :cut",
+            [':e'=>$event, ':cut'=>$cut]);
+        if (!$rows) return 0;
+        $dir = self::audioDir($event);
+        foreach ($rows as $r) {
+            $path = $dir . '/' . basename((string)$r['audio']);
+            if (is_file($path)) @unlink($path);
+            $this->run('UPDATE messages SET audio=NULL, audio_secs=NULL WHERE id=:i', [':i'=>(int)$r['id']]);
+        }
+        return count($rows);
+    }
+
     /** [id => audio filename] for every message in the event that has a clip. */
     public function audioForEvent(string $event): array
     {
@@ -1094,9 +1125,11 @@ class MessagingDb
         $this->run('DELETE FROM messages WHERE event=:e', [':e'=>$event]);
         $this->run('DELETE FROM conversations WHERE event=:e', [':e'=>$event]);
         $this->db->exec('COMMIT');
-        // Delete the event's stored photos too — they live outside the DB.
-        $dir = self::photoDir($event);
-        if (is_dir($dir)) {
+        // Delete the event's stored photos and radio clips too — both live outside the
+        // DB, and in two different places, which is exactly why audio has its own
+        // column rather than sharing `attachment`.
+        foreach ([self::photoDir($event), self::audioDir($event)] as $dir) {
+            if (!is_dir($dir)) continue;
             foreach (glob($dir . '/*') ?: [] as $f) { if (is_file($f)) @unlink($f); }
             @rmdir($dir);
         }
