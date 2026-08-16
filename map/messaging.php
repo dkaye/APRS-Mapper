@@ -546,7 +546,18 @@ function messaging_handle(string $action, array $body, array $ctx): void
         }
         // substr rather than mb_substr: this server has no mbstring, and send bounds
         // its text the same way, so the two cannot disagree about what fits.
-        $text = substr(trim((string)($body['text'] ?? '')), 0, 280);
+        //
+        // NOT 280. That is the limit for something a person TYPED, which `send` uses
+        // and should keep. A log entry is a machine transcription of however long
+        // somebody held the key down, and a capped 120-second over runs to about 1,300
+        // characters. At 280 the other ~78% was discarded here — after being received,
+        // transcribed and delivered correctly — and the loss was invisible, because a
+        // truncated entry reads as a complete one that simply ends mid-sentence.
+        // Observed live: four of ten consecutive entries cut mid-word at exactly 280.
+        //
+        // 4000 is well clear of what MAX_CLIP_SECONDS can produce, so the bound stays
+        // real without being reachable in normal use.
+        $text = substr(trim((string)($body['text'] ?? '')), 0, 4000);
         if ($text === '') _msg_fail(400, 'text required');
         // No recipients, so insertMessage writes no deliveries: nothing is queued for
         // anyone to poll, nothing is announced, and no receipt can come back. The entry
