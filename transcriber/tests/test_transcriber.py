@@ -1871,6 +1871,65 @@ def test_a_missing_clip_does_not_hold_back_the_entry():
     srv.shutdown()
 
 
+def test_the_recording_is_sent_before_anything_is_transcribed():
+    print("post_log_audio — audio goes first")
+    srv = serve()
+    ch = channel_for(srv.server_address[1])
+    Handler.seen.clear()
+    Handler.status, Handler.body = 200, b'{"ok":true,"id":991}'
+
+    with tempfile.TemporaryDirectory() as d:
+        clip = os.path.join(d, "1000.000000.m4a")
+        with open(clip, "wb") as fh:
+            fh.write(b"\x00\x00\x00\x20ftypM4A ")
+        check("returns the entry it created",
+              transcriber.post_log_audio(ch, clip, 4.5), 991)
+
+    sent = Handler.seen[-1]
+    check("multipart", "multipart/form-data" in sent["_ct"], True)
+    check("carries the token", sent["token"], "tok-rx")
+    check("and the duration", sent["audio_secs"], "4.50")
+    check("and the bytes", sent["_file_audio"], b"\x00\x00\x00\x20ftypM4A ")
+    check("but no text — there is none yet", "text" in sent, False)
+    srv.shutdown()
+
+
+def test_a_failed_recording_does_not_cost_the_entry():
+    print("post_log_audio — server refuses")
+    srv = serve()
+    ch = channel_for(srv.server_address[1])
+    Handler.status, Handler.body = 500, b"nope"
+    with tempfile.TemporaryDirectory() as d:
+        clip = os.path.join(d, "1000.000000.m4a")
+        with open(clip, "wb") as fh:
+            fh.write(b"x")
+        # None, not an exception and not a retry. Audio is a listening aid with a
+        # six-hour life; the text still goes through the outbox and is never at risk.
+        check("returns nothing rather than raising",
+              transcriber.post_log_audio(ch, clip, 1.0), None)
+    srv.shutdown()
+
+
+def test_the_words_name_the_entry_the_recording_made():
+    print("post_log_entry — completing an audio-first entry")
+    srv = serve()
+    ch = channel_for(srv.server_address[1])
+    Handler.seen.clear()
+    Handler.status, Handler.body = 200, b'{"ok":true,"id":991}'
+
+    transcriber.post_log_entry(ch, "aid three clear", entry_id=991)
+    sent = Handler.seen[-1]
+    check("plain JSON — the audio already went", sent["_ct"], "application/json")
+    check("names the entry", sent["entry_id"], 991)
+    check("with the words", sent["text"], "aid three clear")
+
+    # Without one, it creates its own entry exactly as before.
+    transcriber.post_log_entry(ch, "on its own")
+    check("no entry_id when there was no recording",
+          "entry_id" in Handler.seen[-1], False)
+    srv.shutdown()
+
+
 def test_the_outbox_carries_the_clip_and_cleans_it_up():
     print("Outbox — audio")
     with tempfile.TemporaryDirectory() as d:
@@ -2652,6 +2711,9 @@ if __name__ == "__main__":
         test_an_entry_with_no_clip_is_still_plain_json,
         test_a_clip_is_sent_alongside_the_text,
         test_a_missing_clip_does_not_hold_back_the_entry,
+        test_the_recording_is_sent_before_anything_is_transcribed,
+        test_a_failed_recording_does_not_cost_the_entry,
+        test_the_words_name_the_entry_the_recording_made,
         test_the_outbox_carries_the_clip_and_cleans_it_up,
         test_a_refused_entry_takes_its_clip_with_it,
         test_a_clip_survives_while_its_entry_is_still_waiting,

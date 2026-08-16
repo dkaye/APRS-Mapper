@@ -409,7 +409,7 @@ class Outbox:
     # seconds this is hours of backlog, far longer than any outage worth surviving.
     cap = 500
 
-    def add(self, text, ts, audio=None, seconds=None):
+    def add(self, text, ts, audio=None, seconds=None, entry_id=None):
         # Timestamp-named so the flush order is the order things were said.
         #
         # `audio` is a path, never the bytes: the entry may sit here for hours across an
@@ -420,7 +420,7 @@ class Outbox:
         path = os.path.join(self.dir, f"{ts:.6f}.json")
         with open(path, "w", encoding="utf-8") as fh:
             json.dump({"text": text, "ts": ts, "attempts": 0, "next_try": 0,
-                       "audio": audio, "seconds": seconds}, fh)
+                       "audio": audio, "seconds": seconds, "entry_id": entry_id}, fh)
         waiting = self.pending()
         for stale in waiting[:max(0, len(waiting) - self.cap)]:
             log.error("outbox full; dropping the oldest entry")
@@ -517,7 +517,46 @@ def _multipart(fields, filename, blob):
     return "multipart/form-data; boundary=" + boundary, bytes(out)
 
 
-def post_log_entry(channel, text, audio=None, seconds=None, timeout=15):
+def post_log_audio(channel, clip, seconds, timeout=20):
+    """Post the recording on its own, before there is anything to say about it.
+
+    Returns the id of the log entry it created, which `post_log_entry` later fills in
+    with the words — or None, in which case the caller simply posts the text as its own
+    entry and nobody hears that over. This is best-effort by design: a listening aid
+    that misses its moment is worth nothing later, so it is never queued and never
+    retried. The written record does not depend on it.
+    """
+    try:
+        with open(clip, "rb") as fh:
+            blob = fh.read()
+    except OSError as e:
+        log.warning("could not read the clip to send (%s)", e)
+        return None
+    content_type, body = _multipart(
+        {"token": channel.token, "audio_secs": "%.2f" % seconds},
+        os.path.basename(clip), blob)
+    req = urllib.request.Request(
+        f"{channel.server}/index.php?messaging=log_audio",
+        data=body,
+        headers={"Content-Type": content_type,
+                 "User-Agent": f"MARS-Transcriber/{VERSION} (+https://marsaprs.org)"},
+        method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            answer = json.loads(resp.read().decode() or "{}")
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError, ValueError) as e:
+        # Including a 403 from a token still propagating. The text will go through the
+        # outbox and be retried there; this half is allowed to be lost.
+        log.warning("could not send the recording (%s); the entry will carry text only", e)
+        return None
+    mid = answer.get("id")
+    if not mid:
+        log.warning("server accepted the recording but named no entry: %r", answer)
+        return None
+    return int(mid)
+
+
+def post_log_entry(channel, text, audio=None, seconds=None, timeout=15, entry_id=None):
     """One log entry, with its audio if there is any. POST_OK, POST_RETRY or POST_DROP.
 
     A clip that has gone missing — the card cleared, an older outbox entry, a failed
@@ -539,7 +578,11 @@ def post_log_entry(channel, text, audio=None, seconds=None, timeout=15):
             os.path.basename(audio), blob)
     else:
         content_type = "application/json"
-        body = json.dumps({"token": channel.token, "text": text}).encode()
+        payload = {"token": channel.token, "text": text}
+        # Names the row the recording already made, so one transmission stays one line.
+        if entry_id:
+            payload["entry_id"] = entry_id
+        body = json.dumps(payload).encode()
     req = urllib.request.Request(
         f"{channel.server}/index.php?messaging=log",
         data=body,
@@ -2379,7 +2422,8 @@ def transcribe_loop(work, channel, whisper, model, outbox, stopping, carrier=Non
             if carrier is not None and is_capped(path):
                 carrier.verdict(bool(logged))
             outbox.flush(lambda e: post_log_entry(
-                channel, e["text"], e.get("audio"), e.get("seconds")))
+                channel, e["text"], e.get("audio"), e.get("seconds"),
+                entry_id=e.get("entry_id")))
         except Exception:                       # noqa: BLE001 - one bad clip must not
             log.exception("transcription failed")   # stop the channel transcribing
 
@@ -2416,6 +2460,29 @@ def handle_clip(channel, path, whisper, model, outbox, retention=None):
                     "the squelch level for this site if it keeps happening.", seconds)
     vocabulary = getattr(channel, "vocabulary", None) or Vocabulary()
     prompt = vocabulary.prompt() if getattr(channel, "initial_prompt", False) else None
+
+    # ── the recording goes first ─────────────────────────────────────────────
+    # Before whisper, not after. Sound has no reason to queue behind text: the audio
+    # used to be encoded once the model returned, so somebody listening on a phone
+    # heard the radio thirteen seconds late on a quiet channel and minutes late behind
+    # a backlog, for a file that was ready the moment the over ended.
+    #
+    # This is also what makes an unlogged over audible. The old placement was inside
+    # the branch that runs only when the transcription passes the filters, so an over
+    # whisper turned into "(buzzing)" was silently dropped — which is right for the
+    # written log and wrong for anyone listening, who wants what came over the air
+    # whatever a model made of it.
+    #
+    # Best-effort, and deliberately NOT through the outbox. The outbox exists to make
+    # the written record survive an outage, in order; audio is a listening aid with a
+    # six-hour life, and a clip that misses its moment is worth nothing later. If this
+    # fails, entry_id stays None and the text posts as its own entry exactly as before.
+    entry_id = None
+    if getattr(channel, "send_audio", False):
+        clip = encode_audio(path, outbox.audio_dir, time.time())
+        if clip:
+            entry_id = post_log_audio(channel, clip, seconds)
+            _unlink(clip)
     # What whisper returned and what clean() left of it, separately. The pipeline only
     # ever needed the second; the manifest needs both, because "(buzzing)" and the empty
     # string it becomes are different answers to what a tone did to the model.
@@ -2434,16 +2501,17 @@ def handle_clip(channel, path, whisper, model, outbox, retention=None):
         if written != keep:
             log.info("callsigns (%.1fs): %r → %r", seconds, keep[:60], written[:60])
         log.info("logging (%.1fs): %s", seconds, written[:80])
-        # Encoded here, before the clip is unlinked at the end of this function, and
-        # onto the card rather than tmpfs: the outbox may hold this for hours across an
-        # outage and /run does not survive a reboot. Only for an entry that is actually
-        # being logged — a clip whose transcription was discarded as a courtesy beep has
-        # nothing for anyone to listen back to.
-        clip = None
-        if getattr(channel, "send_audio", False):
-            clip = encode_audio(path, outbox.audio_dir, time.time())
-        outbox.add(written, time.time(), clip, seconds)
+        # The words, through the outbox as always — that is the record, and it has to
+        # survive an outage in order. `entry_id` names the row the recording already
+        # made, so the two halves of one transmission stay one line in the log instead
+        # of a clip and a transcription a reader has to pair up by eye. Without it (no
+        # audio, or the post failed) this creates its own entry exactly as before.
+        outbox.add(written, time.time(), seconds=seconds, entry_id=entry_id)
         logged = written
+    if entry_id and not keep:
+        # Heard, recorded, and not worth writing down. The row keeps its audio and stays
+        # textless: audible to anyone listening, absent from the written log.
+        log.debug("entry %s keeps its audio with no text", entry_id)
     # Last, after the entry is safely in the outbox, so nothing bound for the log waits
     # on the card. loggable() answered "" for one of several reasons and the manifest
     # wants the reason; the one case rejection() cannot name is the entry that passed on
@@ -2696,7 +2764,8 @@ def main(argv=None):
                     if args.once:
                         handle_clip(channel, path, whisper, model, outbox, retention)
                         outbox.flush(lambda e: post_log_entry(
-                            channel, e["text"], e.get("audio"), e.get("seconds")))
+                            channel, e["text"], e.get("audio"), e.get("seconds"),
+                            entry_id=e.get("entry_id")))
                     else:
                         enqueue(path)
             if args.once:

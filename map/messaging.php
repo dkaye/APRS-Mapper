@@ -559,6 +559,35 @@ function messaging_handle(string $action, array $body, array $ctx): void
         // real without being reachable in normal use.
         $text = substr(trim((string)($body['text'] ?? '')), 0, 4000);
         if ($text === '') _msg_fail(400, 'text required');
+
+        // Completing an entry whose audio was posted first. The Transcriber sends the
+        // recording as soon as the over ends — so it can be listened to without waiting
+        // on whisper — and comes back here with the words once it has them. Same entry,
+        // so the log keeps one row per transmission rather than a clip and a
+        // transcription that a reader has to pair up by eye.
+        $entryId = (int)($body['entry_id'] ?? 0);
+        if ($entryId > 0) {
+            $prev = $db->messageById($entryId);
+            // Its own entry, in this event, and still empty. A transcriber must not be
+            // able to rewrite anybody else's line, nor a completed one of its own: the
+            // outbox retries, and a retry that lands after the text is in would
+            // otherwise overwrite it.
+            if (!$prev || (int)$prev['sender_id'] !== (int)$me['id']
+                || ($prev['event'] ?? '') !== $event) {
+                _msg_fail(404, 'No such entry');
+            }
+            if (!$db->setMessageText($entryId, $text)) {
+                // Already filled in — a duplicate delivery of something we accepted.
+                // Not an error: answering ok lets the device drop it from the outbox
+                // instead of retrying forever over an entry that is already correct.
+                echo json_encode(['ok'=>true, 'id'=>$entryId, 'conversation_id'=>(int)$prev['conversation_id'],
+                                  'kind'=>'log', 'duplicate'=>true]);
+                exit;
+            }
+            echo json_encode(['ok'=>true, 'id'=>$entryId,
+                              'conversation_id'=>(int)$prev['conversation_id'], 'kind'=>'log']);
+            exit;
+        }
         // No recipients, so insertMessage writes no deliveries: nothing is queued for
         // anyone to poll, nothing is announced, and no receipt can come back. The entry
         // exists only as history, which is the whole point of it.
@@ -607,6 +636,40 @@ function messaging_handle(string $action, array $body, array $ctx): void
             'participants'   => $db->listParticipants($event),
             'can_manage'     => (bool)($ctx['authPerm']('messages.manage')),
         ]);
+        exit;
+    }
+
+    case 'log_audio': {
+        // The recording, posted the moment the over ended — before anything has been
+        // transcribed. This exists because audio used to wait for whisper: the clip was
+        // encoded after the model returned, so a listener heard the radio thirteen
+        // seconds late on a quiet channel and minutes late behind a backlog. Sound has
+        // no reason to queue behind text.
+        //
+        // The entry is created with NO text and gets it later, from `log` with
+        // entry_id. Two consequences worth stating:
+        //   - An over whose transcription is discarded as a hallucination still leaves
+        //     its audio here. That is correct for listening: you want to hear what came
+        //     over the air whatever a speech model made of it. It stays textless, so it
+        //     does not put "(buzzing)" into the written log.
+        //   - Readers that want the WRITTEN log skip empty entries; see history().
+        if (($me['kind'] ?? '') !== 'transcriber') _msg_fail(403, 'Transcribers only');
+        if (empty($_FILES['audio'])) _msg_fail(400, 'audio required');
+
+        $conv = $db->resolveLogConversation($event);
+        $id   = $db->insertMessage($event, $conv, (int)$me['id'], '', [], false);
+        $secs = isset($body['audio_secs']) ? (float)$body['audio_secs'] : null;
+        $audio = _msg_store_audio($event, $id, $_FILES['audio'], $secs);
+        if (!$audio) {
+            // Nothing stored means nothing to listen to and nothing to say, so the
+            // empty row would be litter. Remove it rather than leave a permanent blank.
+            $db->deleteMessage($id);
+            _msg_fail(400, 'audio rejected');
+        }
+        $db->setAudio($id, $audio['filename'], $audio['secs']);
+        if ($id % 20 === 0) $db->pruneAudio($event);
+        echo json_encode(['ok'=>true, 'id'=>$id, 'conversation_id'=>$conv, 'kind'=>'log',
+                          'audio'=>MessagingDb::audioUrl($event, $audio['filename'])]);
         exit;
     }
 

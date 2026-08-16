@@ -159,6 +159,31 @@ class MessagingDb
     {
         return $this->one('SELECT * FROM messages WHERE id=:id', [':id'=>$mid]);
     }
+    /** Remove a message and any delivery rows for it.
+     *
+     *  Used for one case only: an audio-first log entry whose clip turned out not to be
+     *  storable, where the row was created a moment earlier and has never been seen by
+     *  anybody. It is not an undo for ordinary traffic — the log is a record, and a
+     *  message that was delivered has been read. */
+    public function deleteMessage(int $mid): void
+    {
+        $this->run('DELETE FROM deliveries WHERE message_id=:id', [':id'=>$mid]);
+        $this->run('DELETE FROM messages WHERE id=:id', [':id'=>$mid]);
+    }
+
+    /** Fill in the text of an entry posted earlier without any.
+     *
+     *  Only ever used to complete an audio-first log entry: the Transcriber posts the
+     *  recording the moment the over ends, so it can be heard without waiting for
+     *  whisper, and comes back with the words when it has them. Guarded on the text
+     *  still being empty, so this can never rewrite an entry that already said
+     *  something — a retry after a timeout must not be able to overwrite the log. */
+    public function setMessageText(int $mid, string $text): bool
+    {
+        $this->run("UPDATE messages SET text=:t WHERE id=:id AND (text IS NULL OR text='')",
+                   [':t'=>$text, ':id'=>$mid]);
+        return $this->db->changes() > 0;
+    }
     // ── Radio audio ────────────────────────────────────────────────────────────
     // Recorded radio audio is the one attachment served straight off disk by Apache,
     // with no PHP and no auth check, and that is a deliberate departure from photos.
@@ -804,8 +829,15 @@ class MessagingDb
      *  recipient (`to_label`) derived from its conversation. */
     public function history(string $event): array
     {
-        return $this->tagRecipients($event, $this->hydrate(
-            $this->all('SELECT * FROM messages WHERE event=:e ORDER BY id', [':e'=>$event])));
+        // Textless entries are skipped. They are audio-first log rows whose recording
+        // arrived before the transcription — and some never get one, because the
+        // transcription was discarded as a hallucination or a courtesy beep. This is
+        // the WRITTEN log, so a row with nothing written in it has nothing to show; it
+        // reappears here the moment its text lands. The monitor feed does not filter
+        // them, because that is where the audio is reached from.
+        return $this->tagRecipients($event, $this->hydrate($this->all(
+            "SELECT * FROM messages WHERE event=:e AND text IS NOT NULL AND text<>'' ORDER BY id",
+            [':e'=>$event])));
     }
 
     // How much history a reconnecting monitor is given. A device that has been off the

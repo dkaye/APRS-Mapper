@@ -426,11 +426,17 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         duration: const Duration(seconds: 4),
       ));
     });
-    // One timer, at the pace of the slower existing poll. The phone already runs
-    // several and this is not urgent traffic — it was not addressed to us.
-    _monitorTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+    // One timer. Ten seconds is right for text nobody is waiting on, but it is half
+    // the delay when the point is listening: the server now has the recording within a
+    // second or two of the over ending, and up to ten more spent waiting for the next
+    // poll is the largest remaining piece of the lag. Four seconds when audio is on,
+    // ten when it is not — a phone following text has no reason to wake as often.
+    _monitorTimer = Timer.periodic(const Duration(seconds: 2), (t) {
       if (!_isSharing) return;
-      unawaited(MonitorService.instance.poll(_msgClient));
+      final mon = MonitorService.instance;
+      final everyN = mon.playingRadioAudio ? 2 : 5;      // 4s vs 10s
+      if (t.tick % everyN != 0) return;
+      unawaited(mon.poll(_msgClient));
     });
   }
 
@@ -446,18 +452,32 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     // a speech model and is carrier for the clip URL; reading it aloud was tried and
     // is strictly worse than the recording — slower than the traffic it describes, and
     // it states a mangled callsign in the same confident voice as a correct one.
-    final radio = batch.where((m) => m.isRadio).toList();
-    if (mon.playingRadioAudio && radio.isNotEmpty) {
-      for (final m in radio) {
+    //
+    // `played` records what actually went to the audio queue, because that — not
+    // "is it radio" — is the thing the speech rule below has to agree with. Nothing
+    // may be delivered twice, once as the real voice and again as a synthesised one
+    // saying approximately the same words a beat later.
+    final played = <int>{};
+    if (mon.playingRadioAudio) {
+      for (final m in batch.where((m) => m.isRadio)) {
         final url = MessagingClient.audioUrl(m);
-        if (url != null) _enqueueRadioClip(m, url);
+        if (url == null) continue;
+        _enqueueRadioClip(m, url);
+        played.add(m.id);
       }
     }
 
     // Typed traffic is the only thing spoken, and only if asked. Short, infrequent,
     // and written by a person — the case where a synthesised voice actually helps.
+    //
+    // Excluded: anything queued as audio above, and any radio entry at all. The second
+    // clause covers the case where audio was wanted but unavailable — an entry whose
+    // clip never arrived, or a channel with send_audio off. Falling back to reading it
+    // aloud there would quietly reintroduce exactly the behaviour that made a busy net
+    // unlistenable, and it would do so only sometimes, which is worse than never.
     if (!mon.monitoringAll || !mon.speakingAll) return;
-    final spoken = batch.where((m) => !m.isRadio).toList();
+    final spoken =
+        batch.where((m) => !m.isRadio && !played.contains(m.id)).toList();
     if (spoken.isEmpty) return;
     final p = await SharedPreferences.getInstance();
     if (!(p.getBool('aprs_msg_speak') ?? true)) return;   // the global mute

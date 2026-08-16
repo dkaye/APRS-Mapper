@@ -349,6 +349,67 @@ class MessagingMonitorTest extends TestCase
         $this->assertSame(['this event traffic'], $texts);
     }
 
+    // ── audio-first entries ───────────────────────────────────────────────────
+
+    /** The recording is posted the moment the over ends and the words follow, so the
+     *  same row gains its text later rather than a second row appearing beside it. */
+    public function testTextCanBeFilledInLater(): void
+    {
+        $mid = $this->db->insertMessage($this->ev, $this->db->resolveLogConversation($this->ev),
+                                        $this->radio, '', [], false);
+        $this->assertTrue($this->db->setMessageText($mid, 'KJ6ABC clear of Bolinas'));
+        $this->assertSame('KJ6ABC clear of Bolinas', $this->db->messageById($mid)['text']);
+    }
+
+    /** The outbox retries, so the same completion can arrive twice. The second must not
+     *  land — otherwise a late duplicate could overwrite a corrected entry. */
+    public function testFillingInTextTwiceIsRefused(): void
+    {
+        $mid = $this->db->insertMessage($this->ev, $this->db->resolveLogConversation($this->ev),
+                                        $this->radio, '', [], false);
+        $this->assertTrue($this->db->setMessageText($mid, 'first'));
+        $this->assertFalse($this->db->setMessageText($mid, 'second'),
+                           'an entry that already has text must not be rewritten');
+        $this->assertSame('first', $this->db->messageById($mid)['text']);
+    }
+
+    /** history() is the WRITTEN log. An entry that only ever had audio -- because its
+     *  transcription was discarded as a hallucination -- has nothing to show there. */
+    public function testTextlessEntriesAreNotInTheWrittenLog(): void
+    {
+        $withText = $this->logEntry('KJ6ABC clear');
+        $audioOnly = $this->db->insertMessage($this->ev, $this->db->resolveLogConversation($this->ev),
+                                              $this->radio, '', [], false);
+
+        $ids = array_column($this->db->history($this->ev), 'id');
+        $this->assertContains($withText, $ids);
+        $this->assertNotContains($audioOnly, $ids, 'a blank row has nothing to write');
+    }
+
+    /** But the monitor feed DOES carry them, because that is how the audio is reached.
+     *  Filtering them there would make an unlogged over silent as well as unwritten. */
+    public function testTextlessEntriesStillReachTheMonitorFeed(): void
+    {
+        $mid = $this->db->insertMessage($this->ev, $this->db->resolveLogConversation($this->ev),
+                                        $this->radio, '', [], false);
+        $this->db->setAudio($mid, $mid . '-aaaaaaaaaaaa.m4a', 3.0);
+
+        $msgs = $this->db->monitor($this->ev, 0, false, true)['messages'];
+        $ids = array_column($msgs, 'id');
+        $this->assertContains($mid, $ids);
+        $this->assertTrue($msgs[0]['has_audio']);
+    }
+
+    /** The row is only ever removed in the one case where its clip could not be stored,
+     *  a moment after it was made and before anyone could have seen it. */
+    public function testDeleteRemovesTheRow(): void
+    {
+        $mid = $this->db->insertMessage($this->ev, $this->db->resolveLogConversation($this->ev),
+                                        $this->radio, '', [], false);
+        $this->db->deleteMessage($mid);
+        $this->assertNull($this->db->messageById($mid));
+    }
+
     // ── audio storage and expiry ──────────────────────────────────────────────
 
     /** Clips expire; the log entry does not. The transcription is the record and the
