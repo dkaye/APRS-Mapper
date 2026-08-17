@@ -70,7 +70,7 @@ sharing a number are things that ship together**, and everything else carries it
 
 | What | Version | Cadence |
 |------|---------|---------|
-| Server, Display Pis, web map, mobile apps | `1.23.0+54` | One release. They are one API contract and one deploy. |
+| Server, Display Pis, web map, mobile apps | `1.23.0+55` | One release. They are one API contract and one deploy. |
 | iGates | `5.2` | Independent. Its own image, its own nightly update. |
 | Transcribers | `1.1` | Independent, and new. |
 

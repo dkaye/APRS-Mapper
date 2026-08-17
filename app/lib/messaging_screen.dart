@@ -347,92 +347,105 @@ class _MessagingScreenState extends State<MessagingScreen> {
   /// with audio off simply never makes the request.
   Future<void> _openMonitorSettings() async {
     final m = MonitorService.instance;
+    // isScrollControlled + a scroll view, because the default sheet is only as tall as
+    // it feels like being and simply clips whatever does not fit — with no scrollbar and
+    // no way to reach it. The last two rows were invisible on an iPhone, which is the
+    // sort of thing that looks like a missing feature rather than a layout bug.
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheet) => SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const ListTile(
-                title: Text('Sound', style: TextStyle(fontWeight: FontWeight.bold)),
+          child: ConstrainedBox(
+            // Not the full height: leaving the top of the screen visible keeps it
+            // reading as a sheet over the messages rather than a new page.
+            constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(ctx).size.height * 0.85),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const ListTile(
+                    title: Text('Sound', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                  SwitchListTile(
+                    secondary: const Icon(Icons.volume_up),
+                    title: const Text('Read my messages aloud'),
+                    subtitle: const Text(
+                      'Messages sent to you are spoken as they arrive. Turn this off and '
+                      'they arrive with a tone instead.',
+                    ),
+                    value: _speak,
+                    onChanged: (v) async {
+                      await _toggleSpeak();
+                      setSheet(() {});
+                      if (mounted) setState(() {});
+                    },
+                  ),
+                  const Divider(height: 1),
+                  const ListTile(
+                    title: Text('Follow the whole event',
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Text(
+                      'Normally you only get what was sent to you. These two add the rest. '
+                      'Neither one ever buzzes or alerts you — this is for listening in, '
+                      'not for being interrupted.',
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  SwitchListTile(
+                    secondary: const Icon(Icons.radio),
+                    title: const Text('Listen to the radio'),
+                    subtitle: const Text(
+                      'Plays the off-air recording of each transmission a few seconds '
+                      'after it ends — the operators\' actual voices, not a computer '
+                      'reading a transcript. Uses cellular data.',
+                    ),
+                    value: m.playingRadioAudio,
+                    onChanged: (v) async {
+                      await m.setRadioAudio(v);
+                      setSheet(() {});
+                      if (mounted) setState(() {});
+                    },
+                  ),
+                  const Divider(height: 1),
+                  SwitchListTile(
+                    secondary: const Icon(Icons.forum_outlined),
+                    title: const Text("See everyone's messages"),
+                    subtitle: const Text(
+                      'Every message sent in this event, whoever it came from and whoever '
+                      'it was meant for.',
+                    ),
+                    value: m.monitoringAll,
+                    onChanged: (v) async {
+                      await m.setAll(v);
+                      setSheet(() {});
+                      if (mounted) setState(() {});
+                    },
+                  ),
+                  SwitchListTile(
+                    secondary: const Icon(Icons.record_voice_over_outlined),
+                    title: const Text('Read those messages aloud'),
+                    subtitle: Text(
+                      m.monitoringAll
+                          ? 'A synthesised voice speaks each one as it arrives, so you can '
+                            'keep your hands and eyes on something else.'
+                          : "Turn on \"See everyone's messages\" first.",
+                    ),
+                    value: m.speakingAll && m.monitoringAll,
+                    onChanged: m.monitoringAll
+                        ? (v) async {
+                            await m.setSpeakAll(v);
+                            setSheet(() {});
+                            if (mounted) setState(() {});
+                          }
+                        : null,
+                  ),
+                  const SizedBox(height: 8),
+                ],
               ),
-              SwitchListTile(
-                secondary: const Icon(Icons.volume_up),
-                title: const Text('Read my messages aloud'),
-                subtitle: const Text(
-                  'Messages sent to you are spoken as they arrive. Turn this off and '
-                  'they arrive with a tone instead.',
-                ),
-                value: _speak,
-                onChanged: (v) async {
-                  await _toggleSpeak();
-                  setSheet(() {});
-                  if (mounted) setState(() {});
-                },
-              ),
-              const Divider(height: 1),
-              const ListTile(
-                title: Text('Follow the whole event',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: Text(
-                  'Normally you only get what was sent to you. These two add the rest. '
-                  'Neither one ever buzzes or alerts you — this is for listening in, '
-                  'not for being interrupted.',
-                ),
-              ),
-              const Divider(height: 1),
-              SwitchListTile(
-                secondary: const Icon(Icons.radio),
-                title: const Text('Listen to the radio'),
-                subtitle: const Text(
-                  'Plays the off-air recording of each transmission a few seconds '
-                  'after it ends — the operators\' actual voices, not a computer '
-                  'reading a transcript. Uses cellular data.',
-                ),
-                value: m.playingRadioAudio,
-                onChanged: (v) async {
-                  await m.setRadioAudio(v);
-                  setSheet(() {});
-                  if (mounted) setState(() {});
-                },
-              ),
-              const Divider(height: 1),
-              SwitchListTile(
-                secondary: const Icon(Icons.forum_outlined),
-                title: const Text("See everyone's messages"),
-                subtitle: const Text(
-                  'Every message sent in this event, whoever it came from and whoever '
-                  'it was meant for.',
-                ),
-                value: m.monitoringAll,
-                onChanged: (v) async {
-                  await m.setAll(v);
-                  setSheet(() {});
-                  if (mounted) setState(() {});
-                },
-              ),
-              SwitchListTile(
-                secondary: const Icon(Icons.record_voice_over_outlined),
-                title: const Text('Read those messages aloud'),
-                subtitle: Text(
-                  m.monitoringAll
-                      ? 'A synthesised voice speaks each one as it arrives, so you can '
-                        'keep your hands and eyes on something else.'
-                      : "Turn on \"See everyone's messages\" first.",
-                ),
-                value: m.speakingAll && m.monitoringAll,
-                onChanged: m.monitoringAll
-                    ? (v) async {
-                        await m.setSpeakAll(v);
-                        setSheet(() {});
-                        if (mounted) setState(() {});
-                      }
-                    : null,
-              ),
-              const SizedBox(height: 8),
-            ],
+            ),
           ),
         ),
       ),
