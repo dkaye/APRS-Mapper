@@ -12,8 +12,10 @@
 /// the phone's chained utterances in messaging_screen.dart.
 import AVFoundation
 import Foundation
+import Observation
 import WatchKit
 
+@Observable
 @MainActor
 final class Announcer {
   static let shared = Announcer()
@@ -22,9 +24,23 @@ final class Announcer {
   /// become a machine-gun.
   private static let minToneInterval: TimeInterval = 2
 
-  /// Above this many at once we summarize instead of reading everything. Nobody
-  /// wants a twenty-message backlog read to them.
-  private static let summarizeAbove = 3
+  /// How old a message may be, by the time it was SENT, before announcing it does more
+  /// harm than good. The same five minutes the phone uses, deliberately — one number
+  /// that can be explained in a sentence: you will not hear anything older than this.
+  ///
+  /// This replaces a summarize-above-three rule, which counted the backlog instead of
+  /// dating it and so got both cases wrong: three stale messages were read out in full,
+  /// and four fresh ones were reduced to a count.
+  static let maxAge: TimeInterval = 300
+
+  /// Characters of speech per second, for the countdown on the Stop control. Rough on
+  /// purpose — it exists to answer "wait, or stop it", not to be a clock.
+  private static let charsPerSecond = 14.0
+
+  /// What is left to say. Read by the Stop control, which is the only way to interrupt
+  /// an announcement the automatic rules judged worth making.
+  private(set) var pendingCount = 0
+  private(set) var pendingSeconds = 0
 
   private let synth = AVSpeechSynthesizer()
   private let speechDelegate = SpeechDelegate()
@@ -37,6 +53,13 @@ final class Announcer {
   private struct Announcement {
     let doubleHaptic: Bool
     let utterances: [String]
+    /// When the thing being announced was SENT, for the age rule. Zero means "not a
+    /// message" — a receipt or a status line, which is about something the operator
+    /// just did and is never stale.
+    var ts: TimeInterval = 0
+    var estSeconds: Double {
+      utterances.reduce(0) { $0 + Double($1.count) / Announcer.charsPerSecond } + 0.5
+    }
     /// Receipts get no alert tone: they answer something the user just did, rather
     /// than interrupting them with something new, and a tone per state change would
     /// mean three chimes for every reply.
@@ -55,25 +78,39 @@ final class Announcer {
 
   func enqueue(_ messages: [WatchMessage]) {
     guard !messages.isEmpty else { return }
-    let ordered = messages.sorted { $0.id < $1.id }
+
+    // Anything older than the window is not announced at all. After the wrist has been
+    // out of range for an hour, everything arrives at once and every one of them is
+    // "new" — dating them is the only test that distinguishes a message worth
+    // interrupting somebody for from a backlog worth reading on screen. The messages
+    // themselves are kept and listed; only the announcement is dropped.
+    let now = Date().timeIntervalSince1970
+    let fresh = messages
+      .filter { now - TimeInterval($0.ts) <= Self.maxAge }
+      .sorted { $0.id < $1.id }
+    guard !fresh.isEmpty else { return }
 
     // A net-wide call gets a distinct double buzz so the wrist alone tells the
     // operator whether something was addressed to them.
-    let doubleHaptic = ordered.contains(where: \.broadcast)
+    let doubleHaptic = fresh.contains(where: \.broadcast)
 
-    var utterances: [String]
-    if ordered.count > Self.summarizeAbove {
-      let newest = ordered.suffix(2)
-      utterances = ["\(ordered.count) new messages."]
-      utterances.append(contentsOf: newest.flatMap(Self.phrases))
-      let rest = ordered.count - newest.count
-      if rest > 0 { utterances.append("and \(rest) more.") }
-    } else {
-      utterances = ordered.flatMap(Self.phrases)
+    // One announcement per message rather than one for the batch, so the Stop control
+    // can show a true count and stopping takes effect at the next message rather than at
+    // the end of a single long utterance list.
+    for m in fresh {
+      queue.append(Announcement(doubleHaptic: doubleHaptic && m.broadcast,
+                                utterances: Self.phrases(for: m),
+                                ts: TimeInterval(m.ts)))
     }
-
-    queue.append(Announcement(doubleHaptic: doubleHaptic, utterances: utterances))
+    publish()
     drain()
+  }
+
+  /// Keeps the Stop control's count and countdown current. Called wherever the queue
+  /// changes — appending, draining, or being emptied.
+  private func publish() {
+    pendingCount = queue.count + (draining ? 1 : 0)
+    pendingSeconds = Int(queue.reduce(0) { $0 + $1.estSeconds }.rounded())
   }
 
   /// Confirms a reply went out, optionally repeating the words.
@@ -120,6 +157,7 @@ final class Announcer {
 
   func stop() {
     queue.removeAll()
+    publish()
     synth.stopSpeaking(at: .immediate)
     player?.stop()
     deactivateAudio()
@@ -134,10 +172,16 @@ final class Announcer {
       guard let self else { return }
       while !queue.isEmpty {
         let next = queue.removeFirst()
+        publish()
+        // Re-checked here, not only on the way in: an announcement can sit behind a
+        // long one and go stale while it waits, and saying it then is the same mistake
+        // as saying it after an outage.
+        if next.ts > 0, Date().timeIntervalSince1970 - next.ts > Self.maxAge { continue }
         await play(next)
       }
       deactivateAudio()
       draining = false
+      publish()
     }
   }
 

@@ -58,46 +58,20 @@ class Speaker {
     await _tts.setSpeechRate(0.5);
   }
 
-  /// "From <who>." — pause — the text.
-  ///
-  /// One preamble, whoever it was addressed to. Monitored traffic used to be announced
-  /// as "Monitored, from Net Control", on the reasoning that a listener should know a
-  /// message was not meant for them. In practice the sender's name already carries
-  /// that, the qualifier made every announcement longer, and it read as clutter rather
-  /// than information — so it is gone.
-  ///
-  /// There is deliberately no option here for radio traffic. It was tried: a
-  /// synthesised voice reading a machine transcript of an over is slower than the
-  /// traffic it describes, so it falls further behind all net; it discards tone and
-  /// urgency; and it pronounces a mangled callsign in exactly the same confident
-  /// cadence as a correct one. The recording itself is better on every count, so radio
-  /// is played rather than spoken — see MonitorService.kPrefRadioAudio.
-  Future<void> speakMessage({
-    required String senderLabel,
-    required String text,
-  }) {
+  /// Say one thing and complete when it has been said. No queue, no staleness rule:
+  /// AudioQueue owns both now, because it also holds radio clips and the two have to
+  /// take turns through one gate. Speaking straight from here would put a synthesised
+  /// voice on top of a real one.
+  Future<void> speakNow({required String senderLabel, required String text}) async {
     final who = senderLabel.trim();
     final body = text.trim();
-    if (body.isEmpty && who.isEmpty) return Future.value();
-    // Stamped when the utterance is queued, not when it is spoken — the whole point
-    // is to measure how long it waited.
-    final queuedAt = DateTime.now();
-    _queue = _queue.then((_) async {
-      // Speech is real time and a backlog is not. Two messages take longer to read
-      // than they took to arrive, so on a busy net the queue grows without bound and
-      // the phone ends up narrating a net that finished ten minutes ago — steadily
-      // further behind, and impossible to interrupt. Anything that has waited this
-      // long has been overtaken by events; the text is still on screen.
-      if (DateTime.now().difference(queuedAt) > _kMaxSpeechAge) return;
-      await _ensureReady();
-      final preamble = who.isNotEmpty ? 'From $who.' : '';
-      if (preamble.isNotEmpty) {
-        await _speak(preamble);
-        await Future.delayed(_kSpeakGap);
-      }
-      await _speak(body);
-    }).catchError((_) {});
-    return _queue;
+    if (who.isEmpty && body.isEmpty) return;
+    await _ensureReady();
+    if (who.isNotEmpty) {
+      await _speak('From $who.');
+      await Future.delayed(_kSpeakGap);
+    }
+    await _speak(body);
   }
 
   Future<void> _speak(String text) async {

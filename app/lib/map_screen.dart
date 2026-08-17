@@ -37,9 +37,11 @@ import 'tracker_data.dart';
 import 'tracker_layer.dart';
 import 'messaging_client.dart';
 import 'messaging_screen.dart';
+import 'audio_queue.dart';
 import 'monitor_service.dart';
 import 'speaker.dart';
 import 'watch_bridge.dart';
+import 'widgets/audio_queue_bar.dart';
 import 'widgets/mode_indicator.dart';
 import 'widgets/offline_banner.dart';
 import 'widgets/update_banner.dart';
@@ -462,7 +464,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       for (final m in batch.where((m) => m.isRadio)) {
         final url = MessagingClient.audioUrl(m);
         if (url == null) continue;
-        _enqueueRadioClip(m, url);
+        AudioQueue.instance.addClip(ts: m.ts, url: url, seconds: m.audioSecs ?? 0);
         played.add(m.id);
       }
     }
@@ -483,68 +485,18 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     if (!(p.getBool('aprs_msg_speak') ?? true)) return;   // the global mute
     if (!mounted) return;
 
-    // A batch arrives after an outage or a slow poll. Reading out fifteen messages
-    // back to back is not hands-free operation, it is a phone that cannot be
-    // interrupted — so past a handful, say what happened instead of reciting it.
-    if (spoken.length > _kMaxSpokenBatch) {
-      unawaited(Speaker.instance.speakMessage(
-        senderLabel: '',
-        text: '${spoken.length} monitored messages received.',
-      ));
-      return;
-    }
+    // No batch summarising any more, and none needed. The queue drops anything over
+    // five minutes old measured by when it was SENT, so a reconnect backlog never
+    // forms — whatever survives that rule is recent enough to be worth hearing in
+    // full, however many of it there is. Counting the batch was a proxy for age and a
+    // poor one: three stale messages were read out and four fresh ones were not.
     for (final m in spoken) {
-      unawaited(Speaker.instance.speakMessage(
-        senderLabel: m.senderLabel, text: m.text));
+      AudioQueue.instance
+          .addSpeech(ts: m.ts, senderLabel: m.senderLabel, text: m.text);
     }
   }
 
-  // ── Radio audio playback ──────────────────────────────────────────────────
 
-  /// Clips waiting to be played, oldest first. A queue rather than a bare play() call
-  /// because overs arrive in bursts and two of them playing at once is noise.
-  final List<({int id, String url, int ts})> _radioQueue = [];
-  bool _radioPlaying = false;
-
-  void _enqueueRadioClip(MsgMessage m, String url) {
-    if (_radioQueue.any((c) => c.id == m.id)) return;
-    _radioQueue.add((id: m.id, url: url, ts: m.ts));
-    unawaited(_drainRadioQueue());
-  }
-
-  Future<void> _drainRadioQueue() async {
-    if (_radioPlaying) return;
-    _radioPlaying = true;
-    try {
-      while (_radioQueue.isNotEmpty && mounted) {
-        final clip = _radioQueue.removeAt(0);
-        // Stale clips are dropped rather than played. Audio is real time and a backlog
-        // is not: after an outage, working through ten minutes of old overs would put
-        // the listener further behind with every one, and the live traffic they
-        // actually want is at the back of the queue.
-        final age = DateTime.now().millisecondsSinceEpoch ~/ 1000 - clip.ts;
-        if (age > _kMaxRadioClipAge.inSeconds) continue;
-        try {
-          await _audioPlayer.setUrl(clip.url);
-          await _audioPlayer.play();
-          // just_audio's play() resolves when playback completes, which is what keeps
-          // these sequential.
-        } catch (_) {
-          // A clip that will not fetch or decode is skipped in silence. The radio is
-          // not worth an error dialog, and the next over is already on its way.
-        }
-      }
-    } finally {
-      _radioPlaying = false;
-    }
-  }
-
-  /// How old a recording may be before playing it does more harm than good.
-  static const _kMaxRadioClipAge = Duration(minutes: 3);
-
-  /// Past this many at once, the batch is summarised rather than read out. Speech is
-  /// real time and a backlog is not.
-  static const _kMaxSpokenBatch = 3;
 
   Future<void> _handleInboundMessage(InboundMessage msg) async {
     // The chat screen is open and shows arriving messages live via its own poll,
@@ -592,8 +544,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         // After the notification, and after a beat: the notification's own sound is
         // the alert tone, and speech starting underneath it would talk over the very
         // thing that made the operator listen.
+        // Through the same queue as everything else, so a message addressed to this
+        // operator cannot start on top of a radio clip already playing. It also gains
+        // the five-minute rule, which is what stops an hour offline becoming an hour of
+        // announcements on reconnect.
         unawaited(Future.delayed(const Duration(milliseconds: 900), () {
-          Speaker.instance.speakMessage(senderLabel: msg.senderLabel, text: msg.text);
+          AudioQueue.instance.addSpeech(
+              ts: msg.ts, senderLabel: msg.senderLabel, text: msg.text);
         }));
         // Spoken aloud IS read. Leaving it unread meant a message the operator had
         // already heard in full still sat in Messages behind a red badge, and opening
@@ -628,8 +585,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       await _audioPlayer.setAudioSource(AudioSource.asset('assets/sounds/message.wav'));
       unawaited(_audioPlayer.play());
     } catch (_) {}
-    unawaited(Speaker.instance
-        .speakMessage(senderLabel: msg.senderLabel, text: msg.text));
+    AudioQueue.instance
+        .addSpeech(ts: msg.ts, senderLabel: msg.senderLabel, text: msg.text);
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     messenger.clearSnackBars();
@@ -2044,7 +2001,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         onActivityModeChange: _isSharing ? _changeActivityMode : null,
         onStartSharingWithMode: _isSharing ? null : _startSharingWithMode,
       ),
-      body: _buildBody(),
+      body: Stack(children: [
+        _buildBody(),
+        // Only visible while something is queued; see AudioQueueBar.
+        const Align(alignment: Alignment.bottomCenter, child: AudioQueueBar()),
+      ]),
     );
   }
 

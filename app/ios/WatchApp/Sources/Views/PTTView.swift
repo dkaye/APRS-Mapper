@@ -34,6 +34,9 @@ struct PTTView: View {
   var body: some View {
     VStack(spacing: 4) {
       StatusLine()
+      // Only visible while something is queued — see AnnouncerStopButton. Placed high,
+      // above the Talk button, because it is a thing you reach for in a hurry.
+      AnnouncerStopButton()
       Text(state.destination?.label ?? "No destination")
         .font(.caption)
         .foregroundStyle(state.destination == nil ? .orange : .secondary)

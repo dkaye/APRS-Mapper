@@ -9,6 +9,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'messaging_client.dart';
+import 'audio_queue.dart';
+import 'widgets/audio_queue_bar.dart';
 import 'monitor_service.dart';
 import 'speaker.dart';
 import 'watch_bridge.dart';
@@ -145,7 +147,10 @@ class _MessagingScreenState extends State<MessagingScreen> {
   /// audio session now that the map screen speaks messages from the background.
   Future<void> _speakMessage(MsgMessage m) {
     if (!_speak) return Future.value();
-    return Speaker.instance.speakMessage(senderLabel: m.senderLabel, text: m.text);
+    // Through the shared queue, so this cannot start on top of a radio clip and it
+    // inherits the five-minute rule with everything else.
+    AudioQueue.instance.addSpeech(ts: m.ts, senderLabel: m.senderLabel, text: m.text);
+    return Future.value();
   }
 
   void _speakDeferred(int convId) {
@@ -328,7 +333,7 @@ class _MessagingScreenState extends State<MessagingScreen> {
     WatchBridge.instance.pushSpeak(_speak);
     if (!_speak) {
       _deferredSpeak.clear();
-      Speaker.instance.stop();
+      AudioQueue.instance.cancelAll();
     }
   }
 
@@ -514,7 +519,10 @@ class _MessagingScreenState extends State<MessagingScreen> {
             ),
           ],
         ),
-        body: _monitorOpen ? _buildMonitor() : (inThread ? _buildThread() : _buildInbox()),
+        body: Stack(children: [
+          _monitorOpen ? _buildMonitor() : (inThread ? _buildThread() : _buildInbox()),
+          const Align(alignment: Alignment.bottomCenter, child: AudioQueueBar()),
+        ]),
         floatingActionButton: (inThread || _monitorOpen)
             ? null
             : FloatingActionButton.extended(
