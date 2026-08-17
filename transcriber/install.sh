@@ -52,6 +52,28 @@ EOF
 # Built here rather than shipped: it wants the host's NEON support, and a binary
 # compiled elsewhere is the sort of thing that runs at a third of the speed for
 # reasons nobody thinks to check.
+# "Does it run" is not the same question as "was it built for this machine", and the
+# difference is invisible until somebody measures it. An aarch64 binary compiled on a
+# Pi 4 runs perfectly well on a Pi 5 — it just runs a Cortex-A72 build on a Cortex-A76,
+# giving back much of what the new board was bought for, with nothing anywhere to say
+# so. That happened on the first Pi 5 migration: install.sh reported "already installed
+# and working" and skipped the rebuild.
+#
+# So the stamp records the CPU it was built for, and a mismatch is a rebuild. The model
+# string is what changes across boards; a missing stamp means a build that predates this
+# check, which is also worth redoing once.
+WHISPER_STAMP=/usr/local/lib/whisper-built-for
+THIS_CPU=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || uname -m)
+if [ -f "$WHISPER_STAMP" ] && [ "$(cat "$WHISPER_STAMP")" != "$THIS_CPU" ]; then
+    echo "whisper.cpp was built for '$(cat "$WHISPER_STAMP")', this is '$THIS_CPU' — rebuilding"
+    rm -f /usr/local/bin/whisper-cli /usr/local/lib/libwhisper* /usr/local/lib/libggml*
+    ldconfig
+elif [ ! -f "$WHISPER_STAMP" ] && [ -x /usr/local/bin/whisper-cli ]; then
+    echo "whisper.cpp has no build stamp — rebuilding once so it is known to match"
+    rm -f /usr/local/bin/whisper-cli /usr/local/lib/libwhisper* /usr/local/lib/libggml*
+    ldconfig
+fi
+
 if ! /usr/local/bin/whisper-cli -h >/dev/null 2>&1; then
     echo "Building whisper.cpp (several minutes)..."
     git clone --depth 1 https://github.com/ggerganov/whisper.cpp "$TMP/whisper"
@@ -73,7 +95,10 @@ if ! /usr/local/bin/whisper-cli -h >/dev/null 2>&1; then
 
     /usr/local/bin/whisper-cli -h >/dev/null 2>&1 \
         || { echo "whisper.cpp built but will not run — refusing to continue" >&2; exit 1; }
-    echo "  whisper.cpp installed and verified"
+    # Written only after it is known to run, so a failed build cannot leave a stamp
+    # claiming this machine is done.
+    printf '%s' "$THIS_CPU" > "$WHISPER_STAMP"
+    echo "  whisper.cpp installed and verified for $THIS_CPU"
 else
     echo "whisper.cpp already installed and working; leaving it alone"
 fi
