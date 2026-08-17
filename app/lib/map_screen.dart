@@ -495,7 +495,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     }
     for (final m in spoken) {
       unawaited(Speaker.instance.speakMessage(
-        senderLabel: m.senderLabel, text: m.text, monitored: true));
+        senderLabel: m.senderLabel, text: m.text));
     }
   }
 

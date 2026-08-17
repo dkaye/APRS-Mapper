@@ -60,8 +60,11 @@ class Speaker {
 
   /// "Message from <who>." — pause — the text.
   ///
-  /// [monitored] marks traffic that was not addressed to this operator. Said aloud so
-  /// nobody answers a question that was asked of somebody else.
+  /// One preamble, whoever it was addressed to. Monitored traffic used to be announced
+  /// as "Monitored, from Net Control", on the reasoning that a listener should know a
+  /// message was not meant for them. In practice the sender's name already carries
+  /// that, the qualifier made every announcement longer, and it read as clutter rather
+  /// than information — so it is gone.
   ///
   /// There is deliberately no option here for radio traffic. It was tried: a
   /// synthesised voice reading a machine transcript of an over is slower than the
@@ -72,7 +75,6 @@ class Speaker {
   Future<void> speakMessage({
     required String senderLabel,
     required String text,
-    bool monitored = false,
   }) {
     final who = senderLabel.trim();
     final body = text.trim();
@@ -88,9 +90,7 @@ class Speaker {
       // long has been overtaken by events; the text is still on screen.
       if (DateTime.now().difference(queuedAt) > _kMaxSpeechAge) return;
       await _ensureReady();
-      final preamble = monitored
-          ? (who.isNotEmpty ? 'Monitored, from $who.' : '')
-          : (who.isNotEmpty ? 'Message from $who.' : '');
+      final preamble = who.isNotEmpty ? 'Message from $who.' : '';
       if (preamble.isNotEmpty) {
         await _speak(preamble);
         await Future.delayed(_kSpeakGap);
