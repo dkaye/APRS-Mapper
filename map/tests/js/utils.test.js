@@ -1,5 +1,6 @@
 const path = require('path');
-const { esc, relativeTime, haversineDistance, bearingTo, compassDir, Q_LABELS, formatAprsPath } =
+const { esc, relativeTime, haversineDistance, bearingTo, compassDir, Q_LABELS, formatAprsPath,
+        splitSentences } =
     require(path.resolve(__dirname, '../../utils.js'));
 
 // ── esc ───────────────────────────────────────────────────────────────────────
@@ -199,4 +200,62 @@ describe('formatAprsPath', () => {
         expect(Q_LABELS).toHaveProperty('qAI');
         expect(Q_LABELS['qAR']).toBe('received by iGate');
     });
+});
+
+// ── splitSentences ────────────────────────────────────────────────────────────
+//
+// The phrases a spoken message is broken into, with a pause between each. Shares its
+// rules with splitSentences in app/lib/speaker.dart and both watch Announcers.
+
+describe('splitSentences', () => {
+    test('two sentences split, each keeping its period', () =>
+        expect(splitSentences('Meet at the staging area. Bring the HT.'))
+            .toEqual(['Meet at the staging area.', 'Bring the HT.']));
+
+    test('a question mark ends a sentence', () =>
+        expect(splitSentences('Are you mobile? Go ahead.'))
+            .toEqual(['Are you mobile?', 'Go ahead.']));
+
+    test('so does an exclamation', () =>
+        expect(splitSentences('Break! Aid three needs a hand.'))
+            .toEqual(['Break!', 'Aid three needs a hand.']));
+
+    test('three sentences give three phrases', () =>
+        expect(splitSentences('Three. Sentences. Here.'))
+            .toEqual(['Three.', 'Sentences.', 'Here.']));
+
+    // The one that matters most on this channel: a frequency must never be read as
+    // two phrases with a quarter second of silence in the middle of the number.
+    test('a frequency is never split down the middle', () =>
+        expect(splitSentences('Monitoring 146.520 simplex tonight.'))
+            .toEqual(['Monitoring 146.520 simplex tonight.']));
+
+    test('initials stay with the name they belong to', () =>
+        expect(splitSentences('J. Kaye is net control.'))
+            .toEqual(['J. Kaye is net control.']));
+
+    test('and a run of them does too', () =>
+        expect(splitSentences('A. B. C. done.')).toEqual(['A. B. C. done.']));
+
+    test('an ellipsis is one break, not three', () =>
+        expect(splitSentences('Standing by... Nothing heard.'))
+            .toEqual(['Standing by...', 'Nothing heard.']));
+
+    test('a closing quote stays with the sentence it closes', () =>
+        expect(splitSentences('He said "go ahead." Then he left.'))
+            .toEqual(['He said "go ahead."', 'Then he left.']));
+
+    test('one sentence with no terminator is still one phrase', () =>
+        expect(splitSentences('One sentence only')).toEqual(['One sentence only']));
+
+    test('empty text gives nothing to say', () => expect(splitSentences('')).toEqual([]));
+    test('whitespace only gives nothing to say', () =>
+        expect(splitSentences('   ')).toEqual([]));
+    test('null is not a crash', () => expect(splitSentences(null)).toEqual([]));
+    test('undefined is not a crash', () => expect(splitSentences(undefined)).toEqual([]));
+
+    // Documented cost, asserted so it is a decision rather than a surprise.
+    test('an abbreviation does split, which is the accepted trade', () =>
+        expect(splitSentences('Mt. Tam repeater is down.'))
+            .toEqual(['Mt.', 'Tam repeater is down.']));
 });

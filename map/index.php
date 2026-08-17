@@ -15,7 +15,7 @@
  *   ?config  Map/background/course/tracker config from config.yaml (ETag-cached)
  */
 
-define('WEB_VERSION', '1.23.0+63');
+define('WEB_VERSION', '1.25.0+68');
 
 // ── Client/server API contract version ────────────────────────────────────────
 // Advertised in the ?json and ?config responses so mobile apps can detect an
@@ -7268,6 +7268,15 @@ function _initMsgResize() {
 }
 // Pause between the spoken sender announcement and the message text.
 const MSG_SPEAK_GAP_MS = 500;
+// Pause between one sentence of a message and the next. Half the gap above, and
+// deliberately: the name and the message are two separate facts and need a beat
+// between them, while two sentences of one message are the same fact continuing.
+// The voice already pauses at a period on its own, so a further 500 ms on top of
+// that reads as the speaker having lost their place rather than as punctuation.
+const MSG_SENTENCE_GAP_MS = 250;
+// splitSentences: loaded from utils.js, where it is unit-tested. The same loop runs on
+// the phone (app/lib/speaker.dart) and both watches, so all four break a message in the
+// same places.
 let _speakChain = Promise.resolve();
 // One phrase, resolving when it finishes speaking (or errors, or is cancelled) so a
 // gap can be timed between phrases.
@@ -7296,7 +7305,15 @@ function _speakMessage(m) {
 			await _speakPhrase('From ' + who + '.');
 			await new Promise(r => setTimeout(r, MSG_SPEAK_GAP_MS));
 		}
-		if (_msgSpeak) await _speakPhrase(m.text);
+		// One utterance per sentence, so the gap between them is a real silence rather
+		// than whatever prosody the engine happens to put at a period. _speakPhrase
+		// resolves on `onend`, which is what lets each gap land where it belongs.
+		const parts = splitSentences(m.text);
+		for (let i = 0; i < parts.length; i++) {
+			if (!_msgSpeak) return;   // the speaker was turned off mid-message
+			if (i) await new Promise(r => setTimeout(r, MSG_SENTENCE_GAP_MS));
+			await _speakPhrase(parts[i]);
+		}
 	}).catch(() => {});
 }
 

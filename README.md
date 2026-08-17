@@ -70,9 +70,9 @@ sharing a number are things that ship together**, and everything else carries it
 
 | What | Version | Cadence |
 |------|---------|---------|
-| Server, Display Pis, web map, mobile apps | `1.23.0+60` | One release. They are one API contract and one deploy. |
+| Server, Display Pis, web map, mobile apps | `1.25.0+68` | One release. They are one API contract and one deploy. |
 | iGates | `5.2` | Independent. Its own image, its own nightly update. |
-| Transcribers | `1.1` | Independent, and new. |
+| Transcribers | `1.3` | Independent, and new. |
 
 **Server, web and mobile share a number** because they genuinely move together: a
 release changes `WEB_VERSION` in `map/index.php`, `version` in `app/pubspec.yaml`, and
@@ -120,18 +120,18 @@ APRS Radio (144.39 MHz)
            ▼
 ┌──────────────────────────────────────┐     ┌──────────────────────────────┐
 │           APRS-IS Network            │◀────│  Mobile App  (iOS/Android)   │
-│         noam.aprs2.net:14580         │     │  Flutter v1.23.0               │
+│         noam.aprs2.net:14580         │     │  Flutter v1.25.0               │
 └────────────────┬─────────────────────┘     │  TCP 14580 (inject position) │
                  │ TCP 14580                 └──────────────┬───────────────┘
 ┌────────────────▼─────────────────────┐                    │ HTTPS (map + config + session)
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.23.0      │
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.25.0      │
 │  aprsDaemon.php → trackers.json      │◀───────────────────┘
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.23.0
+│  Display Pi  (×2)      │  Pi 4 · v1.25.0
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -866,15 +866,46 @@ without opening either sheet.
 
 **Monitored traffic never raises a notification.** None of it was sent to this
 operator, and on a busy net that is a message every few seconds; a phone that buzzed
-for each would be unusable inside a minute. It is read aloud (subject to the same mute
-switch as everything else) and it goes nowhere near the watch — `AppState.swift`
+for each would be unusable inside a minute. It is delivered as audio (subject to the same
+mute switch as everything else) and it goes nowhere near the watch — `AppState.swift`
 promises that every message the wrist holds gets announced, and a firehose would break
 that, churn the message cap, and let a push-to-talk reply aim at whichever stranger
-spoke last. The wrist still hears it all, because the phone speaks it.
+spoke last. The wrist still hears it all, because the phone plays it.
 
-**Speech says where a line came from** — "Heard on Simulcast:" rather than plain "From:".
-A synthesised voice reads a garbled machine transcription in exactly the same confident
-tone as a real message, and the preamble is the only thing telling them apart.
+**Radio entries are handled as sound, never as speech.** A transcriber entry's text came
+from a speech model and is really carrier for the clip URL; reading it aloud was tried and
+is strictly worse than the recording — slower than the traffic it describes, and it states
+a mangled callsign in the same confident voice as a correct one. So a radio entry is
+played (`addClip`), and **typed** traffic is the only thing spoken (`addSpeech`). The
+exclusion is unconditional, covering the case where audio was wanted but unavailable — an
+entry whose clip never arrived, or a channel with `send_audio` off. Falling back to
+reading those aloud would reintroduce exactly the behavior that made a busy net
+unlistenable, and only sometimes, which is worse than never. See
+`_handleMonitoredBatch` in `app/lib/map_screen.dart`.
+
+**A spoken message is broken into phrases, with real silence between them.** Two gaps,
+doing different jobs: 500 ms after the sender's name, because "From Dirck." run into the
+opening words loses both halves; and 250 ms between sentences, because the voice already
+pauses at a period on its own and a second full half-second on top reads as the speaker
+having lost their place rather than as punctuation. Each phrase is a separate utterance
+whose completion is awaited, which is what lets a gap land where it belongs at all.
+
+The split is deliberately conservative, and the same in all four places that speak —
+`splitSentences` in `map/utils.js` and `app/lib/speaker.dart`, `sentences` in
+`ios/WatchApp/Sources/Announcer.swift`, and `splitSentences` in the Wear `Announcer.kt`.
+It requires two alphanumerics before the terminator, so `J. Kaye` stays one phrase, and
+whitespace after it, so **`146.520` is never split down the middle** — the case that
+matters most on a channel where reciting a frequency is much of what gets said. An
+abbreviation (`Mt. Tam`) does split; that is the accepted cost, a quarter second in the
+wrong place. The rules are asserted in `map/tests/js/utils.test.js` and
+`app/test/speaker_test.dart`, over the same cases, so the four cannot drift apart.
+
+On both watches the gap travels with the utterance rather than being a rule inside the
+drain loop, because the boundaries within one announcement do not all mean the same
+thing — and a rule keyed on position could not tell them apart once a message with no
+sender label shifted everything up by one. The Stop control's countdown counts the gaps
+too: a four-sentence message is a second of silence on its own, and that countdown is the
+only thing telling an operator whether to wait it out.
 
 **Everything audible goes through one queue** (`app/lib/audio_queue.dart`) — spoken
 messages, radio clips, and the alert tone alike. There were two before and they did not
@@ -1176,10 +1207,15 @@ To distribute: share the APK via Google Drive or email. Testers tap the download
 3. Build the Wear OS companion, which `flutter build` does not touch — it is a plain Gradle
    module, not a Flutter target:
    ```bash
-   cd android && ./gradlew :wear:assembleRelease
+   cd android
+   JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
+     ./gradlew :wear:assembleRelease
    ```
-   Output: `build/wear/outputs/apk/release/wear-release.apk`. It takes its version from the
-   same `pubspec.yaml`, so step 1 covers both. See [Wear OS Companion](#wear-os-companion-wear).
+   `JAVA_HOME` is not optional: the only JDK on `PATH` is Java 1.8, which Gradle 9 / AGP 9
+   refuse to run under. Output: `build/wear/outputs/apk/release/wear-release.apk` — under
+   `app/build`, not `app/android/wear/build`, because the Flutter Gradle plugin redirects
+   every subproject's build directory. It takes its version from the same `pubspec.yaml`, so
+   step 1 covers both. See [Wear OS Companion](#wear-os-companion-wear).
 4. In Play Console → **Your app** → **Testing → Internal testing** → **Create new release** →
    upload the `.aab` **and** the watch APK into the same release. Play delivers the watch
    APK to a paired watch by matching package name and signature, so both have to be in the
@@ -1363,7 +1399,9 @@ The gesture is a raw pointer loop, not `detectTapGestures` or a long-press detec
 
 ```bash
 cd app/android
-./gradlew :wear:assembleRelease
+# JAVA_HOME is required — the JDK on PATH is 1.8, which Gradle 9 / AGP 9 will not run under.
+JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
+  ./gradlew :wear:assembleRelease
 apksigner verify --print-certs ../build/wear/outputs/apk/release/wear-release.apk | grep SHA-256
 # expected 0d30a9f258e1330cb22a092ca6df65af5d3bf085905fb9bc01d74e54c866da57 — the same
 # certificate as the phone APK
@@ -1507,6 +1545,23 @@ can do no more than join up what was already said. Correction runs *after* the f
 above have accepted an entry, never before: they are calibrated on what whisper emits,
 and a roll call corrected first reads as the same six words four times over and is thrown
 out as a loop.
+
+**The last sentence gets a period, and nothing else is punctuated.** whisper punctuates
+its own output and is good at it — it hears the pauses in a transmission and writes
+`K6DRK testing. West Marin. K6DRK.` unprompted. What it is not is consistent: the same
+operator saying the same words a minute later came back as `K6DRK testing West Marin
+K6DRK`, no period anywhere, and in a log read as a column of one-line entries that reads
+as a transmission cut off mid-word. `close_sentence` closes the last sentence and leaves
+everything else alone, replacing a dangling comma rather than writing over it, and
+treating an ellipsis as the real ending it is. It runs last of all — after the filters
+have judged the entry real and after `correct_callsigns` has spelled it — because it is
+cosmetic and must have no vote in either.
+
+Deliberately **not** a pause-detection rule. The clip boundary already is one
+(`GAP_SECONDS`), whisper is already using the pauses inside a clip, and a
+threshold on gap length would punctuate straight through a callsign — phonetics are
+delivered with a beat between each word ("Kilo … Six … Delta"), so the one part of the
+log that is not sentences is exactly where such a rule would insert sentence structure.
 
 **Priming whisper with that vocabulary is implemented and switched off.** An initial
 prompt (`--prompt`, plus `--carry-initial-prompt` because a clip can run past one

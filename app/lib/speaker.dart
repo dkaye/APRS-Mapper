@@ -17,6 +17,50 @@ import 'package:flutter_tts/flutter_tts.dart';
 /// blurs into the opening of the message and the listener loses both halves.
 const _kSpeakGap = Duration(milliseconds: 500);
 
+/// The pause between one sentence of a message and the next. Half the gap above,
+/// and deliberately: the two silences are doing different jobs. The name and the
+/// message are two separate facts and need a beat between them. Two sentences of
+/// one message are the same fact continuing, and the engine already pauses at a
+/// period on its own — a further 500 ms on top of that reads as the speaker
+/// having lost their place rather than as punctuation.
+const _kSentenceGap = Duration(milliseconds: 250);
+
+/// Where one sentence ends and the next begins: terminal punctuation, any closing
+/// quote or bracket after it, then whitespace.
+///
+/// The two characters required in front of the punctuation are what keep initials
+/// together — "J. Kaye" is one phrase, not two. Requiring whitespace after it does
+/// the same for decimals, so "146.520" is never split down the middle, which matters
+/// on a channel where that is most of what gets said. An abbreviation ("Mt. Tam")
+/// does split, and is the accepted cost: it is an extra quarter second in the wrong
+/// place, audible only as a slightly long pause.
+final _kSentenceEnd = RegExp(r'''([0-9A-Za-z]{2}[.!?]+["'”’)\]]*)\s+''');
+
+/// One message as the phrases it should be spoken in, empty if there is nothing to
+/// say. Never returns a fragment that is only whitespace.
+///
+/// Scanned rather than split on the pattern, because the punctuation belongs to the
+/// sentence it ends: cut after group 1 and resume after the whitespace, so "Go ahead."
+/// keeps its period and the engine keeps the pause it already makes there.
+///
+/// This same loop is written three more times — `splitSentences` in `map/utils.js`,
+/// `sentences` in `ios/WatchApp/Sources/Announcer.swift`, and `splitSentences` in the
+/// Wear `Announcer.kt` — so all four devices break a message in the same places.
+List<String> splitSentences(String text) {
+  final out = <String>[];
+  var rest = text;
+  while (true) {
+    final m = _kSentenceEnd.firstMatch(rest);
+    if (m == null) break;
+    final piece = rest.substring(0, m.start + m[1]!.length).trim();
+    if (piece.isNotEmpty) out.add(piece);
+    rest = rest.substring(m.end);
+  }
+  final last = rest.trim();
+  if (last.isNotEmpty) out.add(last);
+  return out;
+}
+
 class Speaker {
   Speaker._();
   static final Speaker instance = Speaker._();
@@ -82,7 +126,15 @@ class Speaker {
       await _speak('From $who.');
       await Future.delayed(_kSpeakGap);
     }
-    await _speak(body);
+    // One utterance per sentence, so the gap between them is a real silence rather
+    // than whatever prosody the engine happens to put at a period. awaitSpeakCompletion
+    // is what makes this work at all — without it speak() returns as the phrase starts
+    // and every gap would land in the wrong place.
+    final parts = splitSentences(body);
+    for (var i = 0; i < parts.length; i++) {
+      if (i > 0) await Future.delayed(_kSentenceGap);
+      await _speak(parts[i]);
+    }
   }
 
   Future<void> _speak(String text) async {

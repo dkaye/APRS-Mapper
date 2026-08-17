@@ -48,6 +48,43 @@ function formatAprsPath(path) {
 	}).join('') + '</div>';
 }
 
+// Where one sentence ends and the next begins: terminal punctuation, any closing quote
+// or bracket after it, then whitespace.
+//
+// The two characters required in front of the punctuation are what keep initials
+// together — "J. Kaye" is one phrase, not two. Requiring whitespace after it does the
+// same for decimals, so "146.520" is never split down the middle, which matters on a
+// channel where that is most of what gets said. An abbreviation ("Mt. Tam") does split,
+// and is the accepted cost: a quarter second in the wrong place, audible only as a
+// slightly long pause.
+const SENTENCE_END = /([0-9A-Za-z]{2}[.!?]+["'”’)\]]*)\s+/;
+
+// One message as the phrases it should be spoken in, empty if there is nothing to say.
+// Never returns a fragment that is only whitespace.
+//
+// Scanned rather than split on the pattern, because the punctuation belongs to the
+// sentence it ends: cut after group 1 and resume after the whitespace, so "Go ahead."
+// keeps its period and the voice keeps the pause it already makes there.
+//
+// The same loop is written three more times — `splitSentences` in app/lib/speaker.dart,
+// `sentences` in ios/WatchApp/Sources/Announcer.swift, and `splitSentences` in the Wear
+// Announcer.kt — so all four devices break a message in the same places.
+function splitSentences(text) {
+	const out = [];
+	let rest = String(text ?? '');
+	for (;;) {
+		const m = SENTENCE_END.exec(rest);
+		if (!m) break;
+		const piece = rest.slice(0, m.index + m[1].length).trim();
+		if (piece) out.push(piece);
+		rest = rest.slice(m.index + m[0].length);
+	}
+	const last = rest.trim();
+	if (last) out.push(last);
+	return out;
+}
+
 if (typeof module !== 'undefined') module.exports = {
-	esc, relativeTime, haversineDistance, bearingTo, compassDir, Q_LABELS, formatAprsPath
+	esc, relativeTime, haversineDistance, bearingTo, compassDir, Q_LABELS, formatAprsPath,
+	splitSentences
 };

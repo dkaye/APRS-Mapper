@@ -960,6 +960,43 @@ def loggable(text):
     return trimmed if worth_logging(trimmed) else ""
 
 
+# Sentence-ending punctuation, as opposed to the kind that joins clauses.
+SENTENCE_END = ".!?"
+
+
+def close_sentence(text):
+    """The same text with a period on the end, if it does not already end a sentence.
+
+    whisper punctuates its own output and is good at it — it hears the pauses in a
+    transmission and writes "K6DRK testing. West Marin. K6DRK." unprompted. What it is
+    not is consistent: the same operator saying the same words a minute later came back
+    as "K6DRK testing West Marin K6DRK", no period anywhere. In a log read as a column
+    of one-line entries that reads as a transmission cut off mid-word, which is a
+    different claim about the air than the one being made.
+
+    So this closes the last sentence and nothing else. It does not try to find the
+    sentences inside an entry — whisper already did that from the audio, and a rule
+    based on pause length would do it worse here, because phonetics are delivered with
+    a beat between each word ("Kilo ... Six ... Delta") and would come back punctuated
+    through the middle of a callsign.
+
+    A dangling comma goes rather than being written over, because whisper ends a
+    stretch that way when the next thing it expected never arrived, and "West Marin,."
+    is worse than either half of it. Anything after the last word that already carries
+    a period, question mark, or exclamation is left exactly as it is, including an
+    ellipsis — trailing off is a real ending and not a missing one.
+
+    Cosmetic, so it runs last: after loggable() has decided the entry is real and after
+    correct_callsigns() has spelled it, and never before either. See correct_callsigns.
+    """
+    if not text or not re.search(r"[0-9A-Za-z]", text):
+        return text
+    trailing = re.search(r"[^0-9A-Za-z]*$", text).group(0)
+    if any(c in SENTENCE_END for c in trailing):
+        return text
+    return re.sub(r"[,;:\s]+$", "", text) + "."
+
+
 # ── callsigns ────────────────────────────────────────────────────────────────
 #
 # The words a net log most needs right are the ones whisper is worst at. Real output
@@ -2575,6 +2612,9 @@ def handle_clip(channel, path, whisper, model, outbox, retention=None):
         written = correct_callsigns(keep, vocabulary)
         if written != keep:
             log.info("callsigns (%.1fs): %r → %r", seconds, keep[:60], written[:60])
+        # Last of all, and purely cosmetic: whisper leaves the closing period off often
+        # enough that a column of log entries reads as half of them truncated.
+        written = close_sentence(written)
         log.info("logging (%.1fs): %s", seconds, written[:80])
         # The words, through the outbox as always — that is the record, and it has to
         # survive an outage in order. `entry_id` names the row the recording already

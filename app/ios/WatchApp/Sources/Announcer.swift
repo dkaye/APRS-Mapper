@@ -37,6 +37,17 @@ final class Announcer {
   /// purpose — it exists to answer "wait, or stop it", not to be a clock.
   private static let charsPerSecond = 14.0
 
+  /// The silence after "From Dirck." — the name and the message are two separate facts
+  /// and running them together loses both halves. The same 500 ms the phone leaves
+  /// (`_kSpeakGap` in app/lib/speaker.dart), so every device sounds like one app.
+  private static let announceGap: TimeInterval = 0.5
+
+  /// The silence between one sentence of a message and the next. Half the gap above,
+  /// and deliberately: two sentences of one message are the same fact continuing, and
+  /// the voice already pauses at a period on its own — a further 500 ms on top of that
+  /// reads as the speaker having lost their place rather than as punctuation.
+  private static let sentenceGap: TimeInterval = 0.25
+
   /// What is left to say. Read by the Stop control, which is the only way to interrupt
   /// an announcement the automatic rules judged worth making.
   private(set) var pendingCount = 0
@@ -59,15 +70,37 @@ final class Announcer {
   private var draining = false
   private var lastToneAt: Date?
 
+  /// One thing to say and the silence before saying it.
+  ///
+  /// The gap travels with the utterance rather than being a rule inside the drain,
+  /// because the boundaries within one announcement do not all mean the same thing:
+  /// after the sender's name it is half a second, between sentences a quarter. A drain
+  /// that decided by index could not tell the two apart once a message with no sender
+  /// label shifted everything up by one.
+  private struct Utterance {
+    let text: String
+    let gap: TimeInterval
+    init(_ text: String, gap: TimeInterval = 0) {
+      self.text = text
+      self.gap = gap
+    }
+  }
+
   private struct Announcement {
     let doubleHaptic: Bool
-    let utterances: [String]
+    let utterances: [Utterance]
     /// When the thing being announced was SENT, for the age rule. Zero means "not a
     /// message" — a receipt or a status line, which is about something the operator
     /// just did and is never stale.
     var ts: TimeInterval = 0
+    /// The gaps are counted, not approximated by a flat half second as they were when
+    /// there was only ever one of them. A four-sentence message is a second of silence
+    /// on its own, and the Stop control's countdown is the only thing telling an
+    /// operator whether to wait it out.
     var estSeconds: Double {
-      utterances.reduce(0) { $0 + Double($1.count) / Announcer.charsPerSecond } + 0.5
+      utterances.reduce(0) {
+        $0 + Double($1.text.count) / Announcer.charsPerSecond + $1.gap
+      }
     }
     /// Receipts get no alert tone: they answer something the user just did, rather
     /// than interrupting them with something new, and a tone per state change would
@@ -134,7 +167,7 @@ final class Announcer {
   /// interrupting them with something new.
   func announceSent(_ text: String, repeatingWords: Bool) {
     let phrase = repeatingWords && !text.isEmpty ? "Sent. \(text)" : "Message sent."
-    queue.append(Announcement(doubleHaptic: false, utterances: [phrase], tone: false))
+    queue.append(Announcement(doubleHaptic: false, utterances: [Utterance(phrase)], tone: false))
     drain()
   }
 
@@ -157,12 +190,71 @@ final class Announcer {
       return
     }
     WKInterfaceDevice.current().play(stage == "read" ? .success : .click)
-    queue.append(Announcement(doubleHaptic: false, utterances: [phrase], tone: false))
+    queue.append(Announcement(doubleHaptic: false, utterances: [Utterance(phrase)], tone: false))
     drain()
   }
 
-  private static func phrases(for m: WatchMessage) -> [String] {
-    [m.announcementPhrase, m.bodyPhrase].filter { !$0.isEmpty }
+  /// The announcement, then the message one sentence at a time.
+  ///
+  /// One utterance per sentence, so the silence between them is real rather than
+  /// whatever prosody the voice happens to put at a period. The first body sentence
+  /// follows the sender's name and takes the longer gap; the rest follow each other
+  /// and take the shorter one. With no sender label there is no announcement, and the
+  /// first sentence correctly takes no gap at all.
+  private static func phrases(for m: WatchMessage) -> [Utterance] {
+    var out: [Utterance] = []
+    if !m.announcementPhrase.isEmpty {
+      out.append(Utterance(m.announcementPhrase))
+    }
+    for (i, sentence) in sentences(m.bodyPhrase).enumerated() {
+      let gap = out.isEmpty ? 0 : (i == 0 ? announceGap : sentenceGap)
+      out.append(Utterance(sentence, gap: gap))
+    }
+    return out
+  }
+
+  /// Where one sentence ends and the next begins: terminal punctuation, any closing
+  /// quote or bracket after it, then whitespace.
+  ///
+  /// The two characters required in front of the punctuation are what keep initials
+  /// together — "J. Kaye" is one phrase, not two. Requiring whitespace after it does
+  /// the same for decimals, so "146.520" is never split down the middle, which matters
+  /// on a channel where that is most of what gets said. An abbreviation ("Mt. Tam")
+  /// does split, and is the accepted cost: a quarter second in the wrong place.
+  private static let sentenceEnd = try? NSRegularExpression(
+    pattern: "([0-9A-Za-z]{2}[.!?]+[\"\'\u{201D}\u{2019})\\]]*)\\s+")
+
+  /// One message as the phrases it should be spoken in, empty if there is nothing to
+  /// say. Never returns a fragment that is only whitespace.
+  ///
+  /// Scanned rather than split on the pattern, because the punctuation belongs to the
+  /// sentence it ends: cut after group 1 and resume after the whitespace, so "Go ahead."
+  /// keeps its period and the voice keeps the pause it already makes there.
+  ///
+  /// The same loop is written three more times — `splitSentences` in utils.js and in
+  /// app/lib/speaker.dart, and in the Wear Announcer.kt — so all four devices break a
+  /// message in the same places. Tested in map/tests/js/utils.test.js.
+  static func sentences(_ text: String) -> [String] {
+    let whole = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !whole.isEmpty else { return [] }
+    guard let re = sentenceEnd else { return [whole] }
+    let ns = whole as NSString
+    var out: [String] = []
+    var start = 0
+    re.enumerateMatches(in: whole, range: NSRange(location: 0, length: ns.length)) { m, _, _ in
+      guard let m else { return }
+      let cut = m.range(at: 1).location + m.range(at: 1).length
+      let piece = ns.substring(with: NSRange(location: start, length: cut - start))
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      if !piece.isEmpty { out.append(piece) }
+      start = m.range.location + m.range.length
+    }
+    if start < ns.length {
+      let piece = ns.substring(from: start)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      if !piece.isEmpty { out.append(piece) }
+    }
+    return out.isEmpty ? [whole] : out
   }
 
   func stop() {
@@ -222,11 +314,13 @@ final class Announcer {
       try? await Task.sleep(nanoseconds: UInt64(min(p.duration, 2.0) * 1_000_000_000))
     }
 
-    for (index, text) in a.utterances.enumerated() {
-      // The same 500 ms the phone leaves between "From X." and the text
-      // (messaging_screen.dart _kSpeakGap), so both devices sound like one app.
-      if index > 0 { try? await Task.sleep(nanoseconds: 500_000_000) }
-      await speak(text)
+    for u in a.utterances {
+      // The silence each utterance asked for — half a second after the sender's name,
+      // a quarter between sentences. See Utterance and phrases(for:).
+      if u.gap > 0 {
+        try? await Task.sleep(nanoseconds: UInt64(u.gap * 1_000_000_000))
+      }
+      await speak(u.text)
     }
   }
 

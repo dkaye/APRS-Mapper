@@ -26,9 +26,10 @@ echo json_encode([
     'android' => [
         // Must match what download.php actually serves, or the prompt sends people to
         // fetch a build they already have and never stops asking.
-        'latest'  => '1.22.1',
-        'build'   => 42,
+        'latest'  => '1.25.0',
+        'build'   => 68,
         'apk_url' => 'https://marsaprs.org/android/download.php',
     ],
-    'notes' => '',           // optional short "what's new" line shown in the prompt
+    // Optional short "what's new" line shown in the prompt.
+    'notes' => 'Spoken messages now pause between sentences.',
 ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";

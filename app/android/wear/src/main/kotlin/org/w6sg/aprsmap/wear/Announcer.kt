@@ -53,6 +53,27 @@ object Announcer {
     /// purpose — it exists to answer "wait, or stop it", not to be a clock.
     private const val CHARS_PER_SECOND = 14.0
 
+    /// The silence after "From Dirck." — the name and the message are two separate facts
+    /// and running them together loses both halves. The same 500 ms the phone leaves
+    /// (`_kSpeakGap` in app/lib/speaker.dart), so every device sounds like one app.
+    private const val ANNOUNCE_GAP_MS = 500L
+
+    /// The silence between one sentence of a message and the next. Half the gap above,
+    /// and deliberately: two sentences of one message are the same fact continuing, and
+    /// the voice already pauses at a period on its own — a further 500 ms on top of that
+    /// reads as the speaker having lost their place rather than as punctuation.
+    private const val SENTENCE_GAP_MS = 250L
+
+    /// Where one sentence ends and the next begins: terminal punctuation, any closing
+    /// quote or bracket after it, then whitespace.
+    ///
+    /// The two characters required in front of the punctuation are what keep initials
+    /// together — "J. Kaye" is one phrase, not two. Requiring whitespace after it does the
+    /// same for decimals, so "146.520" is never split down the middle, which matters on a
+    /// channel where that is most of what gets said. An abbreviation ("Mt. Tam") does
+    /// split, and is the accepted cost: a quarter second in the wrong place.
+    private val SENTENCE_END = Regex("""([0-9A-Za-z]{2}[.!?]+["'\u201D\u2019)\]]*)\s+""")
+
     /// What is left to say. Read by the Stop control, which is the only way to interrupt an
     /// announcement the automatic rules judged worth making.
     var pendingCount by mutableStateOf(0)
@@ -66,9 +87,18 @@ object Announcer {
     var dimTestRunning by mutableStateOf(false)
         private set
 
+    /// One thing to say and the silence before saying it.
+    ///
+    /// The gap travels with the utterance rather than being a rule inside the drain,
+    /// because the boundaries within one announcement do not all mean the same thing:
+    /// after the sender's name it is half a second, between sentences a quarter. A drain
+    /// that decided by index could not tell the two apart once a message with no sender
+    /// label shifted everything up by one.
+    private data class Utterance(val text: String, val gapMs: Long = 0)
+
     private data class Announcement(
         val doubleHaptic: Boolean,
-        val utterances: List<String>,
+        val utterances: List<Utterance>,
         /// When the thing being announced was SENT, for the age rule. Zero means "not a
         /// message" — a receipt or a status line, which is about something the operator just
         /// did and is never stale.
@@ -78,8 +108,52 @@ object Announcer {
         /// three chimes for every reply.
         val tone: Boolean = true,
     ) {
+        /// The gaps are counted, not approximated by a flat half second as they were when
+        /// there was only ever one of them. A four-sentence message is a second of silence
+        /// on its own, and the Stop control's countdown is the only thing telling an
+        /// operator whether to wait it out.
         val estSeconds: Double
-            get() = utterances.sumOf { it.length / CHARS_PER_SECOND } + 0.5
+            get() = utterances.sumOf { it.text.length / CHARS_PER_SECOND + it.gapMs / 1000.0 }
+    }
+
+    /// One message as the phrases it should be spoken in, empty if there is nothing to
+    /// say. Never returns a fragment that is only whitespace.
+    ///
+    /// Scanned rather than split on the pattern, because the punctuation belongs to the
+    /// sentence it ends: cut after group 1 and resume after the whitespace, so "Go ahead."
+    /// keeps its period and the voice keeps the pause it already makes there.
+    ///
+    /// The same loop is written three more times — `splitSentences` in map/utils.js and in
+    /// app/lib/speaker.dart, and `sentences` in the watchOS Announcer.swift — so all four
+    /// devices break a message in the same places. Tested in map/tests/js/utils.test.js.
+    fun splitSentences(text: String): List<String> {
+        val out = mutableListOf<String>()
+        var rest = text
+        while (true) {
+            val m = SENTENCE_END.find(rest) ?: break
+            val cut = m.range.first + m.groupValues[1].length
+            rest.substring(0, cut).trim().let { if (it.isNotEmpty()) out.add(it) }
+            rest = rest.substring(m.range.last + 1)
+        }
+        rest.trim().let { if (it.isNotEmpty()) out.add(it) }
+        return out
+    }
+
+    /// The announcement, then the message one sentence at a time.
+    ///
+    /// One utterance per sentence, so the silence between them is real rather than
+    /// whatever prosody the voice happens to put at a period. The first body sentence
+    /// follows the sender's name and takes the longer gap; the rest follow each other and
+    /// take the shorter one. With no sender label there is no announcement, and the first
+    /// sentence correctly takes no gap at all.
+    private fun phrases(m: WatchMessage): List<Utterance> {
+        val out = mutableListOf<Utterance>()
+        if (m.announcementPhrase.isNotEmpty()) out.add(Utterance(m.announcementPhrase))
+        splitSentences(m.bodyPhrase).forEachIndexed { i, sentence ->
+            val gap = if (out.isEmpty()) 0L else if (i == 0) ANNOUNCE_GAP_MS else SENTENCE_GAP_MS
+            out.add(Utterance(sentence, gap))
+        }
+        return out
     }
 
     private val queue = ArrayDeque<Announcement>()
@@ -121,7 +195,7 @@ object Announcer {
             queue.addLast(
                 Announcement(
                     doubleHaptic = anyBroadcast && m.broadcast,
-                    utterances = listOf(m.announcementPhrase, m.bodyPhrase).filter { it.isNotEmpty() },
+                    utterances = phrases(m),
                     // A deliberate replay is never stale, whatever its timestamp says.
                     ts = if (ignoreAge) 0 else m.ts.toLong(),
                 )
@@ -142,7 +216,7 @@ object Announcer {
     /// interrupting them with something new.
     fun announceSent(text: String, repeatingWords: Boolean) {
         val phrase = if (repeatingWords && text.isNotEmpty()) "Sent. $text" else "Message sent."
-        queue.addLast(Announcement(doubleHaptic = false, utterances = listOf(phrase), tone = false))
+        queue.addLast(Announcement(doubleHaptic = false, utterances = listOf(Utterance(phrase)), tone = false))
         publish()
         drain()
     }
@@ -161,7 +235,7 @@ object Announcer {
             else -> return
         }
         if (stage == "read") Haptics.success() else Haptics.click()
-        queue.addLast(Announcement(doubleHaptic = false, utterances = listOf(phrase), tone = false))
+        queue.addLast(Announcement(doubleHaptic = false, utterances = listOf(Utterance(phrase)), tone = false))
         publish()
         drain()
     }
@@ -230,11 +304,11 @@ object Announcer {
             playTone()
         }
 
-        a.utterances.forEachIndexed { index, text ->
-            // The same 500 ms the phone leaves between "From X." and the text
-            // (messaging_screen.dart _kSpeakGap), so all three devices sound like one app.
-            if (index > 0) delay(500)
-            Speech.speak(text)
+        for (u in a.utterances) {
+            // The silence each utterance asked for — half a second after the sender's
+            // name, a quarter between sentences. See Utterance and phrases().
+            if (u.gapMs > 0) delay(u.gapMs)
+            Speech.speak(u.text)
         }
     }
 

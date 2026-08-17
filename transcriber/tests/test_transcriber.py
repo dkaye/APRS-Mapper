@@ -1622,6 +1622,39 @@ def test_clean_strips_sound_effects():
           transcriber.worth_logging(transcriber.clean("[MUSIC]")), False)
 
 
+def test_the_last_sentence_is_closed():
+    """whisper punctuates, but not every time, and a log column shows the difference.
+
+    All four of the "already ended" cases are real whisper output off this channel on
+    2026-08-16/17; so is the bare one it is contrasted with.
+    """
+    print("closing the last sentence")
+    closed = transcriber.close_sentence
+    check("an entry whisper left open gets its period",
+          closed("K6DRK testing West Marilyn K6DRK"),
+          "K6DRK testing West Marilyn K6DRK.")
+    check("one that already ends is untouched",
+          closed("Second test to West Marin K6DRK."),
+          "Second test to West Marin K6DRK.")
+    check("a question mark ends a sentence too",
+          closed("Are you mobile?"), "Are you mobile?")
+    check("so does an exclamation", closed("Break!"), "Break!")
+    check("trailing off is an ending, not a missing one",
+          closed("I think he said..."), "I think he said...")
+    check("a dangling comma is replaced rather than written over",
+          closed("K6DRK testing, West Marin,"), "K6DRK testing, West Marin.")
+    check("and so is a dangling comma with a space after it",
+          closed("go ahead, "), "go ahead.")
+    check("a closing quote counts as after the words, not as an ending",
+          closed('he said "go ahead"'), 'he said "go ahead".')
+    check("but not when the sentence ended inside it",
+          closed('he said "go ahead."'), 'he said "go ahead."')
+    # Nothing here should ever reach the log — loggable() runs first — but a cosmetic
+    # step must not be the thing that raises on an entry the guards would have dropped.
+    check("empty text is left alone", closed(""), "")
+    check("and so is text with no words in it at all", closed("--"), "--")
+
+
 # ── clip length ──────────────────────────────────────────────────────────────
 
 def write_wav(path, seconds, rate=16000, amplitude=0):
@@ -2303,7 +2336,7 @@ def test_pipeline_logs_speech():
     with tempfile.TemporaryDirectory() as tmp:
         rc, sent = run_pipeline(tmp, "aid three we have a rider down")
         check("exit 0", rc, 0)
-        check("one entry", sent, ["aid three we have a rider down"])
+        check("one entry", sent, ["aid three we have a rider down."])
 
 
 def test_pipeline_corrects_a_callsign_but_only_after_the_guards():
@@ -2328,7 +2361,7 @@ def test_pipeline_corrects_a_callsign_but_only_after_the_guards():
                                 vocabulary=ROSTER)
         check("exit 0", rc, 0)
         check("the entry reaches the log spelled properly",
-              sent, ["K6DRK testing on West Marin"])
+              sent, ["K6DRK testing on West Marin."])
 
     with tempfile.TemporaryDirectory() as tmp:
         rc, sent = run_pipeline(
@@ -2379,7 +2412,7 @@ def test_pipeline_transcribes_a_capped_clip_rather_than_binning_it():
                                 clip_seconds=transcriber.MAX_CLIP_SECONDS + 0.1)
         check("exit 0", rc, 0)
         check("what was on the air reaches the log",
-              sent, ["aid three we have a rider down"])
+              sent, ["aid three we have a rider down."])
 
 
 def test_pipeline_discards_short_clip():
@@ -2422,7 +2455,7 @@ def test_the_audio_is_thrown_away_unless_somebody_asked_to_keep_it():
         rc, sent = run_pipeline(tmp, "aid three we have a rider down")
         check("exit 0", rc, 0)
         check("the entry reaches the log as before",
-              sent, ["aid three we have a rider down"])
+              sent, ["aid three we have a rider down."])
         check("and nothing is kept", retained(tmp), ([], []))
         check("not even a directory to keep it in",
               os.path.exists(os.path.join(tmp, "spool", "recordings")), False)
@@ -2439,7 +2472,7 @@ def test_a_window_that_has_passed_keeps_nothing():
                                 channel={"record_until": time.time() - 60})
         check("exit 0", rc, 0)
         check("the entry still reaches the log",
-              sent, ["aid three we have a rider down"])
+              sent, ["aid three we have a rider down."])
         check("and nothing is kept", retained(tmp), ([], []))
 
     # The control, and it is not optional: "nothing was kept" passes for free on a
@@ -2490,7 +2523,7 @@ def test_the_manifest_says_what_each_clip_became():
               "aid three we have a rider down")
         check("that loggable() kept it", line.get("kept"), True)
         check("with nothing to explain", line.get("why"), "")
-        check("and the log agrees", sent, ["aid three we have a rider down"])
+        check("and the log agrees", sent, ["aid three we have a rider down."])
 
     # And it lines up with the event log word for word, callsign corrections and all.
     # Anyone using this corpus starts from a line in the log — "the ID at about ten
@@ -2560,7 +2593,7 @@ def test_a_clip_that_cannot_be_kept_does_not_stop_the_channel():
                                 channel={"record_until": time.time() + 3600})
         check("exit 0", rc, 0)
         check("and the transmission still reaches the log",
-              sent, ["aid three we have a rider down"])
+              sent, ["aid three we have a rider down."])
 
 
 def test_the_byte_cap_stops_recording_but_not_receiving():
@@ -2598,7 +2631,7 @@ def test_the_byte_cap_stops_recording_but_not_receiving():
                                          "record_max_bytes": 1})
         check("nothing is kept", retained(tmp)[0], [])
         check("and the channel carries on logging",
-              sent, ["aid three we have a rider down"])
+              sent, ["aid three we have a rider down."])
 
 
 def test_kept_clips_sort_in_the_order_they_were_heard():
@@ -2724,7 +2757,8 @@ def test_unknown_channel_is_fatal():
 
 if __name__ == "__main__":
     for fn in [
-        test_worth_logging, test_clean_strips_sound_effects, test_clip_seconds,
+        test_worth_logging, test_clean_strips_sound_effects,
+        test_the_last_sentence_is_closed, test_clip_seconds,
         test_non_speech_tokens_are_suppressed_at_the_decoder_where_the_build_allows,
         test_a_looping_transcription_does_not_reach_the_log,
         test_repetition_on_the_air_is_not_a_hallucination,
