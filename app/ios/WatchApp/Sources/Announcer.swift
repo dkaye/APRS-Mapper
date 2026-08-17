@@ -47,6 +47,11 @@ final class Announcer {
   private var player: AVAudioPlayer?
 
   private var queue: [Announcement] = []
+  /// What is being spoken right now. Held separately because it has already been taken
+  /// off the queue: counting it but not its duration is why the button read
+  /// "Speaking · 0s" for every single announcement — the one case where the queue is
+  /// empty and something is still being said, which is also the commonest case.
+  private var current: Announcement?
   private var draining = false
   private var lastToneAt: Date?
 
@@ -109,8 +114,9 @@ final class Announcer {
   /// Keeps the Stop control's count and countdown current. Called wherever the queue
   /// changes — appending, draining, or being emptied.
   private func publish() {
-    pendingCount = queue.count + (draining ? 1 : 0)
-    pendingSeconds = Int(queue.reduce(0) { $0 + $1.estSeconds }.rounded())
+    let all = (current.map { [$0] } ?? []) + queue
+    pendingCount = all.count
+    pendingSeconds = Int(all.reduce(0) { $0 + $1.estSeconds }.rounded())
   }
 
   /// Confirms a reply went out, optionally repeating the words.
@@ -157,6 +163,7 @@ final class Announcer {
 
   func stop() {
     queue.removeAll()
+    current = nil
     publish()
     synth.stopSpeaking(at: .immediate)
     player?.stop()
@@ -172,12 +179,22 @@ final class Announcer {
       guard let self else { return }
       while !queue.isEmpty {
         let next = queue.removeFirst()
-        publish()
         // Re-checked here, not only on the way in: an announcement can sit behind a
         // long one and go stale while it waits, and saying it then is the same mistake
         // as saying it after an outage.
-        if next.ts > 0, Date().timeIntervalSince1970 - next.ts > Self.maxAge { continue }
+        //
+        // Before `current` is set, not after. Setting it first and then skipping would
+        // leave the discarded announcement showing on the Stop button until something
+        // else replaced it — and if it were the last one, for good.
+        if next.ts > 0, Date().timeIntervalSince1970 - next.ts > Self.maxAge {
+          publish()
+          continue
+        }
+        current = next
+        publish()
         await play(next)
+        current = nil
+        publish()
       }
       deactivateAudio()
       draining = false
