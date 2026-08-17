@@ -585,8 +585,18 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       await _audioPlayer.setAudioSource(AudioSource.asset('assets/sounds/message.wav'));
       unawaited(_audioPlayer.play());
     } catch (_) {}
-    AudioQueue.instance
-        .addSpeech(ts: msg.ts, senderLabel: msg.senderLabel, text: msg.text);
+    // The wrist takes precedence here exactly as it does when this app is backgrounded.
+    // That check used to live only in the backgrounded branch, so a phone that was
+    // awake never asked the watch at all — and with the watch app open in front of the
+    // operator, both devices read the same message aloud at once.
+    //
+    // The tone above and the banner below are deliberately NOT suppressed: they are for
+    // somebody looking at the phone, and a tone alongside the wrist speaking is
+    // information rather than duplication. Only the second voice is the problem.
+    if (!WatchBridge.instance.watchWillAnnounce) {
+      AudioQueue.instance
+          .addSpeech(ts: msg.ts, senderLabel: msg.senderLabel, text: msg.text);
+    }
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     messenger.clearSnackBars();
