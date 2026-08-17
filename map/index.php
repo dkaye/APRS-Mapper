@@ -15,7 +15,7 @@
  *   ?config  Map/background/course/tracker config from config.yaml (ETag-cached)
  */
 
-define('WEB_VERSION', '1.23.0+50');
+define('WEB_VERSION', '1.23.0+51');
 
 // ── Client/server API contract version ────────────────────────────────────────
 // Advertised in the ?json and ?config responses so mobile apps can detect an
@@ -7272,7 +7272,7 @@ function _speakMessage(m) {
 	_speakChain = _speakChain.then(async () => {
 		if (!_msgSpeak) return;
 		if (who) {
-			await _speakPhrase('Message from ' + who + '.');
+			await _speakPhrase('From ' + who + '.');
 			await new Promise(r => setTimeout(r, MSG_SPEAK_GAP_MS));
 		}
 		if (_msgSpeak) await _speakPhrase(m.text);

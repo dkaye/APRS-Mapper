@@ -264,7 +264,7 @@ class WatchBridge {
   /// Point the next reply at whoever just called.
   ///
   /// This is what makes the watch behave like a radio rather than a form: the
-  /// announcement the operator just heard — "Message from Net Control" — is also a
+  /// announcement the operator just heard — "From Net Control" — is also a
   /// statement of where their reply will go. Replying into the thread reaches the
   /// original sender and everyone else it was addressed to, which is what a net
   /// expects of a group call.

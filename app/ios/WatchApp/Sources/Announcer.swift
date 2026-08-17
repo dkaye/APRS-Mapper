@@ -8,7 +8,7 @@
 /// environment this app exists for.
 ///
 /// Announcements are serialized. Two messages a second apart must not produce
-/// "Message from A / Message from B / text of A / text of B" — the same reasoning as
+/// "From A / From B / text of A / text of B" — the same reasoning as
 /// the phone's chained utterances in messaging_screen.dart.
 import AVFoundation
 import Foundation
@@ -158,7 +158,7 @@ final class Announcer {
     }
 
     for (index, text) in a.utterances.enumerated() {
-      // The same 500 ms the phone leaves between "Message from X." and the text
+      // The same 500 ms the phone leaves between "From X." and the text
       // (messaging_screen.dart _kSpeakGap), so both devices sound like one app.
       if index > 0 { try? await Task.sleep(nanoseconds: 500_000_000) }
       await speak(text)

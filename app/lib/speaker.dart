@@ -30,7 +30,7 @@ class Speaker {
   bool _ready = false;
 
   /// Serializes utterances. Two messages arriving a second apart must not produce
-  /// "Message from A / Message from B / text of A / text of B".
+  /// "From A / From B / text of A / text of B".
   Future<void> _queue = Future.value();
 
   Future<void> _ensureReady() async {

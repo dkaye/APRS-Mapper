@@ -549,7 +549,7 @@ Type up to 280 characters and press **Send**. To attach a **photo**, click the *
 
 **Copying a message:** Each message carries a small **copy** icon beside its timestamp. It copies **the message text only** — no sender, no timestamp, no receipt — which is what belongs in a log entry, an email, or an incident report. The icon turns into a green tick to confirm.
 
-**Read aloud:** Arriving messages are **spoken aloud by default** — you are usually watching the map rather than the message panel. Toggle the **Read aloud** (speaker) button to mute; your choice is remembered. Each is announced as *“Message from CRD Stanton”*, then a short pause, then the message itself — so you know who is calling without looking at the screen, and the name does not run into the first words — handy for a hands-free net control station. When it is off, a short alert **tone** plays instead; a volume slider sets its level (0 mutes).
+**Read aloud:** Arriving messages are **spoken aloud by default** — you are usually watching the map rather than the message panel. Toggle the **Read aloud** (speaker) button to mute; your choice is remembered. Each is announced as *“From CRD Stanton”*, then a short pause, then the message itself — so you know who is calling without looking at the screen, and the name does not run into the first words — handy for a hands-free net control station. When it is off, a short alert **tone** plays instead; a volume slider sets its level (0 mutes).
 
 **Settings** (in the panel): **Change my name**, adjust the alert volume, open **View all** messages, or **Sign out** of messaging.
 
@@ -604,7 +604,7 @@ The people list shows only those you can reach — operators and participants ac
 
 **Receipts:** Your sent messages show **Delivered ✓** and **Read ✓✓** (or **Delivered to N of M** / **Read by N of M** in a group).
 
-**Read aloud:** Arriving messages are **spoken aloud by default** — this is a net-control tool and you are usually not watching the screen. Each is announced as *“Message from CRD Stanton”*, then a short pause, then the message. Tap the **speaker** icon to mute; your choice is remembered.
+**Read aloud:** Arriving messages are **spoken aloud by default** — this is a net-control tool and you are usually not watching the screen. Each is announced as *“From CRD Stanton”*, then a short pause, then the message. Tap the **speaker** icon to mute; your choice is remembered.
 
 **When the app is in the background:** A message **notification** appears with a distinct, insistent **alert sound** so you don't miss it while the app is backgrounded or the screen is locked.
 
