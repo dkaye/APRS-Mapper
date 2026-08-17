@@ -160,11 +160,27 @@ class _MessagingScreenState extends State<MessagingScreen> {
     } else if (res.receipts.isNotEmpty) {
       setState(() {});
     }
+    // Cleared after the batch, not before: everything this first poll returned is
+    // history and must be absorbed silently, and only what arrives afterwards is new.
+    _primingSeen = false;
   }
+
+  /// True until the first poll after this screen opens has been absorbed.
+  ///
+  /// `_lastId` is in-memory and starts at 0, so that first poll returns everything
+  /// already delivered to this device — history, not arrivals. Treating it as arrivals
+  /// meant re-announcing messages the operator had already heard: the map screen speaks
+  /// a message when it lands, and then opening Messages queued the very same message
+  /// for deferred speech, so tapping the conversation read it out a second time.
+  ///
+  /// The first pass therefore only records what exists. Nothing is spoken, no tone is
+  /// played, and nothing is relayed to the watch — it has seen these too.
+  bool _primingSeen = true;
 
   void _ingest(MsgMessage m) {
     final isNew = _seen.add(m.id);
     if (!isNew) return;
+    if (_primingSeen) return;
     // The watch is a separate device and must see every message the phone does.
     // This path is not interchangeable with the background session's: polling here
     // marks the message delivered, and the legacy feed only returns what is still

@@ -36,9 +36,36 @@ final class AudioRecorder {
 
   var permissionKnown: Bool { granted != nil }
 
+  /// True once the operator has actively refused, as opposed to never having been
+  /// asked. The two look identical from `granted == false` and need opposite advice:
+  /// one is fixed by asking, the other only in Settings.
+  private(set) var denied = false
+
+  /// Ask for the microphone, or read back an answer already given.
+  ///
+  /// `AVAudioApplication`, not `AVAudioSession.requestRecordPermission`. The latter is
+  /// deprecated as of watchOS 10 — which is this target's minimum — and on a Series 9
+  /// it did not raise the prompt at all. The symptom is confusing rather than obvious:
+  /// the app silently falls back to the dictation screen forever, and the toggle in
+  /// Settings › Privacy › Microphone stays greyed out, because watchOS only enables it
+  /// once an app has actually asked.
+  ///
+  /// The current state is read first so a refusal already on file is known without
+  /// prompting again — the system only ever shows that alert once.
   func requestPermission() async {
-    granted = await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
-      AVAudioSession.sharedInstance().requestRecordPermission { c.resume(returning: $0) }
+    switch AVAudioApplication.shared.recordPermission {
+    case .granted:
+      granted = true
+      denied = false
+    case .denied:
+      granted = false
+      denied = true
+    default:                     // .undetermined — never asked, so ask
+      let ok = await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
+        AVAudioApplication.requestRecordPermission { c.resume(returning: $0) }
+      }
+      granted = ok
+      denied = !ok
     }
   }
 

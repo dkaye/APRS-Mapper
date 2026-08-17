@@ -595,6 +595,14 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         unawaited(Future.delayed(const Duration(milliseconds: 900), () {
           Speaker.instance.speakMessage(senderLabel: msg.senderLabel, text: msg.text);
         }));
+        // Spoken aloud IS read. Leaving it unread meant a message the operator had
+        // already heard in full still sat in Messages behind a red badge, and opening
+        // it to clear that badge was the act that read it out a second time. Marking it
+        // here also tells the sender it landed, which is true — somebody heard it.
+        //
+        // Only on the path that actually speaks. A notification alone is not reading:
+        // with speech muted the badge is the only sign the message exists.
+        unawaited(_msgClient.read([msg.id]));
         unawaited(_notifPlugin.show(
           id: msg.id & 0x7FFFFFFF,
           title: '📨 ${msg.fromLabel}',

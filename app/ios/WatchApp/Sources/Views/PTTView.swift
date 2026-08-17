@@ -156,7 +156,12 @@ struct PTTView: View {
     if state.destination == nil { return "Swipe to Reply to and pick one" }
     if let status = talk.statusText { return status }
     if recorder.isRecording { return "Release to send" }
-    if recorder.granted == false { return "Allow Microphone in Settings" }
+    // Refused is different from not-yet-asked, and only the first can be fixed in
+    // Settings. Before this distinction existed the app fell back to the dictation
+    // screen and said nothing at all about why, which is how a greyed-out Microphone
+    // toggle went unexplained.
+    if recorder.denied { return "Allow Microphone in Watch Settings" }
+    if recorder.granted == false { return "Microphone unavailable" }
     if !state.phoneReachable { return "iPhone away — tap to dictate" }
     if !state.lastSentText.isEmpty { return "Sent: \(state.lastSentText)" }
     return "Hold to talk"
