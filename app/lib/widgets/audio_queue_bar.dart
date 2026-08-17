@@ -14,7 +14,12 @@ import 'package:flutter/material.dart';
 import '../audio_queue.dart';
 
 class AudioQueueBar extends StatelessWidget {
-  const AudioQueueBar({super.key});
+  /// Space to leave beneath it. The Messages screen has a floating "New message"
+  /// button in the same corner of the screen, and the two overlapped — the countdown
+  /// sat half-under it, which is exactly the control you want legible in a hurry.
+  /// Screens with nothing down there pass nothing.
+  final double bottomInset;
+  const AudioQueueBar({super.key, this.bottomInset = 0});
 
   static String _duration(int secs) {
     if (secs < 60) return '${secs}s';
@@ -30,7 +35,7 @@ class AudioQueueBar extends StatelessWidget {
         if (v.count == 0) return const SizedBox.shrink();
         return SafeArea(
           child: Padding(
-            padding: const EdgeInsets.all(8),
+            padding: EdgeInsets.fromLTRB(8, 8, 8, 8 + bottomInset),
             child: Material(
               color: const Color(0xFF1A5276),
               borderRadius: BorderRadius.circular(24),

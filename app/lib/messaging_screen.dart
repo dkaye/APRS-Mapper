@@ -592,7 +592,11 @@ class _MessagingScreenState extends State<MessagingScreen> {
         ),
         body: Stack(children: [
           _monitorOpen ? _buildMonitor() : (inThread ? _buildThread() : _buildInbox()),
-          const Align(alignment: Alignment.bottomCenter, child: AudioQueueBar()),
+          // Clear of the New message button — an extended FAB plus its margin.
+          Align(
+              alignment: Alignment.bottomCenter,
+              child: AudioQueueBar(
+                  bottomInset: (inThread || _monitorOpen) ? 0 : 72)),
         ]),
         floatingActionButton: (inThread || _monitorOpen)
             ? null
@@ -770,7 +774,7 @@ class _MessagingScreenState extends State<MessagingScreen> {
               Expanded(
                 child: TextField(
                   controller: _composeCtl,
-                  maxLength: 280,
+                  maxLength: 1000,
                   minLines: 1,
                   maxLines: 4,
                   textInputAction: TextInputAction.newline,

@@ -15,7 +15,7 @@
  *   ?config  Map/background/course/tracker config from config.yaml (ETag-cached)
  */
 
-define('WEB_VERSION', '1.23.0+56');
+define('WEB_VERSION', '1.23.0+57');
 
 // ── Client/server API contract version ────────────────────────────────────────
 // Advertised in the ?json and ?config responses so mobile apps can detect an
@@ -2093,7 +2093,12 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
 #msg-composer.hidden { display: none; }
 #msg-compose-text {
     flex: 1; min-width: 0; resize: none; font-family: inherit; font-size: 14px;
-    border: 1px solid #ccc; border-radius: 16px; padding: 8px 12px; max-height: 96px; line-height: 1.3;
+    /* 160px is about nine lines. It was 96 -- five -- which was right when a message
+       was capped at 280 characters and is not now that one can be dictated: half a
+       minute of speech is roughly 400 characters, and reviewing it through a five-line
+       window before pressing send is how a mis-transcribed sentence gets sent anyway.
+       Must match the ceiling in _autoGrow(), or the box grows past its own clip. */
+    border: 1px solid #ccc; border-radius: 16px; padding: 8px 12px; max-height: 160px; line-height: 1.3;
 }
 #msg-mic-btn, #msg-send-btn {
     flex: 0 0 auto; width: 38px; height: 38px; border-radius: 50%; border: none; cursor: pointer;
@@ -2581,7 +2586,7 @@ body.msg-window #msg-panel-grip { display: none; }
 			<div id="msg-thread-scroll"><div id="msg-thread-placeholder">Select a conversation, or start a new message.</div></div>
 			<div id="msg-compose-error"></div>
 			<div id="msg-composer">
-				<textarea id="msg-compose-text" maxlength="280" rows="1" placeholder="Type a message…"></textarea>
+				<textarea id="msg-compose-text" maxlength="1000" rows="1" placeholder="Type a message…"></textarea>
 				<button id="msg-mic-btn" title="Dictate message" aria-label="Dictate message">
 					<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V22h2v-3.08A7 7 0 0 0 19 12h-2z"/></svg>
 				</button>
@@ -6229,7 +6234,9 @@ function _msgFindById(id) {
 }
 
 // ── Composer ─────────────────────────────────────────────────────────────────
-function _autoGrow(ta) { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 96) + 'px'; }
+// 160 matches #msg-compose-text's max-height. The two are the same decision written
+// twice; if they disagree the box either clips its own content or overflows the rule.
+function _autoGrow(ta) { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 160) + 'px'; }
 async function _sendCurrent() {
 	const ta = document.getElementById('msg-compose-text');
 	const text = ta.value.trim();

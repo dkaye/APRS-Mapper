@@ -393,7 +393,13 @@ function messaging_handle(string $action, array $body, array $ctx): void
     case 'send': {
         $hasPhoto  = !empty($_FILES['photo']) && ($_FILES['photo']['error'] ?? 1) === UPLOAD_ERR_OK;
         // Text is required unless a photo is attached (a photo-only message is fine).
-        $text = substr(trim($body['text'] ?? ''), 0, 280);
+        // 1000, not 280. The old limit was sized for thumbs on a phone keyboard, and
+        // dictation makes that the wrong premise -- thirty seconds of speech is about
+        // 400 characters, and an operator talking into a watch should not have their
+        // sentence cut off by a limit chosen for typing. Still bounded: this is a
+        // message, not a document. Machine transcriptions have their own, larger cap in
+        // `log`, because those can be two minutes of somebody else's over.
+        $text = substr(trim($body['text'] ?? ''), 0, 1000);
         if ($text === '' && !$hasPhoto) _msg_fail(400, 'Message text required');
         $convId    = isset($body['conversation_id']) ? (int)$body['conversation_id'] : null;
         $recipients= $body['recipients'] ?? [];
@@ -837,7 +843,9 @@ function messaging_legacy_recipients(array $ctx, string $token): ?array
  *  operator name, or '' / 'web' → every operator currently monitoring. */
 function messaging_legacy_send(array $ctx, string $token, string $text, string $to): array
 {
-    $text = substr(trim($text), 0, 280);
+    // Same 1000 as `send` -- these two bound the same thing and must not disagree,
+    // or which limit applies depends on which client sent it.
+    $text = substr(trim($text), 0, 1000);
     if ($text === '') return [400, ['error'=>'Message required']];
     $db = new MessagingDb();
     $me = _msg_resolve_sender($db, $ctx, $token);
