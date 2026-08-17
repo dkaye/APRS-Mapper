@@ -40,6 +40,9 @@ rsync -a --delete "$IGATE_DIR/home/"      "$REMOTE:$STAGING/home/"
 # in either device's tree. Copied in at deploy time: one source file, two archives, and
 # no chance of the two fleets drifting onto different versions of the same measurement.
 rsync -a --exclude='test_*' --exclude='__pycache__' "$IGATE_DIR/../sdr/" "$REMOTE:$STAGING/home/"
+# Fleet-wide tools shared by every device type — see common/power-check.sh. Kept out of
+# each device's own home/ so there is one copy to fix rather than four to drift.
+rsync -a --exclude='test_*' --exclude='__pycache__' "$IGATE_DIR/../common/" "$REMOTE:$STAGING/home/"
 rsync -a --delete "$IGATE_DIR/direwatch/" "$REMOTE:$STAGING/direwatch/"
 rsync -a --delete "$IGATE_DIR/www/"       "$REMOTE:$STAGING/www/"
 rsync -a --delete "$IGATE_DIR/systemd/"   "$REMOTE:$STAGING/systemd/"

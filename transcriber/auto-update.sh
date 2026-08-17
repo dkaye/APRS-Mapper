@@ -380,6 +380,16 @@ if [ -z "$CHANNELS_ONLY" ] && [ -x /home/pi/sdr-selftest.sh ]; then
         | while read -r l; do log "$l"; done || log "self-test skipped (non-fatal)"
 fi
 
+# Power check. Costs nothing — it reads two counters and a device-tree node, frees
+# nothing and stops nothing — and it catches the fault that otherwise presents as
+# whatever else was happening at the time: a USB drive that "does not work", a receiver
+# that "goes deaf", a display that "reboots at random". Skipped on a channels-only poll,
+# which runs every minute and is not the place for it.
+if [ -z "$CHANNELS_ONLY" ] && [ -x /home/pi/power-check.sh ]; then
+    /home/pi/power-check.sh 2>&1 | grep -aiE '^power:' \
+        | while read -r l; do log "$l"; done || log "power check skipped (non-fatal)"
+fi
+
 if [ -z "$CHANNELS_ONLY" ] || [ -n "$CHANNELS_CHANGED" ]; then
     FORCE_LOG=1 log "update complete: ${WANT:-no channels configured}"
 fi

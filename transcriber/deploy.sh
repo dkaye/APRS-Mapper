@@ -62,6 +62,9 @@ rsync -az --ignore-times "$SRC_DIR/home/"    "$REMOTE:$STAGING/home/"
 rsync -az --ignore-times "$SRC_DIR/auto-update.sh" "$REMOTE:$STAGING/home/"
 # Shared with the iGates — see igate/deploy.sh for why it lives outside both trees.
 rsync -az --ignore-times --exclude='test_*' --exclude='__pycache__' "$SRC_DIR/../sdr/" "$REMOTE:$STAGING/home/"
+# Fleet-wide tools shared by every device type — see common/power-check.sh. Kept out of
+# each device's own home/ so there is one copy to fix rather than four to drift.
+rsync -a --exclude='test_*' --exclude='__pycache__' "$SRC_DIR/../common/" "$REMOTE:$STAGING/home/"
 
 echo "Building files.tar.gz on aprs-pi..."
 ssh "$REMOTE" "chmod +x $STAGING/bin/*.py $STAGING/home/*.sh && tar -czf $REMOTE_DIR/files.tar.gz -C $STAGING ."

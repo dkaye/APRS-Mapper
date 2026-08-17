@@ -263,5 +263,15 @@ if [ -x /home/pi/sdr-selftest.sh ]; then
         | while read -r l; do log "$l"; done || log "self-test skipped (non-fatal)"
 fi
 
+# Power check. Costs nothing — it reads two counters and a device-tree node, frees
+# nothing and stops nothing — and it catches the fault that otherwise presents as
+# whatever else was happening at the time: a USB drive that "does not work", a receiver
+# that "goes deaf", a display that "reboots at random". Run as root so the kernel log is
+# readable; unprivileged it can only report the throttle word.
+if [ -x /home/pi/power-check.sh ]; then
+    /home/pi/power-check.sh 2>&1 | grep -aiE '^power:' \
+        | while read -r l; do log "$l"; done || log "power check skipped (non-fatal)"
+fi
+
 log "=== iGate auto-update complete ==="
 date > /home/pi/LastUpdate

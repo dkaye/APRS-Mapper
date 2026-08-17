@@ -46,6 +46,9 @@ STAGING="/home/pi/.marsaprs-staging/server"
 echo "Syncing files to aprs-pi..."
 ssh "$REMOTE" "mkdir -p $STAGING/home $STAGING/www $STAGING/bin $STAGING/systemd $STAGING/apache $STAGING/cloudflared $STAGING/etc/logrotate.d"
 rsync -a --delete "$SERVER_DIR/home/"        "$REMOTE:$STAGING/home/"
+# Fleet-wide tools shared by every device type — see common/power-check.sh. Kept out of
+# each device's own home/ so there is one copy to fix rather than four to drift.
+rsync -a --exclude='test_*' --exclude='__pycache__' "$SERVER_DIR/../common/" "$REMOTE:$STAGING/home/"
 rsync -a --delete "$SERVER_DIR/bin/"         "$REMOTE:$STAGING/bin/"
 rsync -a --delete "$SERVER_DIR/systemd/"     "$REMOTE:$STAGING/systemd/"
 rsync -a --delete "$SERVER_DIR/apache/"      "$REMOTE:$STAGING/apache/"
