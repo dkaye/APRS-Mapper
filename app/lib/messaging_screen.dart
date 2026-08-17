@@ -210,6 +210,11 @@ class _MessagingScreenState extends State<MessagingScreen> {
     }
   }
 
+  /// Whether anything will be audible when a message arrives — speech for messages
+  /// sent to you, or the radio playing. Drives the app-bar icon, so a glance says
+  /// whether this phone is going to make a noise, without opening the sheet.
+  bool get _audible => _speak || MonitorService.instance.playingRadioAudio;
+
   Future<void> _markRead(List<int> ids) => widget.client.read(ids);
 
   void _scrollToEnd() {
@@ -335,6 +340,24 @@ class _MessagingScreenState extends State<MessagingScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               const ListTile(
+                title: Text('Sound', style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+              SwitchListTile(
+                secondary: const Icon(Icons.volume_up),
+                title: const Text('Read my messages aloud'),
+                subtitle: const Text(
+                  'Messages sent to you are spoken as they arrive. Turn this off and '
+                  'they arrive with a tone instead.',
+                ),
+                value: _speak,
+                onChanged: (v) async {
+                  await _toggleSpeak();
+                  setSheet(() {});
+                  if (mounted) setState(() {});
+                },
+              ),
+              const Divider(height: 1),
+              const ListTile(
                 title: Text('Follow the whole event',
                     style: TextStyle(fontWeight: FontWeight.bold)),
                 subtitle: Text(
@@ -444,17 +467,19 @@ class _MessagingScreenState extends State<MessagingScreen> {
           automaticallyImplyLeading: false,
           leading: inThread ? IconButton(icon: const Icon(Icons.arrow_back), tooltip: 'Back to conversations', onPressed: _backToInbox) : null,
           actions: [
+            // One speaker, not two. This was a mute toggle beside a separate ear icon
+            // for the monitor sheet — but every setting behind both of them is about
+            // sound, and two audio icons side by side made neither obvious. The sheet
+            // now owns all of it, including mute, and this opens the sheet.
+            //
+            // It still shows at a glance whether anything is audible: filled when this
+            // device will make a sound for an arriving message, crossed out when it
+            // will not.
             IconButton(
-              tooltip: _speak ? 'Reading messages aloud — tap to mute' : 'Read arriving messages aloud',
-              icon: Icon(_speak ? Icons.volume_up : Icons.volume_off),
-              onPressed: _toggleSpeak,
+              tooltip: 'Sound and monitoring',
+              icon: Icon(_audible ? Icons.volume_up : Icons.volume_off),
+              onPressed: _openMonitorSettings,
             ),
-            if (!inThread)
-              IconButton(
-                tooltip: 'Monitor the whole event',
-                icon: Icon(MonitorService.instance.enabled ? Icons.hearing : Icons.hearing_disabled),
-                onPressed: _openMonitorSettings,
-              ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 6),
               child: TextButton.icon(
