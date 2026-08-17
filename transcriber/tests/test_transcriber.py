@@ -1624,12 +1624,21 @@ def test_clean_strips_sound_effects():
 
 # ── clip length ──────────────────────────────────────────────────────────────
 
-def write_wav(path, seconds, rate=16000):
+def write_wav(path, seconds, rate=16000, amplitude=0):
+    """Silence by default, which is what most of these tests want. `amplitude` gives a
+    tone instead, for the level-dependent ones — a sine rather than a square so the RMS
+    is a believable stand-in for speech."""
+    n = int(rate * seconds)
     with wave.open(path, "w") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
         w.setframerate(rate)
-        w.writeframes(struct.pack("<h", 0) * int(rate * seconds))
+        if not amplitude:
+            w.writeframes(struct.pack("<h", 0) * n)
+        else:
+            w.writeframes(b"".join(
+                struct.pack("<h", int(amplitude * math.sin(2 * math.pi * 440 * i / rate)))
+                for i in range(n)))
 
 
 def test_clip_seconds():
@@ -2014,6 +2023,63 @@ def test_an_outbox_written_by_an_older_build_still_flushes():
         check("flushes", box.flush(lambda e: (seen.append(e), transcriber.POST_OK)[1]), True)
         check("with its text", seen[0]["text"], "from before")
         check("and no clip", seen[0].get("audio"), None)
+
+
+def test_clips_are_levelled_to_one_volume():
+    print("normalize — every over the same loudness")
+    with tempfile.TemporaryDirectory() as d:
+        def wav_at(name, amplitude):
+            p = os.path.join(d, name)
+            write_wav(p, 2.0, amplitude=amplitude)
+            return p
+
+        # Real traffic measured on this receiver ran -11.5 to -50.8 dBFS. Both ends have
+        # to arrive at the same place or the listener is still working the volume knob.
+        loud = wav_at("loud.wav", 8000)     # ~ -12 dBFS
+        quiet = wav_at("quiet.wav", 100)    # ~ -50 dBFS
+
+        lvl_loud = transcriber.clip_level_dbfs(loud)
+        lvl_quiet = transcriber.clip_level_dbfs(quiet)
+        check("the loud one measures loud", lvl_loud > -20, True)
+        check("the quiet one measures quiet", lvl_quiet < -40, True)
+
+        f_loud = transcriber.normalize_filter(loud)
+        f_quiet = transcriber.normalize_filter(quiet)
+        # A loud over is brought DOWN, not merely left alone: boost-only narrows the
+        # spread without closing it.
+        check("the loud one is attenuated", "volume=-" in f_loud, True)
+        check("the quiet one is boosted", "volume=2" in f_quiet or "volume=3" in f_quiet, True)
+        # RMS says nothing about peaks, and a clipped consonant is worse than a quiet clip.
+        check("both keep a peak ceiling",
+              "alimiter" in f_loud and "alimiter" in f_quiet, True)
+
+
+def test_silence_is_never_amplified():
+    """The mistake the first attempt made.
+
+    ffmpeg's loudnorm targets an absolute loudness and has no ceiling on the boost it
+    will apply to reach it. Handed a scrap of near-silence at -73 dBFS it produced -1.5
+    — a full-scale blast of nothing. The audio path now runs BEFORE whisper, so at this
+    point nothing has judged whether there is any speech in the clip at all, and a clip
+    that is mostly squelch hiss would get exactly that treatment."""
+    print("normalize — silence stays silent")
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "silence.wav")
+        write_wav(p, 2.0, amplitude=1)
+        lvl = transcriber.clip_level_dbfs(p)
+        check("measures as silence", lvl < transcriber.AUDIO_SILENCE_DBFS, True)
+        check("and is left alone entirely", transcriber.normalize_filter(p), None)
+
+
+def test_the_boost_is_bounded():
+    print("normalize — the boost has a ceiling")
+    # Whatever the measurement says. A clip just above the silence floor must not be
+    # lifted by fifty decibels merely because the arithmetic allows it.
+    for level in (-64.0, -60.0, -55.0):
+        gain = max(-transcriber.AUDIO_MAX_CUT_DB,
+                   min(transcriber.AUDIO_MAX_GAIN_DB, transcriber.AUDIO_TARGET_DBFS - level))
+        check(f"{level} dBFS is boosted no more than the cap",
+              gain <= transcriber.AUDIO_MAX_GAIN_DB, True)
 
 
 def test_a_missing_encoder_costs_the_audio_and_nothing_else():
@@ -2719,6 +2785,9 @@ if __name__ == "__main__":
         test_a_clip_survives_while_its_entry_is_still_waiting,
         test_evicting_an_old_entry_deletes_its_clip_too,
         test_an_outbox_written_by_an_older_build_still_flushes,
+        test_clips_are_levelled_to_one_volume,
+        test_silence_is_never_amplified,
+        test_the_boost_is_bounded,
         test_a_missing_encoder_costs_the_audio_and_nothing_else,
         test_a_failed_encode_leaves_nothing_behind,
         test_an_oversized_clip_is_refused_locally,

@@ -37,6 +37,7 @@ import re
 import select
 import shutil
 import signal
+import struct
 import subprocess
 import sys
 import threading
@@ -328,6 +329,76 @@ def load_channel(path, channel_id):
 # Opus's 10: 1.5x on something already trivially small, to avoid a format that may
 # simply not play on most of the fleet.
 AUDIO_BITRATE = "24k"
+
+# Level every clip to the same loudness before encoding.
+#
+# Overs arrive at wildly different levels. Measured over one day of real traffic on this
+# receiver: content ran from -11.5 dBFS down to -50.8, a spread of nearly 40 dB. FM gives
+# no help, because the demodulated level follows how hard somebody talks into their mic
+# rather than how strong the signal is. Unlevelled, listening means riding the volume
+# knob — turn it up for the weak one and the next one takes your head off.
+#
+# A measured gain rather than ffmpeg's loudnorm, and that is the second attempt. loudnorm
+# targets an absolute loudness, which is exactly the right idea, but it has no ceiling on
+# how much boost it will apply: fed a 0.1-second scrap of silence at -73 dBFS it produced
+# -1.5, amplifying nothing into a full-scale blast. A clip that is mostly squelch hiss
+# would get the same treatment, and the audio path now runs BEFORE whisper, so nothing
+# has yet judged whether there is speech in it at all.
+#
+# So the gain is worked out here and clamped. Predictable, bounded, one pass, and the
+# arithmetic is visible in the journal when somebody asks why a clip sounded the way it
+# did.
+AUDIO_TARGET_DBFS = -20.0     # where speech should land; the loud end of real traffic
+AUDIO_MAX_GAIN_DB = 30.0      # never boost more than this, whatever the measurement says
+# Loud overs come DOWN as well. Boost-only leaves the strong stations where they were and
+# only lifts the weak ones, which narrows the spread without closing it — measured
+# traffic ran -11.5 to -50.8 dBFS, and boost-only would still leave 9 dB between the
+# ends. The point is that every over plays at the same volume, not merely that none is
+# inaudible.
+AUDIO_MAX_CUT_DB = 15.0
+AUDIO_SILENCE_DBFS = -65.0    # below this it is not quiet speech, it is nothing
+
+# A true-peak ceiling after the gain, because RMS says nothing about peaks and a clipped
+# consonant is worse than a quiet clip.
+AUDIO_LIMITER = "alimiter=limit=0.89"
+
+
+def clip_level_dbfs(wav_path, stride=16):
+    """Rough RMS of a clip in dBFS, or None if it cannot be read.
+
+    Every sixteenth sample: this only has to be good enough to pick a gain, and a
+    two-minute clip is nearly two million samples that would otherwise be summed in
+    Python on the transcription thread.
+    """
+    try:
+        with wave.open(wav_path) as w:
+            n = w.getnframes()
+            if n == 0:
+                return None
+            raw = w.readframes(n)
+    except (wave.Error, OSError, EOFError):
+        return None
+    usable = len(raw) // 2
+    if usable == 0:
+        return None
+    s = struct.unpack("<%dh" % usable, raw[:usable * 2])[::stride]
+    if not s:
+        return None
+    rms = math.sqrt(sum(x * x for x in s) / len(s))
+    return 20 * math.log10(max(rms, 1.0) / 32768.0)
+
+
+def normalize_filter(wav_path):
+    """The ffmpeg -af argument that levels this clip, or None to leave it alone."""
+    level = clip_level_dbfs(wav_path)
+    if level is None or level < AUDIO_SILENCE_DBFS:
+        # Nothing worth lifting. Silence amplified is not quiet speech recovered, it is
+        # a loud hiss where the listener expected a voice.
+        return None
+    gain = max(-AUDIO_MAX_CUT_DB, min(AUDIO_MAX_GAIN_DB, AUDIO_TARGET_DBFS - level))
+    if abs(gain) < 0.5:
+        return AUDIO_LIMITER          # already at level; keep the peak ceiling
+    return "volume=%.1fdB,%s" % (gain, AUDIO_LIMITER)
 AUDIO_DIR = "audio"          # under the spool, on the card: the outbox may hold it for hours
 # A capped 120-second clip encodes to roughly 360 kB, so this is not close. It is here
 # because the server refuses anything larger and an entry must not be held back
@@ -346,10 +417,14 @@ def encode_audio(wav_path, directory, when):
     try:
         os.makedirs(directory, exist_ok=True)
         dest = os.path.join(directory, "%.6f.m4a" % when)
+        argv = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+                "-i", wav_path, "-ac", "1"]
+        af = normalize_filter(wav_path)
+        if af:
+            argv += ["-af", af]
+        argv += ["-c:a", "aac", "-b:a", AUDIO_BITRATE, dest]
         proc = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-             "-i", wav_path, "-ac", "1", "-c:a", "aac", "-b:a", AUDIO_BITRATE, dest],
-            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60)
+            argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60)
     except FileNotFoundError:
         log.warning("ffmpeg is not installed, so entries will go to the log without "
                     "audio. Install it (or re-run install.sh) to send it.")

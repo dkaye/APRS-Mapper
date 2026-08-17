@@ -36,7 +36,7 @@ struct WatchMessage: Identifiable, Codable, Equatable {
   /// still distinguished, by a double buzz, which costs no airtime.
   var announcementPhrase: String {
     let who = senderLabel.trimmingCharacters(in: .whitespaces)
-    return who.isEmpty ? "Message." : "Message from \(who)."
+    return who.isEmpty ? "Message." : "From \(who)."
   }
 
   /// The content half. A photo with no caption still deserves a sentence, or the

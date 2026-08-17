@@ -13,7 +13,7 @@ import 'dart:io' show Platform;
 
 import 'package:flutter_tts/flutter_tts.dart';
 
-/// The pause between "Message from Dirck." and the words. Run together, the name
+/// The pause between "From Dirck." and the words. Run together, the name
 /// blurs into the opening of the message and the listener loses both halves.
 const _kSpeakGap = Duration(milliseconds: 500);
 
@@ -58,7 +58,7 @@ class Speaker {
     await _tts.setSpeechRate(0.5);
   }
 
-  /// "Message from <who>." — pause — the text.
+  /// "From <who>." — pause — the text.
   ///
   /// One preamble, whoever it was addressed to. Monitored traffic used to be announced
   /// as "Monitored, from Net Control", on the reasoning that a listener should know a
@@ -90,7 +90,7 @@ class Speaker {
       // long has been overtaken by events; the text is still on screen.
       if (DateTime.now().difference(queuedAt) > _kMaxSpeechAge) return;
       await _ensureReady();
-      final preamble = who.isNotEmpty ? 'Message from $who.' : '';
+      final preamble = who.isNotEmpty ? 'From $who.' : '';
       if (preamble.isNotEmpty) {
         await _speak(preamble);
         await Future.delayed(_kSpeakGap);
