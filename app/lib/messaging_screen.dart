@@ -50,12 +50,22 @@ class _MessagingScreenState extends State<MessagingScreen> {
   bool _speak = false;
   List<String> _lastRecipients = const [];
 
+  /// Monitor mode: the event's whole traffic, as a running log. A third place this
+  /// screen can be, alongside the inbox and an open thread.
+  bool _monitorOpen = false;
+  StreamSubscription<List<MsgMessage>>? _monitorSub;
+
   @override
   void initState() {
     super.initState();
     MessagingScreen.isOpen = true;
     _restoreSpeak();
     _bootstrap();
+    // Live while this screen exists, not only while the monitor view is showing: the
+    // inbox row carries a count, and it has to be right when the operator looks at it.
+    _monitorSub = MonitorService.instance.messages.listen((_) {
+      if (mounted) setState(() {});
+    });
     _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) => _poll());
   }
 
@@ -63,6 +73,7 @@ class _MessagingScreenState extends State<MessagingScreen> {
   void dispose() {
     MessagingScreen.isOpen = false;
     _pollTimer?.cancel();
+    _monitorSub?.cancel();
     _composeCtl.dispose();
     _scrollCtl.dispose();
     _player.dispose();
@@ -453,19 +464,31 @@ class _MessagingScreenState extends State<MessagingScreen> {
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
+        if (_monitorOpen) { setState(() => _monitorOpen = false); return; }
         if (_open != null) _backToInbox();
       },
       child: Scaffold(
         appBar: AppBar(
           backgroundColor: _kDark,
           foregroundColor: Colors.white,
-          titleSpacing: inThread ? 0 : null,
-          title: Text(inThread ? _open!.label : 'Messages', overflow: TextOverflow.ellipsis),
+          titleSpacing: (inThread || _monitorOpen) ? 0 : null,
+          title: Text(
+              _monitorOpen
+                  ? (MonitorService.instance.monitoringAll ? 'Everyone’s traffic' : 'Radio')
+                  : (inThread ? _open!.label : 'Messages'),
+              overflow: TextOverflow.ellipsis),
           // On the inbox there is nothing to go back TO — Close is the way out. Without
           // this the AppBar auto-inserts a back arrow that calls maybePop(), which
           // PopScope(canPop: false) swallows, leaving a visible button that does nothing.
           automaticallyImplyLeading: false,
-          leading: inThread ? IconButton(icon: const Icon(Icons.arrow_back), tooltip: 'Back to conversations', onPressed: _backToInbox) : null,
+          leading: _monitorOpen
+              ? IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  tooltip: 'Back to conversations',
+                  onPressed: () => setState(() => _monitorOpen = false))
+              : inThread
+                  ? IconButton(icon: const Icon(Icons.arrow_back), tooltip: 'Back to conversations', onPressed: _backToInbox)
+                  : null,
           actions: [
             // One speaker, not two. This was a mute toggle beside a separate ear icon
             // for the monitor sheet — but every setting behind both of them is about
@@ -491,8 +514,8 @@ class _MessagingScreenState extends State<MessagingScreen> {
             ),
           ],
         ),
-        body: inThread ? _buildThread() : _buildInbox(),
-        floatingActionButton: inThread
+        body: _monitorOpen ? _buildMonitor() : (inThread ? _buildThread() : _buildInbox()),
+        floatingActionButton: (inThread || _monitorOpen)
             ? null
             : FloatingActionButton.extended(
                 backgroundColor: _kBlue,
@@ -508,17 +531,112 @@ class _MessagingScreenState extends State<MessagingScreen> {
     );
   }
 
+  /// The way into the monitor log, at the top of the inbox and only when something is
+  /// actually being followed.
+  ///
+  /// Deliberately not a conversation row, and it does not look like one. Monitored
+  /// traffic has no thread to reply into, and presenting it as one would invite exactly
+  /// the mistake the rest of this feature avoids: answering a question that was asked
+  /// of somebody else.
+  Widget _monitorEntry() {
+    final mon = MonitorService.instance;
+    final n = mon.recent.length;
+    final radioOnly = mon.playingRadioAudio && !mon.monitoringAll;
+    return Material(
+      color: _kDark.withValues(alpha: 0.06),
+      child: ListTile(
+        leading: const Icon(Icons.hearing, color: _kDark),
+        title: Text(radioOnly ? 'Radio' : 'Everyone’s traffic',
+            style: const TextStyle(fontWeight: FontWeight.w600, color: _kDark)),
+        subtitle: Text(n == 0
+            ? 'Listening — nothing yet'
+            : '$n recent${mon.skippedTotal > 0 ? ' · ${mon.skippedTotal} skipped' : ''}'),
+        trailing: const Icon(Icons.chevron_right, color: _kDark),
+        onTap: () => setState(() => _monitorOpen = true),
+      ),
+    );
+  }
+
+  /// Everything being monitored, oldest at the top, newest at the bottom — the order a
+  /// net happened in, which is the order somebody reading back wants it.
+  Widget _buildMonitor() {
+    final items = MonitorService.instance.recent;
+    if (items.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            'Nothing yet.\n\nThis fills as traffic arrives. It shows every message in '
+            'the event and what the receivers heard — none of it addressed to you, and '
+            'none of it will alert you.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey),
+          ),
+        ),
+      );
+    }
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      itemCount: items.length,
+      separatorBuilder: (_, __) => const Divider(height: 1),
+      itemBuilder: (_, i) => _monitorRow(items[items.length - 1 - i]),
+    );
+  }
+
+  Widget _monitorRow(MsgMessage m) {
+    // An audio-first entry has no words yet: the recording is posted the moment the
+    // over ends and the transcription follows a few seconds later, and some never get
+    // one because it was discarded as a hallucination. Saying so is better than an
+    // empty row that looks like a bug.
+    final text = m.text.trim();
+    final body = text.isNotEmpty
+        ? text
+        : (m.hasAudio ? 'Recording — no transcription' : '');
+    return ListTile(
+      dense: true,
+      title: Row(children: [
+        Expanded(
+          child: Text(
+            m.isRadio ? '📻 ${m.senderLabel}' : m.senderLabel,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: _kDark),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        if ((m.toLabel ?? '').isNotEmpty)
+          Text('→ ${m.toLabel}',
+              style: const TextStyle(fontSize: 11, color: Colors.grey)),
+        const SizedBox(width: 8),
+        Text(_clockTime(m.ts), style: const TextStyle(fontSize: 11, color: Colors.grey)),
+      ]),
+      subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        if (body.isNotEmpty)
+          Text(body,
+              style: TextStyle(
+                  fontSize: 14,
+                  color: text.isEmpty ? Colors.grey : Colors.black87,
+                  fontStyle: text.isEmpty ? FontStyle.italic : FontStyle.normal)),
+        if (m.hasAudio) _bubbleAudio(m),
+      ]),
+    );
+  }
+
   Widget _buildInbox() {
     final items = _convs.where((c) => c.lastId > 0).toList()..sort((a, b) => b.lastId.compareTo(a.lastId));
-    if (items.isEmpty) {
+    final monitoring = MonitorService.instance.enabled;
+    if (items.isEmpty && !monitoring) {
       return const Center(child: Padding(padding: EdgeInsets.all(24), child: Text('No conversations yet.\nTap “New message” to start one.', textAlign: TextAlign.center, style: TextStyle(color: Colors.grey))));
     }
+    // The monitor entry is row zero when anything is being followed, so the count is
+    // visible without opening it.
+    final lead = monitoring ? 1 : 0;
     return RefreshIndicator(
       onRefresh: _loadConversations,
       child: ListView.separated(
-        itemCount: items.length,
+        itemCount: items.length + lead,
         separatorBuilder: (_, __) => const Divider(height: 1),
-        itemBuilder: (_, i) {
+        itemBuilder: (_, idx) {
+          if (monitoring && idx == 0) return _monitorEntry();
+          final i = idx - lead;
           final c = items[i];
           final pv = c.preview;
           return ListTile(

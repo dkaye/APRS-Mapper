@@ -67,6 +67,24 @@ class MonitorService {
   /// entry's TEXT is not shown or spoken for this option; it is carrier for the audio.
   bool get wantsLog => _radioAudio;
 
+  /// What has been monitored recently, newest last, for the monitor view to show.
+  ///
+  /// Held here rather than fetched when the view opens, and that is deliberate: the
+  /// cursor belongs to this service, and a second call with a rewound cursor to
+  /// backfill history would either disturb it or need a parallel one. The server bounds
+  /// catch-up to a few minutes anyway, so there is little history to miss — and this
+  /// fills from the moment monitoring is switched on, which is when the operator asked
+  /// to start following.
+  final List<MsgMessage> recent = [];
+
+  /// A net can produce a message every few seconds for an hour. The view is a running
+  /// log, not an archive — the written record lives on the server.
+  static const _kRecentCap = 300;
+
+  /// Total skipped by the server's catch-up bound since monitoring began, so the view
+  /// can say a gap happened rather than leaving one silently.
+  int skippedTotal = 0;
+
   final _messages = StreamController<List<MsgMessage>>.broadcast();
 
   /// Batches, not individual messages. A caller that wants to speak them needs to
@@ -106,7 +124,14 @@ class MonitorService {
     // Turning a subscription on starts from now, not from whenever this device last
     // looked. Otherwise switching it on mid-net delivers a backlog nobody asked for,
     // which is the first thing the user would see and the last thing they wanted.
-    if (v) await _startFromNow();
+    if (v) {
+      await _startFromNow();
+    } else if (!enabled) {
+      // Nothing is being followed any more, so the list behind the button is history
+      // nobody asked to keep. Cleared rather than left to look live.
+      recent.clear();
+      skippedTotal = 0;
+    }
   }
 
   Future<void> _startFromNow() async {
@@ -140,8 +165,17 @@ class MonitorService {
         _skipFirstBatch = false;
         return;
       }
-      if (res.skipped > 0) _skipped.add(res.skipped);
-      if (res.messages.isNotEmpty) _messages.add(res.messages);
+      if (res.skipped > 0) {
+        skippedTotal += res.skipped;
+        _skipped.add(res.skipped);
+      }
+      if (res.messages.isNotEmpty) {
+        recent.addAll(res.messages);
+        if (recent.length > _kRecentCap) {
+          recent.removeRange(0, recent.length - _kRecentCap);
+        }
+        _messages.add(res.messages);
+      }
     } finally {
       _inFlight = false;
     }
@@ -150,6 +184,8 @@ class MonitorService {
   /// Forget where we were. Used when the event changes: ids do not restart, but the
   /// traffic does, and carrying a cursor across is only ever confusing.
   Future<void> reset() async {
+    recent.clear();
+    skippedTotal = 0;
     _cursor = 0;
     _skipFirstBatch = true;
     final p = await SharedPreferences.getInstance();
