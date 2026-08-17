@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The watch app's launcher icon.
+
+  One layer, not two. Google's usual advice is a logo in the foreground over a flat
+  background, but this icon is a scene rather than a mark — the antenna stands on the
+  summit, and a launcher that shifts the two layers independently for a parallax effect
+  would float it off the peak. The whole illustration therefore lives in the background
+  layer, where nothing can slide relative to anything else, and the foreground is empty.
+
+  Artwork is generated: see ../../../../icon/make-icon.py, which draws the SVG and
+  renders one PNG per density. Do not hand-edit the PNGs — the next run overwrites them.
+
+  minSdk is 30, so this file always wins and there is no legacy raster fallback to keep
+  in step with it.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@mipmap/ic_launcher_background" />
+    <foreground android:drawable="@android:color/transparent" />
+</adaptive-icon>

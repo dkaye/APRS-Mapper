@@ -164,14 +164,29 @@ class MsgMessage {
   /// watch, and a different spoken preamble.
   final bool monitored;
 
-  const MsgMessage({required this.id, required this.conversationId, required this.ts, required this.text, this.broadcast = false, required this.fromId, this.fromKind, this.fromKey, this.fromShort, this.fromName = '', this.lat, this.lon, this.hasPhoto = false, this.photoW, this.photoH, this.toLabel, this.hasAudio = false, this.audioUrl, this.audioSecs, this.monitored = false});
+  /// Sent TO us, as opposed to merely happening near us. Tagged by the server, and only
+  /// on the monitor feed — every other feed is built from delivery rows, so everything
+  /// in them is addressed here by construction.
+  ///
+  /// It exists because the phone announces addressed traffic and monitored traffic by
+  /// two independent paths and the monitor feed returns both, so a message sent to this
+  /// operator was read aloud twice. The client cannot work this out for itself: the two
+  /// polls run at different intervals, so a monitor batch can arrive before the
+  /// addressed path has seen anything to claim.
+  ///
+  /// False by default, which is what an older server yields. That is the safe direction
+  /// — a message that is announced twice is a nuisance; one suppressed on both paths is
+  /// a message nobody heard.
+  final bool addressedToMe;
+
+  const MsgMessage({required this.id, required this.conversationId, required this.ts, required this.text, this.broadcast = false, required this.fromId, this.fromKind, this.fromKey, this.fromShort, this.fromName = '', this.lat, this.lon, this.hasPhoto = false, this.photoW, this.photoH, this.toLabel, this.hasAudio = false, this.audioUrl, this.audioSecs, this.monitored = false, this.addressedToMe = false});
 
   MsgMessage asMonitored() => MsgMessage(
         id: id, conversationId: conversationId, ts: ts, text: text, broadcast: broadcast,
         fromId: fromId, fromKind: fromKind, fromKey: fromKey, fromShort: fromShort,
         fromName: fromName, lat: lat, lon: lon, hasPhoto: hasPhoto, photoW: photoW,
         photoH: photoH, toLabel: toLabel, hasAudio: hasAudio, audioUrl: audioUrl,
-        audioSecs: audioSecs, monitored: true,
+        audioSecs: audioSecs, monitored: true, addressedToMe: addressedToMe,
       );
 
   /// A Transcriber entry — something heard on the radio rather than typed by a person.
@@ -196,6 +211,7 @@ class MsgMessage {
         photoW: (j['photo_w'] as num?)?.toInt(),
         photoH: (j['photo_h'] as num?)?.toInt(),
         toLabel: j['to_label'] as String?,
+        addressedToMe: j['addressed'] as bool? ?? false,
         hasAudio: j['has_audio'] as bool? ?? false,
         audioUrl: j['audio_url'] as String?,
         audioSecs: (j['audio_secs'] as num?)?.toDouble(),
@@ -274,11 +290,39 @@ class MessagingClient {
     }
   }
 
+  /// This client's own participant id, and the token it was learned under.
+  ///
+  /// Every message carries `fromId`, but until now nothing outside the chat screen knew
+  /// which id was *ours* — and "did I send this?" is the question that decides whether a
+  /// message is read aloud. See `MessagingClient.myParticipantId`.
+  int? _me;
+  String? _meToken;
+
   Future<({List<MsgParticipant> participants, int? me})> participants() async {
     final d = await _post('participants');
     if (d == null || d['participants'] == null) return (participants: <MsgParticipant>[], me: null);
     final list = (d['participants'] as List).map((p) => MsgParticipant.fromJson(p as Map<String, dynamic>)).where((p) => !p.self).toList();
-    return (participants: list, me: (d['me'] as num?)?.toInt());
+    final me = (d['me'] as num?)?.toInt();
+    if (me != null) {
+      _me = me;
+      _meToken = tokenProvider();
+    }
+    return (participants: list, me: me);
+  }
+
+  /// Who this device is, on the messaging side. Fetched once and held.
+  ///
+  /// `participants` is the only endpoint that answers it and it returns the whole
+  /// roster, so it is far too heavy to ask per message — but the answer does not change
+  /// within a session, so one call covers the life of the token.
+  ///
+  /// Cached against the token rather than forever: a new token is a new participant, and
+  /// an id remembered across an event change would name somebody else entirely.
+  Future<int?> myParticipantId() async {
+    final token = tokenProvider();
+    if (token == null) return null;
+    if (_me != null && _meToken == token) return _me;
+    return (await participants()).me;
   }
 
   Future<List<MsgConversation>> conversations() async {

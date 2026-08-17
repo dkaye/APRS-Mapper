@@ -21,7 +21,7 @@
 7. [Display Pis (v1.23.0)](#display-pis-v1230)
    - [Running a display Pi on Starlink](#running-a-display-pi-on-starlink)
 8. [Mobile Apps (v1.23.0)](#mobile-apps-v1230)
-   - [Architecture](#app-architecture) · [Location Sharing Flow](#location-sharing-flow) · [Smart Track](#smart-track) · [Building & Distributing](#building-distributing) · [Background Location](#background-location)
+   - [Monitoring the whole event](#monitoring-the-whole-event) · [Architecture](#app-architecture) · [Location Sharing Flow](#location-sharing-flow) · [Smart Track](#smart-track) · [Building & Distributing](#building-distributing) · [Background Location](#background-location) · [Apple Watch Companion](#apple-watch-companion-watch) · [Wear OS Companion](#wear-os-companion-wear)
 9. [Transcribers](#transcribers)
    - [Calibration](#calibration) · [Transcriber Diagnostics](#transcriber-diagnostics)
 10. [User Interfaces](#user-interfaces)
@@ -32,7 +32,7 @@
    - [Server Pi](#server-pi) · [Display Pis](#display-pis) · [iGates](#igates)
 14. [Log Rotation](#log-rotation)
 15. [Building & Deploying Devices](#building-deploying-devices)
-    - [NetBird Setup Keys](#netbird-setup-keys) · [APRS Server](#aprs-server) · [Display Pis & iGates](#display-pis-igates)
+    - [Power Supply Checks](#power-supply-checks-all-pis-commonpower-checksh) · [NetBird Setup Keys](#netbird-setup-keys) · [APRS Server](#aprs-server) · [Display Pis & iGates](#display-pis-igates)
 16. [Creating New Master Images](#creating-new-master-images)
     - [APRS Server](#aprs-server_1) · [Display Pis](#display-pis_1) · [iGates](#igates_1)
 17. [Supporting Systems](#supporting-systems)
@@ -771,6 +771,7 @@ browning out, not crashing. It fails at desktop start because that is peak draw:
 compositor, Chromium and WiFi all at once. Confirm from the hardware, not the symptoms:
 
 ```bash
+/home/pi/power-check.sh     # the codified version of all of this — see below
 vcgencmd get_throttled      # 0x0 = healthy
                             # bits 0-2 = happening now; bits 16-18 = since boot (latched)
 dmesg | grep -i undervoltage
@@ -845,16 +846,23 @@ the messaging core works: the delivered feed is a join on `deliveries`, and a me
 not addressed to you has no row there. Transcriber log entries have no rows at all, so
 the radio has always been invisible to phones.
 
-Three independent switches, in the 👂 sheet on the Messages screen:
+Three independent switches, behind **two** icons on the Messages screen:
 
-| | |
-|---|---|
-| **All messages** | everything anyone sends, whoever it was addressed to |
-| **Radio traffic** | what the receivers heard on the air, transcribed |
-| **Play radio audio** | fetch the recording when you tap an entry |
+| Icon | Sheet | Holds |
+|---|---|---|
+| 🔊 speaker | **Sound** | mute, read arriving messages aloud, **Play radio audio** |
+| ⚙ gear | **Follow** | **All messages**, **Radio traffic** |
 
 They are independent because following the event as text costs almost nothing and the
 audio is the part that costs cellular data — so nothing is ever implied.
+
+They are split across two icons because they answer different questions. *What reaches
+this phone at all* is not an audio setting, and it read wrongly behind a speaker: the
+sheet began as one 👂 ear icon holding everything, and "see everyone's messages" sitting
+in a panel about sound was the tell. The speaker also doubles as the indicator — filled
+when this device will make a sound for an arriving message, crossed out when it will not
+— and the gear fills while anything is being followed, so the bar answers both questions
+without opening either sheet.
 
 **Monitored traffic never raises a notification.** None of it was sent to this
 operator, and on a busy net that is a message every few seconds; a phone that buzzed
@@ -864,12 +872,47 @@ promises that every message the wrist holds gets announced, and a firehose would
 that, churn the message cap, and let a push-to-talk reply aim at whichever stranger
 spoke last. The wrist still hears it all, because the phone speaks it.
 
-**Speech says where a line came from** — "Heard on Simulcast:" rather than "Message
-from:". A synthesised voice reads a garbled machine transcription in exactly the same
-confident tone as a real message, and the preamble is the only thing telling them
-apart. The speech queue also drops anything that has waited five minutes: speech is
-real time and a backlog is not, so without that the phone narrates a net that finished
-ten minutes ago and cannot be interrupted.
+**Speech says where a line came from** — "Heard on Simulcast:" rather than plain "From:".
+A synthesised voice reads a garbled machine transcription in exactly the same confident
+tone as a real message, and the preamble is the only thing telling them apart.
+
+**Everything audible goes through one queue** (`app/lib/audio_queue.dart`) — spoken
+messages, radio clips, and the alert tone alike. There were two before and they did not
+know about each other, so on a net with speech and radio both on, a synthesised voice
+and a real one came out of the speaker at the same time and neither could be understood.
+Three rules are the whole design:
+
+1. **Nothing interrupts.** A new transmission waits for the current one to finish.
+   Chopping a clip mid-word to start another is worse than a few seconds' wait, and
+   rule 2 bounds how far behind that can put you.
+2. **Five minutes, measured by when it was *said*** — not when it was queued. That
+   distinction is the entire point after an outage, where everything is queued at the
+   same instant and a queue-time rule would consider none of it stale and read out an
+   hour of backlog. It is also the only version explicable in one sentence: you will not
+   hear anything more than five minutes old.
+3. **It can always be stopped.** A **Stop** control appears while anything is queued,
+   showing both a count and a duration — neither answers "wait or stop it" alone, since
+   three long overs and thirty short ones are the same count and very different waits.
+   The automatic rules are judgement, and judgement is sometimes wrong.
+
+Silent text is deliberately **not** bounded by any of this. A message nobody has to
+listen to costs nothing to deliver, so every one still arrives and lands in the thread;
+only what is *audible* is rationed.
+
+**The alert tone is part of the queued item, not the notification.** It used to be the
+iOS notification's own sound, with speech delayed 900 ms to let it finish — a race
+against a sound the app neither schedules nor can observe, and it lost: the tone arrived
+on top of speech that had already started. The notification is now silent and the tone is
+the first half of the queue entry, which makes the order a fact rather than a bet. It
+also closed a gap: the notification sound was the one noise in the app exempt from the
+queue, so it could fire in the middle of a radio clip.
+
+**A message is marked read when it has been *spoken*, not when it arrived.** Marking on
+arrival claimed the operator had heard something the queue could still drop as stale or
+fail to play — and it ran before the audio session was known to be working, which is
+exactly when it was wrong. Spoken aloud *is* read: leaving it unread meant a message
+already heard in full still sat behind a red badge, and opening it to clear that badge
+was the act that read it aloud a second time.
 
 **Audio is pulled, never pushed, and never in bulk.** A clip is fetched when you tap
 it. The transcription is what you follow; the audio answers "what did they actually
@@ -984,7 +1027,7 @@ On launch the app fetches `https://marsaprs.org/app_version.php` (a small JSON m
 
 ### Smart Track
 
-Smart Track is the automatic beacon-interval algorithm in the native app (iOS/Android) and the web map. It monitors GPS speed and adjusts the upload frequency without any input from the user. (The Apple Watch companion does messaging only — it never beacons position.)
+Smart Track is the automatic beacon-interval algorithm in the native app (iOS/Android) and the web map. It monitors GPS speed and adjusts the upload frequency without any input from the user. (The Apple Watch and Wear OS companions do messaging only — they never beacon position.)
 
 **Unknown (?) mode — startup phase:**
 
@@ -1130,9 +1173,20 @@ To distribute: share the APK via Google Drive or email. Testers tap the download
    flutter build appbundle --release
    ```
    Output: `build/app/outputs/bundle/release/app-release.aab`
-3. In Play Console → **Your app** → **Testing → Internal testing** → **Create new release** → upload the `.aab`.
-4. After internal testing, promote the release through **Closed testing → Open testing → Production** using the **Promote release** button.
-5. Google typically reviews new production releases within 1–3 days.
+3. Build the Wear OS companion, which `flutter build` does not touch — it is a plain Gradle
+   module, not a Flutter target:
+   ```bash
+   cd android && ./gradlew :wear:assembleRelease
+   ```
+   Output: `build/wear/outputs/apk/release/wear-release.apk`. It takes its version from the
+   same `pubspec.yaml`, so step 1 covers both. See [Wear OS Companion](#wear-os-companion-wear).
+4. In Play Console → **Your app** → **Testing → Internal testing** → **Create new release** →
+   upload the `.aab` **and** the watch APK into the same release. Play delivers the watch
+   APK to a paired watch by matching package name and signature, so both have to be in the
+   release together; uploading only the bundle leaves existing watches on the old build with
+   no indication that anything happened.
+5. After internal testing, promote the release through **Closed testing → Open testing → Production** using the **Promote release** button.
+6. Google typically reviews new production releases within 1–3 days.
 
 **Store listing assets required (one-time, update as needed):**
 - Short description (80 chars), full description (4000 chars)
@@ -1213,9 +1267,38 @@ Samsung One UI is particularly aggressive — users must also set the app to **U
 
 A watchOS companion that makes the wrist a nearly hands-free extension of the phone: a reply is a press-and-hold push-to-talk. It does **messaging only** — it never beacons position.
 
-**The phone is the loudspeaker; the watch is the microphone.** That is the opposite of how this was first built, and the inversion came from field testing. watchOS lets an app play audio only while it is frontmost, so a watch on a lowered wrist cannot alert anybody — while the phone, in a pocket, can both chime and read a message aloud. So the phone announces everything unless the watch app is genuinely on screen, and the watch's job the rest of the time is to be ready to take a reply.
+**The phone is the loudspeaker; the watch is the microphone.** That is the opposite of how this was first built, and the inversion came from field testing. watchOS lets an app play audio only while it is frontmost, so a *backgrounded* watch cannot alert anybody — while the phone, in a pocket, can both chime and read a message aloud. So the phone announces whenever the watch app is not on screen, and the watch's job the rest of the time is to be ready to take a reply.
 
-**Who announces an arriving message** is decided by the watch and obeyed by the phone. The watch publishes `canAnnounce` whenever its scene phase changes; the phone suppresses its own alert only while that is true. It is reported rather than inferred because the two devices had different notions of "awake": a dimmed watch is unreachable over WatchConnectivity yet still frontmost, so each assumed the other had it and messages were announced twice or not at all. Every relayed message also carries `phoneAnnounced`, which stops the watch re-reading a backlog when queued transfers flush on waking, and lets it raise a notification if it went quiet after promising to speak.
+> **A lowered wrist is not backgrounded, and assuming otherwise cost this app most of
+> its usefulness on the wrist.** "Frontmost" was read as scene phase `.active`, so the
+> watch declared itself mute the instant the screen dimmed and handed every
+> announcement to the phone — which is most of a net, because a lowered wrist is the
+> normal way to wear a watch. The claim was inherited from documentation and never
+> measured. `Announcer.runDimmedAudioTest()` (Settings → Diagnostics on the watch)
+> measured it on this hardware and disproved it:
+>
+> ```
+> app INACTIVE · session granted · spoke · 4.2s
+> ```
+>
+> A dimmed always-on display is still frontmost: the audio session is granted and the
+> utterance completes. `AppState.canAnnounce` is therefore true for `.inactive` as well
+> as `.active`, and false only for `.background`. The test button stays in the app as
+> the regression check, because the failure it guards against — the watch promising to
+> speak and going quiet while the phone defers to it — is silent on both devices at
+> once.
+>
+> This is why `canAnnounce` is now separate from `isActive`. One flag was answering two
+> questions: "may I speak?" (anything but `.background`) and "should I run my own HTTP
+> poll?" (only `.active` — a battery question, since the poller runs every few seconds
+> and only while the phone is unreachable). Merging them meant a change made for one
+> reason silently moved the other.
+
+**Who announces an arriving message** is decided by the watch and obeyed by the phone. It is reported rather than inferred because the two devices had different notions of "awake": a dimmed watch is unreachable over WatchConnectivity yet still frontmost, so each assumed the other had it and messages were announced twice or not at all. Every relayed message also carries `phoneAnnounced`, which stops the watch re-reading a backlog when queued transfers flush on waking, and lets it raise a notification if it went quiet after promising to speak.
+
+**The watch reports two facts, not one, and the phone needs both.** `canAnnounce` answers *"am I on screen?"*. It does not answer *"did I make a sound?"* — and for a long time the phone decided on the first while needing the second. Silent Mode, the cover-to-mute gesture, a session the OS refuses, and on Wear OS a watch with no speaker or no speech data at all, every one of them leaves the app frontmost and completely inaudible. The phone deferred to it anyway, so the operator heard nothing from either device with nothing anywhere to say why — on a net, the worst failure in the system, and precisely the one this arrangement exists to prevent. So `audioUnavailable` travels with `canAnnounce` in a single payload (never two, or the phone could hold a fresh value of one beside a stale value of the other) and `watchWillAnnounce` requires both. It is retrospective by nature: whether the session will be granted cannot be known until something is announced, so the first message after audio goes away is still lost to the wrist. What it fixes is every message after it.
+
+**The wrist wins whenever it can be heard**, and that is a deliberate ranking rather than an accident of which code path ran first. Distance beats loudness in the environment this exists for — a phone in a pannier is muffled by fabric before volume enters into it, while a watch is a hand's width from the ear with a clear path. The alert should also land on the device that takes the reply, so hearing a call and answering it is one motion instead of two, and the haptic and the voice should come from the same limb rather than making the operator triangulate.
 
 **Why it is native Swift.** Flutter does not target watchOS, so the watch app cannot be Dart. It is a native SwiftUI target (`WatchApp`) inside the same `app/ios/Runner.xcodeproj`, bridged to the Flutter app over WatchConnectivity plus a Flutter method/event channel.
 
@@ -1239,13 +1322,66 @@ A watchOS companion that makes the wrist a nearly hands-free extension of the ph
 
 **Unconfirmed sends are visible and actionable.** `Outbox` persists every reply until the server confirms it, across app launches and watch reboots — a message spoken into the wrist and silently lost is the worst failure this app has. A badge on the Talk page shows the count, and it is a link: tapping it lists what was said and offers **Retry** or **Discard**. Retry aims at the *current* destination, not the original, because an entry usually failed precisely because its target had gone; it also takes a fresh client id, since `?messaging=send` carries none and the server therefore cannot dedupe a retry against a delivered-but-unacknowledged original.
 
-**The limitation accepted.** watchOS only lets an app play audio while frontmost, and will not run a timer for a backgrounded one. So with the phone off or out of range **and** the watch app backgrounded, nothing reaches the operator until they raise their wrist — at which point the watch polls and announces what it missed. The only mechanism that would change this is a `WKExtendedRuntimeSession`, which costs heavy battery and a background-mode declaration App Review may query; the deliberate decision is to live without it, since the phone covers every case in which it is alive.
+**The limitation accepted.** watchOS only lets an app play audio while frontmost, and will not run a timer for a backgrounded one. (Frontmost includes a dimmed screen — see above — so this bites only when the operator has actually left the app.) So with the phone off or out of range **and** the watch app backgrounded, nothing reaches the operator until they raise their wrist — at which point the watch polls and announces what it missed. The only mechanism that would change this is a `WKExtendedRuntimeSession`, which costs heavy battery and a background-mode declaration App Review may query; the deliberate decision is to live without it, since the phone covers every case in which it is alive.
+
+### Wear OS Companion ("Wear")
+
+The same watch app for Android watches. Same behaviour, same rules, same wire format — an operator moving from an Apple Watch to a Pixel Watch mid-season should not have to learn anything, and a bug fixed on one wrist should not survive on the other.
+
+It is a second native app, not a shared one, for the same reason the first one is native: Flutter targets neither watch platform. The design is therefore stated once and implemented twice, and each file names its counterpart in a header comment so a change made in one place is findable in the other.
+
+| Path | Purpose |
+|------|---------|
+| `app/android/wear/` | Gradle module `:wear` — Compose for Wear OS app, Data Layer client, announcer (haptic/tone/TTS), push-to-talk, direct messaging client |
+| `app/android/app/src/main/kotlin/org/w6sg/aprsmap/watch/WatchBridge.kt` | Phone side of the bridge: the Data Layer clients plus the `org.marsaprs/watch` method and event channels |
+| `app/android/app/src/main/kotlin/org/w6sg/aprsmap/watch/WearListenerService.kt` | Receives from the watch when the phone app is not running |
+| `app/lib/watch_bridge.dart` | Dart side — **one file, both watches.** It has no `Platform.isAndroid` branch and must not grow one |
+
+**One Dart bridge, two native ones.** `watch_bridge.dart` speaks the same method channel, the same event channel and the same payloads to both platforms; every difference between WatchConnectivity and the Wear Data Layer is absorbed on the native side. That is what keeps the rules that matter — who announces, where a reply is aimed, what counts as stale — written down once. A platform branch in the Dart would be the start of two subtly different watch apps that nobody could keep in step.
+
+**Transport mapping.** The Data Layer has three clients where watchOS has one session, and mapping them wrongly produces a watch that works on the bench and goes silent in the field:
+
+| watchOS | Wear OS | Why |
+|---------|---------|-----|
+| `sendMessage` | `MessageClient` → `/aprs/live`, `/aprs/tx` | Fast, and fails outright rather than queueing when the other side is not connected |
+| `transferUserInfo` | `DataClient` item at `/aprs/msg/<id>`, `/aprs/txq/<uuid>` | Durable, survives both processes dying, starts the other side's listener service to deliver. A unique path per item, because the Data Layer only notifies on *change* — two identical payloads on one path is one event, and the second vanishes |
+| `updateApplicationContext` | `DataClient` item at `/aprs/context` | One fixed path, latest value wins, syncs to a watch that was not running |
+| `transferFile` | — | Not needed; see push-to-talk below |
+| `isPaired` / `isWatchAppInstalled` / `isReachable` | `CapabilityClient` + `node.isNearby` | There is no session to ask. The phone advertises `aprs_map_phone`, the watch `aprs_map_wear`, each in its module's `res/values/wear.xml`. **Those two strings are wire contract**: rename one and both apps keep running, neither reports an error, and the watch never hears anything again |
+
+Everything crosses as a JSON string under a single `json` key rather than as a typed `DataMap`, because `DataMap.getInt` on a value the sender wrote as a long returns zero rather than failing — the same class of trap that forces hand-written decoding on the WatchConnectivity side, and zero is a valid conversation id.
+
+**Push-to-talk transcribes on the watch, and that is the one real divergence.** watchOS has no speech recogniser, so the Apple Watch records AAC, ships the clip to the iPhone, waits, and gets text back — three hops, a `TalkSession` with a "Sending audio…" phase, and nothing at all when the phone is away. Wear OS watches recognise speech themselves, so `SpeechCapture.kt` records nothing and transfers nothing: press, speak, release, send. It prefers `createOnDeviceSpeechRecognizer` where the watch has it, for the same reason the iPhone sets `requiresOnDeviceRecognition` — this is a ham operator's net traffic and there is no reason to hand it to Google if the wrist can do the work. The consequence that matters during an event is that push-to-talk keeps working when the phone is out of range, which is precisely when somebody is most likely to be talking into their wrist. There is therefore no `talkAudio` path, no `transcript` reply and no microphone permission on the phone side of this bridge.
+
+The gesture is a raw pointer loop, not `detectTapGestures` or a long-press detector. Both of those decide for themselves when a press has become something else — a tap detector cancels once the finger drifts past the touch slop — and on a moving vehicle the finger always drifts. Down starts it, up ends it, nothing in between.
+
+**Ambient is not backgrounded**, and the same two questions are kept apart here as on watchOS. `canAnnounce` is true while the Activity is STARTED, ambient included: a dimmed watch is still this app on the display and audio focus is still granted, and a lowered wrist is the normal way to wear a watch. `isActive` — which gates the direct poller, a battery question — is true only while RESUMED and out of ambient. Settings → Diagnostics carries the same **Test audio when dimmed** button as the Apple Watch, and it matters more here rather than less: Wear hardware varies far more than Apple's does, several models have no speaker at all, and the failure it guards against (the watch promising to speak while the phone defers to it) is silent on both devices at once.
+
+**The limitation accepted, and it is a different one.** WatchConnectivity relaunches the whole iOS app in the background to deliver a watch message, so the iPhone can act on a reply spoken into the wrist even with the app closed. On Android, `WearListenerService` starts a bare process with no Flutter engine in it and nothing will create one. So a reply that reaches the phone while the phone app is not running is parked on disk and replayed the next time Dart calls `ready`. The watch does not pretend otherwise: if no `sendResult` comes back within thirty seconds the Outbox row moves from *Sending* to *Waiting to send*, where it is visible and can be retried. It is deliberately **not** re-sent down the watch's own direct path — `?messaging=send` carries no client id, so the server cannot dedupe, and a retry of something the phone already sent would put the message on the net twice.
+
+**Build and release.** `:wear` is a separate APK with the *same* `applicationId` and the *same* signing key as the phone app — Play matches a companion by package name **and** signature, and getting either wrong ships a watch app that installs cleanly and is never delivered to a watch. Its version comes from `pubspec.yaml`, parsed in `wear/build.gradle.kts`, exactly as `WatchApp.xcconfig` arranges on the other platform; `local.properties` is not used, because it is only written as a side effect of the last `flutter build` and is stale on a clean checkout. The `versionCode` carries a `+100000` offset, since every APK in one Play release needs its own and both come from the same pubspec number.
+
+```bash
+cd app/android
+./gradlew :wear:assembleRelease
+apksigner verify --print-certs ../build/wear/outputs/apk/release/wear-release.apk | grep SHA-256
+# expected 0d30a9f258e1330cb22a092ca6df65af5d3bf085905fb9bc01d74e54c866da57 — the same
+# certificate as the phone APK
+```
+
+R8 is on for the watch release and off for the phone's. Unminified, Compose plus `play-services-wearable` is 22 MB of dex; minified it is under three. That is a storage question on a device with very little, and an install-time question on a link that is Bluetooth. Keep rules for the three manifest-declared classes live in `wear/proguard-rules.pro`.
+
+**The launcher icon is generated, not drawn.** `wear/icon/make-icon.py` emits `ic_launcher.svg` and renders one PNG per density into `wear/src/main/res/mipmap-*/`; run it after any change and commit the result. It is an *adaptive* icon (`mipmap-anydpi-v26/ic_launcher.xml`), which is the only kind Wear OS 3+ uses — the layers are 108 dp, the system shows the middle 72 dp masked to a circle, and only a centred ⌀66 dp circle is guaranteed visible. The phone's square icon cannot simply be copied across: it fills its canvas edge to edge, so the circular crop slices the outer arcs off at both ends. The watch version is a recomposition against that geometry, using the phone icon's own sampled palette — the arcs pulled inside the safe circle, the sky and the massif extended outward to fill the margin the mask eats.
+
+The whole scene sits in the **background** layer with an empty foreground, which is deliberately not the usual logo-over-fill split. The antenna stands on the summit, and a launcher that shifts the two layers independently for parallax would float it off the peak. One layer cannot come apart.
+
+The three numbers that decide whether an edit survives: at x=250 the crop circle spans y 294–730, so a ridge line that looks right on the square canvas can be entirely outside the visible area; the mountain's tonal ramp runs across y 599–880 rather than the full height, or the crop shows only its top third and the massif reads as one flat shape at 64 px; and each density is rendered from the vector at its native size rather than downsampled from a master, because the arcs are thin and the stars are two pixels across.
 
 ---
 
 ## Transcribers
 
-A Transcriber is a Raspberry Pi 4 with an RTL-SDR that listens on a voice frequency,
+A Transcriber is a Raspberry Pi (4 or 5) with an RTL-SDR that listens on a voice frequency,
 transcribes each transmission with `whisper.cpp`, and appends it to the event log by
 itself. Net control hears everything on the radio and writes down almost none of it;
 this is the part that writes it down.
@@ -1312,6 +1448,21 @@ on its own and says so once. The transcription is the record; the recording is a
 on it. Clips ride in the outbox as a *path* rather than as bytes, on the card beside the
 entries that name them, because an entry may wait there for hours across an outage and a
 reboot is exactly what the outbox exists to survive.
+
+**The clip is posted before the transcription exists.** `log_audio` writes an audio-first
+entry with empty text and returns an `entry_id`; the later `log` call completes it. That
+ordering is worth the extra round trip because whisper is the slow part — audio reached a
+listening phone in about **6 seconds instead of 26**, which is the difference between
+hearing a net and reading its minutes.
+
+**Levels are measured and corrected, not left to `loudnorm`.** Clips off the SDR arrived
+with a **37 dB** spread between transmissions, so following a net meant riding the volume
+control. The first attempt used ffmpeg's `loudnorm`, which does the wrong thing on a
+mostly-silent clip: it dutifully amplified a −73 dBFS near-silent capture to −1.5 dBFS, a
+burst of hiss at full volume. What ships instead measures the clip and applies a single
+clamped gain toward −20 dBFS (`AUDIO_MAX_GAIN_DB` 30, `AUDIO_MAX_CUT_DB` 15), refuses to
+touch anything below `AUDIO_SILENCE_DBFS` (−65), and ends in a limiter. The spread across
+a real net came down to about **1.5 dB**.
 
 On the server the clip lands **inside the web root** at an unguessable name and is served
 by Apache with `Cache-Control: public, immutable` — no PHP in the path. Fifty hands-free
@@ -1399,6 +1550,22 @@ separate reasons, both about what a Pi in a box somewhere can afford to lose:
   also stopped leaking on every kill. `rtl_fm`'s stderr goes there too, and is read back
   only when it dies: "No supported devices found." is the whole diagnosis when a dongle
   has fallen off the USB bus, and it used to go to `/dev/null`.
+
+**The spool can live on a USB SSD; the boot disk cannot.** `/var/spool/transcriber` moves
+to an SSD with `transcriber/migrate-to-ssd.sh` and `transcriber/spool-to-ssd.sh`, which is
+worth doing — the outbox and retained recordings are the only things here that write to
+the card repeatedly. Booting a Pi 4 from one is a different matter, and two findings cost
+most of a day:
+
+- **A Crucial X9 will not USB-boot a Pi 4** (an X6 will). The failure looks like anything
+  but the enclosure, and power, UAS and RF were all wrongly blamed first.
+- **A Pi 4 bootloader probes USB mass storage at startup regardless of `BOOT_ORDER`**, and
+  that probe is what hangs. Setting `BOOT_ORDER=0xf1` (SD only) removes the probe
+  entirely, which is what made the X9 usable as a plain data disk.
+
+> `rpi-eeprom-config --apply` stages `recovery.bin` on the **SD card**, so a pending EEPROM
+> update *travels with the card* into whatever Pi you put it in next. A spare Pi 4 in this
+> fleet still carries `BOOT_ORDER=0xf14` and will hang if the X9 is ever attached to it.
 
 What must survive a reboot stays on the card under `/var/spool/transcriber/<channel>`:
 the outbox, so a transmission heard during an outage is not lost, and the measured gain
@@ -1715,6 +1882,23 @@ measure the gain and squelch for the site it is on, and the page counts down to 
 device itself reports rather than to a clock — see [Calibration](#calibration). It refuses
 while there are unsaved changes, for the same reason **Read sheet now** does: the receiver
 would measure the channel as it was saved, not as it looks on the screen.
+
+**The Pi 5 is the machine this wants to be.** The Transcriber moved from a Pi 4 to a Pi 5
+and got roughly **6× the transcription throughput**, which is what makes the *Careful*
+model viable at all: about **2.1 s per clip** against a busy net that produces one every
+few seconds. On the Pi 4, Careful fell behind and stayed behind — the 10am roll-call net
+was three minutes in arrears within the hour.
+
+> **`install.sh` must rebuild `whisper.cpp` when the CPU changes.** It skipped the build
+> as "already installed and working", which on a card moved from a Pi 4 to a Pi 5 would
+> have benchmarked an A72 binary on an A76 and quietly reported the Pi 5 as barely faster.
+> A CPU build stamp now forces the rebuild.
+
+Concurrency was measured and **deliberately declined**: running clips in parallel bought
+about 12%, and it would scramble the order entries appear in the log. A net log that is
+fast and out of order is worse than one that is correct and 12% slower. Four whisper
+threads is also *slower* than three on this hardware — the ceiling is memory bandwidth,
+not cores.
 
 **Two scripts, and the split between them matters.** `install.sh` builds the *machine* —
 packages, `whisper.cpp` compiled for this CPU, the models, the nightly cron — and knows
@@ -2143,7 +2327,7 @@ All messaging state lives in one SQLite database, `/var/lib/marsaprs/messages.db
 | `participants` | One row per addressable party per event — mobiles (keyed by callsign) and operators (keyed by unique name). Holds `display_name`, `short_id`, `token`, `last_seen`, and last-known `lat`/`lon`/`pos_ts`. |
 | `conversations` | A `direct`, `group`, `broadcast`, `entity`, `entity_multi`, or `log` thread, with a `member_hash` so a given set of participants maps to exactly one conversation. |
 | `conversation_members` | Membership join between conversations and participants. **Empty for broadcast conversations** — see below. |
-| `messages` | The messages: monotonic `id` (the wire id for `since_id` polling), `event`, `conversation_id`, `sender_id`, `ts`, `text`, sender `lat`/`lon`/`pos_ts`, `broadcast`, and photo columns (`attachment`, `attach_w`, `attach_h`). |
+| `messages` | The messages: monotonic `id` (the wire id for `since_id` polling), `event`, `conversation_id`, `sender_id`, `ts`, `text`, sender `lat`/`lon`/`pos_ts`, `broadcast`, photo columns (`attachment`, `attach_w`, `attach_h`), and radio-audio columns (`audio`, `audio_secs`). |
 | `deliveries` | Per-recipient row for each message with `delivered_ts` / `read_ts` — this is the inbox, the unread count, and the delivery/read receipts. Replaces the old `pending_msgs` queue. |
 
 **Message IDs are monotonic.** Each client polls with a `since_id` watermark, so ids must never go backwards; the DB assigns them from an always-increasing sequence and **Delete All Messages** does not reset it.
@@ -2193,9 +2377,86 @@ The mobile app needs no change for any of this: `?messaging=participants` return
 | `thread` | The running exchange for one conversation (members only). |
 | `history` | The full event log (View All / admin) — operators only. |
 | `log` | `{token, text}` — append an entry to the event log. Operators only; writes a message with **no recipients**, so no `deliveries` rows exist and nothing is queued, announced, or acknowledged. |
+| `monitor` | `{token, since_id}` — **read-only** feed of the event's traffic for a phone that opted in. Creates no `deliveries` rows (see below). Bounded by age and count, and reports how many it skipped. |
+| `log_audio` | Transcriber: post the recording *before* the transcription exists, returning an `entry_id` that the later `log` call completes. |
 | `read` | Mark delivered messages read (read receipts). |
 | `photo` | Stream an attachment (conversation members or operators only). |
 | `flush` | Per-event wipe, gated by `messages.manage`. |
+
+### The monitor feed — read-only by construction
+
+A phone following the whole event cannot use `poll`: that is an inner join on
+`deliveries`, and a message not addressed to you has no row there. The obvious
+implementation — give the monitoring device delivery rows and reuse `pollFor()` — is the
+one thing that must never ship.
+
+> `receiptsForSender()` counts **all** delivery rows for a message. A monitoring phone
+> would therefore turn every 1:1 into "Delivered to 1 of 2" for the sender, and its
+> `pending` state would never clear — silently, event-wide, for everybody. The unread
+> subquery in `conversationsFor()` and `recentInboundConversation()` would likewise start
+> pointing the monitor at strangers' threads.
+
+So `monitor()` is a plain `SELECT` over `messages` and writes nothing at all. The
+regression test that matters is not "does the monitor see the message" but "does a 1:1
+still report `total = 1` while a monitor is running". `markRead()`/`markDelivered()` on
+ids with no delivery row are already silent no-ops, so a monitoring client is safe by
+construction on the way back too.
+
+**Every message carries `addressed`: whether this monitor also has a delivery row for
+it.** The feed is the whole event, so it returns the messages sent *to* you alongside
+everyone else's — and the phone announces addressed traffic and monitored traffic on two
+independent paths, so those messages were read aloud twice, a few seconds apart. Worse,
+the monitor path is the one speech path that never asked the wrist, so it also talked
+over a watch that was already announcing the same message.
+
+The tempting fix is to exclude those rows here, and it is wrong: this feed is also the
+event's **traffic log**, and dropping the messages sent to you would leave holes in the
+one view whose entire purpose is completeness. Tagging lets the client show everything
+and announce once — `_handleMonitoredBatch` skips anything tagged, and
+`_handleInboundMessage` keeps sole ownership of it, including the choice between the
+wrist and the phone and the marking-read that follows.
+
+It has to be a server tag rather than a client-side guess. The client can see which
+messages reached it on an addressed path, but the two polls run at different intervals,
+so a monitor batch can arrive first and would announce before there was anything to
+claim. `WatchBridge.addressedHere()` remains as a fallback for a server that has not
+been updated yet — right whenever the addressed path won the race, which is usual but
+not guaranteed.
+
+The same feed is also the reason `_handleMonitoredBatch` filters out your own
+transmissions by `fromId`: a sender gets no delivery row for their own message, so every
+*other* feed excludes them for free and this one does not.
+
+Catch-up is bounded (`MONITOR_MAX_AGE` 5 minutes, `MONITOR_MAX_RESULTS` 50) and reports
+`skipped` rather than truncating quietly — the phone shows "42 monitored messages
+skipped" instead of leaving a silent hole where half an hour of the net used to be.
+Directed messages are deliberately **not** bounded: `pollFor()` has no age or count
+limit, so a message addressed to you is never dropped however long you were away.
+
+`rehomeSession` also had to learn about mobiles. It was applied only to operators and
+transcribers, so a phone restoring a persisted token across an event change stayed homed
+in the *old* event. `pollFor` has no event predicate, which is why that was invisible —
+but an event-scoped feed would have served the new event's traffic to a participant row
+in the old one.
+
+### Radio audio — public, static, edge-cached
+
+Radio clips are the one attachment served **outside** PHP: they land under the web root
+at an unguessable `<mid>-<12 hex>` name and Apache serves them with
+`Cache-Control: public, immutable, max-age=31536000`. Fifty hands-free phones each
+fetching every clip of a busy net is on the order of ten thousand mod_php invocations an
+hour, arriving in bursts because every client polls on a similar cadence. There is no
+multicast over HTTP; edge caching is the substitute, and it means the Pi serves each clip
+roughly once however many phones want it.
+
+This is defensible only because amateur transmissions are public by law. **Photos stay
+exactly as they are** — outside the web root, PHP-gated, `Cache-Control: private` —
+because a photo attached to somebody's message is not public, and the distinction is the
+whole justification. The URL is obtainable only from the authenticated feed, so it is a
+capability URL rather than an open directory.
+
+Clips are pruned by age (`AUDIO_MAX_AGE`, 6 hours) and removed with the event by
+`flushEvent()`, which already did the same for photos.
 
 **Backward compatibility.** The legacy mobile endpoints (`?mobile=message`, mobile `poll`, `web_recipients`) are a thin shim over the same `messages.db`, so an older app keeps working unchanged alongside the new chat clients — old and new interoperate through one database.
 
@@ -2215,7 +2476,21 @@ Both windows poll, so exactly one announces. The messages window owns audio whil
 
 ### Mobile Participant UI (chat screen)
 
-The app's **Message** (💬) button opens a **chat screen** mirroring the web panel: a **Conversations** list, threads, and a composer, with **New message → Start conversation / Start group** over the participant list (with Online/Offline presence). It sends text and **photos** (Take a photo / Choose from library), shows **Delivered ✓** / **Read ✓✓** receipts, and can **Read arriving messages aloud**. Background arrivals raise a notification with a distinct, insistent alert sound; tapping it opens the conversation. The app continues to satisfy the older `?mobile=` contract, so mixed-version fleets interoperate.
+The app's **Message** (💬) button opens a **chat screen** mirroring the web panel: a **Conversations** list, threads, and a composer, with **New message → Start conversation / Start group** over the participant list (with Online/Offline presence). It sends text and **photos** (Take a photo / Choose from library), shows **Delivered ✓** / **Read ✓✓** receipts, and can **Read arriving messages aloud**. Background arrivals raise a notification and the message is read out; tapping the notification opens the conversation. The app continues to satisfy the older `?mobile=` contract, so mixed-version fleets interoperate.
+
+Two additions beyond the web panel, both for following an event rather than taking part
+in one — see **Monitoring the whole event** under Mobile Apps:
+
+- A **Monitor** view: the read-only feed of everything on the event, including radio
+  traffic, which has no conversation to live in because it was never addressed to anyone.
+- A **Stop** control for anything being spoken or played, shown only while there is
+  something to stop.
+
+Radio entries carry a **Play** button when the channel sent its recording. Tapping it
+queues the clip like everything else audible — it will not start on top of a message being
+read aloud, and the Stop control can see it. It bypasses the five-minute staleness rule,
+because that rule exists to stop a backlog playing itself and has no business refusing a
+button somebody just pressed.
 
 ---
 
@@ -2495,6 +2770,31 @@ Master SD card images for each device type are stored on the FTP server: [ftp://
 the results of running `install.sh` but not `configure.sh` — so packages, services, and
 scripts are pre-installed, but site-specific settings (callsign, location, hostname) are
 set when deploying each individual device.
+
+### Power Supply Checks (all Pis) — `common/power-check.sh`
+
+Under-voltage is the most-misdiagnosed failure in this fleet. It presents as anything
+but power: reboot loops, SD corruption, a USB disk that will not enumerate, a Pi that
+"lost the network". Three separate wrong diagnoses (power twice, UAS, and RF) were
+chased before the supply was found, so the check is codified rather than remembered.
+
+```bash
+/home/pi/power-check.sh          # any Pi: igate, display, server, transcriber
+```
+
+It decodes `vcgencmd get_throttled` into words (bits 0–3 = happening now, bits 16–19 =
+latched since boot), counts kernel under-voltage lines over the last day, and on a Pi 5
+decodes the USB-PD profile that was actually negotiated from
+`/sys/firmware/devicetree/base/chosen/power/`.
+
+It is installed by all four `deploy.sh` scripts and both `auto-update.sh` paths, and runs
+nightly on the server at 04:20.
+
+**Read the negotiated profile, not the label on the brick.** A Pi 5 needs **5 V at 5 A
+specifically**, and "100 W" is a rating at 20 V — a 100 W supply that cannot do 5 A at
+5 V is not a Pi 5 supply. The server took three supplies before one worked; the second
+failed *progressively* rather than looping (under-voltage events 3 → 6 → 12 in three
+minutes), and the third took it from **1,046 events/day to zero over five hours**.
 
 ### NetBird Setup Keys
 

@@ -243,7 +243,9 @@ The iPhone app includes an **Apple Watch** companion. Install it from the iPhone
 
 The watch does **messaging only**. It never shares your position and never beacons — that stays with the phone.
 
-**What each device does.** The phone is the loudspeaker and the watch is the microphone. Your phone announces arriving messages aloud even from a pocket, so you hear who is calling without looking at anything; the watch's job is to let you answer. If the watch app happens to be on screen when a message arrives, it reads it out instead — only one of them ever speaks.
+**What each device does.** The phone is the loudspeaker and the watch is the microphone. Your phone announces arriving messages aloud even from a pocket, so you hear who is calling without looking at anything; the watch's job is to let you answer. If the watch app is on screen when a message arrives, it reads it out instead — only one of them ever speaks.
+
+**On screen includes a dimmed screen.** With the watch app open you will hear messages from your wrist even with your arm down and the display dimmed, which is the normal way to wear a watch during an event. The phone takes over only when you leave the app.
 
 **Answering.** Press and hold the **Talk** button, speak, and let go. Releasing sends it — there is no confirmation step to find and no button to hunt for afterwards. The name above the button is where your reply is going.
 
@@ -255,7 +257,11 @@ The watch does **messaging only**. It never shares your position and never beaco
 
 **When the phone is away.** The watch keeps working on its own over WiFi or cellular, polling for messages and sending replies directly. The status line tells you which is happening: *Phone linked*, *Direct — phone away*, or *Phone unreachable*.
 
-**One limitation worth knowing.** watchOS only lets an app make sound while it is actually on screen. With your phone switched off or out of range **and** the watch app not showing, nothing will reach you until you raise your wrist — at which point the watch catches up and reads out what it missed. Whenever the phone is alive, it covers this.
+**Stopping it.** While the watch is speaking, a **Stop** button appears at the top of the Talk page showing how much is left to say. It clears everything waiting, not just the sentence in progress.
+
+**One limitation worth knowing.** watchOS only lets an app make sound while its app is showing (dimmed counts; switched away does not). With your phone switched off or out of range **and** the watch app not showing, nothing will reach you until you raise your wrist — at which point the watch catches up and reads out what it missed. Whenever the phone is alive, it covers this.
+
+**Checking it yourself.** **Settings → Diagnostics → Test audio when dimmed** starts a countdown; lower your wrist and listen. The result line says whether the watch was given the audio session and whether it actually spoke — useful if you are ever unsure which device is supposed to be talking.
 
 ---
 
@@ -541,7 +547,7 @@ Receipts reflect this. For one person with two phones, you see the ordinary **De
 
 **Sending:**
 
-Type up to 280 characters and press **Send**. To attach a **photo**, click the **Attach** (📷) button, choose an image, and send it with or without text; recipients see a thumbnail they can click to view full-size.
+Type up to 1,000 characters and press **Send**. (The box also accepts far more text than it used to, so a dictated message is no longer cut off part-way.) To attach a **photo**, click the **Attach** (📷) button, choose an image, and send it with or without text; recipients see a thumbnail they can click to view full-size.
 
 **Voice:** Click the **microphone** button to dictate a message instead of typing (uses your browser's speech recognition; best in Chrome/Edge).
 
@@ -600,13 +606,30 @@ The app includes a full **chat screen** that mirrors the operators' panel. Open 
 
 The people list shows only those you can reach — operators and participants active in the last 24 hours — so names left over from earlier events no longer appear. **Operators are listed first**, separated by a line from the trackers below, and each group is alphabetical. As on the operator panel, someone carrying **two phones** appears once and receives your message on both, a location covering several people offers an **(multiple)** option that reaches all of them, and the right-hand column reads **Online** (green) or **Offline** (red).
 
-**Sending:** Type up to 280 characters in the message box and tap **Send**. Tap **Attach photo** to **Take a photo** or **Choose from library**; the image sends with or without text, and either party can tap a photo to view it full-screen.
+**Sending:** Type up to 1,000 characters in the message box and tap **Send**. (It used to stop at 280, which cut dictated messages off mid-word — a message spoken for thirty seconds needs the room.) Tap **Attach photo** to **Take a photo** or **Choose from library**; the image sends with or without text, and either party can tap a photo to view it full-screen.
 
 **Receipts:** Your sent messages show **Delivered ✓** and **Read ✓✓** (or **Delivered to N of M** / **Read by N of M** in a group).
 
-**Read aloud:** Arriving messages are **spoken aloud by default** — this is a net-control tool and you are usually not watching the screen. Each is announced as *“From CRD Stanton”*, then a short pause, then the message. Tap the **speaker** icon to mute; your choice is remembered.
+**Read aloud:** Arriving messages are **spoken aloud by default** — this is a net-control tool and you are usually not watching the screen. Each is announced as *“From CRD Stanton”*, then a short pause, then the message. Tap the **🔊 speaker** icon in the top bar for the sound settings, including mute; your choices are remembered. The icon itself tells you where you stand: filled if this phone will make a sound for an arriving message, crossed out if it will not.
 
-**When the app is in the background:** A message **notification** appears with a distinct, insistent **alert sound** so you don't miss it while the app is backgrounded or the screen is locked.
+**Stopping it.** Whenever anything is being spoken or played, a **Stop** button appears at the bottom of the screen showing how many items are waiting and roughly how long they will take — both, because “six waiting” could be twenty seconds or four minutes. Tap it to clear everything, not just the sentence in progress.
+
+Nothing ever interrupts anything else: a new message waits for the current one to finish. And nothing more than **five minutes old** is read aloud, measured from when it was *sent* — so coming back from a spell without signal does not start a recital of a net that has moved on. The messages themselves all still arrive and are waiting in their threads; only the *speaking* is rationed.
+
+**Following the whole event.** By default you see only what was sent to you. The **⚙ gear** icon in the top bar opens **Follow**, with two switches:
+
+| Switch | What it does |
+|---|---|
+| **All messages** | You see everything anyone sends, whoever it was addressed to |
+| **Radio traffic** | You see what the receivers heard on the air, transcribed |
+
+Followed traffic appears in a separate **Monitor** view and **never raises a notification** — on a busy net that is a message every few seconds, and a phone that buzzed for each would be unusable within a minute. If you were offline for a while, it tells you how many it skipped rather than leaving a silent gap.
+
+The gear is separate from the speaker on purpose: what reaches your phone at all is not a sound setting.
+
+**Hearing the actual radio.** When a channel sends its recordings, a radio entry carries a **Play** button. Tap it to hear what was really said — useful on the one line in fifty that came out garbled in the transcription. Recordings are fetched only when you tap them, never in advance, so following a net as text costs almost no cellular data. **Play radio audio** in the 🔊 Sound settings turns this on.
+
+**When the app is in the background:** an **alert tone** sounds and the message is then **read aloud**, followed by a **notification** you can tap — so you get the message itself without having to look, even with the screen locked.
 
 - **Android** — tap the notification (or the app is brought forward automatically if "Draw over other apps" is granted) to open the conversation.
 - **iOS** — tap the notification banner to open the app on that conversation.
@@ -1208,7 +1231,8 @@ You do not have to do anything for this to happen. The page at **marsaprs.org/tr
 | **Heard as** | What the log shows as the author. Make it something you will recognize mid-event. Changing it renames the channel's earlier entries too: it is the same radio, and a log showing one receiver under two names is worse than one that catches up. |
 | **Dongle serial** | The USB serial of that channel's radio stick. Not a slot number — the sticks change order when the machine restarts, and two channels swapping frequencies is not something you would notice until the log was already wrong. |
 | **Squelch** | How strong a signal must be before anything is recorded. Leave it **blank** and the channel measures its own site the first time it starts and remembers the answer — right almost everywhere. Put a number in only when you have a reason: raise it (30, 40) if the log fills with noise, lower it if weak stations are being missed. |
-| **Accuracy** | **Fast** keeps up with a busy net in real time. **Careful** is more accurate and slower — on a busy frequency the log falls further behind the radio as it goes. |
+| **Accuracy** | **Fast** keeps up with a busy net in real time. **Careful** is more accurate and slower. On the current receiver hardware Careful keeps up with a busy net; on older hardware the log falls further behind the radio as the net goes on. |
+| **Audio** | Send the actual recording with each entry, so anyone following on a phone can tap **Play** and hear what was really said. Off by default — it costs the receiver a little upload per transmission, and is only worth turning on for a channel somebody is actually listening to on a phone. Recordings are kept for a few hours, then removed. |
 | **On** | Turn a channel off to stop it logging immediately, without deleting its setup. |
 
 **Nothing is written until you press Save.** After that the page waits, counting down, while each receiver comes and collects — they check once a minute, so it usually lands in well under that. When every receiver has it you get *Update applied*; if one never answers you are told which, and the change stays saved until it comes back.

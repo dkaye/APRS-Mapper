@@ -210,7 +210,7 @@
 <li><a href="#display-pis-v1230">Display Pis (v1.23.0)</a></li>
 <li><a href="#running-a-display-pi-on-starlink">Running a display Pi on Starlink</a></li>
 <li><a href="#mobile-apps-v1230">Mobile Apps (v1.23.0)</a></li>
-<li><a href="#app-architecture">Architecture</a> · <a href="#location-sharing-flow">Location Sharing Flow</a> · <a href="#smart-track">Smart Track</a> · <a href="#building-distributing">Building &amp; Distributing</a> · <a href="#background-location">Background Location</a></li>
+<li><a href="#monitoring-the-whole-event">Monitoring the whole event</a> · <a href="#app-architecture">Architecture</a> · <a href="#location-sharing-flow">Location Sharing Flow</a> · <a href="#smart-track">Smart Track</a> · <a href="#building-distributing">Building &amp; Distributing</a> · <a href="#background-location">Background Location</a> · <a href="#apple-watch-companion-watch">Apple Watch Companion</a></li>
 <li><a href="#transcribers">Transcribers</a></li>
 <li><a href="#calibration">Calibration</a> · <a href="#transcriber-diagnostics">Transcriber Diagnostics</a></li>
 <li><a href="#user-interfaces">User Interfaces</a></li>
@@ -221,7 +221,7 @@
 <li><a href="#server-pi">Server Pi</a> · <a href="#display-pis">Display Pis</a> · <a href="#igates">iGates</a></li>
 <li><a href="#log-rotation">Log Rotation</a></li>
 <li><a href="#building-deploying-devices">Building &amp; Deploying Devices</a><ul>
-<li><a href="#netbird-setup-keys">NetBird Setup Keys</a> · <a href="#aprs-server">APRS Server</a> · <a href="#display-pis-igates">Display Pis &amp; iGates</a></li>
+<li><a href="#power-supply-checks-all-pis-commonpower-checksh">Power Supply Checks</a> · <a href="#netbird-setup-keys">NetBird Setup Keys</a> · <a href="#aprs-server">APRS Server</a> · <a href="#display-pis-igates">Display Pis &amp; iGates</a></li>
 </ul>
 </li>
 <li><a href="#creating-new-master-images">Creating New Master Images</a><ul>
@@ -1123,7 +1123,8 @@ than the settings because the symptoms are all misleading.</p>
 Desktop" and then resetting silently — no panic, no log, the journal simply stops — is
 browning out, not crashing. It fails at desktop start because that is peak draw: GPU,
 compositor, Chromium and WiFi all at once. Confirm from the hardware, not the symptoms:</p>
-<pre><code class="language-bash">vcgencmd get_throttled      # 0x0 = healthy
+<pre><code class="language-bash">/home/pi/power-check.sh     # the codified version of all of this — see below
+vcgencmd get_throttled      # 0x0 = healthy
                             # bits 0-2 = happening now; bits 16-18 = since boot (latched)
 dmesg | grep -i undervoltage
 </code></pre>
@@ -1184,31 +1185,37 @@ amount of resetting the mouse helps — the stale bond is on the Pi), plus hostn
 the messaging core works: the delivered feed is a join on <code>deliveries</code>, and a message
 not addressed to you has no row there. Transcriber log entries have no rows at all, so
 the radio has always been invisible to phones.</p>
-<p>Three independent switches, in the 👂 sheet on the Messages screen:</p>
+<p>Three independent switches, behind <strong>two</strong> icons on the Messages screen:</p>
 <table>
 <thead>
 <tr>
-<th></th>
-<th></th>
+<th>Icon</th>
+<th>Sheet</th>
+<th>Holds</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><strong>All messages</strong></td>
-<td>everything anyone sends, whoever it was addressed to</td>
+<td>🔊 speaker</td>
+<td><strong>Sound</strong></td>
+<td>mute, read arriving messages aloud, <strong>Play radio audio</strong></td>
 </tr>
 <tr>
-<td><strong>Radio traffic</strong></td>
-<td>what the receivers heard on the air, transcribed</td>
-</tr>
-<tr>
-<td><strong>Play radio audio</strong></td>
-<td>fetch the recording when you tap an entry</td>
+<td>⚙ gear</td>
+<td><strong>Follow</strong></td>
+<td><strong>All messages</strong>, <strong>Radio traffic</strong></td>
 </tr>
 </tbody>
 </table>
 <p>They are independent because following the event as text costs almost nothing and the
 audio is the part that costs cellular data — so nothing is ever implied.</p>
+<p>They are split across two icons because they answer different questions. <em>What reaches
+this phone at all</em> is not an audio setting, and it read wrongly behind a speaker: the
+sheet began as one 👂 ear icon holding everything, and "see everyone's messages" sitting
+in a panel about sound was the tell. The speaker also doubles as the indicator — filled
+when this device will make a sound for an arriving message, crossed out when it will not
+— and the gear fills while anything is being followed, so the bar answers both questions
+without opening either sheet.</p>
 <p><strong>Monitored traffic never raises a notification.</strong> None of it was sent to this
 operator, and on a busy net that is a message every few seconds; a phone that buzzed
 for each would be unusable inside a minute. It is read aloud (subject to the same mute
@@ -1216,12 +1223,44 @@ switch as everything else) and it goes nowhere near the watch — <code>AppState
 promises that every message the wrist holds gets announced, and a firehose would break
 that, churn the message cap, and let a push-to-talk reply aim at whichever stranger
 spoke last. The wrist still hears it all, because the phone speaks it.</p>
-<p><strong>Speech says where a line came from</strong> — "Heard on Simulcast:" rather than "Message
-from:". A synthesised voice reads a garbled machine transcription in exactly the same
-confident tone as a real message, and the preamble is the only thing telling them
-apart. The speech queue also drops anything that has waited five minutes: speech is
-real time and a backlog is not, so without that the phone narrates a net that finished
-ten minutes ago and cannot be interrupted.</p>
+<p><strong>Speech says where a line came from</strong> — "Heard on Simulcast:" rather than plain "From:".
+A synthesised voice reads a garbled machine transcription in exactly the same confident
+tone as a real message, and the preamble is the only thing telling them apart.</p>
+<p><strong>Everything audible goes through one queue</strong> (<code>app/lib/audio_queue.dart</code>) — spoken
+messages, radio clips, and the alert tone alike. There were two before and they did not
+know about each other, so on a net with speech and radio both on, a synthesised voice
+and a real one came out of the speaker at the same time and neither could be understood.
+Three rules are the whole design:</p>
+<ol>
+<li><strong>Nothing interrupts.</strong> A new transmission waits for the current one to finish.
+   Chopping a clip mid-word to start another is worse than a few seconds' wait, and
+   rule 2 bounds how far behind that can put you.</li>
+<li><strong>Five minutes, measured by when it was <em>said</em></strong> — not when it was queued. That
+   distinction is the entire point after an outage, where everything is queued at the
+   same instant and a queue-time rule would consider none of it stale and read out an
+   hour of backlog. It is also the only version explicable in one sentence: you will not
+   hear anything more than five minutes old.</li>
+<li><strong>It can always be stopped.</strong> A <strong>Stop</strong> control appears while anything is queued,
+   showing both a count and a duration — neither answers "wait or stop it" alone, since
+   three long overs and thirty short ones are the same count and very different waits.
+   The automatic rules are judgement, and judgement is sometimes wrong.</li>
+</ol>
+<p>Silent text is deliberately <strong>not</strong> bounded by any of this. A message nobody has to
+listen to costs nothing to deliver, so every one still arrives and lands in the thread;
+only what is <em>audible</em> is rationed.</p>
+<p><strong>The alert tone is part of the queued item, not the notification.</strong> It used to be the
+iOS notification's own sound, with speech delayed 900 ms to let it finish — a race
+against a sound the app neither schedules nor can observe, and it lost: the tone arrived
+on top of speech that had already started. The notification is now silent and the tone is
+the first half of the queue entry, which makes the order a fact rather than a bet. It
+also closed a gap: the notification sound was the one noise in the app exempt from the
+queue, so it could fire in the middle of a radio clip.</p>
+<p><strong>A message is marked read when it has been <em>spoken</em>, not when it arrived.</strong> Marking on
+arrival claimed the operator had heard something the queue could still drop as stale or
+fail to play — and it ran before the audio session was known to be working, which is
+exactly when it was wrong. Spoken aloud <em>is</em> read: leaving it unread meant a message
+already heard in full still sat behind a red badge, and opening it to clear that badge
+was the act that read it aloud a second time.</p>
 <p><strong>Audio is pulled, never pushed, and never in bulk.</strong> A clip is fetched when you tap
 it. The transcription is what you follow; the audio answers "what did they actually
 say" about the one line in fifty that came out garbled, and pre-fetching the other
@@ -1602,7 +1641,28 @@ storeFile=&lt;absolute path to .jks or .p12&gt;
 <p><strong>Why both platforms use server-side APRS injection:</strong> Both iOS and Android POST position data to <code>?mobile=update</code> rather than sending raw TCP packets directly to APRS-IS. On iOS, <code>NSURLSession</code>-based HTTP is explicitly supported for background network tasks while raw <code>dart:io Socket</code> TCP connections are not reliable in background. Unifying Android to the same path keeps all beaconing logic in the main isolate, makes <code>background_task_handler.dart</code> a no-op, and simplifies the overall architecture.</p>
 <h3 id="apple-watch-companion-watch">Apple Watch Companion ("Watch")</h3>
 <p>A watchOS companion that makes the wrist a nearly hands-free extension of the phone: a reply is a press-and-hold push-to-talk. It does <strong>messaging only</strong> — it never beacons position.</p>
-<p><strong>The phone is the loudspeaker; the watch is the microphone.</strong> That is the opposite of how this was first built, and the inversion came from field testing. watchOS lets an app play audio only while it is frontmost, so a watch on a lowered wrist cannot alert anybody — while the phone, in a pocket, can both chime and read a message aloud. So the phone announces everything unless the watch app is genuinely on screen, and the watch's job the rest of the time is to be ready to take a reply.</p>
+<p><strong>The phone is the loudspeaker; the watch is the microphone.</strong> That is the opposite of how this was first built, and the inversion came from field testing. watchOS lets an app play audio only while it is frontmost, so a <em>backgrounded</em> watch cannot alert anybody — while the phone, in a pocket, can both chime and read a message aloud. So the phone announces whenever the watch app is not on screen, and the watch's job the rest of the time is to be ready to take a reply.</p>
+<blockquote>
+<p><strong>A lowered wrist is not backgrounded, and assuming otherwise cost this app most of
+its usefulness on the wrist.</strong> "Frontmost" was read as scene phase <code>.active</code>, so the
+watch declared itself mute the instant the screen dimmed and handed every
+announcement to the phone — which is most of a net, because a lowered wrist is the
+normal way to wear a watch. The claim was inherited from documentation and never
+measured. <code>Announcer.runDimmedAudioTest()</code> (Settings → Diagnostics on the watch)
+measured it on this hardware and disproved it:</p>
+<p><code>app INACTIVE · session granted · spoke · 4.2s</code></p>
+<p>A dimmed always-on display is still frontmost: the audio session is granted and the
+utterance completes. <code>AppState.canAnnounce</code> is therefore true for <code>.inactive</code> as well
+as <code>.active</code>, and false only for <code>.background</code>. The test button stays in the app as
+the regression check, because the failure it guards against — the watch promising to
+speak and going quiet while the phone defers to it — is silent on both devices at
+once.</p>
+<p>This is why <code>canAnnounce</code> is now separate from <code>isActive</code>. One flag was answering two
+questions: "may I speak?" (anything but <code>.background</code>) and "should I run my own HTTP
+poll?" (only <code>.active</code> — a battery question, since the poller runs every few seconds
+and only while the phone is unreachable). Merging them meant a change made for one
+reason silently moved the other.</p>
+</blockquote>
 <p><strong>Who announces an arriving message</strong> is decided by the watch and obeyed by the phone. The watch publishes <code>canAnnounce</code> whenever its scene phase changes; the phone suppresses its own alert only while that is true. It is reported rather than inferred because the two devices had different notions of "awake": a dimmed watch is unreachable over WatchConnectivity yet still frontmost, so each assumed the other had it and messages were announced twice or not at all. Every relayed message also carries <code>phoneAnnounced</code>, which stops the watch re-reading a backlog when queued transfers flush on waking, and lets it raise a notification if it went quiet after promising to speak.</p>
 <p><strong>Why it is native Swift.</strong> Flutter does not target watchOS, so the watch app cannot be Dart. It is a native SwiftUI target (<code>WatchApp</code>) inside the same <code>app/ios/Runner.xcodeproj</code>, bridged to the Flutter app over WatchConnectivity plus a Flutter method/event channel.</p>
 <table>
@@ -1641,10 +1701,10 @@ storeFile=&lt;absolute path to .jks or .p12&gt;
 <p><strong>Reading aloud on the phone needs <code>UIBackgroundModes: audio</code>.</strong> Without it iOS refuses to start an audio session once the app leaves the screen, which is the situation the feature exists for. One shared <code>Speaker</code> (<code>app/lib/speaker.dart</code>) owns the app's only text-to-speech engine — the chat screen used to own a second, and two contend for the same audio session and cut each other off mid-sentence. Note that <code>defaultToSpeaker</code> must not be passed with the <code>playback</code> category: it is valid only with <code>playAndRecord</code>, and including it fails the whole category call, leaving the app silent in the background with no error anywhere obvious.</p>
 <p><strong>The reply follows the traffic, from whichever side heard it.</strong> An arriving message re-aims the destination, so the announcement the operator just heard is also a statement of where their answer will go. The phone does this in <code>WatchBridge._aimAt</code> when it relays; the watch does it in <code>AppState.ingest</code> for anything it fetched by direct poll, which is the case the phone never sees. Broadcasts move the aim only when there is an addressable sender key — the phone has one, the watch does not, and aiming at the broadcast thread instead would send a spoken "copy that" to every tracker. A destination is also dropped when the conversation behind it is absent from the current event's list, which is what stops a thread from a finished event surviving into the next one.</p>
 <p><strong>Unconfirmed sends are visible and actionable.</strong> <code>Outbox</code> persists every reply until the server confirms it, across app launches and watch reboots — a message spoken into the wrist and silently lost is the worst failure this app has. A badge on the Talk page shows the count, and it is a link: tapping it lists what was said and offers <strong>Retry</strong> or <strong>Discard</strong>. Retry aims at the <em>current</em> destination, not the original, because an entry usually failed precisely because its target had gone; it also takes a fresh client id, since <code>?messaging=send</code> carries none and the server therefore cannot dedupe a retry against a delivered-but-unacknowledged original.</p>
-<p><strong>The limitation accepted.</strong> watchOS only lets an app play audio while frontmost, and will not run a timer for a backgrounded one. So with the phone off or out of range <strong>and</strong> the watch app backgrounded, nothing reaches the operator until they raise their wrist — at which point the watch polls and announces what it missed. The only mechanism that would change this is a <code>WKExtendedRuntimeSession</code>, which costs heavy battery and a background-mode declaration App Review may query; the deliberate decision is to live without it, since the phone covers every case in which it is alive.</p>
+<p><strong>The limitation accepted.</strong> watchOS only lets an app play audio while frontmost, and will not run a timer for a backgrounded one. (Frontmost includes a dimmed screen — see above — so this bites only when the operator has actually left the app.) So with the phone off or out of range <strong>and</strong> the watch app backgrounded, nothing reaches the operator until they raise their wrist — at which point the watch polls and announces what it missed. The only mechanism that would change this is a <code>WKExtendedRuntimeSession</code>, which costs heavy battery and a background-mode declaration App Review may query; the deliberate decision is to live without it, since the phone covers every case in which it is alive.</p>
 <hr />
 <h2 id="transcribers">Transcribers</h2>
-<p>A Transcriber is a Raspberry Pi 4 with an RTL-SDR that listens on a voice frequency,
+<p>A Transcriber is a Raspberry Pi (4 or 5) with an RTL-SDR that listens on a voice frequency,
 transcribes each transmission with <code>whisper.cpp</code>, and appends it to the event log by
 itself. Net control hears everything on the radio and writes down almost none of it;
 this is the part that writes it down.</p>
@@ -1702,6 +1762,19 @@ on its own and says so once. The transcription is the record; the recording is a
 on it. Clips ride in the outbox as a <em>path</em> rather than as bytes, on the card beside the
 entries that name them, because an entry may wait there for hours across an outage and a
 reboot is exactly what the outbox exists to survive.</p>
+<p><strong>The clip is posted before the transcription exists.</strong> <code>log_audio</code> writes an audio-first
+entry with empty text and returns an <code>entry_id</code>; the later <code>log</code> call completes it. That
+ordering is worth the extra round trip because whisper is the slow part — audio reached a
+listening phone in about <strong>6 seconds instead of 26</strong>, which is the difference between
+hearing a net and reading its minutes.</p>
+<p><strong>Levels are measured and corrected, not left to <code>loudnorm</code>.</strong> Clips off the SDR arrived
+with a <strong>37 dB</strong> spread between transmissions, so following a net meant riding the volume
+control. The first attempt used ffmpeg's <code>loudnorm</code>, which does the wrong thing on a
+mostly-silent clip: it dutifully amplified a −73 dBFS near-silent capture to −1.5 dBFS, a
+burst of hiss at full volume. What ships instead measures the clip and applies a single
+clamped gain toward −20 dBFS (<code>AUDIO_MAX_GAIN_DB</code> 30, <code>AUDIO_MAX_CUT_DB</code> 15), refuses to
+touch anything below <code>AUDIO_SILENCE_DBFS</code> (−65), and ends in a limiter. The spread across
+a real net came down to about <strong>1.5 dB</strong>.</p>
 <p>On the server the clip lands <strong>inside the web root</strong> at an unguessable name and is served
 by Apache with <code>Cache-Control: public, immutable</code> — no PHP in the path. Fifty hands-free
 phones each fetching every clip of a busy net is on the order of ten thousand mod_php
@@ -1781,6 +1854,23 @@ separate reasons, both about what a Pi in a box somewhere can afford to lose:</p
   only when it dies: "No supported devices found." is the whole diagnosis when a dongle
   has fallen off the USB bus, and it used to go to <code>/dev/null</code>.</li>
 </ul>
+<p><strong>The spool can live on a USB SSD; the boot disk cannot.</strong> <code>/var/spool/transcriber</code> moves
+to an SSD with <code>transcriber/migrate-to-ssd.sh</code> and <code>transcriber/spool-to-ssd.sh</code>, which is
+worth doing — the outbox and retained recordings are the only things here that write to
+the card repeatedly. Booting a Pi 4 from one is a different matter, and two findings cost
+most of a day:</p>
+<ul>
+<li><strong>A Crucial X9 will not USB-boot a Pi 4</strong> (an X6 will). The failure looks like anything
+  but the enclosure, and power, UAS and RF were all wrongly blamed first.</li>
+<li><strong>A Pi 4 bootloader probes USB mass storage at startup regardless of <code>BOOT_ORDER</code></strong>, and
+  that probe is what hangs. Setting <code>BOOT_ORDER=0xf1</code> (SD only) removes the probe
+  entirely, which is what made the X9 usable as a plain data disk.</li>
+</ul>
+<blockquote>
+<p><code>rpi-eeprom-config --apply</code> stages <code>recovery.bin</code> on the <strong>SD card</strong>, so a pending EEPROM
+update <em>travels with the card</em> into whatever Pi you put it in next. A spare Pi 4 in this
+fleet still carries <code>BOOT_ORDER=0xf14</code> and will hang if the X9 is ever attached to it.</p>
+</blockquote>
 <p>What must survive a reboot stays on the card under <code>/var/spool/transcriber/&lt;channel&gt;</code>:
 the outbox, so a transmission heard during an outage is not lost, and the measured gain
 and squelch, which are the only record of what this site was measured at and are never
@@ -2083,6 +2173,22 @@ measure the gain and squelch for the site it is on, and the page counts down to 
 device itself reports rather than to a clock — see <a href="#calibration">Calibration</a>. It refuses
 while there are unsaved changes, for the same reason <strong>Read sheet now</strong> does: the receiver
 would measure the channel as it was saved, not as it looks on the screen.</p>
+<p><strong>The Pi 5 is the machine this wants to be.</strong> The Transcriber moved from a Pi 4 to a Pi 5
+and got roughly <strong>6× the transcription throughput</strong>, which is what makes the <em>Careful</em>
+model viable at all: about <strong>2.1 s per clip</strong> against a busy net that produces one every
+few seconds. On the Pi 4, Careful fell behind and stayed behind — the 10am roll-call net
+was three minutes in arrears within the hour.</p>
+<blockquote>
+<p><strong><code>install.sh</code> must rebuild <code>whisper.cpp</code> when the CPU changes.</strong> It skipped the build
+as "already installed and working", which on a card moved from a Pi 4 to a Pi 5 would
+have benchmarked an A72 binary on an A76 and quietly reported the Pi 5 as barely faster.
+A CPU build stamp now forces the rebuild.</p>
+</blockquote>
+<p>Concurrency was measured and <strong>deliberately declined</strong>: running clips in parallel bought
+about 12%, and it would scramble the order entries appear in the log. A net log that is
+fast and out of order is worse than one that is correct and 12% slower. Four whisper
+threads is also <em>slower</em> than three on this hardware — the ceiling is memory bandwidth,
+not cores.</p>
 <p><strong>Two scripts, and the split between them matters.</strong> <code>install.sh</code> builds the <em>machine</em> —
 packages, <code>whisper.cpp</code> compiled for this CPU, the models, the nightly cron — and knows
 nothing about which receiver it is. <code>configure.sh</code> makes it a <em>particular</em> receiver:
@@ -2692,7 +2798,7 @@ admin actions are gated by the user-account permission system.</p>
 </tr>
 <tr>
 <td><code>messages</code></td>
-<td>The messages: monotonic <code>id</code> (the wire id for <code>since_id</code> polling), <code>event</code>, <code>conversation_id</code>, <code>sender_id</code>, <code>ts</code>, <code>text</code>, sender <code>lat</code>/<code>lon</code>/<code>pos_ts</code>, <code>broadcast</code>, and photo columns (<code>attachment</code>, <code>attach_w</code>, <code>attach_h</code>).</td>
+<td>The messages: monotonic <code>id</code> (the wire id for <code>since_id</code> polling), <code>event</code>, <code>conversation_id</code>, <code>sender_id</code>, <code>ts</code>, <code>text</code>, sender <code>lat</code>/<code>lon</code>/<code>pos_ts</code>, <code>broadcast</code>, photo columns (<code>attachment</code>, <code>attach_w</code>, <code>attach_h</code>), and radio-audio columns (<code>audio</code>, <code>audio_secs</code>).</td>
 </tr>
 <tr>
 <td><code>deliveries</code></td>
@@ -2779,6 +2885,14 @@ admin actions are gated by the user-account permission system.</p>
 <td><code>{token, text}</code> — append an entry to the event log. Operators only; writes a message with <strong>no recipients</strong>, so no <code>deliveries</code> rows exist and nothing is queued, announced, or acknowledged.</td>
 </tr>
 <tr>
+<td><code>monitor</code></td>
+<td><code>{token, since_id}</code> — <strong>read-only</strong> feed of the event's traffic for a phone that opted in. Creates no <code>deliveries</code> rows (see below). Bounded by age and count, and reports how many it skipped.</td>
+</tr>
+<tr>
+<td><code>log_audio</code></td>
+<td>Transcriber: post the recording <em>before</em> the transcription exists, returning an <code>entry_id</code> that the later <code>log</code> call completes.</td>
+</tr>
+<tr>
 <td><code>read</code></td>
 <td>Mark delivered messages read (read receipts).</td>
 </tr>
@@ -2792,6 +2906,48 @@ admin actions are gated by the user-account permission system.</p>
 </tr>
 </tbody>
 </table>
+<h3 id="the-monitor-feed-read-only-by-construction">The monitor feed — read-only by construction</h3>
+<p>A phone following the whole event cannot use <code>poll</code>: that is an inner join on
+<code>deliveries</code>, and a message not addressed to you has no row there. The obvious
+implementation — give the monitoring device delivery rows and reuse <code>pollFor()</code> — is the
+one thing that must never ship.</p>
+<blockquote>
+<p><code>receiptsForSender()</code> counts <strong>all</strong> delivery rows for a message. A monitoring phone
+would therefore turn every 1:1 into "Delivered to 1 of 2" for the sender, and its
+<code>pending</code> state would never clear — silently, event-wide, for everybody. The unread
+subquery in <code>conversationsFor()</code> and <code>recentInboundConversation()</code> would likewise start
+pointing the monitor at strangers' threads.</p>
+</blockquote>
+<p>So <code>monitor()</code> is a plain <code>SELECT</code> over <code>messages</code> and writes nothing at all. The
+regression test that matters is not "does the monitor see the message" but "does a 1:1
+still report <code>total = 1</code> while a monitor is running". <code>markRead()</code>/<code>markDelivered()</code> on
+ids with no delivery row are already silent no-ops, so a monitoring client is safe by
+construction on the way back too.</p>
+<p>Catch-up is bounded (<code>MONITOR_MAX_AGE</code> 5 minutes, <code>MONITOR_MAX_RESULTS</code> 50) and reports
+<code>skipped</code> rather than truncating quietly — the phone shows "42 monitored messages
+skipped" instead of leaving a silent hole where half an hour of the net used to be.
+Directed messages are deliberately <strong>not</strong> bounded: <code>pollFor()</code> has no age or count
+limit, so a message addressed to you is never dropped however long you were away.</p>
+<p><code>rehomeSession</code> also had to learn about mobiles. It was applied only to operators and
+transcribers, so a phone restoring a persisted token across an event change stayed homed
+in the <em>old</em> event. <code>pollFor</code> has no event predicate, which is why that was invisible —
+but an event-scoped feed would have served the new event's traffic to a participant row
+in the old one.</p>
+<h3 id="radio-audio-public-static-edge-cached">Radio audio — public, static, edge-cached</h3>
+<p>Radio clips are the one attachment served <strong>outside</strong> PHP: they land under the web root
+at an unguessable <code>&lt;mid&gt;-&lt;12 hex&gt;</code> name and Apache serves them with
+<code>Cache-Control: public, immutable, max-age=31536000</code>. Fifty hands-free phones each
+fetching every clip of a busy net is on the order of ten thousand mod_php invocations an
+hour, arriving in bursts because every client polls on a similar cadence. There is no
+multicast over HTTP; edge caching is the substitute, and it means the Pi serves each clip
+roughly once however many phones want it.</p>
+<p>This is defensible only because amateur transmissions are public by law. <strong>Photos stay
+exactly as they are</strong> — outside the web root, PHP-gated, <code>Cache-Control: private</code> —
+because a photo attached to somebody's message is not public, and the distinction is the
+whole justification. The URL is obtainable only from the authenticated feed, so it is a
+capability URL rather than an open directory.</p>
+<p>Clips are pruned by age (<code>AUDIO_MAX_AGE</code>, 6 hours) and removed with the event by
+<code>flushEvent()</code>, which already did the same for photos.</p>
 <p><strong>Backward compatibility.</strong> The legacy mobile endpoints (<code>?mobile=message</code>, mobile <code>poll</code>, <code>web_recipients</code>) are a thin shim over the same <code>messages.db</code>, so an older app keeps working unchanged alongside the new chat clients — old and new interoperate through one database.</p>
 <h3 id="web-operator-ui-chat-panel">Web Operator UI (chat panel)</h3>
 <p>The <strong>Messaging</strong> button subscribes (name + password → token, remembered in <code>localStorage</code>). Messaging then lives in a persistent <strong>chat panel docked right of the map</strong>: a conversation list with unread badges, the selected thread, and an always-visible composer that incoming messages never cover. The 5-second poll drives live updates into the open thread, the list, and the unread counts without a reload. <strong>New message</strong> searches mobiles + operators (multi-select → a group; <strong>All Trackers</strong> → broadcast). Sent messages show <strong>Delivered ✓</strong> / <strong>Read ✓✓</strong> (or <em>N of M</em> in a group). A <strong>Read aloud</strong> toggle speaks arriving messages (Web Speech API); when off, a volume-controlled tone plays. A <strong>microphone</strong> dictates into the composer. <strong>View all</strong> opens the whole-event feed — searchable, and clicking a message opens its thread; operators holding <code>messages.manage</code> also get <strong>Export CSV</strong> and <strong>Delete All Messages</strong> (both re-checked server-side). The panel's settings menu also offers <strong>Manage operators</strong> (same permission) — a list of every operator with their connected/idle state and a <strong>Disconnect</strong> button that frees a stuck name and signs that session out. A name is only "in use" while an operator was seen within the last <strong>90 s</strong> with a live token; both <code>subscribe</code> and <code>rename</code> use that same test, so a departed operator's name auto-frees.</p>
@@ -2801,7 +2957,20 @@ admin actions are gated by the user-account permission system.</p>
 <p>Both windows poll, so exactly one announces. The messages window owns audio while open via a <strong>speaker lease</strong> in <code>localStorage</code>, renewed <strong>on each poll rather than by a heartbeat timer</strong>: background tabs have their timers throttled (to 1/s, and 1/min once hidden a while), so a merely covered messages window stops heartbeating while still running, and a timer-based liveness check reads that as death — measured against a real browser, the map window wrongly reclaimed audio and both would have announced. Renewing from the poll ties the lease to the activity that produces an announcement, so the two cannot disagree: a window that stopped polling stopped announcing, and reclaiming is then correct. The map window evaluates it lazily at announce time and needs no timer of its own. A <code>BroadcastChannel</code> carries the rest — a message's location pin drives <code>_showMsgLocation()</code> on the map window, and a tracker right-click on the map composes in the messages window.</p>
 <p><strong>Auto-subscribe for Display Pi operators:</strong> when <code>?autologin&amp;operator=&lt;name&gt;</code> embeds the messaging password into the page (via PHP session → in-page script), the panel subscribes silently on load. The token is held only in memory, so removing line 1 of <code>~/autologin.txt</code> and rebooting cleanly unsubscribes.</p>
 <h3 id="mobile-participant-ui-chat-screen">Mobile Participant UI (chat screen)</h3>
-<p>The app's <strong>Message</strong> (💬) button opens a <strong>chat screen</strong> mirroring the web panel: a <strong>Conversations</strong> list, threads, and a composer, with <strong>New message → Start conversation / Start group</strong> over the participant list (with Online/Offline presence). It sends text and <strong>photos</strong> (Take a photo / Choose from library), shows <strong>Delivered ✓</strong> / <strong>Read ✓✓</strong> receipts, and can <strong>Read arriving messages aloud</strong>. Background arrivals raise a notification with a distinct, insistent alert sound; tapping it opens the conversation. The app continues to satisfy the older <code>?mobile=</code> contract, so mixed-version fleets interoperate.</p>
+<p>The app's <strong>Message</strong> (💬) button opens a <strong>chat screen</strong> mirroring the web panel: a <strong>Conversations</strong> list, threads, and a composer, with <strong>New message → Start conversation / Start group</strong> over the participant list (with Online/Offline presence). It sends text and <strong>photos</strong> (Take a photo / Choose from library), shows <strong>Delivered ✓</strong> / <strong>Read ✓✓</strong> receipts, and can <strong>Read arriving messages aloud</strong>. Background arrivals raise a notification and the message is read out; tapping the notification opens the conversation. The app continues to satisfy the older <code>?mobile=</code> contract, so mixed-version fleets interoperate.</p>
+<p>Two additions beyond the web panel, both for following an event rather than taking part
+in one — see <strong>Monitoring the whole event</strong> under Mobile Apps:</p>
+<ul>
+<li>A <strong>Monitor</strong> view: the read-only feed of everything on the event, including radio
+  traffic, which has no conversation to live in because it was never addressed to anyone.</li>
+<li>A <strong>Stop</strong> control for anything being spoken or played, shown only while there is
+  something to stop.</li>
+</ul>
+<p>Radio entries carry a <strong>Play</strong> button when the channel sent its recording. Tapping it
+queues the clip like everything else audible — it will not start on top of a message being
+read aloud, and the Stop control can see it. It bypasses the five-minute staleness rule,
+because that rule exists to stop a backlog playing itself and has no business refusing a
+button somebody just pressed.</p>
 <hr />
 <h2 id="analyzer">Analyzer</h2>
 <p>The Analyzer is a separate Flask web application served at <code>/analyzer/</code> that records APRS beacons into a local SQLite database during an event and provides an interactive playback and analysis map. It is the only interface that preserves a historical record of all positions received — the main map only retains the most recent <code>breadcrumb_count</code> breadcrumbs per tracker (10–100). The Analyzer is intended for post-event analysis, coverage review, and real-time monitoring of beacon reception quality.</p>
@@ -3231,6 +3400,24 @@ relay sentinel appears. Just run it again. Seen across six gates on 2026-08-07 u
 the results of running <code>install.sh</code> but not <code>configure.sh</code> — so packages, services, and
 scripts are pre-installed, but site-specific settings (callsign, location, hostname) are
 set when deploying each individual device.</p>
+<h3 id="power-supply-checks-all-pis-commonpower-checksh">Power Supply Checks (all Pis) — <code>common/power-check.sh</code></h3>
+<p>Under-voltage is the most-misdiagnosed failure in this fleet. It presents as anything
+but power: reboot loops, SD corruption, a USB disk that will not enumerate, a Pi that
+"lost the network". Three separate wrong diagnoses (power twice, UAS, and RF) were
+chased before the supply was found, so the check is codified rather than remembered.</p>
+<pre><code class="language-bash">/home/pi/power-check.sh          # any Pi: igate, display, server, transcriber
+</code></pre>
+<p>It decodes <code>vcgencmd get_throttled</code> into words (bits 0–3 = happening now, bits 16–19 =
+latched since boot), counts kernel under-voltage lines over the last day, and on a Pi 5
+decodes the USB-PD profile that was actually negotiated from
+<code>/sys/firmware/devicetree/base/chosen/power/</code>.</p>
+<p>It is installed by all four <code>deploy.sh</code> scripts and both <code>auto-update.sh</code> paths, and runs
+nightly on the server at 04:20.</p>
+<p><strong>Read the negotiated profile, not the label on the brick.</strong> A Pi 5 needs <strong>5 V at 5 A
+specifically</strong>, and "100 W" is a rating at 20 V — a 100 W supply that cannot do 5 A at
+5 V is not a Pi 5 supply. The server took three supplies before one worked; the second
+failed <em>progressively</em> rather than looping (under-voltage events 3 → 6 → 12 in three
+minutes), and the third took it from <strong>1,046 events/day to zero over five hours</strong>.</p>
 <h3 id="netbird-setup-keys">NetBird Setup Keys</h3>
 <p>As part of configuring any device, you will need a NetBird key. At the moment, the only way to get one is to email Doug Kaye at <a href="mailto:doug@rds.com">doug@rds.com</a>. </p>
 <h3 id="aprs-server">APRS Server</h3>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  What the phone advertises to a paired watch over the Data Layer.
+
+  Capabilities are how either side answers "is the other one there, and does it have our
+  app?" — the Wear equivalent of WCSession.isWatchAppInstalled and isReachable, which have
+  no counterpart here. The watch declares `aprs_map_wear` in
+  `app/android/wear/src/main/res/values/wear.xml`; this phone declares `aprs_map_phone`, and
+  each looks for the other's.
+
+  The names are part of the wire contract. Changing one silently un-pairs the two apps: they
+  both keep running, neither reports an error, and the watch simply never hears anything
+  again.
+-->
+<resources>
+    <string-array name="android_wear_capabilities">
+        <item>aprs_map_phone</item>
+    </string-array>
+</resources>

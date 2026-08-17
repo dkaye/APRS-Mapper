@@ -149,7 +149,8 @@ class _MessagingScreenState extends State<MessagingScreen> {
     if (!_speak) return Future.value();
     // Through the shared queue, so this cannot start on top of a radio clip and it
     // inherits the five-minute rule with everything else.
-    AudioQueue.instance.addSpeech(ts: m.ts, senderLabel: m.senderLabel, text: m.text);
+    AudioQueue.instance
+        .addSpeech(ts: m.ts, senderLabel: m.senderLabel, text: m.text, msgId: m.id);
     return Future.value();
   }
 
@@ -208,19 +209,30 @@ class _MessagingScreenState extends State<MessagingScreen> {
     // aloud twice. The message is on screen here anyway; the operator loses nothing
     // by hearing it from their arm.
     final wristHasIt = WatchBridge.instance.watchWillAnnounce;
+    // Sent by this operator from somewhere that is not this screen — the watch, or a
+    // second device on the same tracker. It belongs on screen, but it is not news, and
+    // announcing it means an operator who dictates into their wrist then hears their own
+    // words back from their pocket.
+    //
+    // This is the only inbound path that has to say so. Everywhere else the server has
+    // already excluded us: a sender gets no delivery row for their own message, so it
+    // cannot come back through poll. `thread` returns the whole conversation regardless,
+    // which is what makes it reachable here — and _send() adds everything it just posted
+    // to `_seen`, so this fires only for a message sent from another device.
+    final mine = _myId != null && m.fromId == _myId;
     final inOpen = _open != null && _open!.id == m.conversationId;
     if (inOpen) {
       setState(() => _messages.add(m));
       _markRead([m.id]);
       _scrollToEnd();
-      if (wristHasIt) return;
+      if (wristHasIt || mine) return;
       if (_speak) {
         _speakMessage(m);
       } else {
         _playTone();
       }
     } else {
-      if (wristHasIt) return;
+      if (wristHasIt || mine) return;
       if (_speak) _deferredSpeak.add(m.id);
       _playTone();
     }
@@ -906,48 +918,51 @@ class _MessagingScreenState extends State<MessagingScreen> {
   Widget _bubbleAudio(MsgMessage m) {
     final url = MessagingClient.audioUrl(m);
     if (url == null) return const SizedBox.shrink();
-    final playing = _playingAudioId == m.id;
     final secs = m.audioSecs;
-    return Padding(
-      padding: const EdgeInsets.only(top: 4),
-      child: InkWell(
-        onTap: () => _playClip(m.id, url),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(playing ? Icons.stop_circle_outlined : Icons.play_circle_outline,
-              size: 20, color: _kBlue),
-          const SizedBox(width: 4),
-          Text(
-            playing ? 'Playing…' : (secs != null ? 'Play ${secs.round()}s' : 'Play'),
-            style: const TextStyle(fontSize: 12, color: _kBlue, fontWeight: FontWeight.w500),
+    // Rebuilt from the queue rather than from local state, so the row cannot claim to
+    // be playing something the queue has finished, dropped, or been told to stop.
+    return ValueListenableBuilder<({int count, int seconds})>(
+      valueListenable: AudioQueue.instance.pending,
+      builder: (context, _, __) {
+        final playing = AudioQueue.instance.isQueuedClip(m.id);
+        return Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: InkWell(
+            onTap: () => _playClip(m.id, url, ts: m.ts, secs: secs ?? 0),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(playing ? Icons.stop_circle_outlined : Icons.play_circle_outline,
+                  size: 20, color: _kBlue),
+              const SizedBox(width: 4),
+              Text(
+                playing ? 'Playing…' : (secs != null ? 'Play ${secs.round()}s' : 'Play'),
+                style: const TextStyle(fontSize: 12, color: _kBlue, fontWeight: FontWeight.w500),
+              ),
+            ]),
           ),
-        ]),
-      ),
+        );
+      },
     );
   }
 
-  int? _playingAudioId;
-
-  Future<void> _playClip(int id, String url) async {
-    if (_playingAudioId == id) {
-      await _player.stop();
-      if (mounted) setState(() => _playingAudioId = null);
-      return;
+  /// Play one clip — through the shared queue, like everything else that makes a noise.
+  ///
+  /// This screen used to hold its own player and drive it directly. That put a second
+  /// source of audio outside the queue: tapping Play while a message was being read
+  /// aloud started the clip on top of the voice, and the Stop control could not see it
+  /// because it only knows about the queue. "No way to stop it except closing the
+  /// window" was the visible half of that; talking over itself was the other.
+  ///
+  /// `force` because this is an explicit tap. The five-minute rule stops a backlog
+  /// playing itself unasked; it has no business refusing a button the operator just
+  /// pressed, and refusing it silently would look broken.
+  Future<void> _playClip(int id, String url, {int ts = 0, double secs = 0}) async {
+    if (AudioQueue.instance.isQueuedClip(id)) {
+      await AudioQueue.instance.cancelClip(id);
+    } else {
+      AudioQueue.instance
+          .addClip(ts: ts, url: url, seconds: secs, msgId: id, force: true);
     }
-    setState(() => _playingAudioId = id);
-    try {
-      // just_audio caches by URL, and the clip is served immutable, so replaying one
-      // costs nothing after the first fetch.
-      await _player.setUrl(url);
-      await _player.play();
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Could not play that recording'),
-          duration: Duration(seconds: 2),
-        ));
-      }
-    }
-    if (mounted) setState(() => _playingAudioId = null);
+    if (mounted) setState(() {});
   }
 
   // Attached-photo thumbnail inside a bubble; tap opens the full-screen viewer.

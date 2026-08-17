@@ -15,7 +15,7 @@
  *   ?config  Map/background/course/tracker config from config.yaml (ETag-cached)
  */
 
-define('WEB_VERSION', '1.23.0+60');
+define('WEB_VERSION', '1.23.0+63');
 
 // ── Client/server API contract version ────────────────────────────────────────
 // Advertised in the ?json and ?config responses so mobile apps can detect an
@@ -2354,7 +2354,7 @@ body.msg-window #msg-panel-grip { display: none; }
 			<button id="qs-close">&times;</button>
 		</div>
 		<div id="qs-body">
-			<div class="qs-ver">Version <?= WEB_VERSION ?> &middot; August 13, 2026</div>
+			<div class="qs-ver">Version <?= WEB_VERSION ?> &middot; August 17, 2026</div>
 			<div class="qs-note">You can reopen this guide anytime from <strong>Help &rarr; Quick Start</strong>.</div>
 
 			<div class="qs-sec">
@@ -2406,6 +2406,20 @@ body.msg-window #msg-panel-grip { display: none; }
 				<div class="qs-tip">To record something without sending it to anyone, click <strong>&#128203; Log</strong> or press <strong>Ctrl+L</strong>. Entries go into the event's log and reach no one &mdash; times, arrivals, decisions.</div>
 				<div class="qs-tip">Two monitors? The panel menu has <strong>Open messages in a separate window</strong>. Drag it to the second screen: the map keeps the first, only one window reads messages aloud, and clicking a message's location pin moves the map on the other screen.</div>
 				<div class="qs-tip"><strong>View all messages</strong> at the bottom of that window opens the complete log for the event, with the time, who sent it and who it went to. Messages sent from a phone carry a location pin &mdash; click it to see on the map where the sender was. You can also export the whole log to a spreadsheet.</div>
+				<div class="qs-tip">The message box now takes up to 1,000 characters, so a dictated message is no longer cut off part-way.</div>
+			</div>
+
+			<div class="qs-sec">
+				<div class="qs-sec-title">Radio Transcriptions</div>
+				<div class="qs-tip">If a <strong>Transcriber</strong> is set up for the event, everything heard on the radio is written into the <strong>Event Log</strong> by itself, attributed to the frequency &mdash; you do not have to do anything for this to happen.</div>
+				<div class="qs-tip">A channel can also send the <strong>recording</strong> with each entry. Anyone following on the phone app can then tap <strong>Play</strong> to hear what was actually said, which is what you want on the one line in fifty that came out garbled.</div>
+			</div>
+
+			<div class="qs-sec">
+				<div class="qs-sec-title">On the Phone App</div>
+				<div class="qs-tip">The app can <strong>follow the whole event</strong>, not just messages addressed to you &mdash; the &#9881; gear in the Messages bar switches on <strong>All messages</strong> and <strong>Radio traffic</strong>, which appear in a separate Monitor view.</div>
+				<div class="qs-tip">The &#128266; speaker in the same bar holds everything about sound: mute, reading messages aloud, and playing radio recordings. Filled means this phone will make a sound for an arriving message; crossed out means it will not.</div>
+				<div class="qs-tip">Whenever something is being spoken or played, a <strong>Stop</strong> button appears showing how much is left. Nothing interrupts anything else, and nothing older than five minutes is read aloud &mdash; so coming back into signal does not start a recital of a net that has moved on.</div>
 			</div>
 
 			<a href="https://marsaprs.org/userguide.html" target="_blank" class="help-modal-btn">Open Full User Guide</a>

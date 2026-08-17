@@ -17,11 +17,6 @@ import 'package:flutter_tts/flutter_tts.dart';
 /// blurs into the opening of the message and the listener loses both halves.
 const _kSpeakGap = Duration(milliseconds: 500);
 
-/// How long an utterance may wait before it is no longer worth saying. Matches the
-/// server's monitor catch-up window, so what the phone speaks and what the server
-/// considers current mean the same thing.
-const _kMaxSpeechAge = Duration(minutes: 5);
-
 class Speaker {
   Speaker._();
   static final Speaker instance = Speaker._();
@@ -29,16 +24,28 @@ class Speaker {
   final FlutterTts _tts = FlutterTts();
   bool _ready = false;
 
-  /// Serializes utterances. Two messages arriving a second apart must not produce
-  /// "From A / From B / text of A / text of B".
-  Future<void> _queue = Future.value();
-
+  /// Applied before EVERY utterance, not once at startup.
+  ///
+  /// The iOS audio session is process-wide shared state, and this app has more than one
+  /// thing that configures it: AudioQueue owns a just_audio player for radio clips and
+  /// sets its own category, through the same queue that then hands over to speech. Last
+  /// writer wins. Configuring once and assuming it holds was true when this was the only
+  /// audio component in the app and silently stopped being true when the queue arrived —
+  /// the phone kept speaking on screen, where the category barely matters, and went
+  /// quiet locked, where it is the only thing allowing audio at all.
+  ///
+  /// It is a method-channel call against state already in the right shape most of the
+  /// time, which is far cheaper than the failure it prevents.
   Future<void> _ensureReady() async {
-    if (_ready) return;
-    _ready = true;
-    // Resolves speak() when the phrase finishes rather than when it starts, which is
-    // what lets the gap below actually land between the two halves.
-    await _tts.awaitSpeakCompletion(true);
+    // Set only after the calls that matter have actually returned. Above them, a category
+    // call that threw left the object flagged configured while being unconfigured — for
+    // the life of the process, because nothing retries a thing marked done.
+    if (!_ready) {
+      // Resolves speak() when the phrase finishes rather than when it starts, which is
+      // what lets the gap below actually land between the two halves.
+      await _tts.awaitSpeakCompletion(true);
+      await _tts.setSpeechRate(0.5);
+    }
     if (Platform.isIOS) {
       // playback + duckOthers is what allows audio to start while backgrounded and
       // makes navigation or music dip rather than stop. Without the playback
@@ -55,7 +62,7 @@ class Speaker {
         IosTextToSpeechAudioMode.spokenAudio,
       );
     }
-    await _tts.setSpeechRate(0.5);
+    _ready = true;
   }
 
   /// Say one thing and complete when it has been said. No queue, no staleness rule:
@@ -66,7 +73,11 @@ class Speaker {
     final who = senderLabel.trim();
     final body = text.trim();
     if (who.isEmpty && body.isEmpty) return;
-    await _ensureReady();
+    // Best effort. A refused category is a reason to try speaking anyway — the session
+    // may already be in a usable state — not a reason to give up before the attempt.
+    try {
+      await _ensureReady();
+    } catch (_) {}
     if (who.isNotEmpty) {
       await _speak('From $who.');
       await Future.delayed(_kSpeakGap);

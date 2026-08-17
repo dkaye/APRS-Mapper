@@ -276,6 +276,7 @@ final class Announcer {
         try? await Task.sleep(nanoseconds: 1_000_000_000)
       }
       let wasActive = AppState.shared.isActive
+      let promised = AppState.shared.canAnnounce
       let started = Date()
       let activated = await activateAudio()
       var finished = false
@@ -288,7 +289,13 @@ final class Announcer {
       }
       deactivateAudio()
       let took = Date().timeIntervalSince(started)
-      let appPart = wasActive ? "app active" : "app INACTIVE"
+      // Both, because they now mean different things and the gap between them is the
+      // interesting part. "app INACTIVE · will speak · session granted · spoke" is the
+      // dimmed case working as intended; "app INACTIVE · will speak · session REFUSED"
+      // would mean this app is promising the phone something it cannot deliver, which
+      // is the one result that must never stand.
+      let appPart = (wasActive ? "app active" : "app INACTIVE")
+        + " · " + (promised ? "will speak" : "defers to phone")
       let sessionPart = activated ? "session granted" : "session REFUSED"
       let speechPart = activated ? (finished ? "spoke" : "cut off") : "not attempted"
       dimTestResult = appPart + " · " + sessionPart + " · " + speechPart

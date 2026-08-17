@@ -39,7 +39,6 @@ import 'messaging_client.dart';
 import 'messaging_screen.dart';
 import 'audio_queue.dart';
 import 'monitor_service.dart';
-import 'speaker.dart';
 import 'watch_bridge.dart';
 import 'widgets/audio_queue_bar.dart';
 import 'widgets/mode_indicator.dart';
@@ -478,8 +477,46 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     // aloud there would quietly reintroduce exactly the behaviour that made a busy net
     // unlistenable, and it would do so only sometimes, which is worse than never.
     if (!mon.monitoringAll || !mon.speakingAll) return;
-    final spoken =
-        batch.where((m) => !m.isRadio && !played.contains(m.id)).toList();
+
+    // Never this operator's own words.
+    //
+    // The monitor feed is the one inbound path not built from delivery rows — the
+    // server deliberately writes none for it (MessagingDb::monitor) — so it is the one
+    // feed that hands this phone back the messages this operator just sent. Every other
+    // path gets the exclusion for free, because a sender never gets a delivery row for
+    // their own message.
+    //
+    // Invisible until the watch existed: you sent from this phone, so you were holding
+    // the thing that spoke. Dictate into the wrist with the phone in a pocket and it
+    // reads your own message back at you a few seconds later.
+    //
+    // Only the speech is suppressed. The message stays in `mon.recent`, which is the
+    // event's traffic log — your own transmissions belong in that.
+    final me = await _msgClient.myParticipantId();
+    if (!mounted) return;
+
+    // Nor anything addressed to this operator.
+    //
+    // `_handleInboundMessage` owns those: it decides between the wrist and this phone,
+    // raises the notification, marks the message read once spoken. This feed carries
+    // them too, and announcing them here bypassed all of that — the same message read
+    // aloud twice, and read aloud by the phone even while the watch was announcing it,
+    // because this is the one speech path that never asked the wrist.
+    //
+    // Two tests, and the first is the real one. The server tags each message with
+    // whether we have a delivery row for it, which is definitive. `addressedHere` is
+    // the fallback for a server that has not been updated yet: it is right whenever
+    // the addressed path got there first, which is usual but not guaranteed.
+    //
+    // Still shown in the log either way — only the second voice is the problem.
+    final spoken = batch
+        .where((m) =>
+            !m.isRadio &&
+            !played.contains(m.id) &&
+            m.fromId != me &&
+            !m.addressedToMe &&
+            !WatchBridge.instance.addressedHere(m.id))
+        .toList();
     if (spoken.isEmpty) return;
     final p = await SharedPreferences.getInstance();
     if (!(p.getBool('aprs_msg_speak') ?? true)) return;   // the global mute
@@ -491,8 +528,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     // full, however many of it there is. Counting the batch was a proxy for age and a
     // poor one: three stale messages were read out and four fresh ones were not.
     for (final m in spoken) {
-      AudioQueue.instance
-          .addSpeech(ts: m.ts, senderLabel: m.senderLabel, text: m.text);
+      AudioQueue.instance.addSpeech(
+          ts: m.ts, senderLabel: m.senderLabel, text: m.text, msgId: m.id);
     }
   }
 
@@ -541,25 +578,33 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         // between a driver having to stop and a driver carrying on. Needs the `audio`
         // background mode, without which iOS refuses the session off-screen.
         //
-        // After the notification, and after a beat: the notification's own sound is
-        // the alert tone, and speech starting underneath it would talk over the very
-        // thing that made the operator listen.
-        // Through the same queue as everything else, so a message addressed to this
-        // operator cannot start on top of a radio clip already playing. It also gains
-        // the five-minute rule, which is what stops an hour offline becoming an hour of
-        // announcements on reconnect.
-        unawaited(Future.delayed(const Duration(milliseconds: 900), () {
-          AudioQueue.instance.addSpeech(
-              ts: msg.ts, senderLabel: msg.senderLabel, text: msg.text);
-        }));
-        // Spoken aloud IS read. Leaving it unread meant a message the operator had
-        // already heard in full still sat in Messages behind a red badge, and opening
-        // it to clear that badge was the act that read it out a second time. Marking it
-        // here also tells the sender it landed, which is true — somebody heard it.
+        // Tone and speech both go through the queue, in that order, as one item. They
+        // used to be a race: the tone was the notification's own sound and speech was
+        // delayed 900 ms to clear it. Nothing here schedules that sound or can observe
+        // it, so the delay was a guess, and it lost — the tone landed on top of speech
+        // that had already started. The queue makes the order a fact.
         //
-        // Only on the path that actually speaks. A notification alone is not reading:
-        // with speech muted the badge is the only sign the message exists.
-        unawaited(_msgClient.read([msg.id]));
+        // Being in the queue also means a message addressed to this operator cannot
+        // start on top of a radio clip already playing, and that it inherits the
+        // five-minute rule which stops an hour offline becoming an hour of
+        // announcements on reconnect.
+        AudioQueue.instance.addSpeech(
+          ts: msg.ts,
+          senderLabel: msg.senderLabel,
+          text: msg.text,
+          msgId: msg.id,
+          chime: true,
+          // Spoken aloud IS read. Leaving it unread meant a message the operator had
+          // already heard in full still sat in Messages behind a red badge, and opening
+          // it to clear that badge was the act that read it out a second time. Marking
+          // it also tells the sender it landed, which is true — somebody heard it.
+          //
+          // Fired when the words have actually been said, not when the message arrived.
+          // Marking on arrival claimed the operator had heard something the queue could
+          // still drop as stale or fail to play, and it ran before the audio session
+          // was known to be working — which is exactly when it was wrong.
+          onSpoken: () => unawaited(_msgClient.read([msg.id])),
+        );
         unawaited(_notifPlugin.show(
           id: msg.id & 0x7FFFFFFF,
           title: '📨 ${msg.fromLabel}',
@@ -567,10 +612,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           notificationDetails: const NotificationDetails(
             iOS: DarwinNotificationDetails(
               presentAlert: true,
-              presentSound: true,
-              // Custom alert sound bundled in the Runner app (ios/Runner/message.wav).
-              // Still obeys the silent switch / Focus like any notification sound.
-              sound: 'message.wav',
+              // Silent on purpose. The tone is the first half of the queued item above,
+              // so it is guaranteed to come before the words rather than whenever iOS
+              // gets to it. Two sounds for one message was the bug; this is the half
+              // that had no ordering guarantee, so this is the half that goes.
+              presentSound: false,
               presentBadge: true,
               interruptionLevel: InterruptionLevel.timeSensitive,
             ),
@@ -594,8 +640,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     // somebody looking at the phone, and a tone alongside the wrist speaking is
     // information rather than duplication. Only the second voice is the problem.
     if (!WatchBridge.instance.watchWillAnnounce) {
-      AudioQueue.instance
-          .addSpeech(ts: msg.ts, senderLabel: msg.senderLabel, text: msg.text);
+      AudioQueue.instance.addSpeech(
+          ts: msg.ts, senderLabel: msg.senderLabel, text: msg.text, msgId: msg.id);
     }
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);

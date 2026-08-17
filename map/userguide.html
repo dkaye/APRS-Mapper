@@ -459,13 +459,16 @@ launches.</p>
 <h3 id="apple-watch-iphone-only">Apple Watch (iPhone only)</h3>
 <p>The iPhone app includes an <strong>Apple Watch</strong> companion. Install it from the iPhone's <strong>Watch</strong> app if it does not appear by itself: <strong>My Watch → APRS Map → Show App on Apple Watch</strong>.</p>
 <p>The watch does <strong>messaging only</strong>. It never shares your position and never beacons — that stays with the phone.</p>
-<p><strong>What each device does.</strong> The phone is the loudspeaker and the watch is the microphone. Your phone announces arriving messages aloud even from a pocket, so you hear who is calling without looking at anything; the watch's job is to let you answer. If the watch app happens to be on screen when a message arrives, it reads it out instead — only one of them ever speaks.</p>
+<p><strong>What each device does.</strong> The phone is the loudspeaker and the watch is the microphone. Your phone announces arriving messages aloud even from a pocket, so you hear who is calling without looking at anything; the watch's job is to let you answer. If the watch app is on screen when a message arrives, it reads it out instead — only one of them ever speaks.</p>
+<p><strong>On screen includes a dimmed screen.</strong> With the watch app open you will hear messages from your wrist even with your arm down and the display dimmed, which is the normal way to wear a watch during an event. The phone takes over only when you leave the app.</p>
 <p><strong>Answering.</strong> Press and hold the <strong>Talk</strong> button, speak, and let go. Releasing sends it — there is no confirmation step to find and no button to hunt for afterwards. The name above the button is where your reply is going.</p>
 <p><strong>Where your reply goes.</strong> The destination follows the traffic: whoever last messaged you becomes the target, so the announcement you just heard is also a statement of who you are about to answer. Swipe to the <strong>Reply to</strong> page to aim somewhere else. Answering a message sent to All Trackers goes back to the station that called, not to the whole net — broadcasting stays deliberate.</p>
 <p><strong>Four pages</strong>, swiped sideways: <strong>Talk</strong>, <strong>Messages</strong> (what has arrived), <strong>Reply to</strong> (choose a destination), and <strong>Settings</strong>.</p>
 <p><strong>If a reply does not go out</strong> — the phone is off, out of range, or the destination has gone — a small orange warning appears at the top of the Talk page with a count. Tap it to open the <strong>Outbox</strong>: it shows what you said, and offers <strong>Retry</strong> (which sends it to your current destination) or <strong>Discard</strong>. Nothing you speak is thrown away silently.</p>
 <p><strong>When the phone is away.</strong> The watch keeps working on its own over WiFi or cellular, polling for messages and sending replies directly. The status line tells you which is happening: <em>Phone linked</em>, <em>Direct — phone away</em>, or <em>Phone unreachable</em>.</p>
-<p><strong>One limitation worth knowing.</strong> watchOS only lets an app make sound while it is actually on screen. With your phone switched off or out of range <strong>and</strong> the watch app not showing, nothing will reach you until you raise your wrist — at which point the watch catches up and reads out what it missed. Whenever the phone is alive, it covers this.</p>
+<p><strong>Stopping it.</strong> While the watch is speaking, a <strong>Stop</strong> button appears at the top of the Talk page showing how much is left to say. It clears everything waiting, not just the sentence in progress.</p>
+<p><strong>One limitation worth knowing.</strong> watchOS only lets an app make sound while its app is showing (dimmed counts; switched away does not). With your phone switched off or out of range <strong>and</strong> the watch app not showing, nothing will reach you until you raise your wrist — at which point the watch catches up and reads out what it missed. Whenever the phone is alive, it covers this.</p>
+<p><strong>Checking it yourself.</strong> <strong>Settings → Diagnostics → Test audio when dimmed</strong> starts a countdown; lower your wrist and listen. The result line says whether the watch was given the audio session and whether it actually spoke — useful if you are ever unsure which device is supposed to be talking.</p>
 <hr />
 <h2 id="main-map">Main Map</h2>
 <p>Open the map at <a href="https://marsaprs.org">marsaprs.org</a>. </p>
@@ -714,7 +717,7 @@ LKL (multiple)    2 people at LKL
 <p>The right-hand column shows <strong>Online</strong> (green) or <strong>Offline</strong> (red) for each person. Someone carrying two phones counts as Online if <em>either</em> phone has checked in recently — they are reachable, whichever one they are holding. <strong>(multiple)</strong> rows show no status, since they stand for several people at once. Offline is not a barrier: the message is delivered the moment that phone reconnects.</p>
 <p>Receipts reflect this. For one person with two phones, you see the ordinary <strong>Delivered ✓</strong> / <strong>Read ✓✓</strong> as soon as either phone has it — it is still one person. For an <strong>(multiple)</strong> conversation you see the group wording, <strong>Delivered to 2 of 3</strong>, because those really are separate people.</p>
 <p><strong>Sending:</strong></p>
-<p>Type up to 280 characters and press <strong>Send</strong>. To attach a <strong>photo</strong>, click the <strong>Attach</strong> (📷) button, choose an image, and send it with or without text; recipients see a thumbnail they can click to view full-size.</p>
+<p>Type up to 1,000 characters and press <strong>Send</strong>. (The box also accepts far more text than it used to, so a dictated message is no longer cut off part-way.) To attach a <strong>photo</strong>, click the <strong>Attach</strong> (📷) button, choose an image, and send it with or without text; recipients see a thumbnail they can click to view full-size.</p>
 <p><strong>Voice:</strong> Click the <strong>microphone</strong> button to dictate a message instead of typing (uses your browser's speech recognition; best in Chrome/Edge).</p>
 <p><strong>Delivery &amp; read receipts:</strong> Each message you send shows its status — <strong>Delivered ✓</strong> when it reaches the recipient's device and <strong>Read ✓✓</strong> once opened. In a group the status reads <strong>Delivered to 2 of 3</strong> / <strong>Read by 1 of 3</strong>.</p>
 <p><strong>Copying a message:</strong> Each message carries a small <strong>copy</strong> icon beside its timestamp. It copies <strong>the message text only</strong> — no sender, no timestamp, no receipt — which is what belongs in a log entry, an email, or an incident report. The icon turns into a green tick to confirm.</p>
@@ -749,10 +752,34 @@ LKL (multiple)    2 people at LKL
 <p>The app includes a full <strong>chat screen</strong> that mirrors the operators' panel. Open it with the <strong>Message</strong> (💬) button in the drawer footer (visible while sharing).</p>
 <p><strong>Conversations:</strong> The screen opens on your <strong>Conversations</strong> list, each entry showing the other party and an unread count. Tap one to open its thread, or tap <strong>New message</strong> to <strong>Start a conversation</strong> with an operator — or <strong>Start a group</strong> with several people. Each participant shows <strong>Online</strong> / <strong>Offline</strong> presence, and the picker opens with your <strong>previous recipients already ticked</strong> — during an event you usually message the same station repeatedly. <strong>Cancel</strong> closes it without starting anything.</p>
 <p>The people list shows only those you can reach — operators and participants active in the last 24 hours — so names left over from earlier events no longer appear. <strong>Operators are listed first</strong>, separated by a line from the trackers below, and each group is alphabetical. As on the operator panel, someone carrying <strong>two phones</strong> appears once and receives your message on both, a location covering several people offers an <strong>(multiple)</strong> option that reaches all of them, and the right-hand column reads <strong>Online</strong> (green) or <strong>Offline</strong> (red).</p>
-<p><strong>Sending:</strong> Type up to 280 characters in the message box and tap <strong>Send</strong>. Tap <strong>Attach photo</strong> to <strong>Take a photo</strong> or <strong>Choose from library</strong>; the image sends with or without text, and either party can tap a photo to view it full-screen.</p>
+<p><strong>Sending:</strong> Type up to 1,000 characters in the message box and tap <strong>Send</strong>. (It used to stop at 280, which cut dictated messages off mid-word — a message spoken for thirty seconds needs the room.) Tap <strong>Attach photo</strong> to <strong>Take a photo</strong> or <strong>Choose from library</strong>; the image sends with or without text, and either party can tap a photo to view it full-screen.</p>
 <p><strong>Receipts:</strong> Your sent messages show <strong>Delivered ✓</strong> and <strong>Read ✓✓</strong> (or <strong>Delivered to N of M</strong> / <strong>Read by N of M</strong> in a group).</p>
-<p><strong>Read aloud:</strong> Arriving messages are <strong>spoken aloud by default</strong> — this is a net-control tool and you are usually not watching the screen. Each is announced as <em>“From CRD Stanton”</em>, then a short pause, then the message. Tap the <strong>speaker</strong> icon to mute; your choice is remembered.</p>
-<p><strong>When the app is in the background:</strong> A message <strong>notification</strong> appears with a distinct, insistent <strong>alert sound</strong> so you don't miss it while the app is backgrounded or the screen is locked.</p>
+<p><strong>Read aloud:</strong> Arriving messages are <strong>spoken aloud by default</strong> — this is a net-control tool and you are usually not watching the screen. Each is announced as <em>“From CRD Stanton”</em>, then a short pause, then the message. Tap the <strong>🔊 speaker</strong> icon in the top bar for the sound settings, including mute; your choices are remembered. The icon itself tells you where you stand: filled if this phone will make a sound for an arriving message, crossed out if it will not.</p>
+<p><strong>Stopping it.</strong> Whenever anything is being spoken or played, a <strong>Stop</strong> button appears at the bottom of the screen showing how many items are waiting and roughly how long they will take — both, because “six waiting” could be twenty seconds or four minutes. Tap it to clear everything, not just the sentence in progress.</p>
+<p>Nothing ever interrupts anything else: a new message waits for the current one to finish. And nothing more than <strong>five minutes old</strong> is read aloud, measured from when it was <em>sent</em> — so coming back from a spell without signal does not start a recital of a net that has moved on. The messages themselves all still arrive and are waiting in their threads; only the <em>speaking</em> is rationed.</p>
+<p><strong>Following the whole event.</strong> By default you see only what was sent to you. The <strong>⚙ gear</strong> icon in the top bar opens <strong>Follow</strong>, with two switches:</p>
+<table>
+<thead>
+<tr>
+<th>Switch</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>All messages</strong></td>
+<td>You see everything anyone sends, whoever it was addressed to</td>
+</tr>
+<tr>
+<td><strong>Radio traffic</strong></td>
+<td>You see what the receivers heard on the air, transcribed</td>
+</tr>
+</tbody>
+</table>
+<p>Followed traffic appears in a separate <strong>Monitor</strong> view and <strong>never raises a notification</strong> — on a busy net that is a message every few seconds, and a phone that buzzed for each would be unusable within a minute. If you were offline for a while, it tells you how many it skipped rather than leaving a silent gap.</p>
+<p>The gear is separate from the speaker on purpose: what reaches your phone at all is not a sound setting.</p>
+<p><strong>Hearing the actual radio.</strong> When a channel sends its recordings, a radio entry carries a <strong>Play</strong> button. Tap it to hear what was really said — useful on the one line in fifty that came out garbled in the transcription. Recordings are fetched only when you tap them, never in advance, so following a net as text costs almost no cellular data. <strong>Play radio audio</strong> in the 🔊 Sound settings turns this on.</p>
+<p><strong>When the app is in the background:</strong> an <strong>alert tone</strong> sounds and the message is then <strong>read aloud</strong>, followed by a <strong>notification</strong> you can tap — so you get the message itself without having to look, even with the screen locked.</p>
 <ul>
 <li><strong>Android</strong> — tap the notification (or the app is brought forward automatically if "Draw over other apps" is granted) to open the conversation.</li>
 <li><strong>iOS</strong> — tap the notification banner to open the app on that conversation.</li>
@@ -1537,7 +1564,11 @@ nightly at 4 am; to apply immediately on a field device, SSH in and run
 </tr>
 <tr>
 <td><strong>Accuracy</strong></td>
-<td><strong>Fast</strong> keeps up with a busy net in real time. <strong>Careful</strong> is more accurate and slower — on a busy frequency the log falls further behind the radio as it goes.</td>
+<td><strong>Fast</strong> keeps up with a busy net in real time. <strong>Careful</strong> is more accurate and slower. On the current receiver hardware Careful keeps up with a busy net; on older hardware the log falls further behind the radio as the net goes on.</td>
+</tr>
+<tr>
+<td><strong>Audio</strong></td>
+<td>Send the actual recording with each entry, so anyone following on a phone can tap <strong>Play</strong> and hear what was really said. Off by default — it costs the receiver a little upload per transmission, and is only worth turning on for a channel somebody is actually listening to on a phone. Recordings are kept for a few hours, then removed.</td>
 </tr>
 <tr>
 <td><strong>On</strong></td>

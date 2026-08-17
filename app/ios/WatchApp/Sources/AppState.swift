@@ -42,7 +42,14 @@ final class AppState {
   var phoneReachable = false
   var sharing = false
   var callsign = ""
-  var audioUnavailable = false
+  /// Set by the Announcer when the audio session was wanted and refused. Reported to the
+  /// phone, which will not defer to a wrist that cannot be heard — see reportAudioState().
+  var audioUnavailable = false {
+    didSet {
+      guard audioUnavailable != oldValue else { return }
+      reportAudioState()
+    }
+  }
 
   /// Where the watch talks when the phone cannot. Handed over in the context so a
   /// server move needs no watch release.
@@ -67,18 +74,62 @@ final class AppState {
   /// already on disk, so it is displayed but never announced.
   private var launchWatermark = 0
 
-  /// Whether this app can currently speak — set from the scene phase, and the only
-  /// authority on the question.
+  /// Whether this app is genuinely on screen and interactive.
+  ///
+  /// Narrower than `canAnnounce` on purpose — see there. This drives the direct
+  /// poller, which is a battery question rather than an audio one.
+  var isActive = false
+
+  /// Whether this app can currently make a sound — the only authority on the question,
+  /// and what the phone defers to when deciding whether to announce a message itself.
   ///
   /// The phone used to infer it from WatchConnectivity reachability, which is a
   /// different thing: a watch showing a dimmed screen with this app still resident is
   /// unreachable but perfectly able to talk. The two devices disagreed, so both
   /// announced. It is reported now rather than guessed at.
-  var isActive = false {
+  ///
+  /// It is true for `.inactive` as well as `.active`, which reverses what this app
+  /// assumed for its whole life. The assumption was that watchOS refuses the audio
+  /// session to a dimmed always-on display, so anything but `.active` was treated as
+  /// mute and handed to the phone. That was inherited from documentation and never
+  /// measured; the diagnostic in Announcer.runDimmedAudioTest() measured it, on this
+  /// hardware, and the session is granted and the utterance completes:
+  ///
+  ///     app INACTIVE · session granted · spoke · 4.2s
+  ///
+  /// So an operator wearing the watch through a net had been listening to their pocket
+  /// for no reason every time their wrist was down — which is most of a net.
+  ///
+  /// `.background` remains false, and that is not the same case: there the app is not
+  /// on screen at all, watchOS genuinely will not let it sound, and promising
+  /// otherwise leaves the phone deferring to a watch that stays silent.
+  var canAnnounce = false {
     didSet {
-      guard isActive != oldValue else { return }
-      WatchSession.shared.send(["type": "canAnnounce", "enabled": isActive])
+      guard canAnnounce != oldValue else { return }
+      reportAudioState()
     }
+  }
+
+  /// Both facts, in one payload, whenever either moves.
+  ///
+  /// `canAnnounce` answers "am I on screen?", which is not the same question as "did I
+  /// make a sound?" — and the phone was deciding on the first while needing the second.
+  /// Silent Mode, the cover-to-mute gesture and a route the session refuses all leave
+  /// this app frontmost and inaudible, and the phone would defer to it anyway. The
+  /// operator then heard nothing from either device, with nothing anywhere to say why,
+  /// which is the exact failure this whole arrangement exists to prevent.
+  ///
+  /// Sent together rather than as two messages so the phone can never hold a fresh value
+  /// of one beside a stale value of the other.
+  ///
+  /// It is retrospective, and that is a real limit rather than an oversight: whether the
+  /// session will be granted is not knowable until something is announced, so the first
+  /// message after audio goes away is still lost to the wrist. What this fixes is every
+  /// message after it.
+  private func reportAudioState() {
+    WatchSession.shared.send(["type": "canAnnounce",
+                              "enabled": canAnnounce,
+                              "audioOk": !audioUnavailable])
   }
 
   /// How stale a message may be and still be announced.
@@ -191,8 +242,8 @@ final class AppState {
     }
     if source != .context {
       lastArrival = Arrival(at: Date(), live: source == .relayLive,
-                            announced: isActive && !alertable.isEmpty,
-                            notified: !isActive && !alertable.isEmpty)
+                            announced: canAnnounce && !alertable.isEmpty,
+                            notified: !canAnnounce && !alertable.isEmpty)
     }
 
     // Aim the reply at whoever just called — but only for messages this watch fetched
@@ -214,7 +265,7 @@ final class AppState {
     }
 
     guard !alertable.isEmpty else { return }
-    if isActive {
+    if canAnnounce {
       Announcer.shared.enqueue(alertable)
     } else {
       // Backgrounded, so nothing can be spoken here. Everything still in `alertable`

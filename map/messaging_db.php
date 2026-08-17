@@ -862,8 +862,24 @@ class MessagingDb
      * $includeMessages / $includeLog are the two subscriptions ("everything" and "radio
      * traffic") expressed as filters over one query; with both false there is nothing
      * to send and the caller gets an empty result without touching the database.
+     *
+     * $viewerId tags each message with `addressed`: whether this monitor also has a
+     * delivery row for it, i.e. whether it was sent TO them.
+     *
+     * The tag exists because the phone announces monitored traffic and addressed traffic
+     * by two separate paths, and this feed returns both — so a message addressed to the
+     * monitor was announced twice, once by each. The obvious fix is to exclude those rows
+     * here, and it is wrong: this feed is ALSO the event's traffic log, and dropping the
+     * messages sent to you would leave holes in the one view whose whole purpose is
+     * completeness. Tagging lets the client show everything and announce once.
+     *
+     * A tag rather than a client-side guess, because only this side knows. The client
+     * can observe which messages reached it on an addressed path, but the two polls run
+     * at different intervals, so a monitor batch can arrive first and it would announce
+     * before the addressed path had claimed anything.
      */
-    public function monitor(string $event, int $sinceId, bool $includeMessages, bool $includeLog): array
+    public function monitor(string $event, int $sinceId, bool $includeMessages, bool $includeLog,
+                            int $viewerId = 0): array
     {
         $empty = ['messages'=>[], 'skipped'=>0, 'last_id'=>$sinceId];
         if (!$includeMessages && !$includeLog) return $empty;
@@ -899,12 +915,45 @@ class MessagingDb
         $rows = array_reverse($rows);
 
         return [
-            'messages' => $this->tagRecipients($event, $this->hydrate($rows)),
+            'messages' => $this->tagAddressed(
+                $this->tagRecipients($event, $this->hydrate($rows)), $viewerId),
             // Never silently truncated: the client says "42 messages skipped" so the
             // gap is visible rather than looking like nothing happened.
             'skipped'  => max(0, $total - count($rows)),
             'last_id'  => $lastId,
         ];
+    }
+
+    /**
+     * Mark which of these messages were sent TO $viewerId, by their delivery rows.
+     *
+     * One statement for the batch, not one per row: this runs on every monitor poll from
+     * every subscribed phone, and hydrate() above carries the scar from getting that
+     * wrong. `idx_deliv_recip` covers (recipient_id, message_id), so it is an index scan.
+     *
+     * With no viewer the answer is false for everything, which is the safe direction: a
+     * caller that cannot say who it is gets a feed it will announce, rather than one it
+     * silently ignores.
+     */
+    private function tagAddressed(array $msgs, int $viewerId): array
+    {
+        $mine = [];
+        if ($viewerId > 0 && $msgs) {
+            $ids = array_map(fn($m) => (int)$m['id'], $msgs);
+            $ph  = implode(',', array_fill(0, count($ids), '?'));
+            $st  = $this->db->prepare(
+                "SELECT message_id FROM deliveries
+                  WHERE recipient_id = ? AND message_id IN ($ph)");
+            $st->bindValue(1, $viewerId, SQLITE3_INTEGER);
+            foreach ($ids as $i => $id) $st->bindValue($i + 2, $id, SQLITE3_INTEGER);
+            $r = $st->execute();
+            while ($row = $r->fetchArray(SQLITE3_ASSOC)) $mine[(int)$row['message_id']] = true;
+        }
+        foreach ($msgs as &$m) {
+            $m['addressed'] = isset($mine[(int)$m['id']]);
+        }
+        unset($m);
+        return $msgs;
     }
 
     /** Conversation list for a participant: last message + unread count + the other

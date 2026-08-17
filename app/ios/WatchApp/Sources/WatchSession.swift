@@ -43,7 +43,9 @@ final class WatchSession: NSObject {
     // Restate it on every wake: the phone decides whether to announce a message
     // itself based on this, and a stale answer means either silence or a duet.
     Task { @MainActor in
-      send(["type": "canAnnounce", "enabled": AppState.shared.isActive])
+      send(["type": "canAnnounce",
+            "enabled": AppState.shared.canAnnounce,
+            "audioOk": !AppState.shared.audioUnavailable])
     }
   }
 

@@ -691,7 +691,11 @@ function messaging_handle(string $action, array $body, array $ctx): void
         $sinceId = (int)($_GET['since_id'] ?? $body['since_id'] ?? 0);
         $all     = !empty($_GET['all'] ?? $body['all'] ?? false);
         $log     = !empty($_GET['log'] ?? $body['log'] ?? false);
-        $res     = $db->monitor($event, $sinceId, $all, $log);
+        // The viewer, so each message can say whether it was addressed to them. The
+        // phone announces addressed and monitored traffic on two separate paths and this
+        // feed carries both; without the tag a message sent to this operator is read
+        // aloud twice. See MessagingDb::monitor().
+        $res     = $db->monitor($event, $sinceId, $all, $log, (int)$me['id']);
         echo json_encode([
             'messages' => $res['messages'],
             'skipped'  => $res['skipped'],

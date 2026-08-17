@@ -84,11 +84,12 @@ struct SettingsView: View {
       } header: {
         Text("Diagnostics")
       } footer: {
-        // The footer above claims the watch can only speak while on screen. That claim
-        // is an assumption inherited from watchOS documentation, not something anyone
-        // measured on this hardware — and the whole app routes announcements to the
-        // phone because of it. This button is how the claim gets checked: start it,
-        // lower your wrist, and read the answer when you raise it again.
+        // This button is what disproved the app's founding assumption about the
+        // wrist: that watchOS refuses the audio session to a dimmed screen, so
+        // announcements had to go to the phone the moment a wrist dropped. It does
+        // not — "app INACTIVE · session granted · spoke". The routing rule changed to
+        // match. It stays here as the regression check, because the failure it guards
+        // against is silent on both devices at once.
         Text("Starts a countdown. Lower your wrist so the screen dims, and listen. "
              + "The result says whether the session was granted and whether it spoke.")
           .font(.caption2)
@@ -103,8 +104,11 @@ struct SettingsView: View {
           .foregroundStyle(.secondary)
       } footer: {
         // Setting expectations beats a silent failure the user has to diagnose
-        // mid-net: watchOS simply will not let a backgrounded app make noise.
-        Text("The watch can only speak while this app is on screen.")
+        // mid-net: watchOS simply will not let a backgrounded app make noise. Worth
+        // spelling out that a dimmed screen still counts — the wrist being down is
+        // the normal way to wear this, and it is the case people assume is dead.
+        Text("The watch speaks while this app is on screen, including when the "
+             + "screen has dimmed. If you leave the app, the iPhone takes over.")
           .font(.caption2)
       }
     }

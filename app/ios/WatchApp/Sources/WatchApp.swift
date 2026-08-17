@@ -21,22 +21,25 @@ struct WatchApp: App {
         .environment(AppState.shared)
     }
     .onChange(of: scenePhase) { _, phase in
-      // Only `.active` counts as able to speak, and the distinction matters because
-      // two different questions were being answered by one flag.
+      // Two different questions, and they were being answered by one flag.
       //
-      // "May I START announcing?" — only when genuinely on screen. `.inactive` covers
-      // a dimmed always-on display and a lowered wrist alike, and watchOS refuses the
-      // audio session for the latter. Claiming otherwise made the watch promise to
-      // speak, fail silently, and leave the phone deferring to it: a message that
-      // reached neither device.
+      // "May I speak?" — anything but `.background`. This used to require `.active`,
+      // on the stated grounds that watchOS refuses the audio session to a dimmed
+      // always-on display. Measured on this hardware, it does not: the session is
+      // granted and the utterance completes. See AppState.canAnnounce. Requiring
+      // `.active` meant the watch went mute the moment a wrist dropped and the phone
+      // spoke instead — for most of any net.
+      //
+      // "Should I poll on my own?" — only `.active`. That is a battery question, not
+      // an audio one: the poller runs an HTTP request every few seconds and only ever
+      // when the phone is unreachable, and running it all day behind a lowered wrist
+      // is a different bargain from running it while somebody is looking.
       //
       // "Must I ABANDON one already speaking?" — only on `.background`, handled
       // below. A message that began while the operator was looking finishes even as
       // the screen dims, which is what stopped them being cut off mid-sentence.
+      AppState.shared.canAnnounce = phase != .background
       AppState.shared.isActive = phase == .active
-      // Polling on our own is a foreground-only activity: watchOS would not run the
-      // timer in the background, and an app that cannot make a sound has nothing to
-      // do with the result.
       DirectPoller.shared.evaluate()
       switch phase {
       case .active:
@@ -65,7 +68,9 @@ final class WatchAppDelegate: NSObject, WKApplicationDelegate {
     // the value a scene launches with, so this stayed false through an entire
     // foreground session until the app was first backgrounded — and a message
     // arriving before that was never spoken.
-    AppState.shared.isActive = WKApplication.shared().applicationState == .active
+    let launchState = WKApplication.shared().applicationState
+    AppState.shared.canAnnounce = launchState != .background
+    AppState.shared.isActive = launchState == .active
     WatchSession.shared.activate()
     // At launch, because the prompt cannot appear while backgrounded — which is
     // exactly when the first message the watch needs to raise is likely to arrive.

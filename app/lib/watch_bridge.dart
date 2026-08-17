@@ -1,16 +1,27 @@
-/// Dart side of the Apple Watch bridge.
+/// Dart side of the watch bridge — one implementation, two watches.
 ///
-/// Talks to `app/ios/Runner/WatchBridge.swift` over a method channel (Dart → native)
-/// and an event channel (native → Dart). The watch itself is native Swift under
-/// `app/ios/WatchApp`; see README.md ("Apple Watch Companion") for the whole design.
+/// Talks to `app/ios/Runner/WatchBridge.swift` on iOS and
+/// `app/android/app/src/main/kotlin/org/w6sg/aprsmap/watch/WatchBridge.kt` on Android, over
+/// the same method channel (Dart → native) and event channel (native → Dart), with the same
+/// payloads. The watches themselves are native — SwiftUI under `app/ios/WatchApp`, Compose
+/// for Wear OS under `app/android/wear` — because neither watch platform runs Flutter. See
+/// README.md ("Apple Watch Companion" and "Wear OS Companion") for the whole design.
+///
+/// **This file knows nothing about which watch it is talking to, and must not learn.** The
+/// two native bridges differ underneath — WatchConnectivity against the Wear Data Layer,
+/// reply handlers against none, a watch that transcribes for itself against one that cannot
+/// — and every one of those differences is absorbed on the native side precisely so that the
+/// rules below stay written once. A `Platform.isAndroid` branch in here would be the start of
+/// two subtly different watch apps.
 ///
 /// Two rules shape this file:
 ///
 /// 1. **It initializes from `main()`, not from a widget.** `StartupRouter` routes to
-///    DownloadScreen or PasswordGateScreen first, so on a WatchConnectivity-triggered
-///    background cold launch `MapScreen` — and therefore its `MessagingClient` — may
-///    never be built. The bridge therefore owns its own client and reads the token
-///    straight from SharedPreferences.
+///    DownloadScreen or PasswordGateScreen first, so on a background cold launch — which
+///    WatchConnectivity performs on iOS, and which on Android is whatever run of the app
+///    first drains the parked queue — `MapScreen`, and therefore its `MessagingClient`, may
+///    never be built. The bridge therefore owns its own client and reads the token straight
+///    from SharedPreferences.
 /// 2. **It never dedupes.** `BackgroundLocationService._deliveredMsgIds` is the single
 ///    inbound dedupe on the phone, and the watch has its own by message id. A third
 ///    one here could only disagree with them.
@@ -46,6 +57,11 @@ class WatchBridge {
   static const _method = MethodChannel('org.marsaprs/watch');
   static const _events = EventChannel('org.marsaprs/watch/events');
 
+  /// Where a watch companion exists at all. Desktop and web builds have no native side to
+  /// talk to, and every entry point below is a no-op there rather than a MissingPluginException
+  /// on a channel nobody implemented.
+  static bool get _hasWatch => Platform.isIOS || Platform.isAndroid;
+
   bool _started = false;
   BackgroundLocationService? _bg;
   late final MessagingClient _client = MessagingClient(() => _token);
@@ -75,12 +91,26 @@ class WatchBridge {
   /// unreachable but cannot, so neither did.
   bool _watchCanAnnounce = false;
 
+  /// Whether the watch's last announcement actually got an audio route.
+  ///
+  /// True until told otherwise, because an older watch build does not report it and
+  /// assuming a watch is deaf would send every announcement to the phone.
+  bool _watchAudioOk = true;
+
   /// Whether the wrist will announce this message, in which case the phone says
   /// nothing. Preferred when available — the watch is on the operator's arm and
   /// speaks at conversational distance, where the phone is in a pocket and has to
   /// shout.
+  ///
+  /// Both halves are required, and for a while only the first was. `canAnnounce` means
+  /// "I am on screen", which is a different question from "I made a sound": Silent Mode,
+  /// Theater Mode, cover-to-mute, a session the OS refuses, and — on Wear OS — a watch
+  /// with no speaker or no speech data at all, all leave the app frontmost and inaudible.
+  /// The phone deferred to it anyway and the operator heard nothing from either device,
+  /// with nothing anywhere to say why. On a net that is the worst failure in the system,
+  /// and it is the one this whole arrangement exists to prevent.
   bool get watchWillAnnounce =>
-      Platform.isIOS && paired && appInstalled && _watchCanAnnounce;
+      _hasWatch && paired && appInstalled && _watchCanAnnounce && _watchAudioOk;
 
   /// Alert the phone raises for a message, whichever path saw it first. Registered by
   /// MapScreen.
@@ -101,6 +131,15 @@ class WatchBridge {
     if (_alerted.length > 500) _alerted.remove(_alerted.first);
     onInboundSeen?.call(m);
   }
+
+  /// Whether this message already reached the phone on a path that knows it was
+  /// addressed here — so the monitor feed must not announce it a second time.
+  ///
+  /// Best-effort, and needed only against a server that does not yet tag the monitor
+  /// feed (see `MsgMessage.addressedToMe`, which is the exact answer). This one is right
+  /// whenever the addressed path got there first, which is the common ordering but not
+  /// a guaranteed one; the tag is what closes the race.
+  bool addressedHere(int id) => _alerted.contains(id);
 
   /// Highest message id we have handed to the watch.
   ///
@@ -142,9 +181,9 @@ class WatchBridge {
 
   // ── lifecycle ───────────────────────────────────────────────────────────────
 
-  /// Called from `main()` before `runApp`. No-op off iOS.
+  /// Called from `main()` before `runApp`. No-op where there is no watch platform.
   Future<void> init() async {
-    if (_started || !Platform.isIOS) return;
+    if (_started || !_hasWatch) return;
     _started = true;
 
     final p = await SharedPreferences.getInstance();
@@ -210,7 +249,7 @@ class WatchBridge {
   /// Called once MapScreen owns a real session, so the live token wins over the
   /// persisted one and ending a session immediately wipes the watch's copy.
   void attachSession(BackgroundLocationService bg) {
-    if (!Platform.isIOS) return;
+    if (!_hasWatch) return;
     _bg = bg;
     _scheduleContext();
   }
@@ -250,7 +289,7 @@ class WatchBridge {
   }
 
   void _relay(Map<String, dynamic> dict) {
-    if (!Platform.isIOS || !_started) return;
+    if (!_hasWatch || !_started) return;
     _advanceWatermark(dict['id'] as int);
     _recent.add(dict);
     while (_recent.length > _kRecentCap) {
@@ -306,7 +345,7 @@ class WatchBridge {
   /// Mirror the phone's read-aloud setting. The watch has the same toggle and the
   /// two must agree about what "speak" means.
   void pushSpeak(bool enabled) {
-    if (!Platform.isIOS || !_started) return;
+    if (!_hasWatch || !_started) return;
     _speak = enabled;
     _scheduleContext();
   }
@@ -319,7 +358,7 @@ class WatchBridge {
   /// because both inbound paths feed it, and a prefs write plus a context push per
   /// duplicate would be pure waste.
   void setDestination({int? conversationId, List<String>? recipients, required String label}) {
-    if (!Platform.isIOS || !_started) return;
+    if (!_hasWatch || !_started) return;
     final next = <String, dynamic>{
       if (conversationId != null) 'conversationId': conversationId,
       if (recipients != null) 'recipients': recipients,
@@ -346,7 +385,7 @@ class WatchBridge {
 
   /// The short recent-conversation list the watch offers as switch targets.
   void pushConversations(List<MsgConversation> convs) {
-    if (!Platform.isIOS || !_started) return;
+    if (!_hasWatch || !_started) return;
     _conversations = convs
         .take(10)
         .map((c) => <String, dynamic>{
@@ -366,7 +405,7 @@ class WatchBridge {
   /// Session ended / token changed — push immediately rather than debounced, so a
   /// watch holding a now-dead token drops it at once.
   void pushContextNow() {
-    if (!Platform.isIOS || !_started) return;
+    if (!_hasWatch || !_started) return;
     _contextTimer?.cancel();
     unawaited(_sendContext());
   }
@@ -423,6 +462,10 @@ class WatchBridge {
 
       case 'canAnnounce':
         _watchCanAnnounce = e['enabled'] as bool? ?? false;
+        // Absent means audible. The watch sends both in one payload precisely so this
+        // can never hold a fresh value of one beside a stale value of the other; a
+        // missing key therefore means an older watch build, not a silent one.
+        _watchAudioOk = e['audioOk'] as bool? ?? true;
         break;
 
       case 'hello':

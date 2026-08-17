@@ -50,14 +50,55 @@ class _Item {
   final String text; // speech only
   final String url; // clip only
   final double seconds; // clip only, from audio_secs
-  const _Item.speech(this.ts, this.senderLabel, this.text)
-      : kind = _Kind.speech, url = '', seconds = 0;
-  const _Item.clip(this.ts, this.url, this.seconds)
-      : kind = _Kind.clip, senderLabel = '', text = '';
+
+  /// Which message this is. For a clip it drives the bubble's Play/Stop control; for
+  /// speech it is what stops the same message being read aloud twice — see `_spoken`.
+  /// Zero means "not a message", and nothing is deduped or attributed to it.
+  final int msgId;
+
+  /// Sound the alert tone immediately before this, through this queue.
+  ///
+  /// The tone used to be the iOS notification's own sound, with speech delayed 900 ms
+  /// to let it finish. That is a race against a sound the app does not schedule and
+  /// cannot observe, and it lost: the tone arrived after the speech had already
+  /// started. Owning both ends of it makes the order a fact rather than a bet, and it
+  /// also stops the tone landing in the middle of a radio clip — which the queue
+  /// exists to prevent and the notification sound was quietly exempt from.
+  ///
+  /// Not final: a message can be offered to the queue twice, once by the monitor feed
+  /// (no tone — none of that traffic is addressed here) and once by the path that knows
+  /// it was addressed to this operator (tone). Whichever arrives second is dropped as a
+  /// duplicate, so the surviving item has to be able to take on the tone the dropped one
+  /// was carrying, or an alert would be lost to a race between two polls.
+  bool chime;
+
+  /// Whether the user asked for this specific item by name.
+  ///
+  /// The five-minute rule exists to stop a backlog playing itself. Tapping Play on a
+  /// message from an hour ago is not a backlog, it is an instruction, and refusing it
+  /// silently would look like a broken button.
+  final bool force;
+
+  /// Run only if this was actually spoken — not if it was dropped as stale, and not if
+  /// the audio session refused it.
+  ///
+  /// Not final, for the same reason as `chime`: a dropped duplicate hands its callback
+  /// to the survivor rather than losing it. Only one caller sets it — marking a message
+  /// read once it has been heard — and that is exactly the callback that must not go
+  /// missing because a second feed got there first.
+  void Function()? onSpoken;
+
+  _Item.speech(this.ts, this.senderLabel, this.text,
+      {this.msgId = 0, this.chime = false, this.onSpoken})
+      : kind = _Kind.speech, url = '', seconds = 0, force = false;
+  _Item.clip(this.ts, this.url, this.seconds,
+      {this.msgId = 0, this.force = false})
+      : kind = _Kind.clip, senderLabel = '', text = '', chime = false, onSpoken = null;
 
   /// Best estimate of how long this will occupy the speaker.
   double get estSeconds =>
-      kind == _Kind.clip ? seconds : (senderLabel.length + text.length) / _kCharsPerSecond + 0.5;
+      (chime ? 1.0 : 0.0) +
+      (kind == _Kind.clip ? seconds : (senderLabel.length + text.length) / _kCharsPerSecond + 0.5);
 }
 
 class AudioQueue {
@@ -82,18 +123,120 @@ class AudioQueue {
 
   bool get isBusy => _current != null || _q.isNotEmpty;
 
-  void addSpeech({required int ts, required String senderLabel, required String text}) {
+  /// Message ids already read aloud, newest last.
+  ///
+  /// The phone has more than one way to learn about the same message and they do not
+  /// know about each other. A message addressed to this operator arrives on the
+  /// addressed path AND, if monitoring is on, in the monitor feed — which is the whole
+  /// event's traffic and excludes nothing. Both called this, so both were spoken, a few
+  /// seconds apart.
+  ///
+  /// It has to be remembered rather than checked against the queue, which is what
+  /// `addClip` does with its url. The two polls run at different intervals, so the
+  /// second copy usually turns up after the first has been spoken and drained — a
+  /// queue-scoped test would miss precisely the common case.
+  ///
+  /// Capped and trimmed oldest-first, matching `WatchBridge._alerted`. Ids only ever
+  /// increase, so the oldest is the safest to forget.
+  final _spoken = <int>{};
+  static const _kSpokenCap = 500;
+
+  void addSpeech({
+    required int ts,
+    required String senderLabel,
+    required String text,
+    int msgId = 0,
+    bool chime = false,
+    void Function()? onSpoken,
+  }) {
     if (text.trim().isEmpty && senderLabel.trim().isEmpty) return;
-    _q.add(_Item.speech(ts, senderLabel, text));
+
+    if (msgId != 0) {
+      if (_spoken.contains(msgId)) {
+        // Said already, by whichever feed got here first. `onSpoken` marks it read, and
+        // read is exactly what it now is — so run it rather than dropping it on the
+        // floor. The tone cannot be recovered, and chiming after the words have been
+        // spoken would be worse than the silence.
+        onSpoken?.call();
+        return;
+      }
+      final queued = _pendingSpeech(msgId);
+      if (queued != null) {
+        // Not said yet. Fold this copy into the one already waiting so nothing it was
+        // carrying is lost to having lost the race.
+        if (chime) queued.chime = true;
+        if (onSpoken != null) {
+          final earlier = queued.onSpoken;
+          queued.onSpoken = earlier == null
+              ? onSpoken
+              : () {
+                  earlier();
+                  onSpoken();
+                };
+        }
+        _publish();
+        return;
+      }
+    }
+
+    _q.add(_Item.speech(ts, senderLabel, text,
+        msgId: msgId, chime: chime, onSpoken: onSpoken));
     _publish();
     unawaited(_drain());
   }
 
-  void addClip({required int ts, required String url, double seconds = 0}) {
+  /// The speech item for this message that is waiting or being said right now, if any.
+  /// Deliberately not clips: a message can have both a recording and a spoken summary,
+  /// and they are different things to hear.
+  _Item? _pendingSpeech(int msgId) {
+    if (_current?.kind == _Kind.speech && _current?.msgId == msgId) return _current;
+    for (final i in _q) {
+      if (i.kind == _Kind.speech && i.msgId == msgId) return i;
+    }
+    return null;
+  }
+
+  void _markSpoken(int msgId) {
+    if (msgId == 0) return;
+    _spoken.add(msgId);
+    if (_spoken.length > _kSpokenCap) _spoken.remove(_spoken.first);
+  }
+
+  void addClip({
+    required int ts,
+    required String url,
+    double seconds = 0,
+    int msgId = 0,
+    bool force = false,
+  }) {
     if (_q.any((i) => i.url == url) || _current?.url == url) return;
-    _q.add(_Item.clip(ts, url, seconds));
+    _q.add(_Item.clip(ts, url, seconds, msgId: msgId, force: force));
     _publish();
     unawaited(_drain());
+  }
+
+  /// True while this message's clip is playing or waiting — what the Play/Stop control
+  /// on a bubble reflects. It was local state on the messaging screen, which is why
+  /// that screen played clips through a second player the Stop bar could not see.
+  ///
+  /// The kind test is not decoration. Speech items carry a msgId too now, so without it
+  /// a message being read aloud would light up its own Play control as though its
+  /// recording were playing — and `cancelClip` below would silence the wrong thing.
+  bool isQueuedClip(int msgId) =>
+      msgId != 0 &&
+      ((_current?.kind == _Kind.clip && _current?.msgId == msgId) ||
+          _q.any((i) => i.kind == _Kind.clip && i.msgId == msgId));
+
+  /// Drop one message's clip; the rest of the queue carries on.
+  Future<void> cancelClip(int msgId) async {
+    _q.removeWhere((i) => i.kind == _Kind.clip && i.msgId == msgId);
+    if (_current?.kind == _Kind.clip && _current?.msgId == msgId) {
+      _current = null;
+      try {
+        await _player.stop();
+      } catch (_) {}
+    }
+    _publish();
   }
 
   /// Empty everything and silence what is playing. The button.
@@ -107,8 +250,24 @@ class AudioQueue {
     } catch (_) {}
   }
 
+  /// A missing or nonsensical timestamp must never mean "discard".
+  ///
+  /// The age rule exists to drop a backlog, and it decides that by subtracting from
+  /// now — so a ts of 0 reads as 1970 and is silently, permanently too old. Any path
+  /// that ever loses the field would go quiet with nothing to show for it, which is the
+  /// worst way for a safety rule to fail: it looks exactly like nothing arrived.
   bool _stale(_Item i) =>
+      i.ts > 0 &&
       DateTime.now().millisecondsSinceEpoch ~/ 1000 - i.ts > kAudioMaxAge.inSeconds;
+
+  /// The alert tone, through the same player and the same queue slot as everything
+  /// else. Failure is not fatal: the words matter more than the noise before them.
+  Future<void> _chime() async {
+    try {
+      await _player.setAsset('assets/sounds/message.wav');
+      await _player.play().timeout(const Duration(seconds: 4));
+    } catch (_) {}
+  }
 
   Future<void> _drain() async {
     if (_draining) return;
@@ -119,16 +278,37 @@ class AudioQueue {
         // Checked here rather than on the way in: something can sit in the queue behind
         // a long over and go stale while it waits, and playing it then is the same
         // mistake as playing it after an outage.
-        if (_stale(item)) continue;
+        if (!item.force && _stale(item)) continue;
         _current = item;
         _publish();
         try {
+          // Bounded, and that is not belt-and-braces. Speaker sets
+          // awaitSpeakCompletion(true), so speakNow() resolves when the utterance
+          // FINISHES — and if iOS refuses the audio session, which it can do on a
+          // locked phone while a notification sound holds it, the utterance never
+          // starts, never finishes, and this await never returns. The queue would then
+          // be stalled for the life of the process with nothing played again and no
+          // error anywhere. A timeout costs one skipped item; the alternative costs
+          // every item after it.
+          final budget = Duration(seconds: item.estSeconds.ceil() + 15);
           if (item.kind == _Kind.speech) {
-            await Speaker.instance.speakNow(
-                senderLabel: item.senderLabel, text: item.text);
+            if (item.chime) await _chime();
+            await Speaker.instance
+                .speakNow(senderLabel: item.senderLabel, text: item.text)
+                .timeout(budget, onTimeout: () => Speaker.instance.stop());
+            // Only here, on the path that actually said it out loud. Marking a message
+            // read when it merely ARRIVED claimed the operator had heard something the
+            // queue might still drop as stale or fail to play.
+            //
+            // The same reasoning governs `_spoken`, which is why it is recorded here and
+            // not on the way in: a copy dropped as stale, or one the audio session
+            // refused, was never heard, and a second feed offering it later deserves the
+            // attempt this one did not get.
+            item.onSpoken?.call();
+            _markSpoken(item.msgId);
           } else {
-            await _player.setUrl(item.url);
-            await _player.play();
+            await _player.setUrl(item.url).timeout(budget);
+            await _player.play().timeout(budget, onTimeout: () => _player.stop());
           }
         } catch (_) {
           // A clip that will not fetch or decode, or an audio session the OS refused.

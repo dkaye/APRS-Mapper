@@ -97,6 +97,10 @@ kotlin {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    // The Data Layer, for the Wear OS companion in :wear. This is the phone's half of the
+    // link -- WatchConnectivity's counterpart -- and it lives in the phone APK because that
+    // is the app a watch pairs with. See org.w6sg.aprsmap.watch.WatchBridge.
+    implementation("com.google.android.gms:play-services-wearable:18.2.0")
 }
 
 flutter {

@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
@@ -50,6 +51,21 @@
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
             android:foregroundServiceType="location"
             android:exported="false"/>
+        <!-- Wear OS companion. The Data Layer starts this to hand over a reply spoken into
+             the watch, or to report that the watch app came or went. See
+             app/android/app/src/main/kotlin/org/w6sg/aprsmap/watch/WearListenerService.kt
+             and README.md ("Wear OS Companion"). -->
+        <service
+            android:name="org.w6sg.aprsmap.watch.WearListenerService"
+            android:exported="true"
+            tools:ignore="ExportedService">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED"/>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED"/>
+                <action android:name="com.google.android.gms.wearable.CAPABILITY_CHANGED"/>
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/aprs"/>
+            </intent-filter>
+        </service>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
