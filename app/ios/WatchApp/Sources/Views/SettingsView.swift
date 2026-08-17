@@ -71,6 +71,30 @@ struct SettingsView: View {
       }
 
       Section {
+        Button {
+          Announcer.shared.runDimmedAudioTest()
+        } label: {
+          Label("Test audio when dimmed", systemImage: "speaker.wave.2.bubble")
+        }
+        .disabled(Announcer.shared.dimTestRunning)
+
+        if let r = Announcer.shared.dimTestResult {
+          Text(r).font(.caption2).foregroundStyle(.secondary)
+        }
+      } header: {
+        Text("Diagnostics")
+      } footer: {
+        // The footer above claims the watch can only speak while on screen. That claim
+        // is an assumption inherited from watchOS documentation, not something anyone
+        // measured on this hardware — and the whole app routes announcements to the
+        // phone because of it. This button is how the claim gets checked: start it,
+        // lower your wrist, and read the answer when you raise it again.
+        Text("Starts a countdown. Lower your wrist so the screen dims, and listen. "
+             + "The result says whether the session was granted and whether it spoke.")
+          .font(.caption2)
+      }
+
+      Section {
         // Build time, not just the version: both apps ship as 1.22.0 (15) until
         // pubspec moves, so the marketing version cannot tell you whether a build you
         // just pushed actually landed. This can.

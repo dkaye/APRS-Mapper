@@ -141,6 +141,15 @@ ssh "$REMOTE" "sudo rsync -a $STAGING/apache/ /etc/apache2/sites-available/ && \
     sudo a2enmod proxy proxy_http 2>/dev/null || true && \
     sudo systemctl reload apache2"
 
+# Fleet tools onto the running server, not only into the archive. The archive is what a
+# FRESH install unpacks; an existing server never reads it, so a tool added here would sit
+# in files.tar.gz being deployed and never appear on the machine. power-check.sh found
+# 1,046 under-voltage events on this very server the day it was written -- exactly the
+# sort of thing that must not depend on somebody reinstalling.
+echo "Deploying fleet tools..."
+rsync -a --exclude='test_*' --exclude='__pycache__' "$SERVER_DIR/../common/" "$REMOTE:/home/pi/"
+ssh "$REMOTE" "chmod +x /home/pi/power-check.sh 2>/dev/null || true"
+
 echo "Deploying netbird poller..."
 ssh "$REMOTE" "sudo cp $STAGING/bin/netbird-poller.py /usr/local/bin/netbird-poller.py && \
     sudo chmod +x /usr/local/bin/netbird-poller.py && \

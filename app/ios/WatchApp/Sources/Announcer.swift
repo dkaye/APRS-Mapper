@@ -42,6 +42,10 @@ final class Announcer {
   private(set) var pendingCount = 0
   private(set) var pendingSeconds = 0
 
+  /// Result of the dimmed-screen audio test — see runDimmedAudioTest().
+  private(set) var dimTestResult: String?
+  private(set) var dimTestRunning = false
+
   private let synth = AVSpeechSynthesizer()
   private let speechDelegate = SpeechDelegate()
   private var player: AVAudioPlayer?
@@ -242,6 +246,55 @@ final class Announcer {
     }
     if consume { lastToneAt = Date() }
     return true
+  }
+
+  // ── the dimmed-screen test ──────────────────────────────────────────────────
+
+  /// Wait, then try to speak, and record exactly what happened.
+  ///
+  /// The delay is the whole point: it exists so the operator can lower their wrist and
+  /// let the screen dim before the attempt. Measuring this while somebody is looking at
+  /// the watch would measure the case we already know works.
+  ///
+  /// The question cannot be settled by reading documentation or reasoning about scene
+  /// phases — does watchOS actually let this app speak once the screen has dimmed? The
+  /// app currently assumes not and hands the announcement to the phone. If that
+  /// assumption is wrong, an operator wearing the watch during a net is hearing their
+  /// pocket instead of their wrist for no reason.
+  ///
+  /// Three things are recorded separately, because they fail independently and the
+  /// remedy differs for each: whether the app was still active, whether the audio
+  /// session was granted, and whether the utterance actually finished rather than being
+  /// cut off the instant it began. On the wrist all three sound identical — silence.
+  func runDimmedAudioTest(after seconds: Int = 12) {
+    guard !dimTestRunning else { return }
+    dimTestRunning = true
+    Task { [weak self] in
+      guard let self else { return }
+      for remaining in stride(from: seconds, to: 0, by: -1) {
+        dimTestResult = "Lower your wrist — testing in \(remaining)s"
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+      }
+      let wasActive = AppState.shared.isActive
+      let started = Date()
+      let activated = await activateAudio()
+      var finished = false
+      if activated {
+        let u = AVSpeechUtterance(string:
+          "Audio test. If you heard this with the screen off, the watch can speak while dimmed.")
+        u.voice = AVSpeechSynthesisVoice(language: "en-US")
+        await speechDelegate.speak(u, on: synth)
+        finished = true
+      }
+      deactivateAudio()
+      let took = Date().timeIntervalSince(started)
+      let appPart = wasActive ? "app active" : "app INACTIVE"
+      let sessionPart = activated ? "session granted" : "session REFUSED"
+      let speechPart = activated ? (finished ? "spoke" : "cut off") : "not attempted"
+      dimTestResult = appPart + " · " + sessionPart + " · " + speechPart
+        + " · " + String(format: "%.1fs", took)
+      dimTestRunning = false
+    }
   }
 
   // ── audio session ───────────────────────────────────────────────────────────
