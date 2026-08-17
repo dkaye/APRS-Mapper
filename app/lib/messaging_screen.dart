@@ -345,105 +345,152 @@ class _MessagingScreenState extends State<MessagingScreen> {
   /// costs cellular data, so it is never implied by either of the others. Nothing is
   /// ever pushed to a device that did not ask — the feed carries a flag, and a phone
   /// with audio off simply never makes the request.
-  Future<void> _openMonitorSettings() async {
+  /// Sound: what this phone does out loud. Everything here is about the speaker.
+  ///
+  /// Deliberately does NOT hold "See everyone's messages" — that decides what traffic
+  /// arrives, not what it sounds like, and behind a speaker icon it read as an audio
+  /// setting. It lives under the gear with the option that depends on it.
+  Future<void> _openSoundSettings() async {
     final m = MonitorService.instance;
-    // isScrollControlled + a scroll view, because the default sheet is only as tall as
-    // it feels like being and simply clips whatever does not fit — with no scrollbar and
-    // no way to reach it. The last two rows were invisible on an iPhone, which is the
-    // sort of thing that looks like a missing feature rather than a layout bug.
-    await showModalBottomSheet<void>(
+    await _sheet((setSheet) => [
+          const ListTile(
+            title: Text('Sound', style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text('What this phone does out loud.'),
+          ),
+          const Divider(height: 1),
+          SwitchListTile(
+            secondary: const Icon(Icons.volume_up),
+            title: const Text('Read my messages aloud'),
+            subtitle: const Text(
+              'Messages sent to you are spoken as they arrive. Turn this off and they '
+              'arrive with a tone instead.',
+            ),
+            value: _speak,
+            onChanged: (v) async {
+              await _toggleSpeak();
+              setSheet();
+            },
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.radio),
+            title: const Text('Listen to the radio'),
+            subtitle: const Text(
+              "Plays the off-air recording of each transmission a few seconds after it "
+              "ends — the operators' actual voices, not a computer reading a "
+              "transcript. Uses cellular data.",
+            ),
+            value: m.playingRadioAudio,
+            onChanged: (v) async {
+              await m.setRadioAudio(v);
+              setSheet();
+            },
+          ),
+          const Divider(height: 1),
+          // Not a dead end: the other half of the audible settings lives behind the
+          // gear, because it depends on a subscription rather than on the speaker.
+          ListTile(
+            leading: const Icon(Icons.settings_outlined, color: Colors.grey),
+            title: const Text('Follow the whole event',
+                style: TextStyle(fontSize: 14)),
+            subtitle: const Text(
+                "Everyone else's traffic, and whether to hear it — under the gear."),
+            onTap: () {
+              Navigator.of(context).pop();
+              _openFollowSettings();
+            },
+          ),
+          const SizedBox(height: 8),
+        ]);
+  }
+
+  /// Follow the event: what traffic reaches this phone at all.
+  ///
+  /// "Read them aloud" sits directly under the subscription it depends on rather than
+  /// with the other audio settings. A dependent option beside its parent needs no
+  /// coordination; the same option in another panel needs explaining, greying and a
+  /// shortcut, and can still be found in a state nobody can account for.
+  Future<void> _openFollowSettings() async {
+    final m = MonitorService.instance;
+    await _sheet((setSheet) => [
+          const ListTile(
+            title: Text('Follow the whole event',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text(
+              'Normally you only get what was sent to you. This adds the rest. It never '
+              'buzzes or alerts you — it is for listening in, not for being '
+              'interrupted.',
+            ),
+          ),
+          const Divider(height: 1),
+          SwitchListTile(
+            secondary: const Icon(Icons.forum_outlined),
+            title: const Text("See everyone's messages"),
+            subtitle: const Text(
+              'Every message sent in this event, whoever it came from and whoever it '
+              'was meant for.',
+            ),
+            value: m.monitoringAll,
+            onChanged: (v) async {
+              await m.setAll(v);
+              setSheet();
+            },
+          ),
+          // Indented, to read as belonging to the switch above rather than standing
+          // beside it.
+          Padding(
+            padding: const EdgeInsets.only(left: 24),
+            child: SwitchListTile(
+              secondary: const Icon(Icons.record_voice_over_outlined),
+              title: const Text('Read them aloud'),
+              subtitle: Text(
+                m.monitoringAll
+                    ? 'A synthesised voice speaks each one as it arrives.'
+                    : 'Turn on the switch above first.',
+              ),
+              value: m.speakingAll && m.monitoringAll,
+              onChanged: m.monitoringAll
+                  ? (v) async {
+                      await m.setSpeakAll(v);
+                      setSheet();
+                    }
+                  : null,
+            ),
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.volume_up, color: Colors.grey),
+            title: const Text('Sound', style: TextStyle(fontSize: 14)),
+            subtitle: const Text(
+                'Your own messages, and hearing the radio — under the speaker.'),
+            onTap: () {
+              Navigator.of(context).pop();
+              _openSoundSettings();
+            },
+          ),
+          const SizedBox(height: 8),
+        ]);
+  }
+
+  /// The sheet both settings panels are built in. One place for the scrolling, the
+  /// height cap and the rebuild plumbing — showModalBottomSheet clips whatever does not
+  /// fit, silently, which hid two rows entirely until somebody screenshotted it.
+  Future<void> _sheet(List<Widget> Function(void Function()) children) {
+    return showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheet) => SafeArea(
           child: ConstrainedBox(
-            // Not the full height: leaving the top of the screen visible keeps it
-            // reading as a sheet over the messages rather than a new page.
-            constraints: BoxConstraints(
-                maxHeight: MediaQuery.of(ctx).size.height * 0.85),
+            constraints:
+                BoxConstraints(maxHeight: MediaQuery.of(ctx).size.height * 0.85),
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
-                children: [
-                  const ListTile(
-                    title: Text('Sound', style: TextStyle(fontWeight: FontWeight.bold)),
-                  ),
-                  SwitchListTile(
-                    secondary: const Icon(Icons.volume_up),
-                    title: const Text('Read my messages aloud'),
-                    subtitle: const Text(
-                      'Messages sent to you are spoken as they arrive. Turn this off and '
-                      'they arrive with a tone instead.',
-                    ),
-                    value: _speak,
-                    onChanged: (v) async {
-                      await _toggleSpeak();
-                      setSheet(() {});
-                      if (mounted) setState(() {});
-                    },
-                  ),
-                  const Divider(height: 1),
-                  const ListTile(
-                    title: Text('Follow the whole event',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Text(
-                      'Normally you only get what was sent to you. These two add the rest. '
-                      'Neither one ever buzzes or alerts you — this is for listening in, '
-                      'not for being interrupted.',
-                    ),
-                  ),
-                  const Divider(height: 1),
-                  SwitchListTile(
-                    secondary: const Icon(Icons.radio),
-                    title: const Text('Listen to the radio'),
-                    subtitle: const Text(
-                      'Plays the off-air recording of each transmission a few seconds '
-                      'after it ends — the operators\' actual voices, not a computer '
-                      'reading a transcript. Uses cellular data.',
-                    ),
-                    value: m.playingRadioAudio,
-                    onChanged: (v) async {
-                      await m.setRadioAudio(v);
-                      setSheet(() {});
-                      if (mounted) setState(() {});
-                    },
-                  ),
-                  const Divider(height: 1),
-                  SwitchListTile(
-                    secondary: const Icon(Icons.forum_outlined),
-                    title: const Text("See everyone's messages"),
-                    subtitle: const Text(
-                      'Every message sent in this event, whoever it came from and whoever '
-                      'it was meant for.',
-                    ),
-                    value: m.monitoringAll,
-                    onChanged: (v) async {
-                      await m.setAll(v);
-                      setSheet(() {});
-                      if (mounted) setState(() {});
-                    },
-                  ),
-                  SwitchListTile(
-                    secondary: const Icon(Icons.record_voice_over_outlined),
-                    title: const Text('Read those messages aloud'),
-                    subtitle: Text(
-                      m.monitoringAll
-                          ? 'A synthesised voice speaks each one as it arrives, so you can '
-                            'keep your hands and eyes on something else.'
-                          : "Turn on \"See everyone's messages\" first.",
-                    ),
-                    value: m.speakingAll && m.monitoringAll,
-                    onChanged: m.monitoringAll
-                        ? (v) async {
-                            await m.setSpeakAll(v);
-                            setSheet(() {});
-                            if (mounted) setState(() {});
-                          }
-                        : null,
-                  ),
-                  const SizedBox(height: 8),
-                ],
+                children: children(() {
+                  setSheet(() {});
+                  if (mounted) setState(() {});
+                }),
               ),
             ),
           ),
@@ -517,9 +564,20 @@ class _MessagingScreenState extends State<MessagingScreen> {
             // device will make a sound for an arriving message, crossed out when it
             // will not.
             IconButton(
-              tooltip: 'Sound and monitoring',
+              tooltip: 'Sound',
               icon: Icon(_audible ? Icons.volume_up : Icons.volume_off),
-              onPressed: _openMonitorSettings,
+              onPressed: _openSoundSettings,
+            ),
+            // Separate from the speaker on purpose: this decides what traffic reaches
+            // the phone at all, which is not an audio question and read wrongly behind
+            // a speaker icon. Filled while something is being followed, so the bar says
+            // whether you are listening in without opening anything.
+            IconButton(
+              tooltip: 'Follow the whole event',
+              icon: Icon(MonitorService.instance.monitoringAll
+                  ? Icons.settings
+                  : Icons.settings_outlined),
+              onPressed: _openFollowSettings,
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 6),
