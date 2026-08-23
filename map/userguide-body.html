@@ -208,7 +208,7 @@ launches.</p>
 </tbody>
 </table>
 <h3 id="tapping-markers-on-the-map">Tapping markers on the map</h3>
-<p><strong>Short tap</strong> on any tracker, igate, or aid station marker opens a detail panel from the bottom of the screen showing the name, callsign, time since last beacon, and GPS coordinates. Tap anywhere outside the panel to dismiss it.</p>
+<p><strong>Short tap</strong> on any tracker, igate, or aid station marker opens a detail panel from the bottom of the screen showing the name, GPS coordinates, and — for trackers and iGates — the callsign and time since last beacon. Tap anywhere outside the panel to dismiss it.</p>
 <p><strong>Long-press</strong> any marker (tracker, igate, or aid station) to open Google Maps in the browser, centered on that location.</p>
 <p>Each tracker's map marker shows the <strong>tracker ID</strong> (such as "H1") as a label next to the dot, so you can identify trackers at a glance without opening the drawer.</p>
 <h3 id="reload-tiles">Reload Tiles</h3>
@@ -340,7 +340,7 @@ expanding the section.</p>
 </tr>
 <tr>
 <td><strong>Aid Stations</strong></td>
-<td>Tap to zoom to an aid station and show its label. If the station has a callsign configured, its entry blinks green when a tracker beacon is received through it. Hidden if none are configured.</td>
+<td>Tap to zoom to an aid station and show its label. Hidden if none are configured.</td>
 </tr>
 <tr>
 <td><strong>iGates</strong></td>
@@ -435,7 +435,7 @@ one and hides the previous tracker's history.</p>
 <li><strong>Click it again</strong> to dismiss the label and reset the map.</li>
 </ul>
 <p><strong>Hidden layers (eyeball off):</strong> Selecting an aid station or iGate reveals it even when its layer is hidden. On the web map, a second click on a sidebar entry shows the object's full label, zooms to it, and blinks it — even if the eyeball is off — reverting on your next action. In the native app, tapping a hidden iGate or aid station displays it on the map as though its eyeball were on, again reverting on your next action.</p>
-<p>When an aid station or iGate has a callsign configured, its sidebar entry <strong>blinks green for 5 seconds</strong> each time a listed tracker's beacon is received through it (i.e., the station's callsign appears in the APRS-IS q-construct path of the packet). An iGate and an aid station may share the same callsign; both entries will blink independently.</p>
+<p>When an iGate has a callsign configured, its sidebar entry <strong>blinks green for 5 seconds</strong> each time a listed tracker's beacon is received through it (i.e., the station's callsign appears in the APRS-IS q-construct path of the packet). Aid stations do not blink — they are places on the course rather than receiving stations.</p>
 <p>In kiosk mode, aid station names are shown permanently as floating black labels with transparent backgrounds.</p>
 <hr />
 <h3 id="backgrounds-ls">Backgrounds (L,S)</h3>
@@ -783,7 +783,7 @@ each have a <strong>↓</strong> (export) and <strong>↑</strong> (import) butt
 </tr>
 <tr>
 <td>Aid Stations</td>
-<td>YAML, CSV (<code>name, callsign, lat, lon</code>), GPX</td>
+<td>YAML, CSV (<code>name, lat, lon</code>), GPX</td>
 </tr>
 <tr>
 <td>iGates</td>
@@ -827,7 +827,7 @@ each have a <strong>↓</strong> (export) and <strong>↑</strong> (import) butt
 </tr>
 </tbody>
 </table>
-<p>CSV imports use the first row as column headers (case-insensitive). For Aid Stations and iGates, a <code>callsign</code> column is optional — rows without it import fine. GPX imports read the callsign from the <code>&lt;cmt&gt;</code> field if present; KML reads it from <code>&lt;description&gt;</code>; GeoJSON reads a <code>callsign</code> property. Waypoints are added as new entries. Courses location files (GPX/KML/GeoJSON/JSON) are uploaded to the server and a course entry is created automatically; CSV course files (<code>name, file, color</code>) add entries without uploading. Multiple files can be selected at once.</p>
+<p>CSV imports use the first row as column headers (case-insensitive). For iGates a <code>callsign</code> column is optional — rows without it import fine; aid stations have no callsign and any such column is ignored. GPX imports read the callsign from the <code>&lt;cmt&gt;</code> field if present; KML reads it from <code>&lt;description&gt;</code>; GeoJSON reads a <code>callsign</code> property. Waypoints are added as new entries. Courses location files (GPX/KML/GeoJSON/JSON) are uploaded to the server and a course entry is created automatically; CSV course files (<code>name, file, color</code>) add entries without uploading. Multiple files can be selected at once.</p>
 <p>Importing always <em>adds</em> entries and never removes or overwrites existing ones. Duplicate entries (same name, callsign, or file path) are skipped automatically.</p>
 <p>For <code>.yaml</code> files: if the file has no type marker, a confirmation dialog appears. If you try to import a file meant for a different section, the import is blocked.</p>
 <p>Importing does not save to the server. Use <strong>Save as Default Event…</strong> afterward.</p>
