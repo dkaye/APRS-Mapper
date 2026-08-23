@@ -16,12 +16,25 @@ header('Cache-Control: no-store');   // always fresh; never let Cloudflare cache
 
 echo json_encode([
     'ios' => [
-        // Inert until store_url is filled in — update_check.dart makes the iOS check a
-        // silent no-op while it is empty, so this number cannot prompt anyone before
-        // the build is actually live on the App Store.
-        'latest'    => '1.22.1',
-        'build'     => 42,
-        'store_url' => '',   // e.g. https://apps.apple.com/app/id0000000000
+        // Live on the App Store since 2026-08-18, confirmed against Apple's own lookup
+        // API (itunes.apple.com/lookup?id=6781949531), which reports 1.25.0+68. These
+        // three had been left at 1.22.1 / build 42 / empty store_url from before the
+        // release, and the empty URL made update_check.dart return null for every iOS
+        // user — so iPhones were never told an update existed while Android was.
+        //
+        // The build number is what decides: update_check.dart prompts only when this
+        // exceeds the running build. It must match what the App Store actually serves,
+        // for the same reason the Android note below says so — set it ahead and every
+        // iOS user is prompted forever to fetch something that does not exist.
+        'latest'    => '1.25.0',
+        'build'     => 68,
+        // The id form, not the slug: Apple rewrites the slug when the app is renamed
+        // (this listing already moved from /marin-aprs-map/ to /aprs-map/) and keeps
+        // the numeric id stable. Linked direct rather than through
+        // marsaprs.org/ios/download.php so the prompt opens the App Store app itself
+        // instead of bouncing the user through Safari — the redirect is for printed
+        // and emailed links, where a stable marsaprs.org URL is what matters.
+        'store_url' => 'https://apps.apple.com/app/id6781949531',
     ],
     'android' => [
         // Must match what download.php actually serves, or the prompt sends people to

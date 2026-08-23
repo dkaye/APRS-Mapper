@@ -8,19 +8,13 @@
  */
 require_once __DIR__ . '/_apk.php';
 
-$apk = apk_latest();
-$sha = null;
-if ($apk) {
-    // Cache the digest — hashing 60+ MB on a Pi for every page view is wasteful,
-    // and the file never changes once published.
-    $cache = $apk['path'] . '.sha256';
-    if (is_readable($cache) && filemtime($cache) >= $apk['mtime']) {
-        $sha = trim((string)file_get_contents($cache));
-    } else {
-        $sha = hash_file('sha256', $apk['path']);
-        @file_put_contents($cache, $sha . "\n");
-    }
-}
+// Two independent products from one directory: the phone app and the Wear OS
+// companion. The watch section is hidden entirely when no watch build has been
+// uploaded, rather than showing a dead button.
+$apk  = apk_latest(APK_PHONE);
+$wear = apk_latest(APK_WEAR);
+$sha     = $apk  ? apk_sha256($apk)  : null;
+$wearSha = $wear ? apk_sha256($wear) : null;
 header('Cache-Control: no-cache, must-revalidate');
 ?>
 <!DOCTYPE html>
@@ -53,6 +47,17 @@ header('Cache-Control: no-cache, must-revalidate');
   a.plain { color: #2980b9; }
   .none { background: #fdecea; border: 1px solid #f5b7b1; color: #922b21;
           border-radius: 7px; padding: 14px; font-size: 14px; }
+  .rule { border: 0; border-top: 1px solid #e5e7eb; margin: 28px 0 22px; }
+  h2.section { font-size: 16px; margin: 0 0 2px; }
+  .sub { font-size: 13px; color: #666; margin-bottom: 14px; }
+  .btn.alt { background: #5b6b7a; }
+  .btn.alt:hover { background: #4a5866; }
+  .warn { background: #fff8e1; border: 1px solid #ffe082; border-radius: 7px;
+          padding: 11px 13px; font-size: 13px; color: #7a5b00; margin: 0 0 16px; }
+  ol ul { margin: 5px 0 0 18px; }
+  ol ul li { margin-bottom: 3px; }
+  code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px;
+         background: #f3f4f6; padding: 1px 4px; border-radius: 3px; }
 </style>
 </head>
 <body>
@@ -92,6 +97,58 @@ header('Cache-Control: no-cache, must-revalidate');
     </div>
 
     <div class="sha">SHA-256<br><?= htmlspecialchars($sha ?: 'unavailable') ?></div>
+<?php endif; ?>
+<?php if ($wear): ?>
+
+    <hr class="rule">
+    <h2 class="section">Watch App &mdash; Wear OS</h2>
+    <div class="sub">Read and answer net messages from your wrist. Requires Wear OS 3.0 or
+       later (Pixel Watch, Galaxy Watch4 and newer) and the phone app above.</div>
+
+    <a class="btn alt" href="watch.php">Download the Watch App</a>
+    <div class="meta">
+      Version <?= htmlspecialchars($wear['version']) ?> (build <?= $wear['build'] ?>) &middot;
+      <?= htmlspecialchars(apk_human_size($wear['size'])) ?> &middot;
+      <?= htmlspecialchars(date('F j, Y', $wear['mtime'])) ?>
+    </div>
+
+    <div class="warn">
+      <strong>This one is not a tap-to-install.</strong> A Wear OS watch has no browser and no
+      file manager, so the app cannot be downloaded on the watch itself &mdash; it has to be
+      pushed across from your phone with the watch in developer mode. Allow about 15 minutes
+      the first time. Downloading the file on the phone and tapping it will <em>not</em> work:
+      the phone correctly refuses to install a watch app.
+    </div>
+
+    <h2>Installing on the watch</h2>
+    <ol>
+      <li>On the <strong>phone</strong>, install <strong>Wear Installer 2</strong> from the Play Store
+          (free). This is the tool that does the transfer.</li>
+      <li>On the <strong>watch</strong>, open <strong>Settings &rarr; System &rarr; About &rarr; Versions</strong>
+          and tap <strong>Build number</strong> seven times. It will say developer mode is on.</li>
+      <li>On the <strong>watch</strong>, go to <strong>Settings &rarr; Developer options</strong> and turn on
+          <strong>ADB debugging</strong> and <strong>Wireless debugging</strong> (some watches call it
+          <em>Debug over Wi&#8209;Fi</em>). Leave that screen up &mdash; it shows the IP address, and on
+          newer watches a pairing code, that the installer will ask for.</li>
+      <li>Put the watch and the phone on the <strong>same Wi&#8209;Fi network</strong>.</li>
+      <li>On the phone, tap <strong>Download the Watch App</strong> above and let it save.</li>
+      <li>Open Wear Installer 2, let it connect to the watch, choose the option to install a
+          file you already have, and pick <strong><?= htmlspecialchars($wear['file']) ?></strong>
+          from your Downloads. Follow its pairing prompts.</li>
+      <li>On the watch, open <strong>APRS Map</strong> from the app list. Start the phone app too
+          &mdash; the watch reaches the net through it.</li>
+    </ol>
+
+    <div class="note">
+      <strong>Have a computer with <code>adb</code> installed?</strong> Steps 2&ndash;4 are the same, then
+      <code>adb connect &lt;watch-ip&gt;:5555</code> and
+      <code>adb install <?= htmlspecialchars($wear['file']) ?></code>.
+      <br><br>The watch does <strong>not</strong> share your location &mdash; that stays the phone's job.
+      It does messaging only: read, reply by voice or canned message, and hear new traffic
+      announced.
+    </div>
+
+    <div class="sha">SHA-256<br><?= htmlspecialchars($wearSha ?: 'unavailable') ?></div>
 <?php endif; ?>
   </div>
 </div>
