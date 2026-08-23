@@ -152,10 +152,30 @@ function _msg_ensure_all_mobiles(MessagingDb $db, array $ctx): void
 /** Devices that are addressable right now: a live session token, seen within 24 h.
  *  Same test index.php:99 uses to build the picker, so what an operator can select
  *  and what actually receives a message never disagree. */
+/**
+ * How recently a device or operator must have been seen to appear in the mobile app's
+ * recipient picker.
+ *
+ * Six hours, not the twenty-four this began with. The picker answers "who can I message
+ * right now", and on a net anyone worth addressing has been heard from within the last
+ * hour or two. At a day the list filled with identities nobody could message usefully —
+ * on 2026-08-20 it offered four test operators and a Display Pi, all last seen ~22 hours
+ * earlier, alongside phones that had been off since the morning. A picker whose entries
+ * are mostly wrong is one an operator stops reading.
+ *
+ * The cost is that somebody who has had their phone off for most of a day drops out of
+ * the list until they rejoin, which they do on their next beacon. That is the right way
+ * round: a missing name is visible and recoverable, a wrong one is neither.
+ *
+ * Note the web operator panel does NOT use this — it builds its list from the live
+ * tracker feed, which is why the two have always differed.
+ */
+if (!defined('MSG_ADDRESSABLE_SECONDS')) define('MSG_ADDRESSABLE_SECONDS', 6 * 3600);
+
 function _msg_addressable(array $t, int $now): bool
 {
     return !empty($t['callsign']) && empty($t['blocked'])
-        && !empty($t['token']) && ($now - ($t['lastUpdate'] ?? 0)) <= 86400;
+        && !empty($t['token']) && ($now - ($t['lastUpdate'] ?? 0)) <= MSG_ADDRESSABLE_SECONDS;
 }
 
 /** The display_id shown to operators — the merge key. Falls back to the M0xx id. */
@@ -336,7 +356,7 @@ function messaging_handle(string $action, array $body, array $ctx): void
         // identities ("Net Control (ended)") that otherwise sat in the list forever.
         foreach ($db->listParticipants($event) as $p) {
             if ($p['kind'] !== 'operator') continue;
-            if (empty($p['last_seen']) || ($now - (int)$p['last_seen']) > 86400) continue;
+            if (empty($p['last_seen']) || ($now - (int)$p['last_seen']) > MSG_ADDRESSABLE_SECONDS) continue;
             $out[] = [
                 'id'=>(int)$p['id'], 'kind'=>'operator', 'key'=>$p['key'],
                 'name'=>$p['display_name'], 'short_id'=>$p['short_id'],
@@ -805,6 +825,9 @@ function _msg_legacy_shape(array $m): array
             'text'=>$m['text'], 'ts'=>$m['ts'],
             'conversation_id'=>(int)($m['conversation_id'] ?? 0),
             'from_short'=>$m['from_short'] ?? null,
+            // Travels with from_short for the same stated reason: the watch must not
+            // re-implement the labelling rules, and expanding an id is one of them.
+            'from_spoken'=>$m['from_spoken'] ?? null,
             'from_kind'=>$m['from_kind'] ?? null,
             'from_key'=>$m['from_key'] ?? null,
             'broadcast'=>(bool)($m['broadcast'] ?? false)];

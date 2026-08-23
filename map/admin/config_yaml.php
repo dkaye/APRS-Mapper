@@ -118,7 +118,9 @@ function buildConfigYaml($cfg, $history = []) {
     $L[] = '# changes a toggle, their own choice is remembered and these defaults no longer apply.';
     $L[] = 'label_defaults:';
     $ld  = $cfg['label_defaults'] ?? [];
-    foreach (['tracker_id','tracker_name','aid_name','aid_callsign','igate_name','igate_callsign'] as $k) {
+    // aid_callsign is gone with the field it toggled; an older event file that still
+    // carries the key is simply not written back out.
+    foreach (['tracker_id','tracker_name','aid_name','igate_name','igate_callsign'] as $k) {
         $v = $ld[$k] ?? true;
         $L[] = '  ' . $k . ': ' . (($v && $v !== 'false') ? 'true' : 'false');
     }
@@ -169,13 +171,17 @@ function buildConfigYaml($cfg, $history = []) {
     $L[] = '# ── Aid Stations ──────────────────────────────────────────────────────────────';
     $L[] = '# Aid station locations shown as black dots on the map and listed in the sidebar.';
     $L[] = '#   name     : label shown in the sidebar and on hover';
-    $L[] = '#   callsign : (optional) APRS callsign appended to the tooltip';
     $L[] = '#   lat      : latitude  (decimal degrees; positive = North, negative = South)';
     $L[] = '#   lon      : longitude (decimal degrees; positive = East,  negative = West)';
+    $L[] = '#';
+    $L[] = '# An aid stop has no callsign. It had one until 2026-08-22, which made the';
+    $L[] = '# marker flash when that station beaconed — nobody used it, so the field and';
+    $L[] = '# the beacon tracking behind it were removed. iGates keep theirs; they are';
+    $L[] = '# stations, and an aid stop is a place on the course.';
+    $L[] = '# A callsign left in an older event file is simply ignored.';
     $L[] = 'aidstations:';
     foreach ($cfg['aidstations'] ?? [] as $g) {
         $L[] = '  - name: ' . ys($g['name'] ?? '');
-        if (!empty($g['callsign'])) $L[] = '    callsign: ' . ys($g['callsign']);
         $L[] = '    lat: '  . (is_numeric($g['lat'] ?? '') ? (float)$g['lat'] : 0);
         $L[] = '    lon: '  . (is_numeric($g['lon'] ?? '') ? (float)$g['lon'] : 0);
     }

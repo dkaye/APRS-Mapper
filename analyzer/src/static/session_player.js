@@ -71,14 +71,28 @@ function initSessionPlayer(data, opts) {
         attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
     }).addTo(map);
 
+    // Where the Reset control sends you:
+    //   1. the view saved on THIS page with its own Save Map
+    //   2. the event's configured default view from config.yaml
+    //
+    // Deliberately independent of the main map. Save Map and the reset arrow are a pair
+    // that belong to this page: you frame the replay how you want to watch it, save it,
+    // and the arrow brings you back to it however far you have panned chasing one
+    // tracker. That framing is not the same question as how the live map should sit on
+    // a wall display, and tying them together made one of the two buttons a lie.
+    //
+    // There was a fallback here to the main map's saved view, reading 'aprs_map_view'.
+    // It never fired — the main map writes 'aprs_default_view' — so it was dead code
+    // that looked like a feature for as long as it existed. Removed rather than fixed:
+    // the pages are independent on purpose.
     let defaultView = { lat: mapCfg.lat ?? 37.9757, lon: mapCfg.lon ?? -122.612, zoom: mapCfg.zoom ?? 12 };
     try {
         const analyzerSaved = localStorage.getItem(LS_MAP);
         if (analyzerSaved) {
-            defaultView = JSON.parse(analyzerSaved);
-        } else {
-            const mainSaved = localStorage.getItem('aprs_map_view');
-            if (mainSaved) defaultView = JSON.parse(mainSaved);
+            const v = JSON.parse(analyzerSaved);
+            if (v && v.lat != null && v.lon != null) {
+                defaultView = { lat: v.lat, lon: v.lon, zoom: v.zoom ?? defaultView.zoom };
+            }
         }
     } catch(e) {}
     map.setView([defaultView.lat, defaultView.lon], defaultView.zoom);
@@ -489,12 +503,16 @@ function initSessionPlayer(data, opts) {
         });
 
         byId('save-map-btn')?.addEventListener('click', function() {
+            if (!this.dataset.label) this.dataset.label = this.textContent.trim();
             const c = map.getCenter();
             defaultView = { lat: parseFloat(c.lat.toFixed(6)), lon: parseFloat(c.lng.toFixed(6)), zoom: map.getZoom() };
             localStorage.setItem(LS_MAP, JSON.stringify(defaultView));
             this.textContent = 'Map Saved ✓';
             this.classList.add('saved');
-            setTimeout(() => { this.textContent = 'Save Map Position'; this.classList.remove('saved'); }, 2000);
+            // Restore the label it actually started with. This said 'Save Map Position',
+            // so pressing the button once renamed it for the life of the page.
+            const label = this.dataset.label || 'Save Map';
+            setTimeout(() => { this.textContent = label; this.classList.remove('saved'); }, 2000);
         });
 
         // Restore tracker selection from localStorage

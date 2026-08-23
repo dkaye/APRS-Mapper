@@ -127,12 +127,11 @@ def load_config():
                 digipeaters[cs] = record
             else:
                 igates[cs] = record
-        for entry in (config.get('aidstations') or []):
-            cs = entry.get('callsign')
-            if not cs:
-                continue
-            igates[cs] = {'name': entry.get('name', cs),
-                          'lat': float(entry['lat']), 'lng': float(entry['lon'])}
+        # Aid stops are NOT receivers. They carried an optional callsign until
+        # 2026-08-22 and one with a callsign was registered here as an iGate, which
+        # drew it on the playback map with its own receiver lines. The field is gone —
+        # an aid stop is a place on the course, and a station that gates packets
+        # belongs in `igates` where it can say so.
     except Exception as e:
         print(f"Could not read config.yaml: {e}")
 

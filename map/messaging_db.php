@@ -18,6 +18,13 @@
  * ©2026 Doug Kaye, K6DRK <doug@rds.com>
  */
 
+// The tracker-ID name list. Expansion happens here, once, rather than in each
+// client: five places build a sender label from from_short + from_name — the
+// Flutter client, the mobile-session path, the web panel's text and HTML
+// variants, and the watch announcers — and a lookup added to four of them is a
+// lookup that will disagree with the fifth within a season.
+require_once __DIR__ . '/spoken_ids.php';
+
 if (!defined('MARSAPRS_MESSAGES_DB')) {
     define('MARSAPRS_MESSAGES_DB', getenv('MARSAPRS_MESSAGES_DB') ?: '/var/lib/marsaprs/messages.db');
 }
@@ -702,12 +709,23 @@ class MessagingDb
                 'id'              => (int)$m['id'],
                 'conversation_id' => (int)$m['conversation_id'],
                 'ts'              => (int)$m['ts'],
-                'text'            => $m['text'],
+                // Radio traffic gets ids expanded inside the line as well as in the
+                // label: a log entry reading "Hiker One to net control" is the point of
+                // the list. Applied on the way out, not on the way in, so the stored
+                // transcript stays exactly what was heard and editing the list fixes
+                // yesterday's entries too. Never applied to text a person typed.
+                'text'            => (($s['kind'] ?? '') === 'transcriber')
+                                     ? spoken_ids_expand_text((string)$m['text'])
+                                     : $m['text'],
                 'broadcast'       => (int)$m['broadcast'] === 1,
                 'from_id'         => (int)$m['sender_id'],
                 'from_kind'       => $s['kind'] ?? null,
                 'from_key'        => $s['key'] ?? null,           // callsign / operator name
                 'from_short'      => $s['short_id'] ?? null,      // M0xx
+                // The written-out name for that id when one is set, else null.
+                // Null and not the id itself, so a client can tell "expand this"
+                // from "there is nothing to expand" without a second lookup.
+                'from_spoken'     => spoken_id_for($s['short_id'] ?? null),
                 'from_name'       => $s['display_name'] ?? ($m['from_key'] ?? ''),
                 'lat'             => isset($m['lat']) ? (float)$m['lat'] : null,
                 'lon'             => isset($m['lon']) ? (float)$m['lon'] : null,
@@ -764,7 +782,7 @@ class MessagingDb
                FROM conversation_members cm JOIN participants p ON p.id=cm.participant_id
               WHERE cm.conversation_id=:c', [':c'=>$conversationId]);
         $label = fn($p) => $p['kind'] === 'mobile'
-            ? trim((($p['short_id'] ? $p['short_id'] . ' ' : '') . $p['display_name']))
+            ? spoken_label($p['short_id'] ?? '', (string)$p['display_name'])
             : $p['display_name'];
         foreach ($msgs as &$m) {
             if ($kind === 'broadcast' || !empty($m['broadcast'])) { $m['to_label'] = 'All Trackers'; continue; }
@@ -802,7 +820,7 @@ class MessagingDb
             $members[(int)$m['cid']][] = $m;
         }
         $label = fn($p) => $p['kind'] === 'mobile'
-            ? trim((($p['short_id'] ? $p['short_id'] . ' ' : '') . $p['display_name']))
+            ? spoken_label($p['short_id'] ?? '', (string)$p['display_name'])
             : $p['display_name'];
         foreach ($msgs as &$msg) {
             $cid = $msg['conversation_id'];
@@ -1028,6 +1046,7 @@ class MessagingDb
                 $r['preview'] = ['text'=>$last['text'], 'ts'=>(int)$last['ts'],
                                  'from_id'=>(int)$last['sender_id'],
                                  'from_name'=>$s['display_name'] ?? '', 'from_short'=>$s['short_id'] ?? null,
+                                 'from_spoken'=>spoken_id_for($s['short_id'] ?? null),
                                  'self'=>(int)$last['sender_id'] === $participantId];
             } else {
                 $r['preview'] = null;

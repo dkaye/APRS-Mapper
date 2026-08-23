@@ -1712,6 +1712,7 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
         <?php if (has_permission('analyzer.view')): ?><button class="sec-btn" onclick="location.href='/analyzer/'">Analyzer</button><?php endif; ?>
         <?php if (has_permission('tickets.manage')): ?><button class="sec-btn" onclick="location.href='/tickets/admin.php'">Tickets</button><?php endif; ?>
         <?php if (has_permission('users.manage')): ?><button class="sec-btn" onclick="location.href='/auth/users.php'">Users</button><?php endif; ?>
+        <button class="sec-btn" onclick="location.href='/adminguide.php?back=/admin/'">Guide</button>
         <button class="sec-btn" onclick="location.href='../'">Exit</button>
     </div>
 </div>
@@ -3725,8 +3726,9 @@ function buildAidRow(g, readOnly = false) {
     if (!readOnly) { row.draggable = true; row.appendChild(makeDragHandle()); }
     const fields  = document.createElement('div');
     fields.className = 'row-fields';
-    fields.appendChild(fieldLabel('Name',     'f-aname',     g.name,     '150px'));
-    fields.appendChild(fieldLabel('Callsign', 'f-acallsign', g.callsign, '110px'));
+    // No callsign. An aid stop is a place on the course, not a station: the field was
+    // removed on 2026-08-22 because nothing needed it — see the note in config_yaml.php.
+    fields.appendChild(fieldLabel('Name',     'f-aname',     g.name,     '200px'));
     fields.appendChild(fieldLabel('Lat',      'f-alat',      g.lat,      '120px', { type: 'number', step: 'any' }));
     fields.appendChild(fieldLabel('Lon',      'f-alon',      g.lon,      '130px', { type: 'number', step: 'any' }));
     if (!readOnly) attachLatLonPaste(fields.querySelector('.f-alat'), fields.querySelector('.f-alon'));
@@ -3789,13 +3791,11 @@ function collectConfig() {
 
     const aidstations = [];
     document.querySelectorAll('#aidstations-list > .list-row').forEach(row => {
-        const acs = row.querySelector('.f-acallsign').value.trim();
         const aid = {
             name: row.querySelector('.f-aname').value.trim(),
             lat:  parseFloat(row.querySelector('.f-alat').value),
             lon:  parseFloat(row.querySelector('.f-alon').value)
         };
-        if (acs) aid.callsign = acs;
         aidstations.push(aid);
     });
 
@@ -3829,7 +3829,6 @@ function collectConfig() {
         tracker_id:     _tlv.id   !== false,
         tracker_name:   _tlv.name !== false,
         aid_name:       (_plv.aidstations || {}).name !== false,
-        aid_callsign:   (_plv.aidstations || {}).cs   !== false,
         igate_name:     (_plv.igates || {}).name !== false,
         igate_callsign: (_plv.igates || {}).cs   !== false,
     };
@@ -5119,7 +5118,6 @@ function buildSectionYaml(type, cfg) {
         L.push('  tracker_id: '     + (ld.tracker_id     !== false ? 'true' : 'false'));
         L.push('  tracker_name: '   + (ld.tracker_name   !== false ? 'true' : 'false'));
         L.push('  aid_name: '       + (ld.aid_name       !== false ? 'true' : 'false'));
-        L.push('  aid_callsign: '   + (ld.aid_callsign   !== false ? 'true' : 'false'));
         L.push('  igate_name: '     + (ld.igate_name     !== false ? 'true' : 'false'));
         L.push('  igate_callsign: ' + (ld.igate_callsign !== false ? 'true' : 'false'));
         L.push('');

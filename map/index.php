@@ -72,7 +72,6 @@ define('_CLIENT_IP', $_rip); unset($_rip);
 
 if (isset($_GET['json'])) {
 	$igatesStatusFilename     = 'igates.json';
-	$aidstationsStatusFilename = 'aidstations.json';
 	$mobileFile   = __DIR__ . '/mobile_trackers.json';
 	// ETag is computed from the response body itself (see the echo at the end of
 	// this block) so a 304 can actually fire. The previous mtime-based tag mixed in
@@ -260,7 +259,6 @@ if (isset($_GET['json'])) {
 		'mobile_beacons'     => $_bc,
 		'trackers'           => $trackers,
 		'igate_beacons'      => $igateBeacons,
-		'aid_beacons'        => $readBeaconFile($aidstationsStatusFilename),
 	]);
 	// Hash the actual response body: the ETag changes only when the payload does,
 	// so an unchanged poll returns 304 (real bandwidth saving) yet any change —
@@ -1135,6 +1133,13 @@ window._aprsAutoOp    = <?= json_encode($_autoOp) ?>;
 window._aprsAutoMsgPw = <?= json_encode($_autoMsgPw) ?>;
 </script>
 <?php endif; ?>
+<script>
+// The tracker-ID name list, for labels the page builds itself from local tracker
+// data rather than from a message payload — _mobileTrackerLabel and
+// _participantLabel both do. The server stamps from_spoken onto messages; this
+// covers the other half, so both halves expand or neither does.
+window._aprsSpokenIds = <?php require_once __DIR__ . '/spoken_ids.php'; echo json_encode(spoken_ids_map()); ?>;
+</script>
 <script src="utils.js"></script>
 <style>
 /* ── Reset & shared ──────────────────────────────────────────────────────── */
@@ -2220,7 +2225,7 @@ body.msg-window #msg-panel-grip { display: none; }
 		</div>
 
 		<div id="aidstations-section" style="display:none">
-			<div class="sec-hdr open" data-body="aidstations"><span>Aid/Rest Stops</span><span class="sec-hdr-right"><button class="tk-lbl-btn pl-name-btn" data-section="aidstations" title="Show/hide names"></button><button class="tk-lbl-btn pl-cs-btn" data-section="aidstations" title="Show/hide callsigns"></button><input type="checkbox" class="sec-vis-cb" checked data-section="aidstations"></span></div>
+			<div class="sec-hdr open" data-body="aidstations"><span>Aid/Rest Stops</span><span class="sec-hdr-right"><button class="tk-lbl-btn pl-name-btn" data-section="aidstations" title="Show/hide names"></button><input type="checkbox" class="sec-vis-cb" checked data-section="aidstations"></span></div>
 			<div id="aidstations"></div>
 		</div>
 
@@ -2304,7 +2309,7 @@ body.msg-window #msg-panel-grip { display: none; }
 		</div>
 		<div class="drawer-sec" id="m-aidstations-section" style="display:none">
 			<div class="drawer-sec-hdr" data-body="m-aidstations-body">
-				<span>Aid/Rest Stops</span><span class="sec-hdr-right"><button class="tk-lbl-btn pl-name-btn" data-section="aidstations" title="Show/hide names"></button><button class="tk-lbl-btn pl-cs-btn" data-section="aidstations" title="Show/hide callsigns"></button><input type="checkbox" class="sec-vis-cb" checked data-section="aidstations"></span>
+				<span>Aid/Rest Stops</span><span class="sec-hdr-right"><button class="tk-lbl-btn pl-name-btn" data-section="aidstations" title="Show/hide names"></button><input type="checkbox" class="sec-vis-cb" checked data-section="aidstations"></span>
 			</div>
 			<div id="m-aidstations-body" style="display:none">
 				<div id="m-aidstations-list"></div>
@@ -2927,8 +2932,6 @@ let _beaconIntervalMs = [60000, 30000, 15000, 120000, 60000]; // Walk, Cycle, Dr
 let _beaconDistMi     = [0.2,   0.2,   0.2,   1.0,   0.2];   // Walk, Cycle, Drive, Stationary, Unknown
 const lastIgateBeacons     = {};	// callsign → lastBeacon timestamp (from igates.json)
 const igateFlashTimers     = {};	// callsign → setTimeout id for green blink
-const lastAidBeacons       = {};	// callsign → lastBeacon timestamp (from aidstations.json)
-const aidFlashTimers       = {};	// callsign → setTimeout id for green blink
 const historyDots          = {};	// callsign → [L.circleMarker, ...]
 // APRS destination-field device-type codes → human-readable radio model names
 const APRS_DEVICES = {
@@ -3585,18 +3588,6 @@ function flashIgateBeacon(callsign) {
 	}, _blinkDuration);
 }
 
-function flashAidBeacon(callsign) {
-	if (_blinkDuration <= 0) return;
-	const d = aidMarkers.find(a => a.callsign === callsign);
-	if (!d) return;
-	if (aidFlashTimers[callsign]) clearTimeout(aidFlashTimers[callsign]);
-	d.el.classList.add('igate-beaconing');
-	aidFlashTimers[callsign] = setTimeout(() => {
-		d.el.classList.remove('igate-beaconing');
-		delete aidFlashTimers[callsign];
-	}, _blinkDuration);
-}
-
 // ── Clear all selections ──────────────────────────────────────────────────
 function clearAllSelections() {
 	_deselectIgate();
@@ -4063,12 +4054,6 @@ function updateMap() {
 				});
 			}
 			refreshIgateStaleness();
-			if (data.aid_beacons) {
-				Object.entries(data.aid_beacons).forEach(([cs, ts]) => {
-					if (ts && lastAidBeacons[cs] !== undefined && ts !== lastAidBeacons[cs]) flashAidBeacon(cs);
-					lastAidBeacons[cs] = ts;
-				});
-			}
 		})
 		.catch(err => console.error('Tracker fetch error:', err));
 }
@@ -4551,7 +4536,9 @@ function applyAidStations(stations) {
 			pane: 'aidPane', radius: scaledRadius(aidBase), color: '#222', weight: 1.5, fillColor: '#111', fillOpacity: 0.9
 		}).addTo(map);
 		m._baseRadius = aidBase;
-		const aidTipLabel = placeLabelText(g.name, g.callsign || '', 'aidstations');
+		// Empty callsign, always: aid stops no longer have one. placeLabelText is shared
+		// with iGates, which do, so the machinery stays and only the input changes.
+		const aidTipLabel = placeLabelText(g.name, '', 'aidstations');
 		m.bindTooltip(aidTipLabel, kiosk
 			? { permanent: true, direction: 'right', className: 'place-label-kiosk' }
 			: { permanent: true, direction: 'right', className: 'place-label aid-station-label', offset: [8, 0] });
@@ -4577,10 +4564,7 @@ function applyAidStations(stations) {
 			m.on('mouseover', function() {
 				clearTimeout(_ct);
 				const d = aidMarkers[idx];
-				const lastTs = d.callsign ? lastAidBeacons[d.callsign] : null;
-				const html = `<b>${esc(d.name)}</b>`
-					+ (d.callsign ? `<br>${esc(d.callsign)}` : '')
-					+ (lastTs ? `<br><span style="color:#888;font-size:11px">Last beacon: ${relativeTime(lastTs)} ago</span>` : '');
+				const html = `<b>${esc(d.name)}</b>`;
 				if (!_pop) _pop = L.popup({ closeButton: false, autoPan: false, className: 'aprs-path-popup' });
 				_pop.setContent(html).setLatLng(m.getLatLng()).openOn(map);
 			});
@@ -5023,7 +5007,7 @@ document.querySelectorAll('.sec-label-btn').forEach(btn => {
 <?php
 $_ld   = is_array($_cfg['label_defaults'] ?? null) ? $_cfg['label_defaults'] : [];
 $_ldJs = [];
-foreach (['tracker_id','tracker_name','aid_name','aid_callsign','igate_name','igate_callsign'] as $_lk) {
+foreach (['tracker_id','tracker_name','aid_name','igate_name','igate_callsign'] as $_lk) {
 	$_ldJs[$_lk] = array_key_exists($_lk, $_ld) ? ($_ld[$_lk] === true || $_ld[$_lk] === 'true' || $_ld[$_lk] === 1) : true;
 }
 ?>
@@ -5077,7 +5061,10 @@ updateTrackerLabels();
 // so the two components are the name and the callsign. Shared for both sections.
 const LS_PLACE_LABELS = 'aprs_place_label_vis';
 const placeLabelState = {
-	aidstations: { name: LABEL_DEFAULTS.aid_name,   cs: LABEL_DEFAULTS.aid_callsign },
+	// cs is permanently false for aid stops — they have no callsign to show. Kept as a
+	// key rather than removed because placeLabelText/updatePlaceLabels are shared with
+	// iGates and read it for both sections.
+	aidstations: { name: LABEL_DEFAULTS.aid_name,   cs: false },
 	igates:      { name: LABEL_DEFAULTS.igate_name, cs: LABEL_DEFAULTS.igate_callsign },
 };
 try { const s = JSON.parse(localStorage.getItem(LS_PLACE_LABELS) || '{}');
@@ -5845,27 +5832,43 @@ function _onAuthLost() {
 // The label the sidebar/map shows for a mobile tracker (its live "ID Name"), so
 // the inbox and threads match what the operator sees on the map. Null if the
 // tracker isn't currently on the map.
+// An id written out, or the id unchanged when the list has no entry for it.
+// Uppercased on lookup to match the server's parser, so an entry typed as "car"
+// still matches a tracker whose id is "CAR".
+function _spokenId(id) {
+	if (!id) return id;
+	const m = window._aprsSpokenIds || {};
+	return m[String(id).toUpperCase()] || id;
+}
 function _mobileTrackerLabel(callsign) {
 	if (typeof _mobileTrackers === 'undefined' || !callsign) return null;
 	const t = _mobileTrackers.find(x => x.callsign === callsign);
-	return t ? ([t.id, t.name].filter(Boolean).join(' ') || callsign) : null;
+	return t ? ([_spokenId(t.id), t.name].filter(Boolean).join(' ') || callsign) : null;
 }
 function _participantLabel(p) {
 	if (p.kind === 'mobile') { const l = _mobileTrackerLabel(p.key); if (l) return l; }
 	const name = p.display_name || p.name || p.key;
-	if (p.kind === 'mobile' && p.short_id) return (name && name !== p.key) ? p.short_id + ' ' + name : p.short_id;
+	if (p.kind === 'mobile' && p.short_id) { const h = _spokenId(p.short_id); return (name && name !== p.key) ? h + ' ' + name : h; }
 	return name || p.key;
 }
+// The head of a sender label: the written-out name for the id when the server sent
+// one, else the id itself. "CAR" is the right thing on a map marker, where space is
+// the whole constraint, and the wrong thing in a message list, where "Cardiac"
+// costs six characters and saves the reader guessing.
+function _msgSenderHead(m) { return m.from_spoken || _spokenId(m.from_short); }
+
 function _msgSenderName(m) {
 	if (m.from_kind === 'mobile') { const l = _mobileTrackerLabel(m.from_key); if (l) return l; }
 	const name = m.from_name || m.from_key || '';
-	if (m.from_kind === 'mobile' && m.from_short) return (name && name !== m.from_key) ? m.from_short + ' ' + name : m.from_short;
+	if (m.from_kind === 'mobile' && m.from_short) { const h = _msgSenderHead(m); return (name && name !== m.from_key) ? h + ' ' + name : h; }
 	return name || '—';
 }
 function _senderLabelHtml(m) {
 	if (m.from_kind === 'mobile') { const l = _mobileTrackerLabel(m.from_key); if (l) return _esc(l); }
 	const name = m.from_name || m.from_key || '';
-	if (m.from_kind === 'mobile' && m.from_short) return '<span class="sid">' + _esc(m.from_short) + '</span> ' + _esc(name);
+	// The badge holds whichever form is in use, so an expanded name is styled the
+	// same as the id it replaced rather than arriving as unstyled text mid-line.
+	if (m.from_kind === 'mobile' && m.from_short) return '<span class="sid">' + _esc(_msgSenderHead(m)) + '</span> ' + _esc(name);
 	return _esc(name);
 }
 function _convLabel(c) {
@@ -5973,7 +5976,14 @@ function _toggleViewAll() {
 	document.getElementById('msg-allsearch-btn').style.display = _msgViewAll ? '' : 'none';
 	document.getElementById('msg-panel-title').textContent = _msgViewAll ? 'All Messages' : 'Messages';
 	document.getElementById('msg-panel-sub').textContent = _msgViewAll ? 'every message, chronological' : (_msgName ? 'as ' + _msgName : '');
-	if (_msgViewAll) { _loadAllView(); }
+	if (_msgViewAll) {
+		// Anything queued for reading when a thread is next opened is history the moment
+		// this view is showing — it is all on screen, and from here on arrivals are read
+		// as they land. Without this, opening All Messages and then stepping into a
+		// thread would recite a backlog the operator has already seen scroll past.
+		_deferredSpeak.clear();
+		_loadAllView();
+	}
 	else { _allViewSearchOn = false; _syncAllSearch(); }
 }
 async function _loadAllView() {
@@ -6422,6 +6432,18 @@ function _ingestIncoming(m) {
 	const isOpen = (_openConvId === cid) && _msgPanelOpen;
 	if (isOpen) { if (isNew) _appendBubble(c, m); _markConvRead(cid); }
 	else if (isNew) { c.unread = (c.unread || 0) + 1; }
+	// Whether this message is in front of the operator, which is a wider question than
+	// whether its own thread is open: All Messages shows every thread at once.
+	//
+	// Deliberately NOT folded into isOpen above. That one also appends the bubble and
+	// marks the thread read, and All Messages is a log view — widening it would mark
+	// every conversation on the net read the moment the view was opened, and clear the
+	// unread badges an operator uses to see what still needs answering.
+	//
+	// This is the case audio matters most in: net control on a second screen is
+	// watching the whole net rather than one thread, which is exactly when they are not
+	// looking at the thread a call arrives on.
+	const onScreen = isOpen || (_msgViewAll && _msgPanelOpen);
 	if (isNew && !_msgPriming) {
 		// Speaker on + this message is in the thread you're viewing → read it aloud,
 		// no tone. Otherwise play the alert tone (speaker off, OR the message is in
@@ -6431,7 +6453,7 @@ function _ingestIncoming(m) {
 		// does not queue deferred speech either, or opening a thread on it later would
 		// suddenly read out a backlog the operator already heard on the other screen.
 		if (_mayAnnounce()) {
-			if (_msgSpeak && isOpen) {
+			if (_msgSpeak && onScreen) {
 				_speakMessage(m);
 			} else {
 				if (_msgSpeak) _deferredSpeak.add(m.id);
@@ -6463,12 +6485,35 @@ async function _markConvRead(cid) {
 function _updateTotalUnread() {
 	let n = 0; for (const c of _convs.values()) n += (c.unread || 0);
 	_updateBtnBadge(n);
+	_updateWindowTitle(n);
 }
 function _updateBtnBadge(n) {
 	const b = document.getElementById('msg-btn-badge');
 	if (!b) return;
+	// A separate messages window is open, so this badge is counting traffic the
+	// operator is already looking at on the other screen. On a two-screen station the
+	// map is the thing being watched from across the room, and a red count on it that
+	// never goes down — because the reading is happening elsewhere — is worse than no
+	// count at all: it says "unattended" about a net somebody is actively working.
+	//
+	// Keyed off the same speaker lease that decides audio, deliberately. The two
+	// questions are the same question — "is a messages window handling this?" — and
+	// answering them from one source is what stops the badge and the announcer
+	// disagreeing about whether the second screen exists. The lease is renewed on the
+	// messages window's own poll, so it lapses on its own if that window is closed and
+	// this badge returns within a poll or two.
+	if (!MSG_WINDOW && _speakerAlive()) n = 0;
 	if (n > 0) { b.textContent = n > 99 ? '99+' : n; b.style.display = 'block'; }
 	else b.style.display = 'none';
+}
+// Unread in the messages window's own title, which is where it is useful: that window
+// is often behind something on the laptop screen, and its title is what shows in the
+// shelf. Only there — the map window's title is not a message indicator, and putting a
+// count in it would reintroduce on one screen exactly what was just taken off the other.
+const _BASE_TITLE = document.title;
+function _updateWindowTitle(n) {
+	if (!MSG_WINDOW) return;
+	document.title = n > 0 ? '(' + (n > 99 ? '99+' : n) + ') ' + _BASE_TITLE : _BASE_TITLE;
 }
 
 // ── Arrival toast (panel closed) ─────────────────────────────────────────────

@@ -10,6 +10,10 @@ if (!defined('MARSAPRS_MESSAGES_DB')) define('MARSAPRS_MESSAGES_DB', sys_get_tem
 // test that stores or prunes a clip would reach for /var/www/html — silently doing
 // nothing on a dev Mac, and deleting real files on the server.
 if (!defined('MARSAPRS_AUDIO_ROOT')) define('MARSAPRS_AUDIO_ROOT', sys_get_temp_dir() . '/marsaprs_test_radio');
+// Same reason: the ID-name list lives in /var/lib/marsaprs in production. Every test
+// passes an explicit path, but messaging_db.php requires spoken_ids.php at load and the
+// constant is evaluated then.
+if (!defined('MARSAPRS_SPOKEN_IDS')) define('MARSAPRS_SPOKEN_IDS', sys_get_temp_dir() . '/marsaprs_test_spoken_ids.json');
 require_once $repoRoot . '/map/messaging_db.php';
 // Only defines functions at load; the ?messaging= dispatch happens in index.php.
 require_once $repoRoot . '/map/messaging.php';

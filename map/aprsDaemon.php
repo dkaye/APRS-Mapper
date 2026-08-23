@@ -36,8 +36,6 @@ $socket=null;
 $configFileMtime=0;
 $igates=array();			// [{callsign, name, lastBeacon}] — only entries with a callsign
 $igatesStatusFilename='igates.json';
-$aidstations=array();		// [{callsign, name, lastBeacon}] — only entries with a callsign
-$aidstationsStatusFilename='aidstations.json';
 $trackerHistory  = [];		// callsign → [{lat, lon, ts}, ...]  max $breadcrumbRetain entries each
 $historyFilePath = null;	// full path to tracker_history.yaml in current event dir
 // How many breadcrumbs to RETAIN per tracker. Follows breadcrumb_count from
@@ -363,7 +361,7 @@ function connectToAprsServer() {
 // while preserving live state for already-known callsigns.
 // Returns true if the file was reloaded, false if it was unchanged since the last load.
 function loadTrackers() {
-	global $trackers,$igates,$aidstations,$configFilename,$configFileMtime,$mobileRoot,$mobileEnabled,$breadcrumbRetain;
+	global $trackers,$igates,$configFilename,$configFileMtime,$mobileRoot,$mobileEnabled,$breadcrumbRetain;
 	// PHP caches stat results per request; a long-running CLI daemon would otherwise
 	// keep returning the mtime it first read and never notice a config change.
 	clearstatcache(true, $configFilename);
@@ -409,21 +407,6 @@ function loadTrackers() {
 		);
 	}
 	$igates = $newIgates;
-
-	// Rebuild aidstations — only entries with a callsign; preserve lastBeacon across reloads
-	$existingAid = array();
-	foreach ($aidstations as $g) $existingAid[$g["callsign"]] = $g;
-	$newAid = array();
-	foreach ($cfg['aidstations'] ?? [] as $entry) {
-		if (empty($entry['callsign'])) continue;
-		$cs = $entry['callsign'];
-		$newAid[] = array(
-			"callsign"   => $cs,
-			"name"       => $entry['name'] ?? $cs,
-			"lastBeacon" => $existingAid[$cs]["lastBeacon"] ?? 0,
-		);
-	}
-	$aidstations = $newAid;
 
 	$mob         = $cfg['mobile'] ?? [];
 	$mobileEnabled = !empty($mob['enabled']) && $mob['enabled'] !== false;
@@ -532,7 +515,7 @@ function writeBeaconFile($filename, $entries) {
 // given entries array, in place. Without this a daemon restart resets every iGate/
 // aid station to lastBeacon=0 and the map goes all-grey until each station is
 // re-heard — which for a quiet, self-beacon-only station can take 10–30 min. These
-// timestamps are already durable on disk (igates.json / aidstations.json); reloading
+// timestamps are already durable on disk (igates.json); reloading
 // them at startup makes a restart non-destructive to the status display.
 function seedBeaconsFromFile($filename, &$entries) {
 	if (!file_exists($filename)) return;
@@ -634,10 +617,9 @@ $trackers=array();
 loadTrackers();
 if (empty($trackers) && !$mobileEnabled) fatal("No trackers loaded from $configFilename");
 
-// Restore iGate/aid last-beacon history from disk so a restart doesn't blank the
+// Restore iGate last-beacon history from disk so a restart doesn't blank the
 // map's connectivity display (loadTrackers() builds these with lastBeacon=0).
 seedBeaconsFromFile($igatesStatusFilename, $igates);
-seedBeaconsFromFile($aidstationsStatusFilename, $aidstations);
 
 if (!is_writable($trackerStatusFilename)) fatal("Can't write to trackerstatus file");
 
@@ -758,20 +740,19 @@ while (TRUE) {
 					}
 				}
 
-				// Detect iGate/aid-station activity on the APRS-IS feed — any packet an iGate gated
+				// Detect iGate activity on the APRS-IS feed — any packet an iGate gated
 				// through one of our stations (q-construct in path, e.g. qAR,K6DRK-6).
-				if (!empty($igates) || !empty($aidstations)) {
+				//
+				// Aid stops were watched here too until 2026-08-22, when their callsign was
+				// removed: an aid stop is a place on the course, not a station, and nothing
+				// used the flash the beacon drove.
+				if (!empty($igates)) {
 					$pathParts = explode(',', $aprsPath);
 					$igateUpdated = false;
 					foreach ($igates as $gkey => $igate) {
 						if (aprsStationHeard($igate["callsign"], $callsign, $pathParts)) { $igates[$gkey]["lastBeacon"] = time(); $igateUpdated = true; }
 					}
 					if ($igateUpdated) writeBeaconFile($igatesStatusFilename, $igates);
-					$aidUpdated = false;
-					foreach ($aidstations as $akey => $aid) {
-						if (aprsStationHeard($aid["callsign"], $callsign, $pathParts)) { $aidstations[$akey]["lastBeacon"] = time(); $aidUpdated = true; }
-					}
-					if ($aidUpdated) writeBeaconFile($aidstationsStatusFilename, $aidstations);
 				}
 			}
 		}
