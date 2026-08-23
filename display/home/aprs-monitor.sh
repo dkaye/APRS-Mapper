@@ -6,6 +6,20 @@
 # Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
 # ©2025 Doug Kaye, K6DRK <doug@rds.com>
 
+# Written by the Exit button (kill-server.py), cleared by start-kiosk.sh. While it
+# exists this monitor does nothing at all: no restarting a missing kiosk, no switching
+# to the connecting page, no tearing the browser down when the server comes back.
+#
+# Exit has to mean it. Without this the button killed Chromium and the missing-kiosk
+# check brought it straight back within a minute, so there was no way to reach the
+# desktop on a display that had one — which is what it is for.
+#
+# In /tmp, which is tmpfs, and cleared again by an @reboot cron line: a reboot always
+# brings the kiosk back. A display exists to show the map and reboots itself nightly at
+# 4:10, so one left dark for a week because somebody pressed Exit once is a worse
+# failure than one that returns unasked.
+KIOSK_OFF=/tmp/aprs-kiosk-off
+
 INTERVAL=30
 CHECK_TIMEOUT=10   # a satellite link routinely answers in 3-8s; 5s was too tight
 FAIL_STREAK=3      # consecutive failures before declaring the server unreachable
@@ -13,6 +27,7 @@ MISSING_STREAK=2   # cycles with no browser before we start the kiosk ourselves
 was_reachable=true
 fails=0
 missing=0
+stood_down=false
 
 # Tearing the browser down is disruptive and visible, so it must not hinge on one
 # sample. Over Starlink the fetch does occasionally take 3-8s while the link is
@@ -53,6 +68,25 @@ wait_for_exit() {
 
 while true; do
     sleep "$INTERVAL"
+
+    # Stood down by the Exit button. Reset the state machine while idle, so that
+    # whatever the link did in the meantime is not acted on the instant somebody
+    # presses Start APRS — the first check after restarting should judge the server as
+    # it is then, rather than replay a failure streak from an hour ago.
+    if [ -f "$KIOSK_OFF" ]; then
+        if ! $stood_down; then
+            logger -t aprs-monitor "kiosk exited by request — standing down"
+            stood_down=true
+        fi
+        was_reachable=true
+        fails=0
+        missing=0
+        continue
+    fi
+    if $stood_down; then
+        logger -t aprs-monitor "kiosk restarted by request — monitoring again"
+        stood_down=false
+    fi
 
     # No browser at all. Normally the desktop autostart launches it at login, so
     # give that a couple of cycles before stepping in — but do step in, because

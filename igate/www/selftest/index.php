@@ -93,7 +93,13 @@ $COLOR = ['GOOD' => '#1a7f37', 'MARGINAL' => '#9a6700', 'BAD' => '#c0392b'];
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
     margin: 0; background: #f3f4f6; color: #1f2933; font-size: 14px; }
   .wrap { max-width: 1000px; margin: 0 auto; padding: 24px 16px 60px; }
-  h1 { font-size: 20px; margin: 0 0 4px; }
+  /* Header row: the title and a way out. This page is linked from NetBird Admin and
+     from bookmarks, so it needs a back that works for both — history.back() returns
+     you wherever you came from, and the fallback link covers arriving here cold. */
+  .hdr { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin: 0 0 4px; }
+  h1 { font-size: 20px; margin: 0; }
+  .back { font-size: 13px; color: #2563eb; text-decoration: none; white-space: nowrap; }
+  .back:hover { text-decoration: underline; }
   .sub { color: #6b7280; font-size: 13px; margin-bottom: 18px; }
   .summary { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
   .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 16px; }
@@ -117,7 +123,12 @@ $COLOR = ['GOOD' => '#1a7f37', 'MARGINAL' => '#9a6700', 'BAD' => '#c0392b'];
 </head>
 <body>
 <div class="wrap">
-  <h1>SDR Self-Noise — Fleet</h1>
+  <div class="hdr">
+    <h1>SDR Self-Noise — Fleet</h1>
+    <a class="back" href="javascript:history.back()">&larr; Back</a>
+    <a class="back" href="/netbird/admin.php">NetBird Admin</a>
+    <a class="back" href="https://marsaprs.org/">Map</a>
+  </div>
   <div class="sub">Lower is better. The headline number is the worst internal spur in the APRS guard band
     (144.37&ndash;144.42&nbsp;MHz), in dB over the noise floor &mdash; that&rsquo;s what deafens a gate.</div>
 

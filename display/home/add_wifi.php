@@ -45,7 +45,15 @@ if (!preg_match('/^\s*psk=([0-9a-f]{64})\s*$/m', $output, $m)) {
 $psk = $m[1];
 
 // Append YAML entry to wifi.yaml
-$entry = "- name: \"$name\"\n  ssid: \"$ssid\"\n  password: \"\"\n  encrypted: \"$psk\"\n";
+// The passphrase is kept as well as its hash. The devices only ever use `encrypted` —
+// update-wifi.php hands NetworkManager the PSK — so this column exists purely so that a
+// person reading the WiFi Manager can see what the password for a network actually is.
+// It used to be written blank here, which left that column reading "none" for every
+// entry ever added from a device, and a PSK cannot be turned back into the passphrase
+// that made it. The iGate's add-wifi.php has always written it; these two had not.
+$entry = "- name: \"$name\"\n  ssid: \"$ssid\"\n"
+       . "  password: \"" . addcslashes($password, '"\\') . "\"\n"
+       . "  encrypted: \"$psk\"\n";
 $file  = '/home/pi/wifi.yaml';
 
 if (file_put_contents($file, $entry, FILE_APPEND | LOCK_EX) === false) {

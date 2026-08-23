@@ -38,6 +38,7 @@ sudo apt-get install -y \
     avahi-daemon \
     ufw \
     curl \
+    nethogs \
     rsync cron
 ok "Packages installed"
 
@@ -158,6 +159,10 @@ crontab - << 'EOF'
 */5 * * * * /home/pi/check-netbird.sh >> /tmp/checknetbird.log 2>&1
 # Enable NetBird after any reboot
 @reboot /home/pi/netbird-up.sh
+# A reboot always re-arms the kiosk, whatever the Exit button was told before it.
+# /tmp is tmpfs so this is normally already gone; the line is here so the guarantee
+# does not silently depend on that staying true.
+@reboot rm -f /tmp/aprs-kiosk-off
 # Nightly auto-update at 4:01am
 1 4 * * * /home/pi/auto-update.sh >> /home/pi/update.log 2>&1
 # Nightly reboot at 4:10am (after updates)
@@ -198,6 +203,54 @@ sudo chown -R pi:pi /home/pi
 sudo chmod 755 /home/pi
 chmod +x /home/pi/*.sh /home/pi/*.php /home/pi/*.py 2>/dev/null || true
 ok "Permissions set"
+
+# ── ARP flux guard (wired + wireless on one subnet) ───────────────────────────
+# A display that is wired keeps its WiFi associated on purpose — route metrics put
+# eth0 at 100 and wlan0 at 600, so the cable wins and the radio is a silent fallback.
+# That is fine while the two are on different networks. Plug the Ethernet into a router
+# whose WiFi the Pi already knows and they land on ONE subnet with two addresses, and
+# Linux will then answer ARP for either address on either interface. The gateway's ARP
+# table flaps between the two MACs and *inbound* connections start failing while
+# everything the Pi initiates still works perfectly — which is the most misleading
+# symptom in this whole system: the device pings its gateway flawlessly and is
+# unreachable from anywhere.
+#
+# BigTV, 2026-08-19: eth0 192.168.1.112 and wlan0 192.168.1.141, both default via
+# 192.168.1.1. Gateway ping 0.76 ms at 0% loss; NetBird and SSH intermittent for hours.
+#
+# arp_ignore=1 answers only for addresses on the receiving interface; arp_announce=2
+# always sources ARP from the address that belongs to the outgoing one. A no-op when
+# the interfaces are on different networks, so it costs nothing to apply everywhere.
+msg "ARP flux guard"
+printf 'net.ipv4.conf.all.arp_ignore = 1\nnet.ipv4.conf.all.arp_announce = 2\n' \
+    | sudo tee /etc/sysctl.d/99-arp-flux.conf > /dev/null
+sudo sysctl --system > /dev/null 2>&1 || true
+ok "arp_ignore=1 arp_announce=2"
+
+# ── Fleet diagnostics ─────────────────────────────────────────────────────────
+# Shared with the iGates, the Transcribers and the server: deploy.sh rsyncs common/
+# into the archive, so these arrive with everything else. Listed by name here because
+# an install log that does not mention them is the only way to notice they stopped
+# being delivered — which is exactly what had happened to power-check.sh, present in
+# common/ since it was written and never once run on a display.
+msg "Fleet diagnostics"
+for t in power-check.sh nettest.sh netreport.py nethogs.sh; do
+    if [ -f "/home/pi/$t" ]; then
+        ok "$t"
+    else
+        warn "$t missing — deploy.sh may not have shipped common/"
+    fi
+done
+echo ""
+echo "  Power:    /home/pi/power-check.sh          (undervoltage; run it first for any"
+echo "                                              reboot, freeze or 'random' fault)"
+echo "  Network:  /home/pi/nettest.sh <secs> <label>  then  /home/pi/netreport.py <dir>"
+echo "                                             (separates the WiFi link from the"
+echo "                                              path beyond it)"
+echo "  Traffic:  sudo /home/pi/nethogs.sh          (per-process bandwidth)"
+echo "  WiFi:     /home/pi/wifi-off.sh  /  /home/pi/wifi-on.sh"
+echo "                                             (off refuses unless eth0 carries the"
+echo "                                              default route \u2014 see the script header)"
 
 # ── Log rotation ──────────────────────────────────────────────────────────────
 if [ -f "$TMP/etc/logrotate.d/aprs" ]; then

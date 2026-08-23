@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# nethogs.sh — MARS APRS iGate
+# nethogs.sh — MARS APRS
+#
+# Shared by every device type; see common/power-check.sh.
 #
 # Diagnostic: show per-process network bandwidth usage.
 #

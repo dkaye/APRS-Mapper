@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Summarize a nettest.sh run: loss, latency, jitter, and located outages.
 
+Shared by every device type; see common/power-check.sh.
+
 Usage: netreport.py <run-dir>
 """
 import re, sys, os, statistics as st

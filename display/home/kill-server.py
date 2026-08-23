@@ -27,6 +27,10 @@ def _build_target_url():
 
 TARGET_URL = _build_target_url()
 
+# Set by /exit, cleared by start-kiosk.sh. While it exists aprs-monitor leaves the
+# display alone. See the comment in do_GET for why it lives in /tmp.
+KIOSK_OFF = '/tmp/aprs-kiosk-off'
+
 CONNECTING_HTML = ("""<!DOCTYPE html>
 <html>
 <head>
@@ -77,6 +81,20 @@ class Handler(BaseHTTPRequestHandler):
             self._pna_headers()
             self.end_headers()
             self.wfile.write(b'ok')
+            # Say "stay down" BEFORE killing the browser, not after: aprs-monitor
+            # notices a missing kiosk within two 30-second cycles, and the whole point
+            # of Exit is that it does not come back on its own. Writing the flag first
+            # closes the window where the monitor could see the gap and restart it.
+            #
+            # /tmp, which is tmpfs on Trixie, so the flag is cleared by a reboot. That
+            # is deliberate. A display exists to show the map, it reboots itself nightly
+            # at 4:10, and a kiosk left dark for a week because somebody pressed Exit
+            # once is a worse failure than one that comes back unasked. Start APRS on
+            # the desktop clears it too, via start-kiosk.sh.
+            try:
+                open(KIOSK_OFF, 'w').close()
+            except OSError:
+                pass          # best effort; the kill below still has to happen
             subprocess.Popen(['pkill', 'chromium'])
         elif self.path == '/':
             self.send_response(200)

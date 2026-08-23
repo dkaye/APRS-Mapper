@@ -45,9 +45,32 @@ On the APRS map page:
 
 The second Exit button calls `http://localhost:8080/exit`, handled by kill-server (see Services).
 
+**Exit means it stays exited.** Before killing Chromium, kill-server writes
+`/tmp/aprs-kiosk-off`, and while that file exists `aprs-monitor` stands down completely —
+it will not restart a missing kiosk, will not switch to the connecting page, and will not
+tear the browser down when the server comes back. Without it the monitor noticed the
+missing browser within two 30-second cycles and brought it straight back, so there was no
+way to actually reach the desktop on a display that has one.
+
+The flag is written *before* the kill, not after, so there is no window in which the
+monitor can see the gap and act on it.
+
+**A reboot always re-arms it.** The flag lives in `/tmp` (tmpfs) and an `@reboot` cron
+line removes it as well, so the guarantee does not quietly depend on how `/tmp` happens to
+be mounted. A display exists to show the map and reboots itself nightly at 4:10 — one left
+dark for a week because somebody pressed Exit once is a worse failure than one that comes
+back unasked.
+
 ### Desktop icon (Start APRS)
 
 `/home/pi/Desktop/start-aprs.desktop` — double-click to kill and relaunch Chromium in kiosk mode.
+
+**It also re-arms auto-restart.** `start-kiosk.sh` removes `/tmp/aprs-kiosk-off` as its
+first action, so the kiosk runs *and* the monitor resumes watching it until somebody
+presses Exit again. The flag is cleared in `start-kiosk.sh` rather than in the shortcut so
+it holds for every route in — the desktop icon, the script run by hand, and the autostart
+at login. `aprs-monitor` never calls that script while the flag is set, so it cannot
+un-exit itself.
 
 The file must have mode `644` (not executable). On Pi OS Trixie, any `.desktop` file with the execute bit set triggers an "Executable Script" dialog that blocks the launch.
 
@@ -212,6 +235,114 @@ Throttle flags (from `vcgencmd get_throttled` bitmask):
 Args (all optional): `listenerPort=N`, `destinationPort=N`, `debug`
 
 ---
+
+## Wired displays: the ARP flux guard
+
+A wired display keeps its WiFi associated deliberately — route metrics put `eth0` at 100
+and `wlan0` at 600, so the cable wins and the radio is a silent fallback if it is pulled.
+
+That is fine while the two are on **different** networks. Plug the Ethernet into a router
+whose WiFi the Pi already knows and both interfaces land on **one subnet with two
+addresses**, and Linux will answer ARP for either address on either interface. The
+gateway's ARP table then flaps between the Pi's two MACs, and **inbound** connections
+start failing while everything the Pi initiates still works.
+
+That asymmetry is the most misleading symptom in this system. The display pings its own
+gateway at 0.76 ms with 0% loss, its Ethernet negotiates 1 Gbps full duplex, its power
+grades GOOD — and it is unreachable from anywhere, with the kiosk cycling because it
+cannot load the map. It looks exactly like a Pi rebooting.
+
+BigTV, 2026-08-19, after moving to Starlink: `eth0 192.168.1.112` and
+`wlan0 192.168.1.141`, both `default via 192.168.1.1`.
+
+`install.sh` and `auto-update.sh` both write:
+
+```
+net.ipv4.conf.all.arp_ignore = 1     # answer only for addresses on the receiving iface
+net.ipv4.conf.all.arp_announce = 2   # source ARP from the outgoing iface's address
+```
+
+A no-op when the interfaces are on different networks, so it is applied everywhere.
+
+**To spot it:**
+
+```bash
+ip -br addr show                # two addresses on one subnet?
+ip route | grep default         # two defaults via the same gateway?
+```
+
+If you want the radio off entirely on a permanently-wired display, `sudo nmcli radio wifi
+off` also solves it — at the cost of the fallback.
+
+## Turning WiFi on and off
+
+```bash
+/home/pi/wifi-off.sh      # wired displays only — refuses otherwise
+/home/pi/wifi-on.sh
+```
+
+**`wifi-off.sh` refuses unless eth0 has carrier *and* holds the default route.** That
+refusal is the point: `nmcli radio wifi off` on a display whose only link is WiFi does not
+warn or ask — it disconnects the machine and leaves no way back but a keyboard and a
+screen. NetControl is exactly that machine. `--force` overrides, for when you are standing
+in front of it.
+
+Carrier alone is not accepted, because a cable into a dead switch has carrier and no path
+— which is precisely when losing the radio hurts most.
+
+Why turn it off on a wired display:
+
+- Two interfaces on **one subnet** make the Pi answer ARP for both addresses on both, so
+  inbound connections fail while everything the Pi initiates still works. Off is the
+  simplest cure; the ARP guard is the one that lets you leave it on.
+- A Pi 4 shares one 2.4 GHz radio between WiFi and Bluetooth, so a busy link costs
+  Bluetooth range — which matters when pairing a mouse.
+
+The cost is the fallback: with the radio off, pulling the cable takes the display off the
+network entirely. `nmcli radio wifi off` **persists across reboots**, so a display switched
+off during maintenance stays off until somebody runs `wifi-on.sh` — which is why that
+script exists and why it reports what it associated with rather than just exiting.
+
+## Diagnostics
+
+Shared with the iGates, the Transcribers and the server — they live in `common/` in the
+repo and arrive in `/home/pi/` with everything else.
+
+### power-check.sh
+
+**Run this first for any reboot, freeze, or "random" fault.** Marginal power does not
+announce itself; it presents as the symptom of whatever else was happening at the time —
+a USB drive that "does not work", a receiver that "goes deaf", a display that "reboots at
+random". BigTV has been brought down by it twice.
+
+```bash
+/home/pi/power-check.sh
+```
+
+Reports a grade, the throttle word, temperature, and the count of kernel under-voltage
+lines. `throttled=0x0` is healthy — but note the bits are latched **since boot** and are
+cleared by every reboot, so `0x0` on a machine that keeps rebooting means "not yet this
+boot", not "the power is fine". It runs nightly from `auto-update.sh` as well, minutes
+before the 4:10 reboot wipes the evidence.
+
+### nettest.sh / netreport.py
+
+Separates the WiFi link (Pi → access point) from the path beyond it, so a flaky uplink can
+be told apart from a flaky wireless link. Both matter on a display that roams.
+
+```bash
+/home/pi/nettest.sh 600 kitchen-ap      # probe for 10 minutes, label the run
+/home/pi/netreport.py <run-dir>         # loss, latency, jitter, located outages
+```
+
+### nethogs.sh
+
+Per-process network bandwidth, for when something is using the link and it is not obvious
+what.
+
+```bash
+sudo /home/pi/nethogs.sh
+```
 
 ## Useful Commands
 

@@ -76,6 +76,17 @@ if [ -f /home/pi/wifi-band-pin.sh ]; then
     fi
 fi
 
+# Kiosk re-arm cron entry, same idempotent pattern as the band pin above: install.sh
+# writes it for new devices, and this is how displays already in the field get it.
+# A reboot must always bring the kiosk back regardless of what the Exit button was told
+# beforehand — /tmp is tmpfs so the flag is normally gone anyway, and this makes the
+# guarantee explicit rather than a side effect of how /tmp happens to be mounted.
+if ! sudo -u pi crontab -l 2>/dev/null | grep -q 'aprs-kiosk-off'; then
+    log "Adding kiosk re-arm to crontab..."
+    ( sudo -u pi crontab -l 2>/dev/null; echo '@reboot rm -f /tmp/aprs-kiosk-off' ) \
+        | sudo -u pi crontab -
+fi
+
 # Download latest WiFi list from marsaprs.org
 log "Downloading WiFi list..."
 if [ -f /home/pi/.wifi-token ]; then
@@ -96,6 +107,36 @@ fi
 # Update WiFi connections
 log "Updating WiFi connections..."
 /home/pi/update-wifi.php
+
+# ARP flux guard, idempotently — install.sh writes this for new displays, and this is
+# how the ones already in the field get it. See install.sh for the full reasoning; the
+# short version is that a wired display whose WiFi is on the same subnet answers ARP for
+# both addresses on both interfaces, and inbound connections then fail while everything
+# the Pi initiates keeps working. Written only when it differs, so the nightly run does
+# not reload sysctl for no reason.
+ARP_CONF=/etc/sysctl.d/99-arp-flux.conf
+ARP_WANT='net.ipv4.conf.all.arp_ignore = 1
+net.ipv4.conf.all.arp_announce = 2'
+if [ "$(cat "$ARP_CONF" 2>/dev/null)" != "$ARP_WANT" ]; then
+    printf '%s\n' "$ARP_WANT" | sudo tee "$ARP_CONF" > /dev/null
+    sudo sysctl --system > /dev/null 2>&1 || true
+    log "ARP flux guard installed (arp_ignore=1 arp_announce=2)"
+fi
+
+# Power check, nightly, the same as the iGates run. Costs nothing — it reads two
+# counters and a device-tree node, frees nothing and stops nothing — and it catches the
+# fault that otherwise presents as whatever else was happening at the time.
+#
+# On a display that fault has a name: BigTV browned out in August 2026 and again in
+# August 2026 after being re-cabled, and both times the first useful number was this
+# one. The bits it reads are latched SINCE BOOT and cleared by every reboot, so a
+# display that reboots nightly at 4:10 reports its previous day's verdict here, minutes
+# before that reboot wipes it — which is the only moment it can be caught without
+# somebody being logged in at the time.
+if [ -x /home/pi/power-check.sh ]; then
+    /home/pi/power-check.sh 2>&1 | grep -aiE '^power:' \
+        | while read -r l; do log "$l"; done || log "power check skipped (non-fatal)"
+fi
 
 log "=== Display auto-update complete ==="
 date > /home/pi/LastUpdate

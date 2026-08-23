@@ -10,6 +10,16 @@
 
 URL="https://marsaprs.org/"
 
+# Anything that launches the kiosk deliberately also re-arms the monitor. The Exit
+# button in the map footer writes this flag so aprs-monitor stops relaunching the
+# browser; clearing it here is what makes "Start APRS" on the desktop mean "and keep
+# it running from now on" rather than "start it once until the next thing kills it".
+#
+# Cleared here rather than in the desktop shortcut so it holds for every route in:
+# the shortcut, this script run by hand, and the autostart at login. aprs-monitor
+# does NOT call this while the flag is set, so it cannot un-exit itself.
+rm -f /tmp/aprs-kiosk-off
+
 if [ -f ~/autologin.txt ]; then
     mapfile -t lines < ~/autologin.txt
     # Blank first line means "use this machine's name". Without the fallback an

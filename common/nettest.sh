@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# Network reliability probe for MARS iGate hosts.
+# Network reliability probe.
+#
+# Shared by every device type: iGates, Transcribers, the server and the Display Pis.
+# Moved here from igate/home/ on 2026-08-19 — a display that wanders between access
+# points asks exactly the same question an iGate on a cellular hotspot does, and one
+# copy in common/ is one to fix rather than four to drift.
 # Separates the WiFi link (Pi -> hotspot) from the WAN path (hotspot -> internet)
 # so a flaky cellular backhaul can be told apart from a flaky wireless link.
 #
