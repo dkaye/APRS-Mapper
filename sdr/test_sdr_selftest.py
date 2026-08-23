@@ -139,6 +139,54 @@ def test_a_comb_is_recognised_as_self_noise():
     check("a lone spur is not a comb", out["comb_detected"], False)
 
 
+def test_the_noise_floor_is_read_in_adc_counts_not_dbfs():
+    """-4 dB here is 0.4 counts RMS — a converter hearing nothing — and NOT "nearly full
+    scale". Reading it the second way is what turned a gain-range problem into an
+    afternoon of looking at connectors, so the scale is pinned by a test."""
+    print("floor — the scale")
+    # A dead input: every sample the same, so there is no variance to report.
+    check("a constant stream is not a floor", sdr.floor_db(bytes([128]) * 4000), None)
+    check("and neither is nothing at all", sdr.floor_db(b""), None)
+
+    # +/-1 count of dither on both halves: variance 1 per half, 2 together.
+    dither = bytes([127, 127, 129, 129] * 1000)
+    check("half a count of noise reads about 3 dB", sdr.floor_db(dither), 3.0)
+
+    # A signal filling the converter reads far higher — 40-ish dB, not 0.
+    import math as _m
+    big = bytes([128 + int(100 * _m.sin(i / 3.0)) % 100 for i in range(4000)])
+    check("a loud signal is tens of dB above it", sdr.floor_db(big) > 25, True)
+
+
+def test_a_gain_curve_is_summarised_without_being_graded():
+    """The curve says whether anything reaches the receiver. It is recorded and NOT
+    graded, because only half the evidence exists: the connected case is measured, the
+    disconnected case would need somebody to unscrew an antenna. Inventing the threshold
+    from one half is how the calibration ceiling ended up below a real site's knee."""
+    print("curve — summarised, not judged")
+    # Measured on a working 2 m antenna at a quiet site.
+    live = [[8.7, -4.0], [16.6, -4.0], [25.4, -3.7], [32.8, -2.9],
+            [38.6, 0.1], [44.5, 8.4], [49.6, 11.2]]
+    out = sdr.curve_summary(live)
+    check("the rise is top gain minus bottom", out["floor_rise_db"], 15.2)
+    check("the ends are both kept", (out["floor_bottom_db"], out["floor_top_db"]),
+          (-4.0, 11.2))
+    check("and no grade is invented for it", "grade" in out, False)
+
+    # A receiver with nothing arriving: flat on the converter all the way up.
+    flat = [[g, -4.0] for g, _ in live]
+    check("a flat curve rises by nothing", sdr.curve_summary(flat)["floor_rise_db"], 0.0)
+
+    # One transmission caught mid-curve must not read as sensitivity that is not there.
+    spiked = [[8.7, -4.0], [16.6, 20.0], [25.4, -3.7], [32.8, -2.9],
+              [38.6, 0.1], [44.5, 8.4], [49.6, 11.2]]
+    out = sdr.curve_summary(spiked)
+    check("the rise ignores the spike", out["floor_rise_db"], 15.2)
+    check("but the spread still shows it", out["floor_spread_db"], 24.0)
+
+    check("too few points is no summary at all", sdr.curve_summary([[8.7, -4.0]]), {})
+
+
 if __name__ == "__main__":
     for fn in [test_a_spur_beside_the_watched_channel_is_the_headline,
                test_the_channel_itself_is_not_a_spur,
@@ -146,7 +194,9 @@ if __name__ == "__main__":
                test_the_watched_frequency_is_what_moves,
                test_grades,
                test_legacy_keys_are_still_emitted,
-               test_a_comb_is_recognised_as_self_noise]:
+               test_a_comb_is_recognised_as_self_noise,
+               test_the_noise_floor_is_read_in_adc_counts_not_dbfs,
+               test_a_gain_curve_is_summarised_without_being_graded]:
         fn()
     print()
     if FAILURES:

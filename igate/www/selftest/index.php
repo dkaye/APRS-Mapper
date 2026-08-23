@@ -146,7 +146,9 @@ $COLOR = ['GOOD' => '#1a7f37', 'MARGINAL' => '#9a6700', 'BAD' => '#c0392b'];
   <table>
     <thead><tr>
       <th>Receiver</th><th>Grade</th><th>Guard-band spur</th><th>vs best</th><th>Comb?</th>
-      <th>Floor</th><th>Board</th><th>Version</th><th>Reported</th><th></th>
+      <th>Floor</th><th title="How far the noise floor climbs across the tuner's whole gain range">Rise</th>
+      <th title="Whether this channel runs on a measured gain or the compiled-in fallback">Calibration</th>
+      <th>Board</th><th>Version</th><th>Reported</th><th></th>
     </tr></thead>
     <tbody>
     <?php foreach ($rows as $r):
@@ -165,6 +167,19 @@ $COLOR = ['GOOD' => '#1a7f37', 'MARGINAL' => '#9a6700', 'BAD' => '#c0392b'];
         <td class="num"><?= $vsbest !== null ? ($vsbest <= 0.05 ? '<span style="color:#1a7f37">best</span>' : '+'.number_format($vsbest,1)) : '—' ?></td>
         <td><?= g($r,'comb_detected') ? '<span style="color:#c0392b">yes</span>' : '<span class="muted">no</span>' ?></td>
         <td class="num muted"><?= htmlspecialchars(g($r,'floor_db','—')) ?></td>
+<?php // Rise: bottom of the tuner's gain range to the top. A receiver hearing the band
+      // climbs with the gain; one hearing only its own converter stays flat. Deliberately
+      // NOT graded — the connected case is measured, the disconnected case never was, and
+      // a threshold invented from half the evidence is what put the calibration ceiling
+      // below a real site's knee and then blamed the antenna for the silence. ?>
+        <td class="num muted"><?php $rise = g($r,'floor_rise_db');
+          echo is_numeric($rise) ? (((float)$rise >= 0 ? '+' : '') . number_format((float)$rise,1) . ' dB') : '—'; ?></td>
+        <td><?php $cal = (string)g($r,'calibration');
+          $calCol = ['measured'=>'#1a7f37','unmeasured'=>'#9a6700','none'=>'#c0392b'][$cal] ?? null;
+          if ($calCol): $cg = g($r,'cal_gain'); ?>
+            <span class="pill" style="background:<?= $calCol ?>"><?= $cal === 'none' ? 'NEVER' : htmlspecialchars($cal) ?></span>
+            <?php if (is_numeric($cg)): ?><span class="muted"><?= htmlspecialchars((string)$cg) ?>&nbsp;dB</span><?php endif; ?>
+          <?php else: ?><span class="muted">—</span><?php endif; ?></td>
         <td class="muted"><?= htmlspecialchars(str_replace('Raspberry Pi ','',(string)g($r,'pi_model','—'))) ?></td>
         <td class="muted"><?= htmlspecialchars(g($r,'device_version', g($r,'igate_version','—'))) ?></td>
 <?php // "Reported" age from _received (server time, TZ-aware). The gate's own ts
@@ -183,6 +198,18 @@ $COLOR = ['GOOD' => '#1a7f37', 'MARGINAL' => '#9a6700', 'BAD' => '#c0392b'];
       <span style="color:#9a6700">MARGINAL</span> 6&ndash;15&nbsp;dB &middot;
       <span style="color:#c0392b">BAD</span> &gt; 15&nbsp;dB guard-band spur.
       A BAD gate has a self-generated birdie strong enough to capture the FM receiver and stop it decoding APRS.</p>
+    <p><strong>Rise</strong> is how far the noise floor climbs from the bottom of the tuner's
+      gain range to the top. A receiver hearing the band climbs with the gain — about
+      11&ndash;15&nbsp;dB at a quiet 2&nbsp;m site. One hearing only its own converter stays
+      flat. It is recorded rather than graded: a flat curve means either nothing is reaching
+      the tuner or the site is very quiet, and no measurement here separates them.
+      <em>The grade above cannot tell you this</em> &mdash; it measures internal spurs, and a
+      receiver with nothing on its antenna port scores GOOD.</p>
+    <p><strong>Calibration</strong> is for Transcriber channels.
+      <span style="color:#1a7f37">measured</span> means the gain was found from this site's own
+      noise floor; <span style="color:#9a6700">unmeasured</span> means no knee appeared and the
+      channel is running the top of the sweep; <span style="color:#c0392b">NEVER</span> means it
+      is running the compiled-in fallback, which is somebody else's site's number.</p>
     <p><strong>If a gate is BAD:</strong> the usual cause is the SDR dongle sitting inside the case next to the Pi,
       whose clock/power emissions couple in. Move the dongle out of the case on a short USB extension &mdash; that
       alone typically drops the spur ~15&nbsp;dB. A <code>Comb?&nbsp;yes</code> confirms self-noise (a regular comb of

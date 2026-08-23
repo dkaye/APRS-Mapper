@@ -546,6 +546,28 @@ For calibration, from a Pi Zero 2 W: roughly **+18 dB** with the dongle inside t
 which is a deaf gate, against **0–3 dB** with the dongle moved out of the case, which is
 healthy. Rows are graded GOOD / MARGINAL / BAD and sorted so problems are at the top.
 
+Two further columns answer a different question, and it is the one that actually bites. The
+grade above measures the receiver's *internal* noise. It says nothing about whether an
+antenna is attached — a receiver with nothing on its antenna port scores GOOD, which is
+exactly what happened while a Transcriber channel sat deaf.
+
+**Rise** is how far the noise floor climbs from the bottom of the tuner's gain range to the
+top. A receiver that hears the band climbs with the gain, around **11–15 dB** at a quiet
+2 m site. One that hears only its own converter stays flat, within a dB or two. A flat
+reading means either nothing is reaching the tuner or the site is unusually quiet, and the
+page does not guess which — it shows you the number and leaves the judgement to you.
+
+**Calibration** applies to Transcriber channels:
+
+| Shown | What it means |
+|---|---|
+| <span>measured</span> | The gain was found from this site's own noise floor. This is the one you want. |
+| <span>unmeasured</span> | The measurement ran but never found the point where the receiver starts hearing the band, so the channel is running the top of its sweep. Usable, but nothing confirmed it. |
+| <span>NEVER</span> | Never calibrated. The channel is running a gain compiled into the software, measured at somebody else's site. |
+
+A **NEVER** row is worth clearing before an event — use **Calibrate** on the
+[Transcriber](#transcriber-transcriber) page, with the radio quiet.
+
 Each row has a **Delete** button that clears that host's stored report. It is for tidying
 stale or renamed entries — the row reappears on that device's next nightly upload, so it is
 not a way to hide a bad gate for long.

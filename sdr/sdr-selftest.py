@@ -26,8 +26,10 @@ Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
 import argparse
 import csv
 import json
+import math
 import os
 import statistics
+import subprocess
 import sys
 
 # Offsets from the watched frequency, in Hz. These are the iGate's original absolute
@@ -137,6 +139,104 @@ def analyse(specs, watch, guard_lo, guard_hi, chan):
     }
 
 
+# ── is anything actually reaching this receiver? ─────────────────────────────
+# Everything above grades INTERNAL noise, and for a long time it was quietly read as
+# answering a question it cannot: whether the receiver hears anything at all. It does not.
+# A dongle with nothing on its antenna port has LESS internal noise than a working one, so
+# a stone-deaf receiver scores GOOD — which is what it did, minutes before a calibration
+# on the same dongle reported a disconnected antenna, on a receiver whose antenna was
+# connected and working the whole time.
+#
+# What is recorded here is the noise floor against tuner gain. Flat means the converter's
+# own quantisation noise is all that reaches the ADC; rising roughly 1:1 means the band
+# does, amplified along with everything else.
+#
+# NO GRADE IS PUT ON IT, on purpose. The connected case is measured — a quiet 2 m site
+# rises about 15 dB across this ladder, from 0.44 counts RMS to about 3.6. The
+# disconnected case is NOT measured, because that needs somebody to walk over and unscrew
+# an antenna. Setting a threshold from one half of the evidence is precisely the mistake
+# that put the calibration ceiling below a real site's knee and then blamed the hardware
+# for the silence. So the numbers go into the history, and the threshold waits for data.
+CURVE_GAINS = [8.7, 16.6, 25.4, 32.8, 38.6, 44.5, 49.6]
+IQ_RATE = 250_000
+IQ_WARM_SECONDS = 1.5     # discarded off the front: the tuner is still settling
+IQ_SECONDS = 0.6
+
+
+def floor_db(iq):
+    """Power in a block of raw unsigned 8-bit I/Q, in dB relative to one ADC count.
+
+    The same measurement the transcriber's own calibration sweep makes, deliberately: a
+    number here that could not be compared against one from there would be worth much
+    less. A copy rather than an import because this file also runs on iGates, which have
+    no transcriber.py, and it is a dozen lines.
+
+    Each half keeps its own DC offset — the tuner's I and Q offsets differ by a count or
+    two, and down at the converter floor that error would be most of the answer.
+
+    Read the result in COUNTS, not dBFS: -4 dB is 0.4 counts RMS, which is nothing
+    arriving at all. Misreading it as "nearly full scale" costs an afternoon.
+    """
+    if not iq:
+        return None
+    power = 0.0
+    for half in (iq[0::2], iq[1::2]):
+        if not half:
+            return None
+        hist = [half.count(v) for v in range(256)]
+        mean = sum(v * n for v, n in enumerate(hist)) / len(half)
+        power += sum((v - mean) ** 2 * n for v, n in enumerate(hist)) / len(half)
+    return round(10 * math.log10(power), 1) if power > 0 else None
+
+
+def gain_curve(watch, serial="", gains=CURVE_GAINS):
+    """The noise floor at each tuner gain, as [[gain, floor_db], ...].
+
+    The hardware half, kept apart from curve_summary so the reading of the curve can be
+    tested without a radio. A gain that will not measure is dropped rather than guessed
+    at, so a partial curve is still a usable one.
+    """
+    out = []
+    for g in gains:
+        cmd = ["rtl_sdr"]
+        if serial:
+            cmd += ["-d", str(serial)]
+        cmd += ["-f", str(int(watch)), "-s", str(IQ_RATE), "-g", "%g" % g,
+                "-n", str(int(IQ_RATE * (IQ_WARM_SECONDS + IQ_SECONDS))), "-"]
+        try:
+            p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                               timeout=IQ_WARM_SECONDS + IQ_SECONDS + 20)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        settled = p.stdout[int(IQ_RATE * IQ_WARM_SECONDS) * 2:]
+        if len(settled) < IQ_RATE:      # less than half the wanted samples: not a reading
+            continue
+        f = floor_db(settled)
+        if f is not None:
+            out.append([g, f])
+    return out
+
+
+def curve_summary(curve):
+    """What the curve says, and nothing it does not.
+
+    floor_rise_db is top gain minus bottom gain, not max minus min: a transmission caught
+    mid-curve lifts one point and would make max-minus-min look like sensitivity that is
+    not there. The spread is reported separately so that case stays visible.
+    """
+    if len(curve) < 2:
+        return {}
+    floors = [f for _, f in curve]
+    return {
+        'gain_floors': curve,
+        'floor_bottom_db': curve[0][1],
+        'floor_top_db': curve[-1][1],
+        'floor_rise_db': round(curve[-1][1] - curve[0][1], 1),
+        'floor_spread_db': round(max(floors) - min(floors), 1),
+        'curve_gains': len(curve),
+    }
+
+
 def with_legacy_keys(out):
     """Also emit the aprs_guard_* names this used to use.
 
@@ -161,6 +261,10 @@ def main(argv=None):
     p.add_argument("--guard-hi", type=float, default=GUARD_HI_OFFSET)
     p.add_argument("--channel", type=float, default=CHANNEL_OFFSET,
                    help="half-width of the channel itself, excluded from the guard band")
+    p.add_argument("--antenna", action="store_true",
+                   help="also record a noise-floor-against-gain curve on this receiver")
+    p.add_argument("--serial", default="",
+                   help="dongle serial for --antenna; empty means the default device")
     p.add_argument("sweeps", nargs="*")
     args = p.parse_args(argv)
 
@@ -181,6 +285,14 @@ def main(argv=None):
     if out is None:
         print(json.dumps({**meta, 'error': 'no common bins'}))
         return 1
+
+    # Non-fatal by construction: a receiver with no rtl_sdr, or one that will not open,
+    # still gets its spur grade. The curve is extra evidence, never a precondition.
+    if args.antenna:
+        try:
+            out.update(curve_summary(gain_curve(args.watch, args.serial)))
+        except Exception:
+            pass
 
     print(json.dumps({**meta, **with_legacy_keys(out)}))
     return 0

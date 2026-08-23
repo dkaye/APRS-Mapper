@@ -88,7 +88,11 @@ run_one() {
         sleep 1   # let the USB device settle before reopening it
     done
 
-    if python3 "$PY" --watch "$watch" --meta "$meta" "$tmp"/s*.csv > "$tmp/out.json" 2>/dev/null \
+    # --antenna adds a noise-floor-against-gain curve on this same dongle, which is the
+    # one thing the spur grade cannot tell you: whether anything reaches the receiver at
+    # all. Costs about 15 s and is non-fatal — no rtl_sdr, no curve, same grade.
+    if python3 "$PY" --watch "$watch" --meta "$meta" --antenna --serial "$serial" \
+           "$tmp"/s*.csv > "$tmp/out.json" 2>/dev/null \
        && [ -s "$tmp/out.json" ]; then
         # Per-receiver, plus the well-known path the iGate has always written. A
         # Transcriber with two channels would otherwise overwrite its own first result
@@ -98,15 +102,33 @@ run_one() {
         python3 - "$OUT" >> "$HIST" 2>/dev/null <<'PYEOF'
 import json, sys
 d = json.load(open(sys.argv[1]))
-print("%s,%s,%s,%s,%s,%s,%s" % (
+# Appended at the END, never inserted: every gate has a history written against the
+# original seven columns, and anything reading them by position must keep working.
+print("%s,%s,%s,%s,%s,%s,%s,%s,%s,%s" % (
     d.get('ts',''), d.get('host',''), d.get('grade',''),
     d.get('guard_spur_db',''), d.get('guard_spur_mhz',''),
-    d.get('worst_band_spur_db',''), d.get('worst_band_spur_mhz','')))
+    d.get('worst_band_spur_db',''), d.get('worst_band_spur_mhz',''),
+    d.get('floor_rise_db',''), d.get('floor_top_db',''), d.get('calibration','')))
 PYEOF
         echo "selftest: $(python3 -c "
 import json;d=json.load(open('$OUT'));f=d.get('guard_spur_mhz')
 print('%s  %s  %s' % (d.get('host',''), d['grade'],
       'spur %.1f dB @ %s MHz' % (d['guard_spur_db'], f) if f not in (None,'') else 'no measurable guard spur'))" 2>/dev/null)"
+        # The grade above is about internal spurs and says nothing about whether the
+        # receiver hears anything. These two lines are what does.
+        echo "selftest: $(python3 -c "
+import json;d=json.load(open('$OUT'))
+r=d.get('floor_rise_db')
+print('noise floor %s to %s dB across the tuner (rise %s dB)' % (
+    d.get('floor_bottom_db'), d.get('floor_top_db'), r) if r is not None
+    else 'no gain/floor curve measured')" 2>/dev/null)"
+        python3 -c "
+import json,sys;d=json.load(open('$OUT'));c=d.get('calibration')
+print('selftest: %s' % {
+  'measured':   'gain %s squelch %s, measured for this site' % (d.get('cal_gain'), d.get('cal_squelch')),
+  'unmeasured': 'gain %s squelch %s, NOT a measured knee — top of the sweep' % (d.get('cal_gain'), d.get('cal_squelch')),
+  'none':       'NEVER CALIBRATED — running on the compiled-in fallback',
+}[c]) if c else None" 2>/dev/null
         curl -fsS --max-time 20 -X POST -H 'Content-Type: application/json' \
             --data-binary @"$OUT" "$UPLOAD" >/dev/null 2>&1 \
             && echo "selftest: uploaded to fleet dashboard" || echo "selftest: upload failed (non-fatal)"
@@ -185,7 +207,23 @@ while IFS=$'\t' read -r ID LABEL FREQ SERIAL; do
     # wherever it is tuned instead of assuming the 2 m band.
     RANGE=$(python3 -c "f=int('$FREQ'); print('%d:%d:1000' % (f-2_000_000, f+2_000_000))")
     echo "selftest: measuring $ID at $(python3 -c "print(int('$FREQ')/1e6)") MHz"
+
+    # Is this channel running on a measurement, or on the gain compiled in from somebody
+    # else's site? The device has always known and nothing ever asked, so three channels
+    # ran on the fallback for months and every nightly report said GOOD.
+    CAL=$(python3 - "$ID" <<'CALEOF' 2>/dev/null
+import json, os, re, sys
+d = os.path.join('/var/spool/transcriber', re.sub(r'[^\w.-]', '_', sys.argv[1]))
+try:
+    c = json.load(open(os.path.join(d, 'calibration.json')))
+    f = {'calibration': 'measured' if c.get('knee', True) else 'unmeasured',
+         'cal_gain': c.get('gain'), 'cal_squelch': c.get('squelch')}
+except Exception:
+    f = {'calibration': 'none'}
+print(',' + json.dumps(f)[1:-1])
+CALEOF
+)
     run_one "$ID" "$LABEL" "$FREQ" "$RANGE" "$SERIAL" \
-        ",\"transcriber_version\":\"$TRVER\",\"device_version\":\"$TRVER\",\"device\":\"$(jesc "$HOST")\",\"kind\":\"transcriber\""
+        ",\"transcriber_version\":\"$TRVER\",\"device_version\":\"$TRVER\",\"device\":\"$(jesc "$HOST")\",\"kind\":\"transcriber\"$CAL"
 done < "/tmp/sdr-selftest-channels.$$"
 rm -f "/tmp/sdr-selftest-channels.$$"
