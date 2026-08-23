@@ -28,6 +28,9 @@ dependencies:
   package_info_plus: ^8.0.0
   flutter_local_notifications: ^22.0.1
   just_audio: ^0.9.46
+  # Promoted from a transitive dependency of just_audio to a direct one, because the
+  # app now configures the iOS session itself — see AudioQueue.configureSession.
+  audio_session: ^0.1.21
   flutter_tts: ^4.2.0
   image_picker: ^1.1.2
 

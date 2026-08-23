@@ -150,7 +150,7 @@ class _MessagingScreenState extends State<MessagingScreen> {
     // Through the shared queue, so this cannot start on top of a radio clip and it
     // inherits the five-minute rule with everything else.
     AudioQueue.instance
-        .addSpeech(ts: m.ts, senderLabel: m.senderLabel, text: m.text, msgId: m.id);
+        .addSpeech(ts: m.ts, senderLabel: m.spokenLabel, text: m.text, msgId: m.id);
     return Future.value();
   }
 
@@ -925,17 +925,32 @@ class _MessagingScreenState extends State<MessagingScreen> {
       valueListenable: AudioQueue.instance.pending,
       builder: (context, _, __) {
         final playing = AudioQueue.instance.isQueuedClip(m.id);
+        // A clip the queue could not fetch, decode, or get a session for. Says so
+        // rather than flashing "Playing" and going quiet, which is indistinguishable
+        // from a muted phone and sent us looking in the wrong place for an afternoon.
+        final failed = !playing && AudioQueue.instance.clipFailed(m.id);
         return Padding(
           padding: const EdgeInsets.only(top: 4),
           child: InkWell(
             onTap: () => _playClip(m.id, url, ts: m.ts, secs: secs ?? 0),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(playing ? Icons.stop_circle_outlined : Icons.play_circle_outline,
-                  size: 20, color: _kBlue),
+              Icon(
+                  playing
+                      ? Icons.stop_circle_outlined
+                      : (failed ? Icons.error_outline : Icons.play_circle_outline),
+                  size: 20,
+                  color: failed ? Colors.redAccent : _kBlue),
               const SizedBox(width: 4),
               Text(
-                playing ? 'Playing…' : (secs != null ? 'Play ${secs.round()}s' : 'Play'),
-                style: const TextStyle(fontSize: 12, color: _kBlue, fontWeight: FontWeight.w500),
+                playing
+                    ? 'Playing…'
+                    : failed
+                        ? 'Unavailable — tap to retry'
+                        : (secs != null ? 'Play ${secs.round()}s' : 'Play'),
+                style: TextStyle(
+                    fontSize: 12,
+                    color: failed ? Colors.redAccent : _kBlue,
+                    fontWeight: FontWeight.w500),
               ),
             ]),
           ),

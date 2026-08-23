@@ -5,6 +5,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart';
+import 'audio_queue.dart';
 import 'config_service.dart';
 import 'download_screen.dart';
 import 'map_config.dart';
@@ -18,6 +19,11 @@ void main() async {
   // background to deliver a watch message, and StartupRouter may never reach
   // MapScreen on that path. The bridge has to exist regardless of which screen wins.
   unawaited(WatchBridge.instance.init());
+  // Before anything can play. Two engines share one AVAudioSession — flutter_tts for
+  // speech and just_audio for recorded clips — and until this was added only the first
+  // configured it, so clips threw on activation and vanished without a sound. Awaited
+  // rather than fired off, because the failure it prevents happens on the first tap.
+  await AudioQueue.configureSession();
   // Required for sendDataToTask / addTaskDataCallback communication channel.
   // iOS has no foreground task; calling this on iOS can enable a wake lock that
   // prevents auto-lock even when the user isn't sharing.

@@ -27,6 +27,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:audio_session/audio_session.dart';
 import 'package:just_audio/just_audio.dart';
 
 import 'speaker.dart';
@@ -106,6 +107,43 @@ class AudioQueue {
   static final AudioQueue instance = AudioQueue._();
 
   final _player = AudioPlayer();
+
+  /// Configure the shared iOS/Android audio session once, before anything plays.
+  ///
+  /// Without this, recorded clips were silently unplayable on iPhone: tapping Play
+  /// showed "Playing" for a fraction of a second and produced nothing. Safari played
+  /// the same URL perfectly, which is what proved the file, the network and the format
+  /// were all fine and the fault was here.
+  ///
+  /// The cause is two engines and one AVAudioSession. `flutter_tts` sets its own
+  /// category in Speaker; `just_audio` set none at all and inherited whatever it found,
+  /// so activating it while the speech engine held the session threw — and the queue's
+  /// catch, which exists so a bad clip cannot stall the queue, swallowed it. The same
+  /// contention the header of speaker.dart warns about for two TTS instances, one layer
+  /// down and between two different packages.
+  ///
+  /// `playback` rather than the default, and deliberately: it is what makes both clips
+  /// and speech audible with the ringer switch on silent, which is the position a phone
+  /// lives in on a net. `duckOthers` and `spokenAudio` match what Speaker asks for, so
+  /// the two engines want the same session instead of fighting over it.
+  static Future<void> configureSession() async {
+    try {
+      final session = await AudioSession.instance;
+      await session.configure(const AudioSessionConfiguration(
+        avAudioSessionCategory: AVAudioSessionCategory.playback,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.duckOthers,
+        avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+        androidAudioAttributes: AndroidAudioAttributes(
+          contentType: AndroidAudioContentType.speech,
+          usage: AndroidAudioUsage.assistanceNavigationGuidance,
+        ),
+        androidAudioFocusGainType: AndroidAudioFocusGainType.gainTransientMayDuck,
+      ));
+    } catch (_) {
+      // Best effort. A session the OS will not configure is a reason to try playing
+      // anyway — it may already be usable — not a reason to fail before the attempt.
+    }
+  }
   final List<_Item> _q = [];
   _Item? _current;
   bool _draining = false;
@@ -210,10 +248,15 @@ class AudioQueue {
     bool force = false,
   }) {
     if (_q.any((i) => i.url == url) || _current?.url == url) return;
+    _failedClips.remove(msgId);   // a fresh attempt deserves a clean slate
     _q.add(_Item.clip(ts, url, seconds, msgId: msgId, force: force));
     _publish();
     unawaited(_drain());
   }
+
+  /// Clips whose playback failed, so their row can say so rather than going quiet.
+  final _failedClips = <int>{};
+  bool clipFailed(int msgId) => _failedClips.contains(msgId);
 
   /// True while this message's clip is playing or waiting — what the Play/Stop control
   /// on a bubble reflects. It was local state on the messaging screen, which is why
@@ -310,7 +353,14 @@ class AudioQueue {
             await _player.setUrl(item.url).timeout(budget);
             await _player.play().timeout(budget, onTimeout: () => _player.stop());
           }
-        } catch (_) {
+        } catch (e) {
+          // Remember which message failed, so the bubble can say "Unavailable" instead
+          // of flashing "Playing" and going quiet. There is still no dialog — the radio
+          // is not worth one — but a silent failure indistinguishable from a muted phone
+          // is what turned a broken audio session into an afternoon of diagnosis.
+          // _publish() runs a few lines below on the way out of this item, and the
+          // queue count changes when it does, so the row rebuilds and sees this.
+          if (item.kind == _Kind.clip && item.msgId != 0) _failedClips.add(item.msgId);
           // A clip that will not fetch or decode, or an audio session the OS refused.
           // Skipped in silence — the radio is not worth an error dialog, and the next
           // over is already on its way.

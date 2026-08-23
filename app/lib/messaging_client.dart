@@ -137,6 +137,11 @@ class MsgMessage {
   final String? fromKind;
   final String? fromKey;
   final String? fromShort;
+  /// The tracker id written out — "Cardiac" for "CAR" — or null when the ID-name
+  /// list on the Transcriber page has no entry for it. Composed on the server so
+  /// this client, the mobile-session path, the web panel and both watches cannot
+  /// disagree about what a label says.
+  final String? fromSpoken;
   final String fromName;
   final double? lat;
   final double? lon;
@@ -179,12 +184,12 @@ class MsgMessage {
   /// a message nobody heard.
   final bool addressedToMe;
 
-  const MsgMessage({required this.id, required this.conversationId, required this.ts, required this.text, this.broadcast = false, required this.fromId, this.fromKind, this.fromKey, this.fromShort, this.fromName = '', this.lat, this.lon, this.hasPhoto = false, this.photoW, this.photoH, this.toLabel, this.hasAudio = false, this.audioUrl, this.audioSecs, this.monitored = false, this.addressedToMe = false});
+  const MsgMessage({required this.id, required this.conversationId, required this.ts, required this.text, this.broadcast = false, required this.fromId, this.fromKind, this.fromKey, this.fromShort, this.fromSpoken, this.fromName = '', this.lat, this.lon, this.hasPhoto = false, this.photoW, this.photoH, this.toLabel, this.hasAudio = false, this.audioUrl, this.audioSecs, this.monitored = false, this.addressedToMe = false});
 
   MsgMessage asMonitored() => MsgMessage(
         id: id, conversationId: conversationId, ts: ts, text: text, broadcast: broadcast,
         fromId: fromId, fromKind: fromKind, fromKey: fromKey, fromShort: fromShort,
-        fromName: fromName, lat: lat, lon: lon, hasPhoto: hasPhoto, photoW: photoW,
+        fromSpoken: fromSpoken, fromName: fromName, lat: lat, lon: lon, hasPhoto: hasPhoto, photoW: photoW,
         photoH: photoH, toLabel: toLabel, hasAudio: hasAudio, audioUrl: audioUrl,
         audioSecs: audioSecs, monitored: true, addressedToMe: addressedToMe,
       );
@@ -204,6 +209,7 @@ class MsgMessage {
         fromKind: j['from_kind'] as String?,
         fromKey: j['from_key'] as String?,
         fromShort: j['from_short'] as String?,
+        fromSpoken: j['from_spoken'] as String?,
         fromName: j['from_name'] as String? ?? '',
         lat: (j['lat'] as num?)?.toDouble(),
         lon: (j['lon'] as num?)?.toDouble(),
@@ -216,9 +222,17 @@ class MsgMessage {
         audioUrl: j['audio_url'] as String?,
         audioSecs: (j['audio_secs'] as num?)?.toDouble(),
       );
-  String get senderLabel {
+  String get senderLabel => _label(' ');
+
+  /// The same label for the speech engine, with a comma between the station and the
+  /// person. "From Hiker One Germain" runs the two into a single unfamiliar name;
+  /// the comma is what makes them two facts, and it is audible.
+  String get spokenLabel => _label(', ');
+
+  String _label(String sep) {
     if (fromKind == 'mobile' && fromShort != null && fromShort!.isNotEmpty) {
-      return (fromName.isNotEmpty && fromName != fromKey) ? '$fromShort $fromName' : fromShort!;
+      final head = (fromSpoken != null && fromSpoken!.isNotEmpty) ? fromSpoken! : fromShort!;
+      return (fromName.isNotEmpty && fromName != fromKey) ? '$head$sep$fromName' : head;
     }
     return fromName.isNotEmpty ? fromName : (fromKey ?? '');
   }

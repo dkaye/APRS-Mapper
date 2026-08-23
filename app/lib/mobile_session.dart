@@ -22,6 +22,9 @@ class InboundMessage {
   /// same thread; 0 from a server that predates the field.
   final int conversationId;
   final String? fromShort; // M0xx, for the "M141 Dirck" label
+  /// The id written out — "Cardiac" for "CAR" — from the ID-name list, or null.
+  /// Server-supplied, so the watch never re-implements the labelling rules.
+  final String? fromSpoken;
   final String? fromKind; // 'mobile' | 'operator'
 
   /// The sender's addressable identity — an operator's name, a mobile's callsign.
@@ -37,6 +40,7 @@ class InboundMessage {
     required this.ts,
     this.conversationId = 0,
     this.fromShort,
+    this.fromSpoken,
     this.fromKind,
     this.fromKey,
     this.broadcast = false,
@@ -48,17 +52,25 @@ class InboundMessage {
     ts: (j['ts'] as num?)?.toInt() ?? 0,
     conversationId: (j['conversation_id'] as num?)?.toInt() ?? 0,
     fromShort: j['from_short'] as String?,
+    fromSpoken: j['from_spoken'] as String?,
     fromKind: j['from_kind'] as String?,
     fromKey: j['from_key'] as String?,
     broadcast: j['broadcast'] as bool? ?? false,
   );
 
-  /// How the sender is shown — "M141 Dirck" for a mobile, the name for an operator.
+  /// How the sender is shown — "M141 Dirck" for a mobile, the name for an operator,
+  /// and "Cardiac Stanton" where the ID-name list gives "CAR" a written-out form.
   /// Mirrors MsgMessage.senderLabel in messaging_client.dart so both paths agree.
-  String get senderLabel {
+  String get senderLabel => _label(' ');
+
+  /// With a comma, for speech. See MsgMessage.spokenLabel.
+  String get spokenLabel => _label(', ');
+
+  String _label(String sep) {
     final s = fromShort;
     if (fromKind == 'mobile' && s != null && s.isNotEmpty) {
-      return fromLabel.isNotEmpty && fromLabel != s ? '$s $fromLabel' : s;
+      final head = (fromSpoken != null && fromSpoken!.isNotEmpty) ? fromSpoken! : s;
+      return fromLabel.isNotEmpty && fromLabel != s ? '$head$sep$fromLabel' : head;
     }
     return fromLabel;
   }

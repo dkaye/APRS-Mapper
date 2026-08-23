@@ -529,7 +529,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     // poor one: three stale messages were read out and four fresh ones were not.
     for (final m in spoken) {
       AudioQueue.instance.addSpeech(
-          ts: m.ts, senderLabel: m.senderLabel, text: m.text, msgId: m.id);
+          ts: m.ts, senderLabel: m.spokenLabel, text: m.text, msgId: m.id);
     }
   }
 
@@ -590,7 +590,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         // announcements on reconnect.
         AudioQueue.instance.addSpeech(
           ts: msg.ts,
-          senderLabel: msg.senderLabel,
+          senderLabel: msg.spokenLabel,
           text: msg.text,
           msgId: msg.id,
           chime: true,
@@ -641,7 +641,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     // information rather than duplication. Only the second voice is the problem.
     if (!WatchBridge.instance.watchWillAnnounce) {
       AudioQueue.instance.addSpeech(
-          ts: msg.ts, senderLabel: msg.senderLabel, text: msg.text, msgId: msg.id);
+          ts: msg.ts, senderLabel: msg.spokenLabel, text: msg.text, msgId: msg.id);
     }
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
