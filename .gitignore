@@ -34,3 +34,6 @@ display/home/wifi.conf
 staged.patch
 .claude-trace/
 __pycache__/
+
+# PHPUnit's per-run cache: local timing/state, changes on every test run.
+.phpunit.result.cache
