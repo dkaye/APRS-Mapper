@@ -8,17 +8,48 @@
  * GET  ?ip=<ip>   — render terminal page
  * POST ?auth      — accept ip/user/pass, mint one-time token, return JSON {token}
  *
+ * Both paths require netbird.admin, as do ssh_stream/input/resize.php. The page
+ * is only ever reached from admin.php, which requires the same thing — but the
+ * check has to live here too, because the token minted below is what decides
+ * which host ssh_relay.py dials, and a public server that will relay an SSH
+ * attempt for an anonymous caller is one whether or not a link points at it.
+ *
  * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
  * ©2025 Doug Kaye, K6DRK <doug@rds.com>
  */
 
+require_once '/var/www/html/auth/auth.php';
+require_once __DIR__ . '/yaml_lib.php';
+
+/** The device entry for an IP, or null. addresses.yaml is the whole allow-list. */
+function ssh_device_for_ip(string $ip): ?array {
+    foreach (loadDevices(__DIR__ . '/addresses.yaml') as $d) {
+        if ($d['ip'] === $ip) return $d;
+    }
+    return null;
+}
+
 // POST ?auth — mint a one-time token from supplied credentials
 if (isset($_GET['auth']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Content-Type: application/json');
+    // JSON, not require_permission's redirect: the caller is fetch() from the
+    // terminal page, and it renders d.error straight into the login box.
+    if (!has_permission('netbird.admin')) {
+        http_response_code(403);
+        echo json_encode(['error' => 'Not signed in, or missing netbird.admin']);
+        exit;
+    }
     $ip   = trim($_POST['ip']   ?? '');
     $user = trim($_POST['user'] ?? '');
     $pass = $_POST['pass'] ?? '';
     if (!$ip || !$user) { echo json_encode(['error' => 'ip and user required']); exit; }
+    // The GET path below has always checked this; this path had not, so the token
+    // it minted could name any host the server can reach — including its own LAN.
+    if (!ssh_device_for_ip($ip)) {
+        http_response_code(404);
+        echo json_encode(['error' => 'Unknown device']);
+        exit;
+    }
     $token = bin2hex(random_bytes(16));
     file_put_contents("/tmp/aprs_ssh_{$token}.creds",
         json_encode(['ip' => $ip, 'user' => $user, 'pass' => $pass]), LOCK_EX);
@@ -27,15 +58,11 @@ if (isset($_GET['auth']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // GET — render terminal page
-require_once __DIR__ . '/yaml_lib.php';
+require_permission('netbird.admin');
 $ip = trim($_GET['ip'] ?? '');
 if (!$ip) { http_response_code(400); echo 'Missing ip'; exit; }
 
-$devices = loadDevices(__DIR__ . '/addresses.yaml');
-$device  = null;
-foreach ($devices as $d) {
-    if ($d['ip'] === $ip) { $device = $d; break; }
-}
+$device = ssh_device_for_ip($ip);
 if (!$device) { http_response_code(404); echo 'Device not found'; exit; }
 
 $name = $device['name'] ?? $ip;

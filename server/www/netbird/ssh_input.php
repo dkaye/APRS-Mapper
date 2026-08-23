@@ -8,6 +8,14 @@
  * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
  * ©2025 Doug Kaye, K6DRK <doug@rds.com>
  */
+require_once '/var/www/html/auth/auth.php';
+// netbird.admin, checked here and not only on the page that links here: this
+// endpoint drives a live SSH session, and a token is not an access control —
+// ssh_term.php will mint one for whoever asks. 403 rather than
+// require_permission's redirect, because the caller is fetch()/EventSource and
+// a 302 to the login page is not something either can act on.
+if (!has_permission('netbird.admin')) { http_response_code(403); exit; }
+
 $token = $_GET['token'] ?? '';
 if (!$token || !preg_match('/^[a-f0-9]{32}$/', $token)) { http_response_code(400); exit; }
 
