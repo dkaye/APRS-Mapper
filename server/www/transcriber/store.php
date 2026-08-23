@@ -112,6 +112,13 @@ function transcriber_channels_for(string $device, ?string $path = null): array
             // unlike record_until when it was first added, so the manager's checkbox
             // actually reaches the device instead of surviving until the next poll.
             'send_audio'   => (bool)($c['send_audio'] ?? false),
+            // What to do about courtesy tones and Morse identifiers: "observe" (the
+            // default — measure, record the verdict, drop nothing), "drop", or "off".
+            // Named here for the reason above: without it a channel could never be moved
+            // off observe at all, because the poll would erase the value within a minute.
+            // Empty string rather than a default, so the device's own default decides and
+            // there is one place that says what it is.
+            'tone_filter'  => (string)($c['tone_filter'] ?? ''),
         ];
     }
     return $out;

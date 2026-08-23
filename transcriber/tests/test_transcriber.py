@@ -2204,16 +2204,22 @@ def stub_whisper(directory, says):
     return path
 
 
-def run_pipeline(tmp, says, clip_seconds=3.0, vocabulary=None, channel=None):
+def run_pipeline(tmp, says, clip_seconds=3.0, vocabulary=None, channel=None, audio=None):
     """One --spool-only pass over a single clip. Returns the entries the server got.
 
     `channel` is merged into the channel entry, for the settings a test wants to set the
     way the manager would rather than by reaching into the module.
+
+    `audio` writes the clip when the test cares what is in it — silence otherwise, which
+    is what every test that only exercises the text filters wants.
     """
     spool = os.path.join(tmp, "spool")
     os.makedirs(spool, exist_ok=True)
     clip = os.path.join(spool, "clip_001.wav")
-    write_wav(clip, clip_seconds)
+    if audio:
+        audio(clip)
+    else:
+        write_wav(clip, clip_seconds)
     # settled_clips skips anything sox might still be appending to, so backdate the
     # mtime past that window. Without this the clip is simply not picked up and every
     # assertion about the filters passes for the wrong reason.
@@ -2245,7 +2251,7 @@ def run_pipeline(tmp, says, clip_seconds=3.0, vocabulary=None, channel=None):
         "--spool-only", "--once",
     ])
     srv.shutdown()
-    return rc, [e["text"] for e in Handler.seen]
+    return rc, [e["text"] for e in Handler.seen if "text" in e]
 
 
 def test_a_clip_is_queued_once_not_once_per_loop():
@@ -2755,6 +2761,182 @@ def test_unknown_channel_is_fatal():
             print("  ok  refuses to start")
 
 
+# ── tones: courtesy beeps and Morse IDs ──────────────────────────────────────
+
+def _tone_wav(path, seconds, hz=800, rate=16000, amplitude=9000, keyed=None):
+    """A clip on one frequency. `keyed` gives Morse-like on/off in seconds per element."""
+    n = int(rate * seconds)
+    frames = []
+    for i in range(n):
+        on = True
+        if keyed:
+            on = int(i / (rate * keyed)) % 2 == 0
+        v = amplitude * math.sin(2 * math.pi * hz * i / rate) if on else 0
+        frames.append(struct.pack("<h", int(v)))
+    with wave.open(path, "w") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate)
+        w.writeframes(b"".join(frames))
+
+
+def _speechlike_wav(path, seconds, rate=16000):
+    """A stand-in for speech: pitch that moves, harmonics, and consonant-like noise.
+
+    Not real speech, but it has the property the detector is built to test for — the
+    frequency does not hold still — so a detector that fires on this would fire on a
+    person, which is the failure that matters.
+    """
+    n = int(rate * seconds)
+    frames = []
+    state = 12345
+    for i in range(n):
+        t = i / float(rate)
+        f0 = 120 + 60 * math.sin(2 * math.pi * 3.1 * t)      # pitch sweeping, as speech does
+        v = 6000 * math.sin(2 * math.pi * f0 * t) + 2500 * math.sin(2 * math.pi * 2 * f0 * t)
+        if int(t * 7) % 3 == 0:                               # bursts of consonant noise
+            state = (1103515245 * state + 12345) % (1 << 31)
+            v = (state % 12000) - 6000
+        frames.append(struct.pack("<h", max(-32000, min(32000, int(v)))))
+    with wave.open(path, "w") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate)
+        w.writeframes(b"".join(frames))
+
+
+def test_a_courtesy_tone_is_recognised_as_a_tone():
+    with tempfile.TemporaryDirectory() as tmp:
+        wav = os.path.join(tmp, "beep.wav")
+        _tone_wav(wav, 1.5, hz=800)
+        scan = transcriber.tone_scan(wav)
+        check("a beep is measured", bool(scan), True)
+        check("its frequency is found", abs(scan["hz"] - 800) < 40, True)
+        check("and it is called a tone", "steady tone" in transcriber.tone_reason(scan), True)
+
+
+def test_a_morse_identifier_is_recognised_and_named_as_one():
+    with tempfile.TemporaryDirectory() as tmp:
+        wav = os.path.join(tmp, "cw.wav")
+        _tone_wav(wav, 4.0, hz=700, keyed=0.06)      # ~20 wpm dits
+        scan = transcriber.tone_scan(wav)
+        reason = transcriber.tone_reason(scan)
+        check("keyed carrier is a tone", reason != "", True)
+        check("and the keying tells it from a held tone", "Morse" in reason, True)
+
+
+def test_a_long_clip_is_never_judged_a_tone():
+    """The guard that protects real transmissions.
+
+    A voice over a steady hum or carrier measures as tonal — this test asks whether one
+    frequency dominates, not whether the clip is only that frequency. The repeater's own
+    spoken identifier did exactly that on 2026-08-20 (tonal=1.00, agree=1.00) and would
+    have been deleted. Duration is what separates them: a beep is short.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        short = os.path.join(tmp, "beep.wav")
+        _tone_wav(short, 3.0, hz=1454)
+        check("a short pure tone is a tone",
+              transcriber.tone_reason(transcriber.tone_scan(short)) != "", True)
+        long = os.path.join(tmp, "long.wav")
+        _tone_wav(long, 13.0, hz=1454)      # same signal, transmission length
+        check("the same signal at 13s is left alone",
+              transcriber.tone_reason(transcriber.tone_scan(long)), "")
+
+
+def test_a_beep_with_few_audible_frames_is_still_caught():
+    """The quantisation that made this miss half the beeps it should have caught.
+
+    A 2-3 second beep yields only 7-9 audible frames, so the tonal fraction can only take
+    values like 5/7, 6/8, 7/8. The original 0.75 threshold sat mid-quantisation and
+    identical beeps fell either side of it at random.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        for secs in (2.3, 2.56, 2.82, 4.6):
+            w = os.path.join(tmp, f"b{secs}.wav")
+            _tone_wav(w, secs, hz=1454, keyed=0.06)
+            scan = transcriber.tone_scan(w)
+            check(f"{secs}s keyed tone is caught",
+                  transcriber.tone_reason(scan) != "", True)
+
+
+def test_speech_is_not_mistaken_for_a_tone():
+    with tempfile.TemporaryDirectory() as tmp:
+        wav = os.path.join(tmp, "voice.wav")
+        _speechlike_wav(wav, 3.0)
+        check("a moving pitch is not a tone", transcriber.tone_reason(transcriber.tone_scan(wav)), "")
+
+
+def test_an_unreadable_or_tiny_clip_is_no_opinion_not_a_drop():
+    with tempfile.TemporaryDirectory() as tmp:
+        missing = os.path.join(tmp, "gone.wav")
+        check("a missing file says nothing", transcriber.tone_scan(missing), None)
+        tiny = os.path.join(tmp, "tiny.wav")
+        write_wav(tiny, 0.05, amplitude=9000)
+        check("too short to judge says nothing", transcriber.tone_scan(tiny), None)
+        silent = os.path.join(tmp, "silent.wav")
+        write_wav(silent, 2.0)
+        check("silence says nothing", transcriber.tone_scan(silent), None)
+        check("and no opinion is never a reason to drop", transcriber.tone_reason(None), "")
+
+
+def test_the_filter_defaults_to_observing_and_rejects_a_typo():
+    ch = lambda d: transcriber.Channel(dict({"id": "rx1"}, **d))
+    check("absent means observe", ch({}).tone_filter, "observe")
+    check("drop is honoured", ch({"tone_filter": "drop"}).tone_filter, "drop")
+    check("off is honoured", ch({"tone_filter": "off"}).tone_filter, "off")
+    check("case does not matter", ch({"tone_filter": "DROP"}).tone_filter, "drop")
+    # A typo must not silently start deleting transmissions.
+    check("a typo falls back to observe", ch({"tone_filter": "dorp"}).tone_filter, "observe")
+
+
+def test_a_standalone_tone_costs_the_log_neither_a_line_nor_a_second_of_audio():
+    """Drop mode must beat the audio post, not just the transcription.
+
+    The audio block deliberately runs even when the transcription is rejected, so a
+    garbled human over is still audible. A courtesy tone is the case where that is
+    wrong, and it is only wrong if the verdict is reached first.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, texts = run_pipeline(
+            tmp, "Beep.", channel={"tone_filter": "drop", "send_audio": True},
+            audio=lambda p: _tone_wav(p, 3.0, hz=800))
+        check("the channel finishes normally", rc, 0)
+        check("nothing is written to the log", texts, [])
+        check("and nothing at all is posted — no text row, no audio row",
+              len(Handler.seen), 0)
+
+
+def test_observing_a_tone_still_logs_and_still_sends_the_audio():
+    """The default mode changes nothing. That is the whole point of it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, texts = run_pipeline(
+            tmp, "K6DRK testing.", channel={"tone_filter": "observe", "send_audio": True},
+            audio=lambda p: _tone_wav(p, 3.0, hz=800))
+        check("the transcription still reaches the log", texts, ["K6DRK testing."])
+
+
+def test_a_tone_in_front_of_speech_is_not_a_standalone_tone():
+    """Dropping is for transmissions that are ONLY a tone.
+
+    A beep with somebody talking after it leaves most of the clip broadband, so the
+    frequency agreement never reaches the threshold and the whole transmission is kept —
+    audio and text together. Trimming the beep off the front would mean editing a
+    recording of what came over the air, which this deliberately does not do.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        def beep_then_voice(path):
+            _tone_wav(path, 0.4, hz=800)
+            head = wave.open(path); frames = head.readframes(head.getnframes()); head.close()
+            voice = os.path.join(os.path.dirname(path), "_v.wav")
+            _speechlike_wav(voice, 2.6)
+            v = wave.open(voice); vf = v.readframes(v.getnframes()); v.close()
+            with wave.open(path, "w") as w:
+                w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+                w.writeframes(frames + vf)
+            os.unlink(voice)
+        clip = os.path.join(tmp, "mixed.wav")
+        beep_then_voice(clip)
+        check("a tone with speech behind it is not judged a tone",
+              transcriber.tone_reason(transcriber.tone_scan(clip)), "")
+
+
 if __name__ == "__main__":
     for fn in [
         test_worth_logging, test_clean_strips_sound_effects,
@@ -2841,6 +3023,16 @@ if __name__ == "__main__":
         test_an_idle_frequency_is_not_fatal,
         test_a_broken_whisper_is_fatal_not_silent,
         test_disabled_channel_does_nothing, test_unknown_channel_is_fatal,
+        test_a_courtesy_tone_is_recognised_as_a_tone,
+        test_a_morse_identifier_is_recognised_and_named_as_one,
+        test_speech_is_not_mistaken_for_a_tone,
+        test_a_long_clip_is_never_judged_a_tone,
+        test_a_beep_with_few_audible_frames_is_still_caught,
+        test_an_unreadable_or_tiny_clip_is_no_opinion_not_a_drop,
+        test_the_filter_defaults_to_observing_and_rejects_a_typo,
+        test_a_standalone_tone_costs_the_log_neither_a_line_nor_a_second_of_audio,
+        test_observing_a_tone_still_logs_and_still_sends_the_audio,
+        test_a_tone_in_front_of_speech_is_not_a_standalone_tone,
     ]:
         fn()
     if FAILURES:

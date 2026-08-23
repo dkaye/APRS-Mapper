@@ -261,6 +261,23 @@ class Channel:
         # this IS in transcriber_channels_for()'s key list, so the manager's checkbox
         # reaches the device on the next config poll rather than surviving a minute.
         self.send_audio = bool(d.get("send_audio", False))
+        # What to do about courtesy tones and Morse IDs — see tone_scan.
+        #
+        #   "observe"  measure and record the verdict, drop nothing   (the default)
+        #   "drop"     skip transcription and logging for a clip judged a tone
+        #   "off"      do not measure at all
+        #
+        # Observe by default, and deliberately: this file's standing rule is that losing
+        # a genuine transmission costs the log one line while admitting an invented one
+        # costs it credibility, and a detector nobody has yet checked against their own
+        # repeater is exactly the thing that could do the first. Observe changes nothing
+        # about what is logged; it writes what it WOULD have dropped into the manifest and
+        # the journal, so a site can read an event back and then turn it on knowing what
+        # that will cost. Anything unrecognised is treated as "observe" for the same
+        # reason _cap() exists: a typo in an optional setting must not change behaviour.
+        mode = str(d.get("tone_filter") or "observe").strip().lower()
+        self.tone_filter = mode if mode in ("off", "observe", "drop") else "observe"
+
 
 
 def record_deadline(value):
@@ -711,6 +728,218 @@ def clip_seconds(path):
             return w.getnframes() / float(w.getframerate() or 1)
     except (wave.Error, OSError, EOFError):
         return 0.0
+
+
+# ── tones: courtesy beeps and Morse IDs ──────────────────────────────────────
+#
+# A repeater's courtesy tone and its CW identifier are the two things on the air that
+# are not speech and arrive all day. Both were reaching the log: the tone as the word
+# "Beep" (see HALLUCINATIONS) and the CW ID as whatever whisper made of ten seconds of
+# keyed carrier — which is not a stock invention, so nothing downstream caught it.
+#
+# The physical difference is the whole detector. Speech is broadband and its pitch
+# moves constantly: a vowel is periodic for a tenth of a second, then a consonant
+# breaks it, then the next vowel is at a different pitch. A beep and a CW ID sit on ONE
+# frequency for as long as they last. So the question is not "is this periodic" — voiced
+# speech is — but "is it periodic at the SAME frequency all the way through", and
+# essentially nothing anybody says answers yes.
+#
+# Morse needs no separate test. Its key-down segments are all on the tone frequency and
+# its key-up gaps are below the floor, so it is measured on its tone alone and lands in
+# the same verdict. The keying count is reported anyway, because "a Morse identifier" is
+# a more useful line in the manifest than "a steady tone" when reading back what was
+# dropped.
+#
+# Runs BEFORE whisper, which is the point of it: the verdict comes from the audio rather
+# than from what a model invented about the audio, and a clip that never reaches whisper
+# costs no transcription at all. On a roll call with a tone after every over that is most
+# of the clips.
+#
+# Stdlib only, like the rest of this file, and bounded: autocorrelation in Python is not
+# free, so a fixed number of frames is sampled across the clip however long it is.
+
+TONE_FRAME = 256              # 16 ms at 16 kHz — long enough for two cycles at 250 Hz
+TONE_MAX_FRAMES = 48          # sampled evenly across the clip, so cost is flat in length
+TONE_MIN_FRAMES = 6           # below this there is not enough clip to judge
+TONE_MIN_HZ, TONE_MAX_HZ = 250, 2600   # courtesy tones and CW sidetones live in here
+# How periodic a frame must be to count as a tone at all. Voiced speech reaches 0.9 on a
+# sustained vowel, so this alone separates nothing — it is the frequency agreement below
+# that does the work. This only decides which frames are worth asking about.
+TONE_PERIODICITY = 0.85
+# What fraction of the clip's audible frames must be that periodic, and how many of those
+# must land on one frequency.
+#
+# Measured 2026-08-20 against 200 recorded clips off this repeater, not chosen. The first
+# pair shipped at 0.75/0.80 and caught 120 of them while missing 30 — and the misses were
+# not marginal signals, they were the same courtesy beep the detector caught minutes
+# earlier. A short beep has only 7-9 audible frames, so `tonal` can only take values like
+# 5/7=0.714, 6/8=0.75, 7/8=0.875: the old threshold sat mid-quantisation and identical
+# beeps fell either side of it at random.
+#
+# `agree` is the signal that actually discriminates — it was 1.00 on every real tone in
+# the corpus, and the frequency it agreed on was the same 1454.5 Hz every time. So the
+# frame ratio is loosened and the agreement tightened, which caught 131 and missed 19
+# with no new false positives.
+TONE_FRAME_RATIO = 0.60
+# How close two frames must be to count as the same frequency, and how many must agree.
+TONE_AGREE_TOL = 0.06
+TONE_AGREE_RATIO = 0.90
+# A standalone tone is SHORT. This is the guard that protects real transmissions, and it
+# was added because two of them were not protected: the repeater's own spoken identifier —
+# "From 3,800 feet above the Santa Clara Valley, this is the WR6ABD repeater" — measured
+# tonal=1.00 agree=1.00 and would have been deleted. A steady hum or carrier under a voice
+# makes a clip test as tonal, because this asks whether one frequency dominates and not
+# whether the clip is ONLY that frequency.
+#
+# Duration separates them cleanly where frequency does not: every genuine beep and CW ID
+# in the corpus ran 2-5 seconds and none exceeded 10.5, while the voice identifier ran 13.
+# Eight seconds keeps every real tone measured here and costs one marginal clip.
+TONE_MAX_SECONDS = 8.0
+# A frame counts as audible at this fraction of the clip's own loudest frame. Relative,
+# not absolute, because these clips have already been through squelch and a fixed dBFS
+# floor would mean something different on every site's gain.
+TONE_FLOOR_RATIO = 0.15
+
+
+def _tone_frames(wav_path):
+    """(frames, rate, seconds) — up to TONE_MAX_FRAMES evenly spaced blocks of samples.
+
+    Seeks to each block rather than reading the file: a two-minute clip is nearly two
+    million samples, and unpacking all of them to look at twelve thousand made the cost
+    grow with the length of the clip when the whole design is that it should not. The
+    detector reads the same 48 frames off a four-second over and a two-minute one.
+    """
+    try:
+        with wave.open(wav_path) as w:
+            if w.getsampwidth() != 2 or w.getnchannels() != 1:
+                return [], 0, 0.0     # not the mono 16-bit this expects; say nothing
+            rate = w.getframerate() or SAMPLE_RATE
+            total = w.getnframes()
+            seconds = total / float(rate or SAMPLE_RATE)
+            if total < TONE_FRAME * TONE_MIN_FRAMES:
+                return [], rate, seconds
+            count = min(TONE_MAX_FRAMES, total // TONE_FRAME)
+            step = (total - TONE_FRAME) // max(count - 1, 1)
+            frames = []
+            for i in range(count):
+                w.setpos(i * step)
+                raw = w.readframes(TONE_FRAME)
+                if len(raw) < TONE_FRAME * 2:
+                    break
+                frames.append(struct.unpack("<%dh" % TONE_FRAME, raw))
+    except (wave.Error, OSError, EOFError):
+        return [], 0, 0.0
+    return (frames, rate, seconds) if len(frames) >= TONE_MIN_FRAMES else ([], rate, seconds)
+
+
+def _frame_pitch(frame, rate):
+    """(hz, periodicity) for one frame, or (0, 0.0) when it is not periodic enough.
+
+    Plain autocorrelation over the lags that fall inside the tone band. Normalised by
+    lag 0, so the returned figure is 0..1 and comparable between a loud frame and a
+    quiet one — which matters, because a CW ID is often the loudest thing on the
+    channel and a courtesy tone one of the quietest.
+    """
+    energy = sum(x * x for x in frame)
+    if energy <= 0:
+        return 0, 0.0
+    lo = max(2, int(rate / TONE_MAX_HZ))
+    hi = min(len(frame) // 2, int(rate / TONE_MIN_HZ))
+    best_lag, best = 0, 0.0
+    for lag in range(lo, hi + 1):
+        acc = 0
+        for i in range(len(frame) - lag):
+            acc += frame[i] * frame[i + lag]
+        r = acc / energy
+        if r > best:
+            best, best_lag = r, lag
+    if best_lag == 0 or best < TONE_PERIODICITY:
+        return 0, best
+    return rate / float(best_lag), best
+
+
+def tone_scan(wav_path):
+    """What the audio of one clip looks like, or None when it cannot be judged.
+
+    Never raises and never blocks the channel: an unreadable or too-short clip is
+    "no opinion", which the caller treats as "transcribe it" — the same answer this
+    gave before the detector existed.
+    """
+    try:
+        return _tone_scan(wav_path)
+    except Exception as e:              # noqa: BLE001 - deliberate, see below
+        # Same rule as Retention: this runs inside the transcription path and nothing it
+        # can do may cost the channel a transmission. Every failure has the same answer —
+        # no opinion, which the caller treats as "transcribe it", exactly as it did before
+        # this existed. A narrower catch would only be a list of the ways it has failed so
+        # far, and the next one would arrive in the middle of a net.
+        log.debug("tone scan failed, transcribing anyway: %s", e)
+        return None
+
+
+def _tone_scan(wav_path):
+    frames, rate, seconds = _tone_frames(wav_path)
+    if not frames:
+        return None
+    powers = [sum(x * x for x in f) / len(f) for f in frames]
+    loudest = max(powers)
+    if loudest <= 0:
+        return None
+    floor = loudest * (TONE_FLOOR_RATIO ** 2)      # ratio is on amplitude, power is its square
+    audible = [i for i, p in enumerate(powers) if p >= floor]
+    if len(audible) < TONE_MIN_FRAMES:
+        return None
+
+    pitches = []
+    for i in audible:
+        hz, _ = _frame_pitch(frames[i], rate)
+        if hz:
+            pitches.append(hz)
+
+    # How many of the audible frames sit on one frequency: take each candidate in turn
+    # and count the others within tolerance of it. The winner is the clip's frequency.
+    best_hz, agree = 0.0, 0
+    for candidate in pitches:
+        n = sum(1 for hz in pitches if abs(hz - candidate) <= candidate * TONE_AGREE_TOL)
+        if n > agree:
+            best_hz, agree = candidate, n
+
+    # Key-down/key-up transitions, for telling Morse from a held tone in the manifest.
+    on = [p >= floor for p in powers]
+    keying = sum(1 for a, b in zip(on, on[1:]) if a != b)
+
+    return {
+        "hz": round(best_hz, 1),
+        "tonal": round(len(pitches) / float(len(audible)), 3),
+        "agree": round(agree / float(len(pitches)) if pitches else 0.0, 3),
+        "keying": keying,
+        "frames": len(audible),
+        "seconds": round(seconds, 2),
+    }
+
+
+def tone_reason(scan):
+    """Why this clip is a tone rather than speech, in a few words, or "" if it is not.
+
+    Both conditions, and neither alone: "most frames are periodic" passes on a clip of
+    sustained singing or a long vowel, and "the periodic ones agree" passes on a clip
+    with two periodic frames in it. Together they describe a signal that holds one
+    frequency for its whole length, which speech does not do.
+    """
+    if not scan:
+        return ""
+    if scan["tonal"] < TONE_FRAME_RATIO or scan["agree"] < TONE_AGREE_RATIO:
+        return ""
+    # Long enough to be somebody talking. See TONE_MAX_SECONDS: a voice over a steady hum
+    # measures as tonal, and the only thing that reliably tells it from a beep is that a
+    # beep is short.
+    if scan.get("seconds", 0) > TONE_MAX_SECONDS:
+        return ""
+    # Four transitions is two key-downs — a courtesy tone re-triggering the squelch can
+    # produce two, and a CW identifier produces dozens.
+    if scan["keying"] >= 4:
+        return "a Morse identifier at %d Hz" % round(scan["hz"])
+    return "a steady tone at %d Hz" % round(scan["hz"])
 
 
 # Non-speech tokens are whisper's own vocabulary for sounds rather than words:
@@ -2226,7 +2455,7 @@ class Retention:
             return False
         return True
 
-    def keep(self, path, seconds, heard, cleaned, logged, why):
+    def keep(self, path, seconds, heard, cleaned, logged, why, tone=None, would_drop=""):
         """Copy one clip to the card and write its line of the manifest.
 
         Both, or neither. Audio with no line means re-listening to an hour of radio by
@@ -2272,6 +2501,13 @@ class Retention:
                 "kept": bool(logged),
                 "logged": logged or "",
                 "why": why,
+                # What the tone detector measured, and what it would have done about it.
+                # Both, because they answer different questions when reading a card back:
+                # the numbers are what a threshold would have to be moved past, and
+                # would_drop is the count of transmissions that move would have cost.
+                # Absent when the channel has the detector off.
+                "tone": tone,
+                "would_drop": would_drop,
             }, ensure_ascii=False) + "\n"
             with open(self.manifest, "a", encoding="utf-8") as fh:
                 fh.write(line)
@@ -2589,6 +2825,38 @@ def handle_clip(channel, path, whisper, model, outbox, retention=None):
     # the written record survive an outage, in order; audio is a listening aid with a
     # six-hour life, and a clip that misses its moment is worth nothing later. If this
     # fails, entry_id stays None and the text posts as its own entry exactly as before.
+    # The tone verdict comes FIRST — before the audio is posted and before whisper runs.
+    #
+    # Both of those are things a courtesy tone should not cause, and the audio is the
+    # easier one to get wrong: the block below deliberately posts a clip even when the
+    # transcription is rejected, so that an over whisper turned into "(buzzing)" is still
+    # audible to anyone listening. That is right for a garbled human transmission and
+    # wrong for a beep — a listener scrubbing the log wants the overs, not the repeater
+    # clearing its throat after each one. Judged here, a tone becomes neither a row of
+    # text nor a second of audio.
+    #
+    # The measurement is of the whole clip, which is what makes "standalone" the operative
+    # word: a tone that arrives in its own transmission is all tone and is dropped, while
+    # a tone in front of somebody talking leaves most of the clip broadband and is kept,
+    # audio and text together. That asymmetry is deliberate. Trimming a beep off the front
+    # of real speech would mean editing a recording of what came over the air, and this
+    # keeps or discards transmissions rather than rewriting them.
+    tone = tone_scan(path) if getattr(channel, "tone_filter", "observe") != "off" else None
+    tone_why = tone_reason(tone)
+    if tone_why and getattr(channel, "tone_filter", "observe") == "drop":
+        log.info("dropped (%.1fs): %s", seconds, tone_why)
+        if retention is not None:
+            # Recorded with everything else, so an operator reading the card back can see
+            # what the detector took as well as what it let through. The whisper and clean
+            # columns are empty because it never ran — which is the saving, and is visible
+            # here as the difference between a dropped clip and a rejected one.
+            retention.keep(path, seconds, "", "", "", tone_why, tone=tone)
+        os.unlink(path)
+        return False
+    if tone_why:
+        # Observe mode. Says what it would have done and does not do it — including that
+        # it would have suppressed the audio, which is why this says "and its audio".
+        log.info("would drop (%.1fs): %s, and its audio", seconds, tone_why)
     entry_id = None
     if getattr(channel, "send_audio", False):
         clip = encode_audio(path, outbox.audio_dir, time.time())
@@ -2633,7 +2901,8 @@ def handle_clip(channel, path, whisper, model, outbox, retention=None):
     # its own and collapsed to a loop once the repetition was trimmed out of it.
     if retention is not None:
         retention.keep(path, seconds, heard, text, logged,
-                       "" if keep else (rejection(text) or "a loop once it was trimmed"))
+                       "" if keep else (rejection(text) or "a loop once it was trimmed"),
+                       tone=tone, would_drop=tone_why)
     os.unlink(path)
     return bool(logged)
 

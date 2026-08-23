@@ -26,6 +26,11 @@ ini_set('display_errors', '0');
 
 require_once '/var/www/html/auth/auth.php';
 require_once __DIR__ . '/store.php';
+// The tracker-ID name list. It lives in map/ beside messaging_db.php, which is the
+// code that consumes it — this page is only where it is edited. Absolute path for
+// the same reason the requires above it are absolute: this file runs from the web
+// root, not from the repo layout.
+require_once '/var/www/html/spoken_ids.php';
 
 function jsonOut($data, int $code = 200): never {
     http_response_code($code);
@@ -119,6 +124,21 @@ if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     foreach ($old['devices'] as $d) if (!empty($d['host'])) $devTokens[$d['host']] = $d['token'] ?? '';
     $chTokens = [];
     foreach ($old['channels'] as $c) if (!empty($c['id'])) $chTokens[$c['id']] = $c['token'] ?? '';
+    // The whole previous channel, by id. The page posts back only the fields it draws,
+    // so anything the registry holds that this UI does not offer a control for was
+    // being erased by an unrelated save — silently, because nothing on the page ever
+    // mentioned it.
+    //
+    // That cost a real event: `tone_filter` was set to "drop" on 2026-08-20, then wiped
+    // when a channel was added for the Double Dipsea on 2026-08-22, and the beep filter
+    // spent the day in observe mode. `record_until` and a hand-set `gain` have exactly
+    // the same exposure.
+    //
+    // Carrying the old row forward and overwriting the managed keys is the general fix:
+    // a key this page does not know about survives a save through it, which is the only
+    // behaviour that stays correct as fields are added to the registry and not here.
+    $chPrev = [];
+    foreach ($old['channels'] as $c) if (!empty($c['id'])) $chPrev[$c['id']] = $c;
 
     $devices = [];
     foreach ($body['devices'] as $d) {
@@ -143,7 +163,10 @@ if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $id = transcriber_channel_id($device, $hz);
         if ($id === '' || isset($seen[$id])) continue;
         $seen[$id] = true;
-        $channels[] = [
+        // Stored row first, managed keys second: array_merge lets the later array win,
+        // so every field this page draws is taken from the form and everything else is
+        // carried across untouched.
+        $channels[] = array_merge($chPrev[$id] ?? [], [
             'id'        => $id,
             'device'    => $device,
             'label'     => substr(trim($c['label'] ?? ''), 0, 40) ?: $id,
@@ -155,7 +178,7 @@ if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
             'enabled'   => !empty($c['enabled']),
             'send_audio' => !empty($c['send_audio']),
             'token'     => $chTokens[$id] ?? transcriber_token(),
-        ];
+        ]);
     }
 
     // Stored as typed, not as derived. The export URL is reconstructed on every use, so
@@ -253,6 +276,27 @@ if (isset($_GET['standing'])) {
     jsonOut(transcriber_standing_load());
 }
 
+// The tracker-ID name list. Its own endpoint and its own file, for the same reason
+// the standing vocabulary has them: a write through ?save would move the registry's
+// fingerprint and the page that just saved would be refused its own next Save.
+if (isset($_GET['ids'])) {
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        if (!$canEdit) jsonOut(['error' => 'Missing permission: netbird.admin'], 403);
+        $body = json_decode(file_get_contents('php://input'), true);
+        $sent = (string)($body['fingerprint'] ?? '');
+        if ($sent !== '' && $sent !== spoken_ids_load()['fingerprint']) {
+            jsonOut(['error' => 'Someone else changed the ID list since you opened it'
+                              . ' — reload the page and redo your edit'], 409);
+        }
+        $saved = spoken_ids_save((string)($body['text'] ?? ''));
+        // The parsed map comes back with it, so the page can show what actually took
+        // effect rather than what was typed — a line missing its "=" simply vanishes,
+        // and seeing that immediately is the difference between a typo and a mystery.
+        jsonOut($saved + ['ok' => true, 'map' => spoken_ids_map()]);
+    }
+    jsonOut(spoken_ids_load() + ['map' => spoken_ids_map()]);
+}
+
 if (isset($_GET['rotate']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$canEdit) jsonOut(['error' => 'Missing permission: netbird.admin'], 403);
     $body = json_decode(file_get_contents('php://input'), true);
@@ -325,6 +369,17 @@ input:focus, select:focus { outline: 2px solid #2563eb; outline-offset: -1px; bo
 /* Never calibrated is colored like the thing it is: not an error, but a receiver running
    numbers measured on somebody else's hill, which nobody would otherwise think to look
    for. Same amber as a missing vocabulary section, for the same reason. */
+/* The banner, not the column. A channel running on built-in numbers already says
+   "Never" in its own row, in amber, and on 2026-08-22 that was not enough: a channel
+   added the night before an event ran all day on defaults measured for nowhere, the
+   squelch never gated, and eight hours of a net produced twenty-five entries of which
+   most read "the the the you." The row said so; nobody was looking at the row.
+   This says it once, at the top, in the words that describe the consequence. */
+.cal-warn { background: #fffbeb; border: 1px solid #f59e0b; border-left-width: 4px;
+            border-radius: 6px; padding: 10px 13px; margin: 0 0 10px; font-size: 13px;
+            color: #7a5b00; line-height: 1.5; }
+.cal-warn strong { color: #92400e; }
+.cal-warn .chans { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
 .cal { font-size: 12px; white-space: nowrap; }
 .cal.never { color: #b45309; font-weight: 600; }
 .cal.busy { color: #2563eb; }
@@ -451,6 +506,7 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
   </div>
 
   <h2>Channels</h2>
+  <div id="cal-warn" class="cal-warn" style="display:none"></div>
   <p class="hint">One row per frequency being listened to. A receiver with two dongles
      can cover two channels at once.</p>
   <table class="explain">
@@ -574,6 +630,50 @@ Cardiac Hill = Cardiac</pre>
       <pre class="sample" id="vocab-extra-ro"></pre>
     <?php endif; ?>
     <p class="hint" id="vocab-extra-meta"></p>
+  </div>
+
+  <h2>Tracker ID names</h2>
+  <p class="hint">What a tracker's <strong>ID</strong> is called when it is written out or
+     read aloud. An ID is short because it has to fit on a map marker and stay readable
+     across a room &mdash; <code>CAR</code>, <code>H1</code>, <code>INS</code> &mdash; and that
+     is exactly what makes it wrong everywhere else. In the Messages panel
+     <em>Cardiac Stanton</em> tells you who is talking and <em>CAR Stanton</em> does not, and
+     a speech engine reads <code>H1</code> as two characters rather than as a station.</p>
+  <p class="hint">One per line, <strong>ID = what to call it</strong>. The same shape as a
+     correction above, so there is one syntax rather than two. Lines starting with
+     <code>#</code> are ignored, so the list can be grouped with headings.</p>
+  <pre class="sample">H1 = Hiker One
+INS = Insult
+CAR = Cardiac</pre>
+  <p class="hint">With those set, a message from <strong>H1 Germain</strong> is shown as
+     <em>Hiker One Germain</em> and announced as <em>&ldquo;From Hiker One, Germain.&rdquo;</em>
+     An ID with no line here is left exactly as it is, so the list only needs the ones worth
+     expanding. This list is shared by every event, because an aid station keeps its name from
+     one year to the next.</p>
+  <p class="hint">It also applies <strong>inside transcribed radio traffic</strong>: a line
+     heard as <em>&ldquo;H1 to net control&rdquo;</em> is logged as <em>&ldquo;Hiker One to net
+     control&rdquo;</em>. Whole words only, so <code>CAR</code> does not rewrite the middle of
+     <em>CARDIAC</em> or <em>SCARED</em>, and only radio traffic is touched &mdash; what an
+     operator typed is never altered.</p>
+  <p class="hint">Matching ignores case, so an ID that is also an ordinary word will fire on
+     that word too: with <code>CAR = Cardiac</code>, <em>&ldquo;the car is parked&rdquo;</em>
+     becomes <em>&ldquo;the Cardiac is parked&rdquo;</em>. IDs like <code>H1</code> or
+     <code>INS</code> have no such problem. If it becomes annoying, remove that one line —
+     the Messages panel label still expands either way.</p>
+  <p class="hint"><strong>Map markers are deliberately not changed.</strong> They keep the
+     short ID, which is the reason the field is short.</p>
+  <div class="box">
+    <?php if ($canEdit): ?>
+      <textarea id="ids-text" rows="8" spellcheck="false"
+                placeholder="H1 = Hiker One&#10;CAR = Cardiac"></textarea>
+      <div class="vocab-row" style="margin-top:8px">
+        <button class="hdr-btn hdr-btn-primary" id="ids-save" onclick="saveIds()">Save ID names</button>
+        <span class="hint" id="ids-meta"></span>
+      </div>
+    <?php else: ?>
+      <pre class="sample" id="ids-text-ro"></pre>
+      <p class="hint" id="ids-meta"></p>
+    <?php endif; ?>
   </div>
 
   <h2>Standing vocabulary</h2>
@@ -909,6 +1009,53 @@ async function openStanding() {
 
 function closeStanding() { $('standingbox').classList.remove('open'); }
 
+// ── Tracker ID names ─────────────────────────────────────────────────────────
+let idsPrint = '';
+
+function renderIdsMeta(d) {
+    const n  = d && d.map ? Object.keys(d.map).length : 0;
+    const el = $('ids-meta');
+    if (!el) return;
+    // The count is of lines that actually parsed, not lines typed, so a line missing
+    // its "=" shows up as a number that did not go up.
+    el.textContent = n === 0 ? 'No IDs named yet — every ID is shown as-is.'
+                             : n + (n === 1 ? ' ID named.' : ' IDs named.');
+}
+
+async function loadIds() {
+    try {
+        const d = await (await fetch('?ids')).json();
+        idsPrint = d.fingerprint || '';
+        const ta = $('ids-text'), ro = $('ids-text-ro');
+        if (ta) ta.value = d.text || '';
+        if (ro) ro.textContent = (d.text || '').trim() || '— none —';
+        renderIdsMeta(d);
+    } catch {}
+}
+
+async function saveIds() {
+    if (!CAN_EDIT) return;
+    const btn = $('ids-save');
+    btn.disabled = true;
+    try {
+        const r = await fetch('?ids', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({text: $('ids-text').value, fingerprint: idsPrint}),
+        });
+        const d = await r.json();
+        if (d.error) { status(d.error, 'error'); btn.disabled = false; return; }
+        idsPrint = d.fingerprint || '';
+        renderIdsMeta(d);
+        // No waitForDevices here: unlike the vocabulary, this list is not sent to the
+        // receivers at all. It is read by the server when it hands out a message, so it
+        // is in force for the next message rather than at the next device poll.
+        status('ID names saved', 'saved');
+    } catch {
+        status('Save failed.', 'error');
+    }
+    btn.disabled = false;
+}
+
 async function saveStanding() {
     if (!CAN_EDIT) return;
     const btn = $('standing-save'), st = $('standing-status');
@@ -1134,6 +1281,40 @@ function calibrationCell(c) {
     // time somebody changed one of them.
     return `<span class="cal never">Never</span>${btn}`
          + '<div class="derived">built-in defaults</div>';
+}
+
+/* Say once, at the top, that a channel is about to listen using numbers measured
+ * somewhere else.
+ *
+ * Only ENABLED channels count. A disabled row is not listening, so warning about it is
+ * noise — and noise in a warning is how the row-level "Never" came to be ignored.
+ *
+ * The wording names the consequence rather than the state. "Never calibrated" is a fact
+ * about a config file; "will not hear the net properly" is what actually happened on
+ * 2026-08-22, and is what makes somebody press the button before the event rather than
+ * read past it.
+ */
+function renderCalWarning() {
+    const el = $('cal-warn');
+    if (!el) return;
+    const cal = (data && data.calibration) || {};
+    const bad = (data.channels || []).filter(c => {
+        if (!c.enabled) return false;
+        const k = cal[c.id];
+        return !k || !k.gain;        // no measurement, same test the row's cell makes
+    });
+    if (!bad.length) { el.style.display = 'none'; return; }
+    const names = bad.map(c => esc(c.label || c.id)).join(', ');
+    const many  = bad.length > 1;
+    el.innerHTML =
+        `<strong>${many ? bad.length + ' channels have' : 'This channel has'} never been calibrated.</strong> ` +
+        `<span class="chans">${names}</span> ` +
+        `${many ? 'are' : 'is'} listening with the built-in gain and squelch, which were ` +
+        `measured for no particular site. On a frequency or in a location ${many ? 'they have' : 'it has'} ` +
+        `not been measured at, the squelch may not gate: the receiver records long stretches of ` +
+        `noise instead of separate transmissions, and the transcription of noise is nothing. ` +
+        `<br><strong>Press Recalibrate on ${many ? 'each row' : 'the row'} below, at the site, before the net starts.</strong>`;
+    el.style.display = '';
 }
 
 /* Measure one channel's gain and squelch, at the site it is on.
@@ -1394,6 +1575,7 @@ function renderRows() {
         <td>${CAN_EDIT ? `<button class="row-btn danger" onclick="delChannel(${i})">Remove</button>` : ''}</td>
     </tr>`).join('');
     $('channels-empty').style.display = data.channels.length ? 'none' : '';
+    renderCalWarning();
 
     renderVocabulary();
 }
@@ -1422,6 +1604,7 @@ if (CAN_EDIT) {
 }
 
 load();
+loadIds();
 </script>
 </body>
 </html>
