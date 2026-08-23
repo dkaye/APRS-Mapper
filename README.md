@@ -45,7 +45,7 @@
 
 ## Overview
 
-This document is intended for a technical audience who want to understand the inner workings of our APRS system. Users are encouraged to view the User Guide at [https://marsaprs.org/userguide.html](https://marsaprs.org/userguide.html?back=/readme.html).
+This document is intended for a technical audience who want to understand the inner workings of our APRS system. Users are encouraged to view the User Guide at [https://marsaprs.org/userguide.html](https://marsaprs.org/userguide.html?back=/readme.html). For how to *operate* the admin pages — permissions, events, devices, tickets — see [ADMIN.MD](ADMIN.MD), served at [/admin.html](https://marsaprs.org/admin.html).
 
 The MARS APRS System provides real-time position tracking for MARS (Marin Amateur Radio
 Society) public-service events. Operators carry APRS trackers that
@@ -1136,15 +1136,39 @@ cp build/app/outputs/flutter-apk/app-release.apk ~/Downloads/aprs-map-<version>-
 rsync -avz ~/Downloads/aprs-map-<version>-<build>.apk pi@192.168.0.180:/var/www/html/android/
 ```
 
+**Publishing the watch app** — the `:wear` APK is published from the same directory under
+its own `aprs-wear-` prefix. Build it as described in [Wear OS Companion](#wear-os-companion-wear),
+then:
+
+```bash
+cp build/wear/outputs/apk/release/wear-release.apk ~/Downloads/aprs-wear-<version>-<build>.apk
+rsync -avz ~/Downloads/aprs-wear-<version>-<build>.apk pi@192.168.0.180:/var/www/html/android/
+```
+
+Ship both together. They carry the same `applicationId` and the same signing key, and a watch
+running an older build against a newer phone is exactly the drift the shared wire format exists
+to prevent.
+
 | URL | Purpose |
 |---|---|
-| `https://marsaprs.org/android/` | Landing page — version, size, SHA-256, install steps |
-| `https://marsaprs.org/android/download.php` | **Permanent** download link; 302s to the newest APK |
+| `https://marsaprs.org/android/` | Landing page — version, size, SHA-256, install steps for both apps |
+| `https://marsaprs.org/android/download.php` | **Permanent** phone download link; 302s to the newest `aprs-map-` APK |
+| `https://marsaprs.org/android/watch.php` | **Permanent** watch download link; 302s to the newest `aprs-wear-` APK |
 
-`map/android/` holds `index.php`, `download.php` and `_apk.php`; the APKs themselves are
-gitignored and live only on the Pi. The filename must match
-`aprs-map-<major>.<minor>.<patch>-<build>.apk` or it is ignored, and the highest build
-number wins. The stable URL redirects rather than being a fixed filename that gets
+`map/android/` holds `index.php`, `download.php`, `watch.php` and `_apk.php`; the APKs
+themselves are gitignored and live only on the Pi. The filename must match
+`aprs-map-<major>.<minor>.<patch>-<build>.apk` (or `aprs-wear-…` for the companion) or it is
+ignored, and the highest build number wins. **The prefix is what keeps the two apart** — the
+same applicationId means a watch APK served as the phone download would be offered as an
+update to the phone app.
+
+Sideloading is a real limitation for the watch, not a detail. Play delivers a companion to a
+paired watch automatically, but only when the phone app was itself installed from Play; a
+sideloaded phone app has no such channel. So the watch APK has to be pushed across with ADB —
+from a phone using a tool like Wear Installer 2, or from a computer over Wi-Fi. The watch's
+`uses-feature android.hardware.type.watch` (required, `wear/src/main/AndroidManifest.xml:5`)
+means a phone refuses to install it, which is the guard that stops a user who taps the wrong
+download from replacing their phone app with a watch UI. The stable URL redirects rather than being a fixed filename that gets
 overwritten, so Cloudflare and browser caches can't pin an old release to it — and old
 versions stay downloadable at their own paths.
 
@@ -2251,7 +2275,7 @@ Hovering a tracker or breadcrumb dot shows its APRS path (iGates/digipeaters the
 traveled). Breadcrumbs are filtered: consecutive duplicate positions and positions within
 100 feet of the previous breadcrumb are suppressed. The breadcrumb trail shows up to
 `breadcrumb_count` positions as dots on a dashed line with directional arrows; the trail updates automatically
-as the selected tracker moves. Aid station and iGate tooltips include an optional callsign.
+as the selected tracker moves. iGate tooltips include an optional callsign; aid stations show their name only.
 A scale bar in the lower-right corner toggles between miles/feet and kilometers/meters when
 clicked. Kiosk mode removes controls for unattended display use.
 
@@ -2617,7 +2641,7 @@ Rounding to nearest bounds the disagreement at half a quantization step — **`8
 
 A timestamp-based dedup was considered and rejected. The two feeds do not agree on time either — `relay_daemon.py` stores `int(time.time())` from the **VPS** at gating time (truncated to whole seconds), while `aprs_daemon.py` stores `time.time()` on the **server Pi** at APRS-IS receipt (position packets carry no `timestamp` field, so the fallback always applies). The difference is always positive and small (median +0.59 s, max +1.12 s over 62 pairs — truncation loss plus propagation), but its safety margin rests on the minimum observed gap between consecutive beacons from one tracker (2.77 s), which is empirical. The position bound is structural, so it wins.
 
-**Aid stations as iGates:** Aid stations and rest stops that have an APRS callsign configured in the Admin UI are treated as iGates on the Analyzer map — their coordinates are loaded from `config.yaml`, their received packets are displayed with red receiver lines, and they appear as map markers alongside regular iGates.
+**Aid stations are not receivers.** They carried an optional callsign until 2026-08-22, and one with a callsign was drawn on the Analyzer map as an iGate with its own receiver lines. The field has been removed: an aid stop is a place on the course, and a station that actually gates packets belongs in the **iGates** section, where it is described as what it is. A callsign left in an older `event.yaml` is ignored.
 
 **Data persistence:** Beacon data is never deleted automatically. It persists across daemon restarts, page reloads, and server reboots until an operator explicitly uses **Erase All Data** (admin password + two-step confirmation). **Erase All Data is scoped to the current event** — it deletes only rows carrying that event's `event_id`, so recordings from other events are never touched. The SQLite database is excluded from the deploy rsync so a new deployment never wipes event data.
 

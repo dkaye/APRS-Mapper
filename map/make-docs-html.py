@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# Converts README.MD → readme.html and USERGUIDE.MD → userguide.html.
+# Converts README.md → readme.html, USERGUIDE.MD → userguide.html,
+# and ADMIN.MD → admin-body.html (a fragment; adminguide.php renders it).
 # Run from the map/ directory: python3 make-docs-html.py
 
 import markdown
@@ -222,18 +223,22 @@ def build(src_name, dst_name, title):
 
     print(f"Written: {dst}")
 
-# README.md is the system doc at the repo root; USERGUIDE.MD is the web-served
-# user guide, which stays in map/. Both render into map/ for serving.
+# README.md and ADMIN.MD are system docs at the repo root; USERGUIDE.MD is the
+# web-served user guide, which stays in map/. All render into map/ for serving.
 DOCS = [
     ("../README.md", "readme.html",    "MARS APRS — README"),
+    ("../ADMIN.MD",  "admin.html",     "MARS APRS — Admin Guide"),
     ("USERGUIDE.MD", "userguide.html", "MARS APRS — User Guide"),
 ]
 
 for args in DOCS:
     build(*args)
 
-# Write the userguide body fragment for userguide.php
-frag_dst = os.path.join(BASE, "userguide-body.html")
-with open(frag_dst, "w", encoding="utf-8") as f:
-    f.write(render_body("USERGUIDE.MD"))
-print(f"Written: {frag_dst}")
+# Body fragments for the PHP-wrapped pages. userguide.php adds a back link;
+# adminguide.php adds an admin.view permission check.
+for src, frag in [("USERGUIDE.MD", "userguide-body.html"),
+                  ("../ADMIN.MD",  "admin-body.html")]:
+    frag_dst = os.path.join(BASE, frag)
+    with open(frag_dst, "w", encoding="utf-8") as f:
+        f.write(render_body(src))
+    print(f"Written: {frag_dst}")

@@ -210,7 +210,7 @@
 <li><a href="#display-pis-v1230">Display Pis (v1.23.0)</a></li>
 <li><a href="#running-a-display-pi-on-starlink">Running a display Pi on Starlink</a></li>
 <li><a href="#mobile-apps-v1230">Mobile Apps (v1.23.0)</a></li>
-<li><a href="#monitoring-the-whole-event">Monitoring the whole event</a> · <a href="#app-architecture">Architecture</a> · <a href="#location-sharing-flow">Location Sharing Flow</a> · <a href="#smart-track">Smart Track</a> · <a href="#building-distributing">Building &amp; Distributing</a> · <a href="#background-location">Background Location</a> · <a href="#apple-watch-companion-watch">Apple Watch Companion</a></li>
+<li><a href="#monitoring-the-whole-event">Monitoring the whole event</a> · <a href="#app-architecture">Architecture</a> · <a href="#location-sharing-flow">Location Sharing Flow</a> · <a href="#smart-track">Smart Track</a> · <a href="#building-distributing">Building &amp; Distributing</a> · <a href="#background-location">Background Location</a> · <a href="#apple-watch-companion-watch">Apple Watch Companion</a> · <a href="#wear-os-companion-wear">Wear OS Companion</a></li>
 <li><a href="#transcribers">Transcribers</a></li>
 <li><a href="#calibration">Calibration</a> · <a href="#transcriber-diagnostics">Transcriber Diagnostics</a></li>
 <li><a href="#user-interfaces">User Interfaces</a></li>
@@ -240,7 +240,7 @@
 </ol>
 <hr />
 <h2 id="overview">Overview</h2>
-<p>This document is intended for a technical audience who want to understand the inner workings of our APRS system. Users are encouraged to view the User Guide at <a href="https://marsaprs.org/userguide.html?back=/readme.html">https://marsaprs.org/userguide.html</a>.</p>
+<p>This document is intended for a technical audience who want to understand the inner workings of our APRS system. Users are encouraged to view the User Guide at <a href="https://marsaprs.org/userguide.html?back=/readme.html">https://marsaprs.org/userguide.html</a>. For how to <em>operate</em> the admin pages — permissions, events, devices, tickets — see <a href="ADMIN.MD">ADMIN.MD</a>, served at <a href="https://marsaprs.org/admin.html">/admin.html</a>.</p>
 <p>The MARS APRS System provides real-time position tracking for MARS (Marin Amateur Radio
 Society) public-service events. Operators carry APRS trackers that
 transmit their GPS position over radio. The system receives those transmissions, publishes
@@ -268,7 +268,7 @@ sharing a number are things that ship together</strong>, and everything else car
 <tbody>
 <tr>
 <td>Server, Display Pis, web map, mobile apps</td>
-<td><code>1.23.0+60</code></td>
+<td><code>1.25.0+68</code></td>
 <td>One release. They are one API contract and one deploy.</td>
 </tr>
 <tr>
@@ -278,7 +278,7 @@ sharing a number are things that ship together</strong>, and everything else car
 </tr>
 <tr>
 <td>Transcribers</td>
-<td><code>1.1</code></td>
+<td><code>1.3</code></td>
 <td>Independent, and new.</td>
 </tr>
 </tbody>
@@ -322,18 +322,18 @@ reads.</p>
            ▼
 ┌──────────────────────────────────────┐     ┌──────────────────────────────┐
 │           APRS-IS Network            │◀────│  Mobile App  (iOS/Android)   │
-│         noam.aprs2.net:14580         │     │  Flutter v1.23.0               │
+│         noam.aprs2.net:14580         │     │  Flutter v1.25.0               │
 └────────────────┬─────────────────────┘     │  TCP 14580 (inject position) │
                  │ TCP 14580                 └──────────────┬───────────────┘
 ┌────────────────▼─────────────────────┐                    │ HTTPS (map + config + session)
-│       APRS Server  (aprs-pi)         │  Pi 4 · v1.23.0      │
+│       APRS Server  (aprs-pi)         │  Pi 4 · v1.25.0      │
 │  aprsDaemon.php → trackers.json      │◀───────────────────┘
 │  Apache + PHP · netbird/ · wifi/     │
 │  marsaprs.org  (Cloudflare Tunnel)   │
 └──┬───────────────────────────────────┘
    │ HTTPS via Cloudflare
 ┌──▼─────────────────────┐
-│  Display Pi  (×2)      │  Pi 4 · v1.23.0
+│  Display Pi  (×2)      │  Pi 4 · v1.25.0
 │  Chromium fullscreen   │
 │  marsaprs.org          │
 └────────────────────────┘
@@ -1218,14 +1218,42 @@ when this device will make a sound for an arriving message, crossed out when it 
 without opening either sheet.</p>
 <p><strong>Monitored traffic never raises a notification.</strong> None of it was sent to this
 operator, and on a busy net that is a message every few seconds; a phone that buzzed
-for each would be unusable inside a minute. It is read aloud (subject to the same mute
-switch as everything else) and it goes nowhere near the watch — <code>AppState.swift</code>
+for each would be unusable inside a minute. It is delivered as audio (subject to the same
+mute switch as everything else) and it goes nowhere near the watch — <code>AppState.swift</code>
 promises that every message the wrist holds gets announced, and a firehose would break
 that, churn the message cap, and let a push-to-talk reply aim at whichever stranger
-spoke last. The wrist still hears it all, because the phone speaks it.</p>
-<p><strong>Speech says where a line came from</strong> — "Heard on Simulcast:" rather than plain "From:".
-A synthesised voice reads a garbled machine transcription in exactly the same confident
-tone as a real message, and the preamble is the only thing telling them apart.</p>
+spoke last. The wrist still hears it all, because the phone plays it.</p>
+<p><strong>Radio entries are handled as sound, never as speech.</strong> A transcriber entry's text came
+from a speech model and is really carrier for the clip URL; reading it aloud was tried and
+is strictly worse than the recording — slower than the traffic it describes, and it states
+a mangled callsign in the same confident voice as a correct one. So a radio entry is
+played (<code>addClip</code>), and <strong>typed</strong> traffic is the only thing spoken (<code>addSpeech</code>). The
+exclusion is unconditional, covering the case where audio was wanted but unavailable — an
+entry whose clip never arrived, or a channel with <code>send_audio</code> off. Falling back to
+reading those aloud would reintroduce exactly the behavior that made a busy net
+unlistenable, and only sometimes, which is worse than never. See
+<code>_handleMonitoredBatch</code> in <code>app/lib/map_screen.dart</code>.</p>
+<p><strong>A spoken message is broken into phrases, with real silence between them.</strong> Two gaps,
+doing different jobs: 500 ms after the sender's name, because "From Dirck." run into the
+opening words loses both halves; and 250 ms between sentences, because the voice already
+pauses at a period on its own and a second full half-second on top reads as the speaker
+having lost their place rather than as punctuation. Each phrase is a separate utterance
+whose completion is awaited, which is what lets a gap land where it belongs at all.</p>
+<p>The split is deliberately conservative, and the same in all four places that speak —
+<code>splitSentences</code> in <code>map/utils.js</code> and <code>app/lib/speaker.dart</code>, <code>sentences</code> in
+<code>ios/WatchApp/Sources/Announcer.swift</code>, and <code>splitSentences</code> in the Wear <code>Announcer.kt</code>.
+It requires two alphanumerics before the terminator, so <code>J. Kaye</code> stays one phrase, and
+whitespace after it, so <strong><code>146.520</code> is never split down the middle</strong> — the case that
+matters most on a channel where reciting a frequency is much of what gets said. An
+abbreviation (<code>Mt. Tam</code>) does split; that is the accepted cost, a quarter second in the
+wrong place. The rules are asserted in <code>map/tests/js/utils.test.js</code> and
+<code>app/test/speaker_test.dart</code>, over the same cases, so the four cannot drift apart.</p>
+<p>On both watches the gap travels with the utterance rather than being a rule inside the
+drain loop, because the boundaries within one announcement do not all mean the same
+thing — and a rule keyed on position could not tell them apart once a message with no
+sender label shifted everything up by one. The Stop control's countdown counts the gaps
+too: a four-sentence message is a second of silence on its own, and that countdown is the
+only thing telling an operator whether to wait it out.</p>
 <p><strong>Everything audible goes through one queue</strong> (<code>app/lib/audio_queue.dart</code>) — spoken
 messages, radio clips, and the alert tone alike. There were two before and they did not
 know about each other, so on a net with speech and radio both on, a synthesised voice
@@ -1404,7 +1432,7 @@ App restart while sharing was active:
 <h3 id="app-update-check">App Update Check</h3>
 <p>On launch the app fetches <code>https://marsaprs.org/app_version.php</code> (a small JSON manifest carrying the latest <code>build</code> per platform) and, if a newer build is available, shows a <strong>dismissable</strong> "Update available" prompt — never a forced upgrade. iOS opens the App Store listing (<code>store_url</code>; the check is a silent no-op while that URL is empty), Android opens the APK download (<code>apk_url</code>). A "Later" choice is remembered until an even newer build ships. Client logic lives in <code>lib/update_check.dart</code>; bump <code>build</code>/<code>latest</code> in <code>map/app_version.php</code> when a new app version is released (see the version-bump checklist).</p>
 <h3 id="smart-track">Smart Track</h3>
-<p>Smart Track is the automatic beacon-interval algorithm in the native app (iOS/Android) and the web map. It monitors GPS speed and adjusts the upload frequency without any input from the user. (The Apple Watch companion does messaging only — it never beacons position.)</p>
+<p>Smart Track is the automatic beacon-interval algorithm in the native app (iOS/Android) and the web map. It monitors GPS speed and adjusts the upload frequency without any input from the user. (The Apple Watch and Wear OS companions do messaging only — they never beacon position.)</p>
 <p><strong>Unknown (?) mode — startup phase:</strong></p>
 <p>Every session begins in <strong>unknown</strong> mode (shown as <strong>?</strong> in the web sidebar). The app joins the server with <code>sharing_mode: "unknown"</code> and stays in this phase until Smart Track collects enough GPS readings to make a confident initial determination — typically within 90 seconds. When the mode is first set, the app waits 15 seconds before sending the first real-mode beacon so the sidebar briefly shows <strong>?</strong> before the actual activity icon appears.</p>
 <p><strong>Speed thresholds:</strong></p>
@@ -1482,6 +1510,15 @@ the newest automatically:</p>
 <pre><code class="language-bash">cp build/app/outputs/flutter-apk/app-release.apk ~/Downloads/aprs-map-&lt;version&gt;-&lt;build&gt;.apk
 rsync -avz ~/Downloads/aprs-map-&lt;version&gt;-&lt;build&gt;.apk pi@192.168.0.180:/var/www/html/android/
 </code></pre>
+<p><strong>Publishing the watch app</strong> — the <code>:wear</code> APK is published from the same directory under
+its own <code>aprs-wear-</code> prefix. Build it as described in <a href="#wear-os-companion-wear">Wear OS Companion</a>,
+then:</p>
+<pre><code class="language-bash">cp build/wear/outputs/apk/release/wear-release.apk ~/Downloads/aprs-wear-&lt;version&gt;-&lt;build&gt;.apk
+rsync -avz ~/Downloads/aprs-wear-&lt;version&gt;-&lt;build&gt;.apk pi@192.168.0.180:/var/www/html/android/
+</code></pre>
+<p>Ship both together. They carry the same <code>applicationId</code> and the same signing key, and a watch
+running an older build against a newer phone is exactly the drift the shared wire format exists
+to prevent.</p>
 <table>
 <thead>
 <tr>
@@ -1492,18 +1529,31 @@ rsync -avz ~/Downloads/aprs-map-&lt;version&gt;-&lt;build&gt;.apk pi@192.168.0.1
 <tbody>
 <tr>
 <td><code>https://marsaprs.org/android/</code></td>
-<td>Landing page — version, size, SHA-256, install steps</td>
+<td>Landing page — version, size, SHA-256, install steps for both apps</td>
 </tr>
 <tr>
 <td><code>https://marsaprs.org/android/download.php</code></td>
-<td><strong>Permanent</strong> download link; 302s to the newest APK</td>
+<td><strong>Permanent</strong> phone download link; 302s to the newest <code>aprs-map-</code> APK</td>
+</tr>
+<tr>
+<td><code>https://marsaprs.org/android/watch.php</code></td>
+<td><strong>Permanent</strong> watch download link; 302s to the newest <code>aprs-wear-</code> APK</td>
 </tr>
 </tbody>
 </table>
-<p><code>map/android/</code> holds <code>index.php</code>, <code>download.php</code> and <code>_apk.php</code>; the APKs themselves are
-gitignored and live only on the Pi. The filename must match
-<code>aprs-map-&lt;major&gt;.&lt;minor&gt;.&lt;patch&gt;-&lt;build&gt;.apk</code> or it is ignored, and the highest build
-number wins. The stable URL redirects rather than being a fixed filename that gets
+<p><code>map/android/</code> holds <code>index.php</code>, <code>download.php</code>, <code>watch.php</code> and <code>_apk.php</code>; the APKs
+themselves are gitignored and live only on the Pi. The filename must match
+<code>aprs-map-&lt;major&gt;.&lt;minor&gt;.&lt;patch&gt;-&lt;build&gt;.apk</code> (or <code>aprs-wear-…</code> for the companion) or it is
+ignored, and the highest build number wins. <strong>The prefix is what keeps the two apart</strong> — the
+same applicationId means a watch APK served as the phone download would be offered as an
+update to the phone app.</p>
+<p>Sideloading is a real limitation for the watch, not a detail. Play delivers a companion to a
+paired watch automatically, but only when the phone app was itself installed from Play; a
+sideloaded phone app has no such channel. So the watch APK has to be pushed across with ADB —
+from a phone using a tool like Wear Installer 2, or from a computer over Wi-Fi. The watch's
+<code>uses-feature android.hardware.type.watch</code> (required, <code>wear/src/main/AndroidManifest.xml:5</code>)
+means a phone refuses to install it, which is the guard that stops a user who taps the wrong
+download from replacing their phone app with a watch UI. The stable URL redirects rather than being a fixed filename that gets
 overwritten, so Cloudflare and browser caches can't pin an old release to it — and old
 versions stay downloadable at their own paths.</p>
 <p><strong>Release signing</strong> requires <code>android/key.properties</code> (gitignored):</p>
@@ -1545,7 +1595,22 @@ storeFile=&lt;absolute path to .jks or .p12&gt;
    <code>bash
    flutter build appbundle --release</code>
    Output: <code>build/app/outputs/bundle/release/app-release.aab</code></li>
-<li>In Play Console → <strong>Your app</strong> → <strong>Testing → Internal testing</strong> → <strong>Create new release</strong> → upload the <code>.aab</code>.</li>
+<li>Build the Wear OS companion, which <code>flutter build</code> does not touch — it is a plain Gradle
+   module, not a Flutter target:
+   <code>bash
+   cd android
+   JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
+     ./gradlew :wear:assembleRelease</code>
+   <code>JAVA_HOME</code> is not optional: the only JDK on <code>PATH</code> is Java 1.8, which Gradle 9 / AGP 9
+   refuse to run under. Output: <code>build/wear/outputs/apk/release/wear-release.apk</code> — under
+   <code>app/build</code>, not <code>app/android/wear/build</code>, because the Flutter Gradle plugin redirects
+   every subproject's build directory. It takes its version from the same <code>pubspec.yaml</code>, so
+   step 1 covers both. See <a href="#wear-os-companion-wear">Wear OS Companion</a>.</li>
+<li>In Play Console → <strong>Your app</strong> → <strong>Testing → Internal testing</strong> → <strong>Create new release</strong> →
+   upload the <code>.aab</code> <strong>and</strong> the watch APK into the same release. Play delivers the watch
+   APK to a paired watch by matching package name and signature, so both have to be in the
+   release together; uploading only the bundle leaves existing watches on the old build with
+   no indication that anything happened.</li>
 <li>After internal testing, promote the release through <strong>Closed testing → Open testing → Production</strong> using the <strong>Promote release</strong> button.</li>
 <li>Google typically reviews new production releases within 1–3 days.</li>
 </ol>
@@ -1663,7 +1728,9 @@ poll?" (only <code>.active</code> — a battery question, since the poller runs 
 and only while the phone is unreachable). Merging them meant a change made for one
 reason silently moved the other.</p>
 </blockquote>
-<p><strong>Who announces an arriving message</strong> is decided by the watch and obeyed by the phone. The watch publishes <code>canAnnounce</code> whenever its scene phase changes; the phone suppresses its own alert only while that is true. It is reported rather than inferred because the two devices had different notions of "awake": a dimmed watch is unreachable over WatchConnectivity yet still frontmost, so each assumed the other had it and messages were announced twice or not at all. Every relayed message also carries <code>phoneAnnounced</code>, which stops the watch re-reading a backlog when queued transfers flush on waking, and lets it raise a notification if it went quiet after promising to speak.</p>
+<p><strong>Who announces an arriving message</strong> is decided by the watch and obeyed by the phone. It is reported rather than inferred because the two devices had different notions of "awake": a dimmed watch is unreachable over WatchConnectivity yet still frontmost, so each assumed the other had it and messages were announced twice or not at all. Every relayed message also carries <code>phoneAnnounced</code>, which stops the watch re-reading a backlog when queued transfers flush on waking, and lets it raise a notification if it went quiet after promising to speak.</p>
+<p><strong>The watch reports two facts, not one, and the phone needs both.</strong> <code>canAnnounce</code> answers <em>"am I on screen?"</em>. It does not answer <em>"did I make a sound?"</em> — and for a long time the phone decided on the first while needing the second. Silent Mode, the cover-to-mute gesture, a session the OS refuses, and on Wear OS a watch with no speaker or no speech data at all, every one of them leaves the app frontmost and completely inaudible. The phone deferred to it anyway, so the operator heard nothing from either device with nothing anywhere to say why — on a net, the worst failure in the system, and precisely the one this arrangement exists to prevent. So <code>audioUnavailable</code> travels with <code>canAnnounce</code> in a single payload (never two, or the phone could hold a fresh value of one beside a stale value of the other) and <code>watchWillAnnounce</code> requires both. It is retrospective by nature: whether the session will be granted cannot be known until something is announced, so the first message after audio goes away is still lost to the wrist. What it fixes is every message after it.</p>
+<p><strong>The wrist wins whenever it can be heard</strong>, and that is a deliberate ranking rather than an accident of which code path ran first. Distance beats loudness in the environment this exists for — a phone in a pannier is muffled by fabric before volume enters into it, while a watch is a hand's width from the ear with a clear path. The alert should also land on the device that takes the reply, so hearing a call and answering it is one motion instead of two, and the haptic and the voice should come from the same limb rather than making the operator triangulate.</p>
 <p><strong>Why it is native Swift.</strong> Flutter does not target watchOS, so the watch app cannot be Dart. It is a native SwiftUI target (<code>WatchApp</code>) inside the same <code>app/ios/Runner.xcodeproj</code>, bridged to the Flutter app over WatchConnectivity plus a Flutter method/event channel.</p>
 <table>
 <thead>
@@ -1702,6 +1769,91 @@ reason silently moved the other.</p>
 <p><strong>The reply follows the traffic, from whichever side heard it.</strong> An arriving message re-aims the destination, so the announcement the operator just heard is also a statement of where their answer will go. The phone does this in <code>WatchBridge._aimAt</code> when it relays; the watch does it in <code>AppState.ingest</code> for anything it fetched by direct poll, which is the case the phone never sees. Broadcasts move the aim only when there is an addressable sender key — the phone has one, the watch does not, and aiming at the broadcast thread instead would send a spoken "copy that" to every tracker. A destination is also dropped when the conversation behind it is absent from the current event's list, which is what stops a thread from a finished event surviving into the next one.</p>
 <p><strong>Unconfirmed sends are visible and actionable.</strong> <code>Outbox</code> persists every reply until the server confirms it, across app launches and watch reboots — a message spoken into the wrist and silently lost is the worst failure this app has. A badge on the Talk page shows the count, and it is a link: tapping it lists what was said and offers <strong>Retry</strong> or <strong>Discard</strong>. Retry aims at the <em>current</em> destination, not the original, because an entry usually failed precisely because its target had gone; it also takes a fresh client id, since <code>?messaging=send</code> carries none and the server therefore cannot dedupe a retry against a delivered-but-unacknowledged original.</p>
 <p><strong>The limitation accepted.</strong> watchOS only lets an app play audio while frontmost, and will not run a timer for a backgrounded one. (Frontmost includes a dimmed screen — see above — so this bites only when the operator has actually left the app.) So with the phone off or out of range <strong>and</strong> the watch app backgrounded, nothing reaches the operator until they raise their wrist — at which point the watch polls and announces what it missed. The only mechanism that would change this is a <code>WKExtendedRuntimeSession</code>, which costs heavy battery and a background-mode declaration App Review may query; the deliberate decision is to live without it, since the phone covers every case in which it is alive.</p>
+<h3 id="wear-os-companion-wear">Wear OS Companion ("Wear")</h3>
+<p>The same watch app for Android watches. Same behaviour, same rules, same wire format — an operator moving from an Apple Watch to a Pixel Watch mid-season should not have to learn anything, and a bug fixed on one wrist should not survive on the other.</p>
+<p>It is a second native app, not a shared one, for the same reason the first one is native: Flutter targets neither watch platform. The design is therefore stated once and implemented twice, and each file names its counterpart in a header comment so a change made in one place is findable in the other.</p>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>app/android/wear/</code></td>
+<td>Gradle module <code>:wear</code> — Compose for Wear OS app, Data Layer client, announcer (haptic/tone/TTS), push-to-talk, direct messaging client</td>
+</tr>
+<tr>
+<td><code>app/android/app/src/main/kotlin/org/w6sg/aprsmap/watch/WatchBridge.kt</code></td>
+<td>Phone side of the bridge: the Data Layer clients plus the <code>org.marsaprs/watch</code> method and event channels</td>
+</tr>
+<tr>
+<td><code>app/android/app/src/main/kotlin/org/w6sg/aprsmap/watch/WearListenerService.kt</code></td>
+<td>Receives from the watch when the phone app is not running</td>
+</tr>
+<tr>
+<td><code>app/lib/watch_bridge.dart</code></td>
+<td>Dart side — <strong>one file, both watches.</strong> It has no <code>Platform.isAndroid</code> branch and must not grow one</td>
+</tr>
+</tbody>
+</table>
+<p><strong>One Dart bridge, two native ones.</strong> <code>watch_bridge.dart</code> speaks the same method channel, the same event channel and the same payloads to both platforms; every difference between WatchConnectivity and the Wear Data Layer is absorbed on the native side. That is what keeps the rules that matter — who announces, where a reply is aimed, what counts as stale — written down once. A platform branch in the Dart would be the start of two subtly different watch apps that nobody could keep in step.</p>
+<p><strong>Transport mapping.</strong> The Data Layer has three clients where watchOS has one session, and mapping them wrongly produces a watch that works on the bench and goes silent in the field:</p>
+<table>
+<thead>
+<tr>
+<th>watchOS</th>
+<th>Wear OS</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sendMessage</code></td>
+<td><code>MessageClient</code> → <code>/aprs/live</code>, <code>/aprs/tx</code></td>
+<td>Fast, and fails outright rather than queueing when the other side is not connected</td>
+</tr>
+<tr>
+<td><code>transferUserInfo</code></td>
+<td><code>DataClient</code> item at <code>/aprs/msg/&lt;id&gt;</code>, <code>/aprs/txq/&lt;uuid&gt;</code></td>
+<td>Durable, survives both processes dying, starts the other side's listener service to deliver. A unique path per item, because the Data Layer only notifies on <em>change</em> — two identical payloads on one path is one event, and the second vanishes</td>
+</tr>
+<tr>
+<td><code>updateApplicationContext</code></td>
+<td><code>DataClient</code> item at <code>/aprs/context</code></td>
+<td>One fixed path, latest value wins, syncs to a watch that was not running</td>
+</tr>
+<tr>
+<td><code>transferFile</code></td>
+<td>—</td>
+<td>Not needed; see push-to-talk below</td>
+</tr>
+<tr>
+<td><code>isPaired</code> / <code>isWatchAppInstalled</code> / <code>isReachable</code></td>
+<td><code>CapabilityClient</code> + <code>node.isNearby</code></td>
+<td>There is no session to ask. The phone advertises <code>aprs_map_phone</code>, the watch <code>aprs_map_wear</code>, each in its module's <code>res/values/wear.xml</code>. <strong>Those two strings are wire contract</strong>: rename one and both apps keep running, neither reports an error, and the watch never hears anything again</td>
+</tr>
+</tbody>
+</table>
+<p>Everything crosses as a JSON string under a single <code>json</code> key rather than as a typed <code>DataMap</code>, because <code>DataMap.getInt</code> on a value the sender wrote as a long returns zero rather than failing — the same class of trap that forces hand-written decoding on the WatchConnectivity side, and zero is a valid conversation id.</p>
+<p><strong>Push-to-talk transcribes on the watch, and that is the one real divergence.</strong> watchOS has no speech recogniser, so the Apple Watch records AAC, ships the clip to the iPhone, waits, and gets text back — three hops, a <code>TalkSession</code> with a "Sending audio…" phase, and nothing at all when the phone is away. Wear OS watches recognise speech themselves, so <code>SpeechCapture.kt</code> records nothing and transfers nothing: press, speak, release, send. It prefers <code>createOnDeviceSpeechRecognizer</code> where the watch has it, for the same reason the iPhone sets <code>requiresOnDeviceRecognition</code> — this is a ham operator's net traffic and there is no reason to hand it to Google if the wrist can do the work. The consequence that matters during an event is that push-to-talk keeps working when the phone is out of range, which is precisely when somebody is most likely to be talking into their wrist. There is therefore no <code>talkAudio</code> path, no <code>transcript</code> reply and no microphone permission on the phone side of this bridge.</p>
+<p>The gesture is a raw pointer loop, not <code>detectTapGestures</code> or a long-press detector. Both of those decide for themselves when a press has become something else — a tap detector cancels once the finger drifts past the touch slop — and on a moving vehicle the finger always drifts. Down starts it, up ends it, nothing in between.</p>
+<p><strong>Ambient is not backgrounded</strong>, and the same two questions are kept apart here as on watchOS. <code>canAnnounce</code> is true while the Activity is STARTED, ambient included: a dimmed watch is still this app on the display and audio focus is still granted, and a lowered wrist is the normal way to wear a watch. <code>isActive</code> — which gates the direct poller, a battery question — is true only while RESUMED and out of ambient. Settings → Diagnostics carries the same <strong>Test audio when dimmed</strong> button as the Apple Watch, and it matters more here rather than less: Wear hardware varies far more than Apple's does, several models have no speaker at all, and the failure it guards against (the watch promising to speak while the phone defers to it) is silent on both devices at once.</p>
+<p><strong>The limitation accepted, and it is a different one.</strong> WatchConnectivity relaunches the whole iOS app in the background to deliver a watch message, so the iPhone can act on a reply spoken into the wrist even with the app closed. On Android, <code>WearListenerService</code> starts a bare process with no Flutter engine in it and nothing will create one. So a reply that reaches the phone while the phone app is not running is parked on disk and replayed the next time Dart calls <code>ready</code>. The watch does not pretend otherwise: if no <code>sendResult</code> comes back within thirty seconds the Outbox row moves from <em>Sending</em> to <em>Waiting to send</em>, where it is visible and can be retried. It is deliberately <strong>not</strong> re-sent down the watch's own direct path — <code>?messaging=send</code> carries no client id, so the server cannot dedupe, and a retry of something the phone already sent would put the message on the net twice.</p>
+<p><strong>Build and release.</strong> <code>:wear</code> is a separate APK with the <em>same</em> <code>applicationId</code> and the <em>same</em> signing key as the phone app — Play matches a companion by package name <strong>and</strong> signature, and getting either wrong ships a watch app that installs cleanly and is never delivered to a watch. Its version comes from <code>pubspec.yaml</code>, parsed in <code>wear/build.gradle.kts</code>, exactly as <code>WatchApp.xcconfig</code> arranges on the other platform; <code>local.properties</code> is not used, because it is only written as a side effect of the last <code>flutter build</code> and is stale on a clean checkout. The <code>versionCode</code> carries a <code>+100000</code> offset, since every APK in one Play release needs its own and both come from the same pubspec number.</p>
+<pre><code class="language-bash">cd app/android
+# JAVA_HOME is required — the JDK on PATH is 1.8, which Gradle 9 / AGP 9 will not run under.
+JAVA_HOME=&quot;/Applications/Android Studio.app/Contents/jbr/Contents/Home&quot; \
+  ./gradlew :wear:assembleRelease
+apksigner verify --print-certs ../build/wear/outputs/apk/release/wear-release.apk | grep SHA-256
+# expected 0d30a9f258e1330cb22a092ca6df65af5d3bf085905fb9bc01d74e54c866da57 — the same
+# certificate as the phone APK
+</code></pre>
+<p>R8 is on for the watch release and off for the phone's. Unminified, Compose plus <code>play-services-wearable</code> is 22 MB of dex; minified it is under three. That is a storage question on a device with very little, and an install-time question on a link that is Bluetooth. Keep rules for the three manifest-declared classes live in <code>wear/proguard-rules.pro</code>.</p>
+<p><strong>The launcher icon is generated, not drawn.</strong> <code>wear/icon/make-icon.py</code> emits <code>ic_launcher.svg</code> and renders one PNG per density into <code>wear/src/main/res/mipmap-*/</code>; run it after any change and commit the result. It is an <em>adaptive</em> icon (<code>mipmap-anydpi-v26/ic_launcher.xml</code>), which is the only kind Wear OS 3+ uses — the layers are 108 dp, the system shows the middle 72 dp masked to a circle, and only a centred ⌀66 dp circle is guaranteed visible. The phone's square icon cannot simply be copied across: it fills its canvas edge to edge, so the circular crop slices the outer arcs off at both ends. The watch version is a recomposition against that geometry, using the phone icon's own sampled palette — the arcs pulled inside the safe circle, the sky and the massif extended outward to fill the margin the mask eats.</p>
+<p>The whole scene sits in the <strong>background</strong> layer with an empty foreground, which is deliberately not the usual logo-over-fill split. The antenna stands on the summit, and a launcher that shifts the two layers independently for parallax would float it off the peak. One layer cannot come apart.</p>
+<p>The three numbers that decide whether an edit survives: at x=250 the crop circle spans y 294–730, so a ridge line that looks right on the square canvas can be entirely outside the visible area; the mountain's tonal ramp runs across y 599–880 rather than the full height, or the crop shows only its top third and the massif reads as one flat shape at 64 px; and each density is rendered from the vector at its native size rather than downsampled from a master, because the arcs are thin and the stars are two pixels across.</p>
 <hr />
 <h2 id="transcribers">Transcribers</h2>
 <p>A Transcriber is a Raspberry Pi (4 or 5) with an RTL-SDR that listens on a voice frequency,
@@ -1814,6 +1966,21 @@ can do no more than join up what was already said. Correction runs <em>after</em
 above have accepted an entry, never before: they are calibrated on what whisper emits,
 and a roll call corrected first reads as the same six words four times over and is thrown
 out as a loop.</p>
+<p><strong>The last sentence gets a period, and nothing else is punctuated.</strong> whisper punctuates
+its own output and is good at it — it hears the pauses in a transmission and writes
+<code>K6DRK testing. West Marin. K6DRK.</code> unprompted. What it is not is consistent: the same
+operator saying the same words a minute later came back as <code>K6DRK testing West Marin
+K6DRK</code>, no period anywhere, and in a log read as a column of one-line entries that reads
+as a transmission cut off mid-word. <code>close_sentence</code> closes the last sentence and leaves
+everything else alone, replacing a dangling comma rather than writing over it, and
+treating an ellipsis as the real ending it is. It runs last of all — after the filters
+have judged the entry real and after <code>correct_callsigns</code> has spelled it — because it is
+cosmetic and must have no vote in either.</p>
+<p>Deliberately <strong>not</strong> a pause-detection rule. The clip boundary already is one
+(<code>GAP_SECONDS</code>), whisper is already using the pauses inside a clip, and a
+threshold on gap length would punctuate straight through a callsign — phonetics are
+delivered with a beat between each word ("Kilo … Six … Delta"), so the one part of the
+log that is not sentences is exactly where such a rule would insert sentence structure.</p>
 <p><strong>Priming whisper with that vocabulary is implemented and switched off.</strong> An initial
 prompt (<code>--prompt</code>, plus <code>--carry-initial-prompt</code> because a clip can run past one
 30-second window) makes the model likelier to emit those exact words, which is both the
@@ -2923,6 +3090,27 @@ regression test that matters is not "does the monitor see the message" but "does
 still report <code>total = 1</code> while a monitor is running". <code>markRead()</code>/<code>markDelivered()</code> on
 ids with no delivery row are already silent no-ops, so a monitoring client is safe by
 construction on the way back too.</p>
+<p><strong>Every message carries <code>addressed</code>: whether this monitor also has a delivery row for
+it.</strong> The feed is the whole event, so it returns the messages sent <em>to</em> you alongside
+everyone else's — and the phone announces addressed traffic and monitored traffic on two
+independent paths, so those messages were read aloud twice, a few seconds apart. Worse,
+the monitor path is the one speech path that never asked the wrist, so it also talked
+over a watch that was already announcing the same message.</p>
+<p>The tempting fix is to exclude those rows here, and it is wrong: this feed is also the
+event's <strong>traffic log</strong>, and dropping the messages sent to you would leave holes in the
+one view whose entire purpose is completeness. Tagging lets the client show everything
+and announce once — <code>_handleMonitoredBatch</code> skips anything tagged, and
+<code>_handleInboundMessage</code> keeps sole ownership of it, including the choice between the
+wrist and the phone and the marking-read that follows.</p>
+<p>It has to be a server tag rather than a client-side guess. The client can see which
+messages reached it on an addressed path, but the two polls run at different intervals,
+so a monitor batch can arrive first and would announce before there was anything to
+claim. <code>WatchBridge.addressedHere()</code> remains as a fallback for a server that has not
+been updated yet — right whenever the addressed path won the race, which is usual but
+not guaranteed.</p>
+<p>The same feed is also the reason <code>_handleMonitoredBatch</code> filters out your own
+transmissions by <code>fromId</code>: a sender gets no delivery row for their own message, so every
+<em>other</em> feed excludes them for free and this one does not.</p>
 <p>Catch-up is bounded (<code>MONITOR_MAX_AGE</code> 5 minutes, <code>MONITOR_MAX_RESULTS</code> 50) and reports
 <code>skipped</code> rather than truncating quietly — the phone shows "42 monitored messages
 skipped" instead of leaving a silent hole where half an hour of the net used to be.

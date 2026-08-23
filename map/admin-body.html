@@ -1,0 +1,885 @@
+<h1 id="mars-aprs-admin-guide">MARS APRS — Admin Guide</h1>
+<p>How to use the administrative web interfaces that run on <code>marsaprs.org</code>. This is the
+operator's manual; <a href="https://marsaprs.org/readme.html">README.md</a> is the system
+documentation that explains how the machinery underneath works, and the
+<a href="https://marsaprs.org/userguide.html">User Guide</a> is what you hand to event participants.</p>
+<p>Everything described here is served by the APRS Server Pi and reached over the public web,
+not over the NetBird VPN. You do not need to be on the VPN to administer the system — the
+VPN is how the <em>server</em> reaches the field devices, not how you reach the server.</p>
+<p><strong>Where this document lives.</strong> On the server it is at
+<a href="https://marsaprs.org/admin.html"><code>/admin.html</code></a>, and at
+<a href="https://marsaprs.org/adminguide.php"><code>/adminguide.php</code></a> when you want a back link — the
+<strong>Guide</strong> button in the Map Admin header uses the latter. The source is <code>ADMIN.MD</code> at the
+repo root; running <code>map/make-docs-html.py</code> regenerates both.</p>
+<hr />
+<h2 id="contents">Contents</h2>
+<ol>
+<li><a href="#signing-in">Signing in</a></li>
+<li><a href="#permissions">Permissions</a></li>
+<li><a href="#user-management-authusersphp">User Management — <code>/auth/users.php</code></a></li>
+<li><a href="#map-admin-admin">Map Admin — <code>/admin/</code></a></li>
+<li><a href="#tickets-ticketsadminphp">Tickets — <code>/tickets/admin.php</code></a></li>
+<li><a href="#netbird-status-netbird">NetBird Status — <code>/netbird/</code></a></li>
+<li><a href="#netbird-admin-netbirdadminphp">NetBird Admin — <code>/netbird/admin.php</code></a></li>
+<li><a href="#wifi-manager-wifi">WiFi Manager — <code>/wifi/</code></a></li>
+<li><a href="#transcriber-channels-transcriber">Transcriber Channels — <code>/transcriber/</code></a></li>
+<li><a href="#sdr-self-test-igateselftest">SDR Self-Test — <code>/igate/selftest/</code></a></li>
+<li><a href="#analyzer-analyzer">Analyzer — <code>/analyzer/</code></a></li>
+<li><a href="#app-downloads">App downloads</a></li>
+</ol>
+<hr />
+<h2 id="signing-in">Signing in</h2>
+<p>All pages share one sign-in. You do not sign in to each page
+separately. A session lasts <strong>24 hours</strong>.</p>
+<h2 id="permissions">Permissions</h2>
+<p>There are thirteen permissions. They are flat — there are no roles or groups — so an
+account is exactly the set of boxes ticked on it.</p>
+<table>
+<thead>
+<tr>
+<th>Permission</th>
+<th>Grants</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>users.manage</code></td>
+<td>Manage users and permissions</td>
+</tr>
+<tr>
+<td><code>admin.view</code></td>
+<td>Map Admin, read only</td>
+</tr>
+<tr>
+<td><code>admin.edit</code></td>
+<td>Map Admin, full editing</td>
+</tr>
+<tr>
+<td><code>admin.edit_trackers</code></td>
+<td>Map Admin, edit <strong>only</strong> the Trackers section</td>
+</tr>
+<tr>
+<td><code>admin.set_default</code></td>
+<td>"Save as Default Event" — make an event the live one</td>
+</tr>
+<tr>
+<td><code>admin.delete_event</code></td>
+<td>Delete events</td>
+</tr>
+<tr>
+<td><code>analyzer.view</code></td>
+<td>View the Analyzer</td>
+</tr>
+<tr>
+<td><code>analyzer.admin</code></td>
+<td>Analyzer admin: erase data, control the daemon</td>
+</tr>
+<tr>
+<td><code>netbird.view</code></td>
+<td>View NetBird device status</td>
+</tr>
+<tr>
+<td><code>netbird.admin</code></td>
+<td>Manage NetBird devices; edit Transcriber channels</td>
+</tr>
+<tr>
+<td><code>wifi.admin</code></td>
+<td>WiFi management</td>
+</tr>
+<tr>
+<td><code>tickets.manage</code></td>
+<td>Manage tickets</td>
+</tr>
+<tr>
+<td><code>messages.manage</code></td>
+<td>Delete all messages, disconnect operators</td>
+</tr>
+</tbody>
+</table>
+<h2 id="user-management-authusersphp">User Management — <code>/auth/users.php</code></h2>
+<p>Requires <code>users.manage</code>. This is the only page that can hand out permissions.</p>
+<p>The page lists every account with its username, name, email, active flag, creation date,
+last login, and current permissions. Four actions are available:</p>
+<p><strong>Create</strong> — username (2–32 characters: letters, digits, <code>_</code>, <code>-</code>, <code>.</code>), optional name and
+email, a password typed twice, and the permission tick-boxes. The account is active
+immediately.</p>
+<p><strong>Edit</strong> — change name, email, the active flag, and permissions. Saving replaces the whole
+permission set with whatever is ticked, so a box you clear is a permission removed.</p>
+<p><strong>Reset password</strong> — set a new password directly, without the email round trip. This also
+<strong>signs that user out everywhere</strong> except your own current session, which is what you want
+when you are resetting because an account may be compromised. Use this for anyone whose
+account has no email address.</p>
+<p><strong>Delete</strong> — removes the account. Permissions and sessions go with it, by foreign key
+cascade. There is no undo and no archive.</p>
+<h3 id="guards-on-your-own-account">Guards on your own account</h3>
+<p>The page stops you from locking yourself out, in three specific ways:</p>
+<ul>
+<li>The <code>users.manage</code> tick-box is <strong>disabled</strong> when you are editing yourself.</li>
+<li>If you somehow submit an edit of yourself without <code>users.manage</code>, the server puts it back.</li>
+<li>The <strong>active</strong> flag is forced to on when you are editing yourself, and <strong>Delete</strong> refuses
+  on your own account.</li>
+</ul>
+<p>These guards only protect <em>you</em> from <em>yourself</em>. Nothing stops two administrators from
+removing each other's <code>users.manage</code>, and nothing stops you deleting the only other
+administrator. If every account with <code>users.manage</code> is gone, no web page can fix it:
+recovery means shell access to the server and
+<code>sudo -u www-data php /var/www/html/auth/init_db.php</code>, which creates a new administrator
+when run without arguments.</p>
+<hr />
+<h2 id="map-admin-admin">Map Admin — <code>/admin/</code></h2>
+<p>Requires <code>admin.view</code>. This is the largest page in the system and the one you will spend the
+most time in. It edits an event — the whole description of what the map shows.</p>
+<p>Without <code>admin.edit</code> every field renders read-only and the editing buttons are absent. The
+server also refuses mutating requests from a view-only account, so the read-only mode is
+real and not merely a hidden button.</p>
+<h3 id="header">Header</h3>
+<p>The header names the current event file and event name, and carries the action buttons:</p>
+<table>
+<thead>
+<tr>
+<th>Button</th>
+<th>Needs</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>New</strong></td>
+<td><code>admin.edit</code></td>
+<td>Clears the form to an empty event. Warns first if you have unsaved changes</td>
+</tr>
+<tr>
+<td><strong>Update</strong></td>
+<td><code>admin.edit</code></td>
+<td>Validates and applies your edits to the event that is live now, then returns to the map</td>
+</tr>
+<tr>
+<td><strong>Load…</strong></td>
+<td><code>admin.edit</code></td>
+<td>Opens the list of saved events and loads one into the form</td>
+</tr>
+<tr>
+<td><strong>Save</strong></td>
+<td><code>admin.edit</code></td>
+<td>Writes the form to a named event — <strong>without</strong> making it the live event</td>
+</tr>
+<tr>
+<td><strong>Save as Default Event</strong></td>
+<td><code>admin.set_default</code></td>
+<td>Writes it <strong>and</strong> makes it the live event that <code>marsaprs.org</code> shows</td>
+</tr>
+<tr>
+<td><strong>Sign out</strong> / <strong>Exit</strong></td>
+<td>—</td>
+<td>End the session / return to the map</td>
+</tr>
+<tr>
+<td><strong>NetBird</strong>, <strong>Analyzer</strong>, <strong>Tickets</strong>, <strong>Users</strong></td>
+<td>the matching permission</td>
+<td>Jump to that page</td>
+</tr>
+</tbody>
+</table>
+<p>The distinction that matters: <strong>Save</strong> stores an event, <strong>Save as Default Event</strong> switches
+the public map over to it. Saving a half-built event for next month cannot disturb today's
+event. Only the second button is gated by <code>admin.set_default</code>, which is precisely the
+permission you withhold from someone who may build events but must not go live with one.</p>
+<p><strong>Update</strong> is the event-day button. It applies what you changed to the running event and
+takes you back to the map. If the event has been changed on the server since you loaded it —
+someone else editing at the same time — you get a warning before your version overwrites
+theirs.</p>
+<h3 id="sections">Sections</h3>
+<p><strong>Event</strong> — the event name, the <strong>Event Password</strong> that participants type into the app or
+web map, the <strong>Messaging Password</strong> that operators use to subscribe to the message net, and
+two live-adjusting sliders:</p>
+<ul>
+<li><strong>Blink Duration</strong> (0–10 s): how long a tracker's marker blinks when it moves.</li>
+<li><strong>Breadcrumb Count</strong> (0–100, where 0 is off): how many past positions trail behind a
+  tracker.</li>
+</ul>
+<p>Those two sliders save as you drag them, without a separate Save. The <strong>💬 Messages</strong> button
+beside the messaging password opens the current message thread, with an Export .txt button
+and — for <code>messages.manage</code> only — <strong>Delete All Messages</strong>, which asks for a confirmation
+click and then clears the whole thread.</p>
+<p><strong>Backup</strong> and <strong>Restore</strong> sit beside the event name. Backup downloads the entire event as a
+<code>.zip</code> named for the event and today's date; Restore takes one back. This is the only
+complete export of an event including its course files, and it is worth doing before any
+event you would hate to rebuild.</p>
+<p><strong>Legend</strong> — raw HTML shown in the lower-left of the map in kiosk mode. Whatever you put
+here renders as markup, so it is a place to be careful.</p>
+<p><strong>Trackers</strong> — everyone being tracked, in one list. This section is editable by
+<code>admin.edit_trackers</code> as well as <code>admin.edit</code>, and has its own <strong>Update Tracker Data</strong>
+button which saves the tracker list alone. That button works even when the event is locked,
+which is the point of it: the roster changes on event morning after the rest of the event
+has been frozen.</p>
+<p>There are two kinds of row, and they look similar because they are the same thing seen two
+ways — someone on the course, and how their position reaches you.</p>
+<p><strong>Radio trackers</strong> are people carrying an APRS radio. You type these in ahead of the event:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>What to put in it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>ID</strong></td>
+<td>The short label drawn on the map beside their marker. Keep it short — two or three characters is ideal, because it has to be readable at a glance on a screen across the room</td>
+</tr>
+<tr>
+<td><strong>Callsign</strong></td>
+<td>Their APRS callsign with SSID, e.g. <code>K6DRK-9</code>. Uppercased for you as you type</td>
+</tr>
+<tr>
+<td><strong>Name</strong></td>
+<td>The person or role, e.g. <em>Sweep 2</em> or <em>Jane</em>. This is what appears in the sidebar</td>
+</tr>
+<tr>
+<td><strong>Δ</strong></td>
+<td>Not editable — the shortest gap between beacons over the last ten received. It tells you how often this radio is actually reporting, which is usually more useful than when it last did</td>
+</tr>
+<tr>
+<td><strong>Heard</strong></td>
+<td>Not editable — how long ago this radio was last heard. Green through red as it ages</td>
+</tr>
+<tr>
+<td><strong>Info</strong></td>
+<td>Opens what is known about the radio: its last beacon, path, and any device details</td>
+</tr>
+<tr>
+<td><strong>Remove</strong></td>
+<td>Deletes the row</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Mobile trackers</strong> are phones running the app. You do not create these — they appear on
+their own when someone joins with the event password, which is why the list has a refresh
+(↻) button rather than an add button. Their columns:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>ID</strong></td>
+<td>The map label, as above. Editable — a phone joins with something generic, and renaming it to <em>SAG 3</em> is usually the first thing you want to do</td>
+</tr>
+<tr>
+<td><strong>Callsign</strong></td>
+<td>Assigned automatically when they join (<code>MARSQQ-NN</code> form), not editable. This is the callsign their positions are injected to APRS-IS under</td>
+</tr>
+<tr>
+<td><strong>Name</strong></td>
+<td>Who it is. Editable, and worth setting for the same reason as the ID</td>
+</tr>
+<tr>
+<td><strong>Δ</strong></td>
+<td>Interval between beacons, as above. Click it to reset the beacon history for that phone</td>
+</tr>
+<tr>
+<td><strong>Client</strong></td>
+<td>The device, and an icon for the Smart Track mode it is currently in — stationary, walking, cycling, driving</td>
+</tr>
+<tr>
+<td><strong>Joined</strong></td>
+<td>How long they have been in this session</td>
+</tr>
+<tr>
+<td><strong>Heard</strong></td>
+<td>How long since their last beacon</td>
+</tr>
+<tr>
+<td><strong>Info</strong></td>
+<td>The phone's reported device details</td>
+</tr>
+<tr>
+<td><strong>Hide</strong> / <strong>Unhide</strong></td>
+<td>Takes them off the map without disconnecting them. For a phone that is on but parked, or a duplicate</td>
+</tr>
+<tr>
+<td><strong>Remove</strong></td>
+<td>Drops the session. They come back if the app is still running and sharing</td>
+</tr>
+</tbody>
+</table>
+<p>When someone carries <strong>both</strong> a radio and a phone, the two rows are linked and shown
+together — the radio row above, the phone row beneath it — so you can see one person's two
+position sources side by side rather than hunting for them separately in the list.</p>
+<p>The tick-boxes down the left are for bulk work: select several phones and use <strong>Remove (n)</strong>
+in the section header to drop them all at once. This is the end-of-event tidy-up.</p>
+<p>Above the list are the mobile settings: whether phones may join at all, the <strong>PIN code</strong> they
+must enter to share location, and the <strong>Root callsign</strong> their assigned callsigns are built
+from.</p>
+<p><strong>Default Section Visibility</strong> — which layers (trackers, courses, aid stations, iGates,
+backgrounds) are switched on when someone opens the map fresh.</p>
+<p><strong>Map Default View</strong> — the latitude, longitude, and zoom the map opens at.</p>
+<p><strong>Map Backgrounds</strong> — the tile layers offered. The ⊞ button browses available tile
+providers.</p>
+<p><strong>Aid/Rest Stops</strong>, <strong>iGates</strong>, <strong>Courses</strong> — the geographic content. Each has export (↓)
+and import (↑) buttons in its section header. Aid stations and iGates import from YAML, GPX,
+KML, or GeoJSON; courses from YAML, CSV, or a location file; and the Event section as a
+whole exports and imports from YAML or CSV.</p>
+<h3 id="event-locking">Event locking</h3>
+<p>An event can be <strong>locked</strong> so that it cannot be overwritten by accident once it is set up.
+A locked event shows a red 🔒 in the event list.</p>
+<p>Locking is the one thing on this page that does <strong>not</strong> use your account permissions. It is
+protected by a separate shared password in <code>admin/password.txt</code> on the server, and saving
+over a locked event requires typing it. To change that password, edit the file directly on
+the Pi — there is no web interface for it.</p>
+<p>The reason for the separate password is that locking is a guard against mistakes by people
+who legitimately hold <code>admin.edit</code>, and a permission they already have cannot guard against
+them. Note the deliberate exception above: <strong>Update Tracker Data</strong> still works on a locked
+event.</p>
+<h3 id="deleting-events">Deleting events</h3>
+<p>Requires <code>admin.delete_event</code>, from the event list in the Load dialog. The event directory
+and its course files go with it.</p>
+<h3 id="activity-log">Activity log</h3>
+<p>Admin actions are appended to <code>/var/log/aprs-admin/aprs-admin.log</code> on the server with a
+timestamp and client IP. There is no web view of it; read it over SSH.</p>
+<hr />
+<h2 id="tickets-ticketsadminphp">Tickets — <code>/tickets/admin.php</code></h2>
+<p>Requires <code>tickets.manage</code>.</p>
+<p>Participants submit support requests at <strong><code>/tickets/</code></strong>, which is public and needs no
+account — that is the whole point, since someone whose app is not working cannot be asked to
+create an account first. Each ticket gets an ID of the form <code>TKT-0001</code> and a status URL the
+submitter can check later.</p>
+<p>The admin page lists all tickets, sortable, with a filter for active ones. Opening a ticket
+shows the submitter's details, their summary and description, and copy buttons beside each
+field for pasting into an email. You can set:</p>
+<ul>
+<li><strong>Status</strong> — one of <em>Open</em>, <em>Testing</em>, <em>Resolved</em>, <em>Won't Fix</em>, <em>Duplicate</em>.</li>
+<li><strong>Resolved in version</strong> — appears only when the status is <em>Resolved</em>, and records which
+  app or site build fixed it.</li>
+<li><strong>Admin response</strong> — free text that the submitter sees when they check their ticket's
+  status URL. Write it as something a participant will read.</li>
+</ul>
+<p>New tickets and new comments email the <code>manager_email</code> address from
+<code>tickets/config.json</code>, which is the same address that account registrations notify.</p>
+<hr />
+<h2 id="netbird-status-netbird">NetBird Status — <code>/netbird/</code></h2>
+<p>Requires <code>netbird.view</code>. The live health board for the whole fleet.</p>
+<p>Five counters across the top — <strong>Total</strong>, <strong>Online</strong>, <strong>Pending</strong>, <strong>Offline</strong>, <strong>Disabled</strong>
+— over a table of every device. A <strong>Daemon</strong> badge in the header shows whether the APRS
+tracker daemon is running on the server. Devices are grouped under the section headings set
+in NetBird Admin, so related gates sit together.</p>
+<p>Each row is one device:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>What it tells you</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Name</strong></td>
+<td>The site, as named in NetBird Admin — <em>Muir Woods</em>, <em>Bolinas Ridge</em></td>
+</tr>
+<tr>
+<td><strong>Host</strong></td>
+<td>Its APRS callsign, e.g. <code>K6DRK-10</code>. A dash means the device has none, which is normal for a Display Pi or the server</td>
+</tr>
+<tr>
+<td><strong>Status</strong></td>
+<td><strong>Online</strong> (reachable now), <strong>Offline</strong> (not), <strong>Disabled</strong> (switched off in Admin, so it is not expected), or <strong>Pending</strong> (just changed state — give it a moment before believing it)</td>
+</tr>
+<tr>
+<td><strong>IP Address</strong></td>
+<td>Its NetBird address, with a button to copy it for an SSH session</td>
+</tr>
+<tr>
+<td><strong>Last</strong></td>
+<td>How long ago the device answered. This is the number that tells you a gate has <em>just</em> gone quiet versus has been down all morning</td>
+</tr>
+<tr>
+<td><strong>iGate</strong></td>
+<td>Time since this gate last forwarded an APRS packet — green under 5 minutes, blue under 15, red beyond that, and <em>stale</em> after an hour. A gate can be <strong>Online</strong> here and still red: the Pi is up and the radio side is not, which is exactly the failure worth catching early</td>
+</tr>
+</tbody>
+</table>
+<p>Further columns appear on the right when devices report extra detail — most usefully <strong>CPU</strong>
+temperature and <strong>Throttled</strong>. Throttled is the one to read: <em>Low voltage</em> means the power
+supply is not keeping up, which is the most common cause of a Pi that reboots on its own or
+goes deaf without explaining itself.</p>
+<p><strong>Reading the board quickly.</strong> Offline and red-iGate rows sort to your attention first.
+Online with a stale iGate means the network is fine and the radio is not. Everything offline
+in one group usually means the site's power or internet went, not six devices failing at
+once.</p>
+<p>Holders of <code>netbird.admin</code> also get two sliders:</p>
+<ul>
+<li><strong>Poll</strong> — how often the server asks NetBird for device status.</li>
+<li><strong>Refresh</strong> — how often this page redraws from what the server has.</li>
+</ul>
+<p>These are different questions and it is worth keeping them apart: turning Refresh up makes
+the page feel livelier without generating any more load on NetBird, while turning Poll up is
+what actually gets you fresher data.</p>
+<p>The page <strong>stops polling when left idle</strong> and shows a "Polling Paused" panel with a Resume
+button. That is intentional — a status board left open on a spare monitor for a week should
+not keep hammering the API.</p>
+<hr />
+<h2 id="netbird-admin-netbirdadminphp">NetBird Admin — <code>/netbird/admin.php</code></h2>
+<p>Requires <code>netbird.admin</code>. Where the device list itself is edited.</p>
+<p><strong>+ Add Device</strong> and <strong>Edit</strong> open a form with four fields:</p>
+<ul>
+<li><strong>Name</strong> — what shows on the status board, e.g. <em>Muir Woods</em>.</li>
+<li><strong>Host</strong> — the device's APRS hostname, e.g. <code>K6DRK-10</code>. Leave blank if it has none. This
+  is matched case-insensitively, and the save path refuses a second entry for the same host.</li>
+<li><strong>IP</strong> — the NetBird address, <code>100.101.x.y</code>.</li>
+<li><strong>Group</strong> — a section heading. Devices with the same group are listed together.</li>
+</ul>
+<p>Each row has a toggle for <strong>enabled</strong>, and four buttons:</p>
+<table>
+<thead>
+<tr>
+<th>Button</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>ssh</strong></td>
+<td>Opens a browser SSH terminal to the device</td>
+</tr>
+<tr>
+<td><strong>Web</strong></td>
+<td>Opens the device's own web interface</td>
+</tr>
+<tr>
+<td><strong>Edit</strong></td>
+<td>Reopens the form</td>
+</tr>
+<tr>
+<td><strong>Del</strong></td>
+<td>Removes the entry</td>
+</tr>
+</tbody>
+</table>
+<p><strong>ssh</strong> and <strong>Web</strong> are disabled unless the device is both online and enabled.</p>
+<h3 id="the-browser-ssh-terminal">The browser SSH terminal</h3>
+<p>The <strong>ssh</strong> button opens a full xterm.js terminal in a popup, connected through the server
+over the NetBird VPN to the device. It is a real interactive shell: you can run
+<code>sudo systemctl restart …</code>, tail a log, or reboot a gate without leaving the browser.</p>
+<p>The header also links to the <a href="#sdr-self-test-igateselftest">SDR Self-Test</a> page
+(<strong>iGate Test</strong>), the <a href="#wifi-manager-wifi">WiFi Manager</a>, and the User Guide.</p>
+<hr />
+<h2 id="wifi-manager-wifi">WiFi Manager — <code>/wifi/</code></h2>
+<p>Requires <code>wifi.admin</code> to edit; <code>netbird.view</code> gets a read-only view, labeled as such in the
+page heading.</p>
+<p>This manages the single fleet-wide list of WiFi networks that <strong>every</strong> field device tries —
+iGates, Display Pis, Transcribers, and the server. Add the venue's network here the week
+before an event and the whole fleet picks it up on its nightly check, rather than being
+configured one machine at a time in a parking lot.</p>
+<p>Each row is one network:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Name</strong></td>
+<td>A label for you. It has no effect on anything — call it <em>Community Center</em> so you know what it is next year</td>
+</tr>
+<tr>
+<td><strong>SSID</strong></td>
+<td>The network name exactly as it is broadcast. Case matters</td>
+</tr>
+<tr>
+<td><strong>Password</strong></td>
+<td>The plain password. Enter it here and the PSK is generated for you</td>
+</tr>
+<tr>
+<td><strong>PSK Hash</strong></td>
+<td>The hashed form, which is what actually goes out to the fleet</td>
+</tr>
+</tbody>
+</table>
+<p><strong>The order of the list is the priority order, and the top is the most preferred.</strong> Drag a
+row up to prefer it. A device connects to the highest network on the list that it can
+actually see: if it can see numbers 2 and 5, it takes 2 and never looks at 5. If it can see
+none of them it keeps trying, so a network that is out of range costs nothing but a line.</p>
+<p>That is why the running order matters more than it looks. Put the event venue's network
+above your home network before an event, and the gates that travel will prefer the venue
+when they arrive and fall back to whatever else they know when they leave — without anyone
+touching them. Leave it below and a gate sitting in your garage the night before may never
+move off the wrong network.</p>
+<p>Because a device only re-reads this list on its nightly check, <strong>add the venue network the
+day before, not the morning of.</strong> A gate that has already left for the site will not see an
+entry added after it lost internet.</p>
+<p>---</p>
+<h2 id="transcriber-channels-transcriber">Transcriber Channels — <code>/transcriber/</code></h2>
+<p>Requires <code>netbird.admin</code> to edit; <code>netbird.view</code> gets a read-only view.</p>
+<p>Manages the fleet of Transcribers: which Pi listens on which frequency, with which SDR
+dongle, and whether it is on. Devices fetch their own slice of this configuration on a
+nightly schedule.</p>
+<h3 id="devices">Devices</h3>
+<p>A table of receiver hosts, each with a <strong>config token</strong> that authenticates that Pi when it
+fetches its settings. Tokens can be <strong>rotated</strong>, which shows the new value <strong>once</strong> — copy it
+then, because it is not displayed again.</p>
+<h3 id="channels">Channels</h3>
+<p>One row per frequency being monitored:</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Receiver</strong></td>
+<td>Which Pi does the listening</td>
+</tr>
+<tr>
+<td><strong>Frequency</strong></td>
+<td>In MHz, as you would read it off a radio</td>
+</tr>
+<tr>
+<td><strong>Heard as</strong></td>
+<td>The name written on every log entry from this channel</td>
+</tr>
+<tr>
+<td><strong>Dongle serial</strong></td>
+<td>The serial programmed into the SDR stick — not a USB slot number</td>
+</tr>
+<tr>
+<td><strong>Squelch</strong></td>
+<td>How strong a signal must be before the receiver records it</td>
+</tr>
+<tr>
+<td><strong>Calibration</strong></td>
+<td>Tuner gain and squelch measured at the site; there is a button to ask a channel to measure itself now</td>
+</tr>
+<tr>
+<td><strong>Accuracy</strong></td>
+<td><strong>Fast</strong> keeps up with a busy net in real time; the slower setting is more accurate</td>
+</tr>
+<tr>
+<td><strong>On</strong></td>
+<td>Off stops it logging immediately without losing the setup</td>
+</tr>
+<tr>
+<td><strong>Audio</strong></td>
+<td>Send the recording along with the transcription</td>
+</tr>
+<tr>
+<td><strong>Log token</strong></td>
+<td>Authenticates entries this channel posts</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Update devices</strong> in the header tells the Pis to re-fetch now instead of waiting for their
+next scheduled check.</p>
+<h3 id="tracker-id-names">Tracker ID names</h3>
+<p>A tracker's <strong>ID</strong> is short because it has to fit on a map marker and stay readable across
+a room — <code>CAR</code>, <code>H1</code>, <code>INS</code>. That is exactly what makes it wrong everywhere else: <em>CAR
+Stanton</em> in the Messages panel tells a reader nothing, and a speech engine reads <code>H1</code> as two
+characters rather than as a station.</p>
+<p>This list says what each ID is called when it is written out or spoken. One per line:</p>
+<pre><code>H1 = Hiker One
+INS = Insult
+CAR = Cardiac
+</code></pre>
+<p>Same shape as a correction below, so there is one syntax rather than two. Lines starting
+with <code>#</code> are ignored, so you can group the list under headings.</p>
+<p>With those set, a message from <strong>H1 Germain</strong> is shown in the Messages panel as <em>Hiker One
+Germain</em> and announced as <em>"From Hiker One, Germain."</em> The comma is deliberate — run
+together, the station and the person blur into one unfamiliar name.</p>
+<p>An ID with no line here is left exactly as it is, so the list only needs the ones worth
+expanding. <strong>Map markers are deliberately not changed</strong>; they keep the short ID, which is
+the reason the field is short.</p>
+<p><strong>It also applies inside transcribed radio traffic.</strong> A log entry heard as <em>"H1 to net
+control"</em> is shown as <em>"Hiker One to net control"</em>. Only whole words are replaced, so an ID
+of <code>CAR</code> does not rewrite the middle of <em>CARDIAC</em>, <em>SCARED</em> or <em>CARRY</em>, and only radio
+traffic is touched — text an operator typed is never altered.</p>
+<blockquote>
+<p><strong>One caveat, for IDs that are also ordinary words.</strong> Matching ignores case, because
+transcription does not reliably produce a callsign in the case it was written in and
+requiring an exact match would make this miss most of the time. The cost is that an ID
+like <code>CAR</code> will also fire on the ordinary word: <em>"the car is parked"</em> becomes <em>"the
+Cardiac is parked"</em>. IDs that are unambiguous tokens — <code>H1</code>, <code>INS</code>, <code>M141</code> — have no such
+problem. If a collision becomes annoying, the cure is to drop that one line; the label
+still expands in the Messages panel either way.</p>
+</blockquote>
+<p>The list is shared by every event, because an aid station keeps its name from one year to
+the next. Unlike the vocabulary below it is not sent to the receivers — the server applies
+it when it hands out a message, so a change is in force for the next message rather than at
+the next device check, and it applies to entries already recorded as well as new ones.</p>
+<h3 id="beeps-and-morse-identifiers">Beeps and Morse identifiers</h3>
+<p>A repeater sends a courtesy tone after every over and a Morse identifier every few
+minutes. Both used to reach the log — the tone as an entry reading "Beep", the Morse as
+whatever the transcription made of ten seconds of keyed carrier.</p>
+<p>Each channel now measures the audio before transcribing it, and can tell both apart from
+speech on one property: a beep and a CW identifier sit on <strong>one frequency</strong> for their whole
+length, and speech never does — its pitch moves constantly. There is nothing to tune per
+site and nothing to type; it is a property of the sound.</p>
+<p>Every channel starts in <strong>observe</strong> mode, which changes nothing about what is logged. It
+records what it <em>would</em> have dropped, in the channel's journal and in the recording
+manifest if that channel is keeping audio. Read an event back, satisfy yourself that the
+only things it flagged were tones, and then switch it to <strong>drop</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Behaviour</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>observe</code></td>
+<td>Measures and reports; drops nothing. <strong>The default</strong></td>
+</tr>
+<tr>
+<td><code>drop</code></td>
+<td>A clip judged a tone is not transcribed, not logged, <strong>and its audio is not sent</strong></td>
+</tr>
+<tr>
+<td><code>off</code></td>
+<td>Does not measure at all</td>
+</tr>
+</tbody>
+</table>
+<p><strong>It removes the audio as well as the line.</strong> Normally a channel sending audio posts the
+recording even when the transcription is rejected, so that a garbled human transmission is
+still audible to anyone listening. A courtesy tone is the case where that is wrong — a
+listener scrubbing an event wants the overs, not the repeater clearing its throat after
+each one — so a clip judged a tone becomes neither a row of text nor a second of audio.</p>
+<p><strong>Only when the tone is the whole transmission.</strong> The measurement is of the whole clip, so
+a beep arriving in its own transmission is dropped, while a beep in front of somebody
+talking leaves most of the clip broadband and the whole transmission is kept — audio and
+text together. Nothing is ever trimmed out of the middle of a recording; this keeps or
+discards transmissions rather than rewriting them.</p>
+<p>Dropping is also the cheaper setting: a clip judged a tone never reaches transcription,
+which on a roll call with a tone after every over is most of the clips.</p>
+<p>Anything it cannot judge — a clip too short, too quiet, or unreadable — is <em>no opinion</em>,
+and is transcribed exactly as before. The detector can never be the reason a transmission
+is missing from the log.</p>
+<h3 id="vocabulary">Vocabulary</h3>
+<p>Transcription gets callsigns and local place names wrong more than anything else — <code>K6DRK</code>
+comes back as <em>K6 dark</em> — so the page gives the receivers a list of words to expect. There
+are three sources, and they add together:</p>
+<ol>
+<li>
+<p><strong>Event vocabulary</strong> — the event's radio assignment sheet in Google Docs. Paste the
+   ordinary <code>/edit</code> link; the document must be shared as <em>Anyone with the link can view</em>.
+   Callsigns and tactical calls are pulled out by their shape, plus anything under a heading
+   containing the word <strong>Vocabulary</strong>. Names, shift times, and phone numbers are not read
+   and are never stored. The sheet is re-read every fifteen minutes; <strong>Read sheet now</strong>
+   forces it.</p>
+</li>
+<li>
+<p><strong>Place names and corrections</strong> — a box on the page for terms that cannot be found on the
+   sheet by shape, because they are ordinary words in ordinary order: <em>Windy Gap</em>,
+   <em>Cardiac</em>, <em>Bootjack</em>, <em>Pantoll</em>, <em>Stinson Beach</em>. The proper home for these is the
+   shared sheet, under a <em>Vocabulary</em> heading, one term per line. The box on the page is for
+   mid-event, when <em>Cardiac</em> is coming out as <em>Cardiff</em> in the log and the document is not
+   yours to edit right then. A line of the form <code>Cardiff = Cardiac</code> is a <strong>correction</strong>:
+   what came out on the left, what it should have said on the right. Use one only for a
+   mishearing somebody has actually heard, because a correction is obeyed exactly.</p>
+</li>
+<li>
+<p><strong>Standing vocabulary</strong> — one list shared by every event, behind <strong>Edit standing list…</strong>.
+   The procedural words, the amateur-radio terms, and the regional place names that do not
+   change from event to event belong here so nobody retypes them into each new sheet. An
+   event's own sheet and the box above win on the same term, so a standing entry never
+   overrides what today's sheet says.</p>
+</li>
+</ol>
+<hr />
+<h2 id="sdr-self-test-igateselftest">SDR Self-Test — <code>/igate/selftest/</code></h2>
+<p><strong>No sign-in required.</strong></p>
+<p>Every iGate and Transcriber runs an SDR self-noise test nightly and posts the result here.
+The dashboard ranks the fleet worst-first by the single number that predicts a deaf gate:
+the worst internal spur in the guard band around the monitored frequency, in dB over the
+noise floor. <strong>Low is good.</strong></p>
+<p>For calibration, from a Pi Zero 2 W: roughly <strong>+18 dB</strong> with the dongle inside the case,
+which is a deaf gate, against <strong>0–3 dB</strong> with the dongle moved out of the case, which is
+healthy. Rows are graded GOOD / MARGINAL / BAD and sorted so problems are at the top.</p>
+<p>Each row has a <strong>Delete</strong> button that clears that host's stored report. It is for tidying
+stale or renamed entries — the row reappears on that device's next nightly upload, so it is
+not a way to hide a bad gate for long.</p>
+<p>The URL stays under <code>/igate/</code> even though the page now covers Transcribers too, because
+every deployed gate posts to that path and the link is in people's bookmarks.</p>
+<hr />
+<h2 id="analyzer-analyzer">Analyzer — <code>/analyzer/</code></h2>
+<p>Requires <code>analyzer.view</code>; destructive operations require <code>analyzer.admin</code>.</p>
+<p>Where the Map Admin shows you where everyone is <em>now</em>, the Analyzer shows you where they
+have been. It records every beacon of an event and lets you replay the whole day afterward —
+for a debrief, for working out why a runner was reported missing, or for showing a landowner
+that riders stayed on the course.</p>
+<p>Signing in is the same account; there is nothing separate to set up.</p>
+<p>Opening <code>/analyzer/</code> takes you straight to the current event's map — there is no event list
+to pick from first. Everything is driven from the <strong>controls panel</strong>, which opens from the
+button on the map.</p>
+<h3 id="recording">Recording</h3>
+<p>At the top of the panel is the recording state and the <strong>daemon toggle</strong>. The dot beside it
+is green while beacons are actively being collected and gray when they are not, and the panel
+tells you when the current recording started and last received anything.</p>
+<p><strong>This is the switch that matters, and the mistake to avoid is finding it off after the
+event.</strong> Turn it on before the first rider leaves. Only <code>analyzer.admin</code> can change it.</p>
+<h3 id="choosing-what-you-are-looking-at">Choosing what you are looking at</h3>
+<p>The middle of the panel filters the map. Nothing here changes the recording — you are
+choosing what to draw from what was already collected:</p>
+<table>
+<thead>
+<tr>
+<th>Control</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Show Tracks</strong></td>
+<td>The line each tracker traveled, rather than just where they are</td>
+</tr>
+<tr>
+<td><strong>Show Radio Beacons</strong> / <strong>Show Cellular Beacons</strong></td>
+<td>Positions that arrived by radio (red) and by phone (green). Turning one off is how you see what coverage the <em>other</em> actually gave you</td>
+</tr>
+<tr>
+<td><strong>Show iGates/Digipeaters</strong></td>
+<td>The receiving stations themselves</td>
+</tr>
+<tr>
+<td><strong>Show Radio Links</strong></td>
+<td>Lines from a tracker to the iGate that heard it — this is the view that shows which gate was doing the work in each part of the course</td>
+</tr>
+<tr>
+<td><strong>Show Courses</strong></td>
+<td>The course overlay</td>
+</tr>
+<tr>
+<td><strong>Show Names</strong></td>
+<td>Labels on markers. Turn off when the map is crowded</td>
+</tr>
+<tr>
+<td><strong>Auto-Refresh</strong></td>
+<td>How often the view updates during a live event, 30 s to 5 min</td>
+</tr>
+</tbody>
+</table>
+<p>Below those, three multi-select lists narrow the map to specific <strong>trackers</strong>, <strong>iGates</strong>, or
+<strong>carriers</strong>. Selecting one tracker and turning on Tracks and Radio Links answers "what
+happened to this person" faster than anything else in the system.</p>
+<h3 id="choosing-a-time-range">Choosing a time range</h3>
+<p>The two <strong>beacon range</strong> sliders set the start and end of what is displayed. Drag the start
+slider forward to skip the hour of everyone milling around at registration, or pull the end
+back to look at the finish. The labels above each slider show the time you have landed on.</p>
+<h3 id="getting-things-out">Getting things out</h3>
+<p>At the bottom of the panel:</p>
+<table>
+<thead>
+<tr>
+<th>Button</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Save Map</strong></td>
+<td>Saves the current view as an image</td>
+</tr>
+<tr>
+<td><strong>Export…</strong></td>
+<td>Downloads the event's beacon data</td>
+</tr>
+<tr>
+<td><strong>Playback</strong></td>
+<td>Opens the replay — the event animated from start to finish. This is the one to use in a debrief</td>
+</tr>
+<tr>
+<td><strong>Erase All…</strong></td>
+<td>Deletes recorded data. <code>analyzer.admin</code> only, and it asks twice</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Export before you erase.</strong> Erase All is not recoverable from the Analyzer, and the beacon
+history is not part of the event backup taken from Map Admin.</p>
+<hr />
+<h2 id="app-downloads">App downloads</h2>
+<p><strong>No sign-in required</strong> — these are the public pages you send participants to. Both are
+permanent URLs, so the link in an email, a QR code, or the user guide never has to change
+when a new version ships.</p>
+<h3 id="iphone-and-ipad">iPhone and iPad</h3>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Send people to</strong></td>
+<td><code>https://marsaprs.org/ios/download.php</code> (or just <code>/ios/</code>)</td>
+</tr>
+<tr>
+<td><strong>Where it goes</strong></td>
+<td>The App Store listing for <strong>APRS Map</strong></td>
+</tr>
+<tr>
+<td><strong>Requires</strong></td>
+<td>iOS 15 or later</td>
+</tr>
+</tbody>
+</table>
+<p>There is no page of install steps because none are needed — it is an ordinary App Store
+install, and updates arrive by themselves.</p>
+<p>The redirect exists so that written material can name one URL alongside the Android one.
+Apple's own listing URL changes when the app is renamed — it has moved once already, from
+<code>/marin-aprs-map/</code> to <code>/aprs-map/</code> — while the numeric id stays put, so the redirect links
+on the id and anything printed keeps working.</p>
+<p>Some testers may still be on <strong>TestFlight</strong> from before the App Store release. Move them
+across when you can: TestFlight builds stop working 90 days after upload, and the resulting
+"the app won't open" is the single most common iOS report.</p>
+<h3 id="android">Android</h3>
+<table>
+<thead>
+<tr>
+<th></th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Send people to</strong></td>
+<td><code>https://marsaprs.org/android/</code></td>
+</tr>
+<tr>
+<td><strong>Phone app</strong></td>
+<td><code>https://marsaprs.org/android/download.php</code></td>
+</tr>
+<tr>
+<td><strong>Watch app</strong></td>
+<td><code>https://marsaprs.org/android/watch.php</code></td>
+</tr>
+</tbody>
+</table>
+<p>The landing page shows each build's version, size, date, and SHA-256, and carries the
+install steps — Android sideloading trips an "unknown source" warning, so the steps are on
+the page rather than somewhere people have to be told about separately.</p>
+<p>The <strong>watch app</strong> is for Wear OS 3.0 and later and does messaging only; it does not share
+location. Installing it is genuinely more involved than the phone app — a watch has no
+browser, so the file has to be pushed across from the phone with the watch in developer
+mode. The steps are on the same page.</p>
+<h3 id="publishing-a-new-build">Publishing a new build</h3>
+<p>Copy the APK to the Pi under a versioned name and the download page picks up the newest
+automatically. The filename prefix is what keeps the two Android apps apart — <code>aprs-map-</code>
+for the phone, <code>aprs-wear-</code> for the watch — and they share an applicationId, so a watch APK
+served as the phone download would be offered as an update to the phone app. See <em>Building
+&amp; Distributing</em> in the README for the commands.</p>
+<p>When a release goes out, also update <code>map/app_version.php</code>, which is what makes the apps
+show their "update available" prompt.</p>
+<blockquote>
+<p><strong>Currently out of step:</strong> the iOS entry in <code>app_version.php</code> still has an empty
+<code>store_url</code> and a build number from 1.22.1, left over from before the App Store release.
+While <code>store_url</code> is empty the iOS update check does nothing at all, so iPhone users are
+never told a new version exists. Filling in the App Store URL and the current build number
+turns the prompt on.</p>
+</blockquote>
