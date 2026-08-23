@@ -1812,14 +1812,22 @@ QUIET_FRACTION = 0.05        # under 5% of the full sample rate counts as "shut"
 # 29, about 4 dB apart: the knee is found from the SLOPE between neighbours, and steps
 # closer together than a floor measurement is repeatable would be reading noise.
 #
-# The list stops at 32.8 and not at the tuner's 49.6 dB maximum, and that cap is doing
-# real work. The knee is measured on an IDLE channel, and the failure that got a hardcoded
-# 40 removed is not visible from there: front-end overload from a strong transmitter
-# somewhere else in the band, which is not on this frequency and need not be transmitting
-# while the sweep runs. Nothing the sweep can measure would object to 40 dB. So the sweep
-# is allowed to find the knee and is not allowed to chase it up to where this tuner stops
-# being linear.
-GAIN_CANDIDATES = [8.7, 12.5, 16.6, 20.7, 25.4, 29.7, 32.8]
+# The list stops short of the tuner's 49.6 dB maximum, and that cap is doing real work.
+# The knee is measured on an IDLE channel, and the failure that got a hardcoded 40 removed
+# is not visible from there: front-end overload from a strong transmitter somewhere else
+# in the band, which is not on this frequency and need not be transmitting while the sweep
+# runs. Nothing the sweep can measure would object to 40 dB. So the sweep is allowed to
+# find the knee and is not allowed to chase it up to where this tuner stops being linear.
+#
+# The ceiling was 32.8 until 2026-08-23, and that was one step too low to answer the
+# question at a quiet site. Measured on an idle 2m antenna: the floor sat on the
+# converter's own quantisation noise — 0.44 counts RMS, flat to within a hundredth of a dB
+# per dB — from 8.7 all the way up to 32.8, and only lifted off at 36.4. The sweep ended
+# BELOW the knee, so it found no knee and reported a disconnected antenna. It said that on
+# three separate channels with the antenna connected the whole time, which is a day of
+# looking at connectors. 36.4 and 38.6 are the two steps the R820T offers between the old
+# ceiling and the 40 that overloaded; both stay under it, and they cost five seconds.
+GAIN_CANDIDATES = [8.7, 12.5, 16.6, 20.7, 25.4, 29.7, 32.8, 36.4, 38.6]
 
 # How much of each dB of gain has to reach the noise floor before the receiver counts as
 # hearing the band rather than its own converter.
@@ -1906,7 +1914,11 @@ def gain_text(gain):
 def choose_gain(measure, candidates=GAIN_CANDIDATES, slope=KNEE_SLOPE,
                 tolerance=FLOOR_TOLERANCE):
     """The lowest gain at which this receiver hears the band rather than itself.
-    Returns (gain, "") or (None, why).
+
+    Returns (gain, "") when it found a knee, (None, why) when the sweep is not a
+    measurement at all, and (top_of_sweep, caveat) when the sweep was clean but no knee
+    appeared in it. A gain arriving with a non-empty second value is usable and is NOT
+    measured, and the caller has to keep those apart.
 
     `measure(gain) -> the noise floor in dB, or None if the receiver produced nothing`,
     injected the way choose_squelch's sampler is, so the knee-finding can be tested
@@ -1926,11 +1938,16 @@ def choose_gain(measure, candidates=GAIN_CANDIDATES, slope=KNEE_SLOPE,
     slope crosses KNEE_SLOPE is where the receiver stops hearing itself and starts hearing
     the band, and no signal has to be present for any of it.
 
-    Three ways it refuses to answer, and each names itself:
+    Two ways it refuses to answer, and each names itself:
 
       - the receiver hands back nothing            the tuner has not locked
-      - the floor never follows the gain           there is no antenna on it
       - the floor moves while being measured       somebody is transmitting
+
+    And one it answers with a caveat rather than refusing. A floor that never follows the
+    gain used to be reported as "there is no antenna on it", which is one of its two
+    causes and was the wrong one every time it was said: the other is a site quieter than
+    the sweep reaches. Nothing measurable here separates them, so it says so, hands back
+    the top of the sweep, and lets the caller cache it as knee=False.
 
     The last is the one worth being careful about, because what traffic produces is not a
     wild answer but a plausible one: a floor that jumps at one gain looks exactly like a
@@ -1947,6 +1964,13 @@ def choose_gain(measure, candidates=GAIN_CANDIDATES, slope=KNEE_SLOPE,
         if floor is None:
             return None, "the receiver produced no samples — the tuner has not locked"
         floors.append(floor)
+    # The sweep itself, not just the verdict it produced. Every failure below describes
+    # the SHAPE of this curve — did not rise, fell, rose twice differently — and until
+    # these numbers were logged there was no way to tell "flat because the antenna is
+    # off" from "flat because the site is genuinely quiet and the knee is below the
+    # sweep". Cheap: one line per calibration, and only when a run is being watched.
+    log.info("gain sweep: %s",
+             ", ".join(f"{g:g}dB={f:.1f}" for g, f in zip(candidates, floors)))
 
     # The band has to have been idle throughout, not merely idle when we started.
     again = measure(candidates[0])
@@ -1980,9 +2004,25 @@ def choose_gain(measure, candidates=GAIN_CANDIDATES, slope=KNEE_SLOPE,
                           "was transmitting")
         return candidates[i], ""
 
-    return None, ("the noise floor did not rise with the gain at all, so the receiver is "
-                  "hearing itself rather than the antenna — check the antenna and its "
-                  "connector")
+    # No knee anywhere in the sweep. Two things produce that and NOTHING here can tell
+    # them apart: nothing is reaching the tuner, or the site is quieter than the top of
+    # the ladder reaches. Refusing outright used to be the answer, on the honest grounds
+    # that returning the top of the sweep and calling it a measurement is a lie.
+    #
+    # It is a lie — but refusing was the worse one, because the caller's fallback for a
+    # refusal is a gain compiled in from somebody else's site. At the site that prompted
+    # this, that fallback was 30 dB against a knee at 38.6, which left the receiver
+    # converter-limited and about 6 dB deaf for as long as nobody looked. Refusing did not
+    # avoid guessing. It guessed lower, and it guessed silently.
+    #
+    # So hand back the top of the sweep — the best gain anything measured here points to —
+    # and say plainly that it is not a knee. The caller caches it with knee=False and
+    # carries this text with it, so nothing downstream can mistake it for a measurement.
+    return candidates[-1], (
+        f"the noise floor did not rise with the gain anywhere up to "
+        f"{gain_text(candidates[-1])} dB, so this is the top of the sweep and not a "
+        f"measured knee — either nothing is reaching the tuner (check the antenna and "
+        f"its connector) or this site is quieter than the sweep can reach")
 
 
 def calibration_seconds():
@@ -2140,7 +2180,13 @@ def calibrate(channel, spool, measure=None, sample=None):
     gain, why = choose_gain(measure)
     if gain is None:
         return None, why
-    log.info("gain %s dB — the knee, measured for this site", gain_text(gain))
+    # A gain WITH a warning is the no-knee case: usable, but not measured. It is cached
+    # so the receiver stops running on a number from another site, and it is marked so
+    # the manager and the self-test can say which of the two it is looking at.
+    if why:
+        log.warning("%s", why)
+    else:
+        log.info("gain %s dB — the knee, measured for this site", gain_text(gain))
 
     # The squelch is measured through a receiver opened at the gain just chosen. A copy,
     # so nothing here changes what the caller holds.
@@ -2154,7 +2200,9 @@ def calibrate(channel, spool, measure=None, sample=None):
                       f"producing samples")
 
     result = {"gain": gain, "squelch": level, "when": time.time(),
-              "frequency": str(channel.frequency)}
+              "frequency": str(channel.frequency), "knee": not why}
+    if why:
+        result["note"] = why
     calibration_save(spool, result)
     return result, ""
 
@@ -2190,9 +2238,14 @@ def run_calibration(channel, spool):
         log.error("calibration failed: %s", why)
         emit(state="failed", error=why)
         return 1
-    log.info("gain %s dB, squelch %s — measured and cached",
-             gain_text(result["gain"]), result["squelch"])
-    emit(state="done", gain=result["gain"], squelch=result["squelch"])
+    log.info("gain %s dB, squelch %s — %s and cached",
+             gain_text(result["gain"]), result["squelch"],
+             "measured" if result.get("knee", True) else "NOT measured")
+    done = {"gain": result["gain"], "squelch": result["squelch"],
+            "knee": bool(result.get("knee", True))}
+    if result.get("note"):
+        done["note"] = result["note"]
+    emit(state="done", **done)
     return 0
 
 
@@ -2934,18 +2987,30 @@ def main(argv=None):
     )
 
     channel = load_channel(args.config, args.channel)
+    spool = args.spool or os.path.join(SPOOL, re.sub(r"[^\w.-]", "_", channel.id))
+
+    # Before whisper is looked for, before anything is swept, and before the enabled
+    # check below: calibration is a radio job and nothing else, and a device whose model
+    # is missing should still be able to measure its site.
+    #
+    # `enabled` used to be tested first, so calibrating a channel that was off exited in
+    # three seconds with "nothing to do" and the manager reported "the receiver did not
+    # run the measurement" — true, and no help at all. That is backwards: measuring the
+    # site BEFORE putting a channel on the air is the right order, and the Double Dipsea
+    # 2026 is what it costs to get it wrong. A disabled channel is one nobody is relying
+    # on, which makes it the safest thing to take off the air for a minute.
+    if args.calibrate:
+        os.makedirs(spool, exist_ok=True)
+        return run_calibration(channel, spool)
+
+    # A disabled channel touches nothing — not even its spool directory. Creating one as
+    # root is how a channel ends up unable to write its own outbox later, which is why
+    # the makedirs stays below this and is not hoisted for tidiness.
     if not channel.enabled:
         log.info("channel %s is disabled; nothing to do", channel.id)
         return 0
 
-    spool = args.spool or os.path.join(SPOOL, re.sub(r"[^\w.-]", "_", channel.id))
     os.makedirs(spool, exist_ok=True)
-
-    # Before whisper is looked for and before anything is swept: calibration is a radio
-    # job and nothing else, and a device whose model is missing should still be able to
-    # measure its site.
-    if args.calibrate:
-        return run_calibration(channel, spool)
 
     outbox = Outbox(os.path.join(spool, "outbox"))
     # None unless this channel has asked to keep its audio, and None is the normal state.

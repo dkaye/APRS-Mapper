@@ -1077,18 +1077,39 @@ def test_the_gain_is_the_knee_where_the_receiver_starts_hearing_the_band():
           (29.7, ""))
 
 
-def test_a_gain_sweep_with_no_knee_is_not_an_answer():
-    """A floor that never follows the gain is a receiver hearing nothing but itself —
-    a disconnected antenna, or a connector that has worked loose. There is no knee to
-    find, and the honest answer is to say so rather than to return the top of the sweep
-    and call it measured."""
+def test_a_gain_sweep_with_no_knee_is_used_but_never_called_measured():
+    """A floor that never follows the gain has two causes and this sweep cannot separate
+    them: nothing reaching the tuner, or a site quieter than the ladder reaches.
+
+    It used to refuse and name the antenna, and that was the wrong cause every time it
+    was said. Refusing also did not avoid guessing, which was the real problem: the
+    caller's fallback is a gain compiled in from another site, and at the site that
+    prompted this it was 30 dB against a knee at 38.6 — so refusing to guess quietly
+    guessed lower, and left the receiver deaf. The top of the sweep comes back instead,
+    with the caveat attached, and the caller's job is to cache it without believing it."""
     print("gain — no knee")
     gain, why = transcriber.choose_gain(band(thermal=-200))
-    check("returns no gain", gain, None)
-    check("and blames the antenna", "antenna" in why, True)
+    check("hands back the top of the sweep", gain, max(transcriber.GAIN_CANDIDATES))
+    check("rather than nothing at all", gain is not None, True)
+    check("still says to check the antenna", "antenna" in why, True)
+    check("but no longer claims that is the only cause", "quieter" in why, True)
+
+    # What the caller does with it: cached so the receiver stops running on another
+    # site's number, and marked so nothing downstream calls it a measurement.
+    with tempfile.TemporaryDirectory() as spool:
+        channel = transcriber.Channel({"id": "rx1-147465", "frequency": "147465000",
+                                       "serial": "1"})
+        result, why = transcriber.calibrate(channel, spool,
+                                            measure=band(thermal=-200),
+                                            sample=site(floor=25))
+        check("it is cached", result and result["gain"], max(transcriber.GAIN_CANDIDATES))
+        check("and marked as not a knee", result["knee"], False)
+        check("with the reason kept beside it", "antenna" in result.get("note", ""), True)
+        saved = json.load(open(os.path.join(spool, "calibration.json")))
+        check("the mark survives to disk", saved["knee"], False)
 
     # And a receiver that hands back nothing at all is the wedged tuner again, not a
-    # wonderfully quiet site. It must never be measured against.
+    # wonderfully quiet site. That one is still a refusal.
     gain, why = transcriber.choose_gain(lambda g: None)
     check("a dead receiver is not a measurement", gain, None)
     check("and says the tuner produced nothing", "no samples" in why, True)
@@ -1119,12 +1140,42 @@ def test_the_gain_sweep_stays_below_what_this_tuner_stays_linear_at():
     """The knee is measured on an idle channel, so it cannot see the one thing that got a
     hardcoded 40 removed: front-end overload from a strong transmitter elsewhere in the
     band, which is not on this frequency and is not there while the sweep runs. Nothing
-    the sweep measures would object to 40 dB. So the list simply does not offer it."""
+    the sweep measures would object to 40 dB. So the list simply does not offer it.
+
+    40 is the number with a failure attached to it, and it is the one to assert on. An
+    earlier version of this test demanded 36 or less, which is a tighter bound than
+    anything measured ever justified, and it made the sweep stop one step short of a real
+    site's knee — see the test below."""
     print("gain — the cap")
     check("stays well below the tuner's 49.6 dB maximum",
-          max(transcriber.GAIN_CANDIDATES) <= 36, True)
+          max(transcriber.GAIN_CANDIDATES) < 40, True)
     check("and never offers the 40 that overloaded the front end",
           [g for g in transcriber.GAIN_CANDIDATES if g >= 40], [])
+
+
+def test_a_site_quiet_enough_to_need_the_top_of_the_sweep_still_calibrates():
+    """A quiet site's knee sits high, and the sweep has to reach it or it will blame the
+    antenna for the silence.
+
+    This is measured, not invented. On an idle 2m antenna the floor sat on the converter's
+    own quantisation noise from 8.7 dB all the way to 32.8 — the old top of the sweep —
+    and lifted off at 36.4. Every calibration there failed with "check the antenna and its
+    connector" while the antenna was connected and working, because a sweep that stops
+    below the knee cannot tell a quiet site from a disconnected one. thermal=-30 puts the
+    knee where that site's actually was."""
+    print("gain — a quiet site reaches its knee")
+    gain, why = transcriber.choose_gain(band(thermal=-30))
+    check("finds the knee above the old 32.8 ceiling", gain, 36.4)
+    check("and does not blame the antenna", why, "")
+
+    # The bug itself: the same site, swept only as far as the old ceiling went. It now
+    # degrades to an unmeasured 32.8 instead of refusing, which is the point — but 36.4
+    # measured is the answer, and only a ladder that reaches it can say so.
+    gain, why = transcriber.choose_gain(band(thermal=-30),
+                                        candidates=[8.7, 12.5, 16.6, 20.7, 25.4, 29.7, 32.8])
+    check("stopping short finds no knee at all", why != "", True)
+    check("and can only offer the top of its ladder", gain, 32.8)
+    check("naming how far it actually looked", "32.8" in why, True)
 
 
 # ── what is cached, and when it is measured ──────────────────────────────────
@@ -1155,7 +1206,8 @@ def test_gain_and_squelch_are_cached_together_or_not_at_all():
 
         saved = json.load(open(os.path.join(spool, "calibration.json")))
         check("both are written down together", sorted(saved),
-              ["frequency", "gain", "squelch", "when"])
+              ["frequency", "gain", "knee", "squelch", "when"])
+        check("and it is recorded that this one was a real knee", saved["knee"], True)
 
         # The gain the squelch was measured at is the gain the channel then opens with.
         gain, squelch, _ = transcriber.calibration_for(channel, spool)
@@ -1266,7 +1318,14 @@ def test_calibrating_says_it_has_started_before_it_says_what_it_found():
         check("says it has started first", lines[0]["state"], "started")
         check("with how long it expects to take", lines[0]["expected"] > 0, True)
         check("then what it measured", lines[1],
-              {"state": "done", "gain": 16.6, "squelch": 30})
+              {"state": "done", "gain": 16.6, "squelch": 30, "knee": True})
+
+        # A gain that is the top of the sweep rather than a knee travels as such, so the
+        # manager can show the difference instead of presenting a guess as a measurement.
+        rc, lines = calibration_output(channel, spool, band(thermal=-200), site(floor=25))
+        check("a caveated gain still succeeds", rc, 0)
+        check("but is reported as not a knee", lines[1]["knee"], False)
+        check("and carries the reason", "antenna" in lines[1].get("note", ""), True)
 
 
 def test_a_failed_calibration_says_why_and_caches_nothing():
@@ -2739,6 +2798,55 @@ def test_a_broken_whisper_is_fatal_not_silent():
             print("  ok  a missing binary is fatal too")
 
 
+def test_a_disabled_channel_can_still_be_calibrated():
+    """Measuring the site must not require the channel to be on the air first.
+
+    The enabled check used to sit above the calibrate branch, so calibrating a channel
+    that was switched off exited in three seconds with "nothing to do" and the manager
+    reported "the receiver did not run the measurement" — true, and no help. Measuring
+    BEFORE putting a channel on the air is the right order, and a disabled channel is
+    the safest one to take off the air for a minute.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        config = os.path.join(tmp, "channels.json")
+        with open(config, "w") as fh:
+            json.dump({"channels": [{"id": "x@rx1", "label": "off", "token": "t",
+                                     "frequency": "146700000", "serial": "0001",
+                                     "enabled": False}]}, fh)
+        # Reaching run_calibration is the whole assertion — it is allowed to fail for
+        # want of a radio on the machine running the tests. What must NOT happen is the
+        # early "disabled; nothing to do" return, which never touches the tuner at all.
+        reached = {"yes": False}
+        real = transcriber.run_calibration
+        transcriber.run_calibration = lambda ch, spool: (reached.update(yes=True), 0)[1]
+        try:
+            rc = transcriber.main(["--channel", "x@rx1", "--config", config,
+                                   "--spool", tmp, "--calibrate"])
+        finally:
+            transcriber.run_calibration = real
+        check("calibration runs on a disabled channel", reached["yes"], True)
+        check("and exits cleanly", rc, 0)
+
+
+def test_a_disabled_channel_still_does_nothing_when_asked_to_listen():
+    """The enabled check still applies to everything that is not calibration."""
+    with tempfile.TemporaryDirectory() as tmp:
+        config = os.path.join(tmp, "channels.json")
+        with open(config, "w") as fh:
+            json.dump({"channels": [{"id": "x@rx1", "label": "off", "token": "t",
+                                     "frequency": "146700000", "serial": "0001",
+                                     "enabled": False}]}, fh)
+        called = {"yes": False}
+        real = transcriber.run_calibration
+        transcriber.run_calibration = lambda ch, spool: (called.update(yes=True), 0)[1]
+        try:
+            rc = transcriber.main(["--channel", "x@rx1", "--config", config, "--spool", tmp])
+        finally:
+            transcriber.run_calibration = real
+        check("listening on a disabled channel exits 0", rc, 0)
+        check("and does not calibrate", called["yes"], False)
+
+
 def test_disabled_channel_does_nothing():
     print("disabled channel")
     with tempfile.TemporaryDirectory() as tmp:
@@ -2977,9 +3085,10 @@ if __name__ == "__main__":
         test_calibration_refuses_to_measure_a_dead_input,
         test_calibration_gives_up_rather_than_guessing,
         test_the_gain_is_the_knee_where_the_receiver_starts_hearing_the_band,
-        test_a_gain_sweep_with_no_knee_is_not_an_answer,
+        test_a_gain_sweep_with_no_knee_is_used_but_never_called_measured,
         test_a_transmission_during_the_sweep_is_detected_rather_than_measured,
         test_the_gain_sweep_stays_below_what_this_tuner_stays_linear_at,
+        test_a_site_quiet_enough_to_need_the_top_of_the_sweep_still_calibrates,
         test_gain_and_squelch_are_cached_together_or_not_at_all,
         test_a_measurement_is_never_re_measured_behind_your_back,
         test_a_channel_that_has_never_been_calibrated_runs_on_the_defaults,
@@ -3023,6 +3132,8 @@ if __name__ == "__main__":
         test_an_idle_frequency_is_not_fatal,
         test_a_broken_whisper_is_fatal_not_silent,
         test_disabled_channel_does_nothing, test_unknown_channel_is_fatal,
+        test_a_disabled_channel_can_still_be_calibrated,
+        test_a_disabled_channel_still_does_nothing_when_asked_to_listen,
         test_a_courtesy_tone_is_recognised_as_a_tone,
         test_a_morse_identifier_is_recognised_and_named_as_one,
         test_speech_is_not_mistaken_for_a_tone,
