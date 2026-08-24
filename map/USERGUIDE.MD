@@ -561,7 +561,7 @@ Type up to 1,000 characters and press **Send**. (The box also accepts far more t
 
 **View all messages:**
 
-Click **View all** to see the complete message log for the event — every message, in both directions, including other operators' conversations — as a scrollable, **searchable** feed. Type in the search box to filter by text, name, or ID, and click any message to jump into that conversation's thread and reply. Messages sent from a mobile tracker show a **location pin** — click it to centre the map on where the sender last reported (with a popup showing the sender, time, and message; if their position predates the message, the popup says so). Operators signed in with the **Delete All Messages** permission also see:
+Click **All Messages** at the top of the conversation list — or **View all** in the panel toolbar — to see the complete message log for the event — every message, in both directions, including other operators' conversations — as a scrollable, **searchable** feed. Type in the search box to filter by text, name, or ID, and click any message to jump into that conversation's thread and reply. Messages sent from a mobile tracker show a **location pin** — click it to centre the map on where the sender last reported (with a popup showing the sender, time, and message; if their position predates the message, the popup says so). Operators signed in with the **Delete All Messages** permission also see:
 
 - **Export CSV** — download the whole log with full timestamps (local and UTC), callsigns, and the sender's coordinates where recorded.
 - **Delete All Messages** — permanently erase the log for everyone. It asks for confirmation and cannot be undone, so export first if you need a record.

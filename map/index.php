@@ -2019,6 +2019,9 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
     border-bottom: 1px solid #f0f0f0; cursor: pointer;
 }
 .msg-conv-item:hover { background: #f6f9fb; }
+/* Separates the three destinations that always exist from the conversations that come
+   and go. Heavier than the hairline between rows, or it reads as one more row. */
+.msg-conv-sep { border: 0; border-top: 2px solid #e3e8ec; margin: 0; }
 .msg-conv-avatar {
     flex: 0 0 auto; width: 38px; height: 38px; border-radius: 50%;
     background: #dce6ee; color: #1a5276; font-size: 12px; font-weight: 700;
@@ -2406,11 +2409,11 @@ body.msg-window #msg-panel-grip { display: none; }
 				<div class="qs-sec-title">Messaging</div>
 				<div class="qs-tip">While you are sharing your location, net control can send you text messages. An incoming message plays a tone and shows a pop-up with the sender's name and text.</div>
 				<div class="qs-tip">Click <strong>Reply</strong> to respond, or use the <strong>Messaging</strong> button to start a new message.</div>
-				<div class="qs-tip">Operators: the panel lists your conversations on the left and the selected one on the right. <strong>All Trackers</strong> and the <strong>Event Log</strong> stay pinned at the top; below them, stations not heard from in a day drop off the list. Click <strong>New message</strong> to start one, or right-click a tracker in the sidebar to message it directly.</div>
+				<div class="qs-tip">Operators: the panel lists your conversations on the left and the selected one on the right. <strong>All Messages</strong>, <strong>All Trackers</strong> and the <strong>Event Log</strong> stay pinned at the top, above a divider; below it, stations not heard from in a day drop off the list. Click <strong>New message</strong> to start one, or right-click a tracker in the sidebar to message it directly.</div>
 				<div class="qs-tip">Each message has a small <strong>copy</strong> icon that copies just the text &mdash; no sender or timestamp &mdash; ready to paste into a log or an email.</div>
 				<div class="qs-tip">To record something without sending it to anyone, click <strong>&#128203; Log</strong> or press <strong>Ctrl+L</strong>. Entries go into the event's log and reach no one &mdash; times, arrivals, decisions.</div>
 				<div class="qs-tip">Two monitors? The panel menu has <strong>Open messages in a separate window</strong>. Drag it to the second screen: the map keeps the first, only one window reads messages aloud, and clicking a message's location pin moves the map on the other screen.</div>
-				<div class="qs-tip"><strong>View all messages</strong> at the bottom of that window opens the complete log for the event, with the time, who sent it and who it went to. Messages sent from a phone carry a location pin &mdash; click it to see on the map where the sender was. You can also export the whole log to a spreadsheet.</div>
+				<div class="qs-tip"><strong>All Messages</strong>, at the top of that list, opens the complete log for the event, with the time, who sent it and who it went to. Messages sent from a phone carry a location pin &mdash; click it to see on the map where the sender was. You can also export the whole log to a spreadsheet.</div>
 				<div class="qs-tip">The message box now takes up to 1,000 characters, so a dictated message is no longer cut off part-way.</div>
 			</div>
 
@@ -2595,7 +2598,6 @@ body.msg-window #msg-panel-grip { display: none; }
 			<div id="msg-conv-scroll"><div id="msg-conv-empty">No conversations yet.</div></div>
 			<div id="msg-conv-footer">
 				<span style="font-size:11px;color:#999">MARS Messaging</span>
-				<button class="msg-link" id="msg-all-link">View all messages</button>
 			</div>
 		</div>
 		<div id="msg-split" title="Drag to resize the conversation list"></div>
@@ -5985,6 +5987,9 @@ function _toggleViewAll() {
 		_loadAllView();
 	}
 	else { _allViewSearchOn = false; _syncAllSearch(); }
+	// The All Messages row is selected while the view is, and this is the only place
+	// that changes — leaving the list alone would strand the highlight on or off.
+	_renderConvList();
 }
 async function _loadAllView() {
 	const scroll = document.getElementById('msg-allview-scroll');
@@ -6112,11 +6117,13 @@ function _renderConvList() {
 			&& (!c.stale || c.unread > 0 || c.id === _openConvId))
 		.sort((a, b) => b.last_id - a.last_id);
 
-	const row = (c, name, sub, cid, pin) => {
+	const row = (c, name, sub, cid, pin, forceSel) => {
 		const pv = c && c.preview;
 		const prev = pv ? ((pv.self ? 'You: ' : '') + pv.text) : sub;
 		const badge = c && c.unread > 0 ? '<span class="msg-badge">' + c.unread + '</span>' : '';
-		const sel = cid != null && cid === _openConvId ? ' sel' : '';
+		// All Messages is not a conversation and has no id to match, so its selected
+		// state is passed in rather than derived.
+		const sel = (forceSel ?? (cid != null && cid === _openConvId)) ? ' sel' : '';
 		return '<div class="msg-conv-item' + sel + '" data-cid="' + (cid == null ? '' : cid) + '"' +
 			(pin ? ' data-pin="' + pin + '"' : '') + '>' +
 			'<div class="msg-conv-main"><div class="msg-conv-name">' + _esc(name) + '</div>' +
@@ -6130,10 +6137,15 @@ function _renderConvList() {
 	// it — nor scroll for it once ordinary traffic has pushed it down.
 	// The Event Log is pinned beside it for the same reason: it always exists, it is
 	// reached constantly during a net, and it must not drift down the list.
+	// All Messages leads them, because it is the widest view of the same three and the
+	// one an operator drops back to. It used to be a link in the footer of this column,
+	// which put the broadest destination in the least visible place on the panel.
 	const bc = [..._convs.values()].find(c => c.kind === 'broadcast');
 	const lg = [..._convs.values()].find(c => c.kind === 'log');
-	const head = row(bc, 'All Trackers', 'Broadcast to everyone', bc ? bc.id : null, 'broadcast')
-		+ row(lg, '📋 Event Log', 'Written to the log, sent to no one', lg ? lg.id : null, 'log');
+	const head = row(null, 'All Messages', 'Everything in the event, in order', null, 'all', _msgViewAll)
+		+ row(bc, 'All Trackers', 'Broadcast to everyone', bc ? bc.id : null, 'broadcast')
+		+ row(lg, '📋 Event Log', 'Written to the log, sent to no one', lg ? lg.id : null, 'log')
+		+ '<hr class="msg-conv-sep">';
 
 	scroll.innerHTML = head + (items.length
 		? items.map(c => row(c, _convLabel(c), '', c.id)).join('')
@@ -6142,6 +6154,9 @@ function _renderConvList() {
 	scroll.querySelectorAll('.msg-conv-item').forEach(el =>
 		el.addEventListener('click', () => {
 			const cid = el.dataset.cid;
+			// All Messages is a view of the panel rather than a thread in it, so it is
+			// answered before anything looks for a conversation to open.
+			if (el.dataset.pin === 'all') { if (!_msgViewAll) _toggleViewAll(); return; }
 			// A pinned row has no thread behind it until something has been put in it,
 			// so which opener to call is decided by the pin, not by the missing id.
 			if (cid === '') { if (el.dataset.pin === 'log') _openLog(); else _openBroadcast(); }
@@ -6937,7 +6952,6 @@ function _wireMsgUI() {
 		_openPanel();
 		_openLog();
 	});
-	document.getElementById('msg-all-link').addEventListener('click', () => { _closeSettings(); if (!_msgViewAll) _toggleViewAll(); });
 	document.getElementById('msg-mi-all').addEventListener('click', () => { _closeSettings(); if (!_msgViewAll) _toggleViewAll(); });
 	document.getElementById('msg-mi-operators').addEventListener('click', _openManageOperators);
 
