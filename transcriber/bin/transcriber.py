@@ -858,6 +858,90 @@ def _frame_pitch(frame, rate):
     return rate / float(best_lag), best
 
 
+# ── a dead carrier: loud, steady, and not anybody talking ────────────────────
+#
+# Whisper already recognises these — it answers 'you' or '♪♪♪' or nothing at all, and the
+# text is discarded. The trouble is ORDER: the clip is uploaded before whisper runs, so by
+# the time the transcription is thrown away a burst of static has already played on every
+# phone listening. This is the same verdict reached early enough to matter.
+#
+# The measure is the ENVELOPE, not the level or the pitch. Speech has gaps — between
+# words, between syllables — so its loudest tenth sits 30 to 60 dB above its quietest.
+# A carrier sitting open does not move at all. Measured on this receiver:
+#
+#     dead carrier   1.08  1.31  1.40  1.80 dB across the clip
+#     real speech      47.68  63.06 dB
+#
+# A RATIO, deliberately, and that is the whole reason this threshold is trustworthy where
+# an absolute level is not: more gain multiplies every frame alike and leaves the ratio
+# where it was. The level threshold measured alongside this one was taken at 30 dB and
+# became meaningless the day the receiver was recalibrated to 38.6.
+#
+# Nothing is lost to it that was ever speech. Across 211 clips recorded at the old gain the
+# quietest-enveloped real transmission still measured 33 dB, and no noise clip went below
+# 41 — so on that corpus this rule catches nothing and costs nothing, and it is only the
+# higher gain that made dead carriers reach the squelch at all.
+FLAT_FRAME = 512             # 32 ms at 16 kHz
+FLAT_MAX_FRAMES = 200
+FLAT_DYN_DB = 5.0            # speech has never been measured below 33
+# Below this there is not enough envelope to judge. A short clip can be flat by accident;
+# MIN_CLIP_SECONDS has already dealt with the ones too short to be speech at all.
+FLAT_MIN_SECONDS = 2.0
+
+
+def flat_scan(wav_path):
+    """How far the audio level moves across a clip, in dB, or None if it cannot be judged.
+
+    p90 over p10 of frame level. Each frame's DC offset is removed before its level is
+    taken — measured about zero instead, a clip carrying an offset reads as far louder and
+    far flatter than it is, which is how thirteen seconds of clear speech once came out
+    looking like the quietest thing on the channel.
+    """
+    try:
+        with wave.open(wav_path) as w:
+            if w.getsampwidth() != 2 or w.getnchannels() != 1:
+                return None
+            rate = w.getframerate() or SAMPLE_RATE
+            n = w.getnframes()
+            seconds = n / float(rate) if rate else 0.0
+            if seconds < FLAT_MIN_SECONDS or n < FLAT_FRAME * 4:
+                return None
+            step = max(FLAT_FRAME, n // FLAT_MAX_FRAMES)
+            levels = []
+            for k in range(0, n - FLAT_FRAME, step):
+                w.setpos(k)
+                block = struct.unpack("<%dh" % FLAT_FRAME, w.readframes(FLAT_FRAME))
+                dc = sum(block) / float(len(block))
+                acc = 0.0
+                for x in block:
+                    d = x - dc
+                    acc += d * d
+                levels.append(math.sqrt(acc / len(block)))
+    except (OSError, EOFError, wave.Error, struct.error):
+        return None
+    if len(levels) < 6:
+        return None
+    levels.sort()
+    pick = lambda p: levels[min(len(levels) - 1, int(len(levels) * p))]
+    lo = max(pick(0.10), 1.0)          # one count, so silence cannot divide by zero
+    hi = max(pick(0.90), 1.0)
+    return {"dyn_db": round(20 * math.log10(hi / lo), 2),
+            "level_db": round(20 * math.log10(max(pick(0.50), 1.0)), 2),
+            "seconds": round(seconds, 2)}
+
+
+def flat_reason(scan):
+    """Why this clip is a dead carrier, or "" if it is not. Named, like tone_reason, so
+    the log and the retention manifest say what was taken rather than only that something
+    was."""
+    if not scan:
+        return ""
+    if scan["dyn_db"] < FLAT_DYN_DB:
+        return ("a dead carrier — the level never moved (%.1f dB across %.1fs)"
+                % (scan["dyn_db"], scan["seconds"]))
+    return ""
+
+
 def tone_scan(wav_path):
     """What the audio of one clip looks like, or None when it cannot be judged.
 
@@ -2894,8 +2978,15 @@ def handle_clip(channel, path, whisper, model, outbox, retention=None):
     # audio and text together. That asymmetry is deliberate. Trimming a beep off the front
     # of real speech would mean editing a recording of what came over the air, and this
     # keeps or discards transmissions rather than rewriting them.
-    tone = tone_scan(path) if getattr(channel, "tone_filter", "observe") != "off" else None
+    # Both detectors sit behind the one setting. `tone_filter` now means "drop
+    # transmissions nobody said anything in", of which a courtesy tone and a carrier left
+    # open are two kinds; giving the second its own switch would have meant a second
+    # managed key, a second UI control, and two things to remember to turn on.
+    filtering = getattr(channel, "tone_filter", "observe") != "off"
+    tone = tone_scan(path) if filtering else None
     tone_why = tone_reason(tone)
+    if not tone_why and filtering:
+        tone_why = flat_reason(flat_scan(path))
     if tone_why and getattr(channel, "tone_filter", "observe") == "drop":
         log.info("dropped (%.1fs): %s", seconds, tone_why)
         if retention is not None:

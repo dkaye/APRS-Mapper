@@ -1742,6 +1742,87 @@ def test_clip_seconds():
         check("unreadable file is 0", transcriber.clip_seconds(os.path.join(d, "nope.wav")), 0.0)
 
 
+# ── a carrier left open ──────────────────────────────────────────────────────
+
+def write_speechlike(path, seconds, rate=16000, amplitude=6000):
+    """A signal with SYLLABLES: bursts of tone separated by near-silence.
+
+    Not a stand-in for the sound of speech, which nothing here judges — a stand-in for its
+    SHAPE, which is the only thing the detector looks at. Speech stops between words; a
+    carrier sitting open does not.
+    """
+    n = int(rate * seconds)
+    with wave.open(path, "w") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate)
+        out = []
+        for i in range(n):
+            loud = (i // int(rate * 0.25)) % 2 == 0       # 250 ms on, 250 ms off
+            # The gap SCALES with the signal, because that is what turning the gain up
+            # does. Holding it at a fixed couple of counts made the quiet version's floor
+            # the converter's own resolution rather than its signal, so the two versions
+            # measured 36 dB apart and the test caught its own fixture rather than a bug.
+            a = amplitude if loud else amplitude / 100.0
+            out.append(struct.pack("<h", int(a * math.sin(2 * math.pi * 300 * i / rate))))
+        w.writeframes(b"".join(out))
+
+
+def test_a_carrier_left_open_is_not_a_transmission():
+    """Whisper already recognises these and answers 'you' or nothing — but the clip is
+    uploaded BEFORE whisper runs, so the static has played on every listening phone by the
+    time its transcription is thrown away. This is the same verdict, reached early enough
+    to matter.
+
+    Measured on this receiver: dead carriers came in at 1.08, 1.31, 1.40 and 1.80 dB of
+    envelope movement, real speech at 47.68 and 63.06."""
+    print("dead carrier")
+    with tempfile.TemporaryDirectory() as d:
+        flat = os.path.join(d, "flat.wav")
+        write_wav(flat, 10.0, amplitude=8000)            # one unbroken tone: never moves
+        scan = transcriber.flat_scan(flat)
+        check("an unmoving level is measured as such", scan["dyn_db"] < 5.0, True)
+        check("and named", "dead carrier" in transcriber.flat_reason(scan), True)
+        check("the reason says how long it went on", "10.0s" in transcriber.flat_reason(scan), True)
+
+        speech = os.path.join(d, "speech.wav")
+        write_speechlike(speech, 10.0)
+        s2 = transcriber.flat_scan(speech)
+        check("something with pauses in it is not", transcriber.flat_reason(s2), "")
+        check("and its envelope moves a long way", s2["dyn_db"] > 30, True)
+
+
+def test_the_dead_carrier_test_is_a_ratio_so_gain_cannot_move_it():
+    """The whole reason this threshold is trustworthy where an absolute level is not. The
+    level threshold measured beside it was taken at 30 dB gain and stopped meaning anything
+    the day this receiver was recalibrated to 38.6; p90-over-p10 multiplies out."""
+    print("dead carrier — gain independence")
+    with tempfile.TemporaryDirectory() as d:
+        quiet, loud = os.path.join(d, "q.wav"), os.path.join(d, "l.wav")
+        write_speechlike(quiet, 6.0, amplitude=2000)     # a weak station
+        write_speechlike(loud, 6.0, amplitude=20000)     # the same shape, 20 dB louder
+        a, b = transcriber.flat_scan(quiet), transcriber.flat_scan(loud)
+        check("a weak signal is not called a dead carrier", transcriber.flat_reason(a), "")
+        check("nor a strong one", transcriber.flat_reason(b), "")
+        check("and the level really is 20 dB apart",
+              round(b["level_db"] - a["level_db"]) in (19, 20, 21), True)
+        check("yet the two measure alike, which is the point",
+              abs(a["dyn_db"] - b["dyn_db"]) < 2.0, True)
+
+
+def test_a_clip_too_short_to_have_an_envelope_is_not_judged():
+    """A two-second scrap can be flat by accident. MIN_CLIP_SECONDS has already thrown out
+    what is too short to be speech, so there is nothing to gain by guessing here."""
+    print("dead carrier — too short to say")
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "short.wav")
+        write_wav(p, 1.0, amplitude=8000)
+        check("says nothing", transcriber.flat_scan(p), None)
+        check("and no opinion is never a reason to drop", transcriber.flat_reason(None), "")
+
+        check("an unreadable file says nothing either",
+              transcriber.flat_scan(os.path.join(d, "nope.wav")), None)
+
+
+
 # ── the outbox ───────────────────────────────────────────────────────────────
 
 def clear_backoff(box):
@@ -3086,6 +3167,9 @@ if __name__ == "__main__":
         test_calibration_gives_up_rather_than_guessing,
         test_the_gain_is_the_knee_where_the_receiver_starts_hearing_the_band,
         test_a_gain_sweep_with_no_knee_is_used_but_never_called_measured,
+        test_a_carrier_left_open_is_not_a_transmission,
+        test_the_dead_carrier_test_is_a_ratio_so_gain_cannot_move_it,
+        test_a_clip_too_short_to_have_an_envelope_is_not_judged,
         test_a_transmission_during_the_sweep_is_detected_rather_than_measured,
         test_the_gain_sweep_stays_below_what_this_tuner_stays_linear_at,
         test_a_site_quiet_enough_to_need_the_top_of_the_sweep_still_calibrates,
