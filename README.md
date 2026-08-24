@@ -846,23 +846,34 @@ the messaging core works: the delivered feed is a join on `deliveries`, and a me
 not addressed to you has no row there. Transcriber log entries have no rows at all, so
 the radio has always been invisible to phones.
 
-Three independent switches, behind **two** icons on the Messages screen:
+Four independent switches, behind **one** ⚙ gear on the Messages screen, in the sheet
+**What you see and hear** — in this order:
 
-| Icon | Sheet | Holds |
-|---|---|---|
-| 🔊 speaker | **Sound** | mute, read arriving messages aloud, **Play radio audio** |
-| ⚙ gear | **Follow** | **All messages**, **Radio traffic** |
+| Switch | Holds |
+|---|---|
+| **See everyone's messages** | every message in the event, whoever it was meant for |
+| **Read them aloud** | speaks each one as it arrives; depends on the switch above |
+| **Listen to the radio** | the operators' own recordings, just after each over |
+| **Read my messages aloud** | speech for messages sent to you; off means a tone instead |
 
 They are independent because following the event as text costs almost nothing and the
 audio is the part that costs cellular data — so nothing is ever implied.
 
-They are split across two icons because they answer different questions. *What reaches
-this phone at all* is not an audio setting, and it read wrongly behind a speaker: the
-sheet began as one 👂 ear icon holding everything, and "see everyone's messages" sitting
-in a panel about sound was the tell. The speaker also doubles as the indicator — filled
-when this device will make a sound for an arriving message, crossed out when it will not
-— and the gear fills while anything is being followed, so the bar answers both questions
-without opening either sheet.
+It was **two** icons, a 🔊 speaker for sound beside the gear for the subscription, on the
+reasoning that *what reaches this phone at all* is not an audio setting. That reasoning
+is sound and it was still the wrong trade: arranging four switches took two panels and a
+row at the foot of each pointing at the other, and people went looking for the radio
+behind a speaker that did not own it. One sheet needs no cross-links, and the single
+ordering rule that ever mattered survives — "Read them aloud" sits directly beneath the
+subscription it depends on, where a dependent option needs no greying or explaining.
+
+The gear fills while **any** of the four is on, which keeps the one thing the speaker's
+crossed-out state was good for: the bar says whether this phone is following the event or
+about to make a noise, without opening anything.
+
+Every subtitle in the sheet is one short line, and that is a constraint rather than a
+style — the sheet caps at 85% of screen height and clips the overflow **silently**, which
+once hid two rows entirely until somebody screenshotted it.
 
 **Monitored traffic never raises a notification.** None of it was sent to this
 operator, and on a busy net that is a message every few seconds; a phone that buzzed

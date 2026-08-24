@@ -238,10 +238,14 @@ class _MessagingScreenState extends State<MessagingScreen> {
     }
   }
 
-  /// Whether anything will be audible when a message arrives — speech for messages
-  /// sent to you, or the radio playing. Drives the app-bar icon, so a glance says
-  /// whether this phone is going to make a noise, without opening the sheet.
-  bool get _audible => _speak || MonitorService.instance.playingRadioAudio;
+  /// Whether any of the four settings is on. Drives the app-bar gear, so a glance says
+  /// whether this phone is following the event or about to make a noise, without
+  /// opening the sheet — which is what the speaker icon used to say, back when there
+  /// were two icons to say it with.
+  bool get _anythingOn {
+    final m = MonitorService.instance;
+    return _speak || m.playingRadioAudio || m.monitoringAll;
+  }
 
   Future<void> _markRead(List<int> ids) => widget.client.read(ids);
 
@@ -349,98 +353,38 @@ class _MessagingScreenState extends State<MessagingScreen> {
     }
   }
 
-  // ── Monitoring the whole event ─────────────────────────────────────────────
+  // ── What reaches this phone, and what it says out loud ────────────────────
 
-  /// Three independent choices, and they are independent on purpose.
+  /// Four independent choices, and they are independent on purpose.
   ///
   /// Following the event as text costs almost nothing; the audio is the part that
   /// costs cellular data, so it is never implied by either of the others. Nothing is
   /// ever pushed to a device that did not ask — the feed carries a flag, and a phone
   /// with audio off simply never makes the request.
-  /// Sound: what this phone does out loud. Everything here is about the speaker.
   ///
-  /// Deliberately does NOT hold "See everyone's messages" — that decides what traffic
-  /// arrives, not what it sounds like, and behind a speaker icon it read as an audio
-  /// setting. It lives under the gear with the option that depends on it.
-  Future<void> _openSoundSettings() async {
+  /// One sheet, behind the gear. It was two — a speaker for what this phone says out
+  /// loud, a gear for what reaches it at all — on the reasoning that a subscription is
+  /// not an audio setting. That is true, and it still cost two icons, two panels, and a
+  /// row at the foot of each pointing at the other, to arrange four switches. The one
+  /// ordering rule that ever mattered survives: "Read them aloud" sits directly beneath
+  /// the subscription it depends on, where a dependent option needs no explaining.
+  ///
+  /// Every subtitle is one short line, and that is a constraint rather than a style: the
+  /// sheet caps at 85% of the screen and clips the overflow SILENTLY. Four switches with
+  /// the old three-line descriptions did not fit.
+  Future<void> _openSettings() async {
     final m = MonitorService.instance;
     await _sheet((setSheet) => [
           const ListTile(
-            title: Text('Sound', style: TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: Text('What this phone does out loud.'),
-          ),
-          const Divider(height: 1),
-          SwitchListTile(
-            secondary: const Icon(Icons.volume_up),
-            title: const Text('Read my messages aloud'),
-            subtitle: const Text(
-              'Messages sent to you are spoken as they arrive. Turn this off and they '
-              'arrive with a tone instead.',
-            ),
-            value: _speak,
-            onChanged: (v) async {
-              await _toggleSpeak();
-              setSheet();
-            },
-          ),
-          SwitchListTile(
-            secondary: const Icon(Icons.radio),
-            title: const Text('Listen to the radio'),
-            subtitle: const Text(
-              "Plays the off-air recording of each transmission a few seconds after it "
-              "ends — the operators' actual voices, not a computer reading a "
-              "transcript. Uses cellular data.",
-            ),
-            value: m.playingRadioAudio,
-            onChanged: (v) async {
-              await m.setRadioAudio(v);
-              setSheet();
-            },
-          ),
-          const Divider(height: 1),
-          // Not a dead end: the other half of the audible settings lives behind the
-          // gear, because it depends on a subscription rather than on the speaker.
-          ListTile(
-            leading: const Icon(Icons.settings_outlined, color: Colors.grey),
-            title: const Text('Follow the whole event',
-                style: TextStyle(fontSize: 14)),
-            subtitle: const Text(
-                "Everyone else's traffic, and whether to hear it — under the gear."),
-            onTap: () {
-              Navigator.of(context).pop();
-              _openFollowSettings();
-            },
-          ),
-          const SizedBox(height: 8),
-        ]);
-  }
-
-  /// Follow the event: what traffic reaches this phone at all.
-  ///
-  /// "Read them aloud" sits directly under the subscription it depends on rather than
-  /// with the other audio settings. A dependent option beside its parent needs no
-  /// coordination; the same option in another panel needs explaining, greying and a
-  /// shortcut, and can still be found in a state nobody can account for.
-  Future<void> _openFollowSettings() async {
-    final m = MonitorService.instance;
-    await _sheet((setSheet) => [
-          const ListTile(
-            title: Text('Follow the whole event',
+            title: Text('What you see and hear',
                 style: TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: Text(
-              'Normally you only get what was sent to you. This adds the rest. It never '
-              'buzzes or alerts you — it is for listening in, not for being '
-              'interrupted.',
-            ),
+            subtitle: Text('Following the event never buzzes or interrupts you.'),
           ),
           const Divider(height: 1),
           SwitchListTile(
             secondary: const Icon(Icons.forum_outlined),
             title: const Text("See everyone's messages"),
-            subtitle: const Text(
-              'Every message sent in this event, whoever it came from and whoever it '
-              'was meant for.',
-            ),
+            subtitle: const Text("Everyone's traffic, not just yours."),
             value: m.monitoringAll,
             onChanged: (v) async {
               await m.setAll(v);
@@ -454,11 +398,9 @@ class _MessagingScreenState extends State<MessagingScreen> {
             child: SwitchListTile(
               secondary: const Icon(Icons.record_voice_over_outlined),
               title: const Text('Read them aloud'),
-              subtitle: Text(
-                m.monitoringAll
-                    ? 'A synthesised voice speaks each one as it arrives.'
-                    : 'Turn on the switch above first.',
-              ),
+              subtitle: Text(m.monitoringAll
+                  ? 'Spoken as they arrive.'
+                  : 'Turn on the switch above first.'),
               value: m.speakingAll && m.monitoringAll,
               onChanged: m.monitoringAll
                   ? (v) async {
@@ -468,22 +410,32 @@ class _MessagingScreenState extends State<MessagingScreen> {
                   : null,
             ),
           ),
-          const Divider(height: 1),
-          ListTile(
-            leading: const Icon(Icons.volume_up, color: Colors.grey),
-            title: const Text('Sound', style: TextStyle(fontSize: 14)),
+          SwitchListTile(
+            secondary: const Icon(Icons.radio),
+            title: const Text('Listen to the radio'),
             subtitle: const Text(
-                'Your own messages, and hearing the radio — under the speaker.'),
-            onTap: () {
-              Navigator.of(context).pop();
-              _openSoundSettings();
+                "The operators' own voices, just after each over. Uses data."),
+            value: m.playingRadioAudio,
+            onChanged: (v) async {
+              await m.setRadioAudio(v);
+              setSheet();
+            },
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.volume_up),
+            title: const Text('Read my messages aloud'),
+            subtitle: const Text('Off means a tone instead.'),
+            value: _speak,
+            onChanged: (v) async {
+              await _toggleSpeak();
+              setSheet();
             },
           ),
           const SizedBox(height: 8),
         ]);
   }
 
-  /// The sheet both settings panels are built in. One place for the scrolling, the
+  /// The sheet the settings panel is built in. One place for the scrolling, the
   /// height cap and the rebuild plumbing — showModalBottomSheet clips whatever does not
   /// fit, silently, which hid two rows entirely until somebody screenshotted it.
   Future<void> _sheet(List<Widget> Function(void Function()) children) {
@@ -567,29 +519,18 @@ class _MessagingScreenState extends State<MessagingScreen> {
                   ? IconButton(icon: const Icon(Icons.arrow_back), tooltip: 'Back to conversations', onPressed: _backToInbox)
                   : null,
           actions: [
-            // One speaker, not two. This was a mute toggle beside a separate ear icon
-            // for the monitor sheet — but every setting behind both of them is about
-            // sound, and two audio icons side by side made neither obvious. The sheet
-            // now owns all of it, including mute, and this opens the sheet.
+            // One icon for all four switches. There was a speaker beside this gear, and
+            // between them they needed a cross-link in each panel pointing at the other
+            // — which is a lot of furniture for four switches, and still left people
+            // hunting for the radio behind a speaker that did not own it.
             //
-            // It still shows at a glance whether anything is audible: filled when this
-            // device will make a sound for an arriving message, crossed out when it
-            // will not.
+            // Filled while ANY of them is on, so the bar says at a glance whether this
+            // phone is following the event or about to make a noise. That is the one
+            // thing the speaker's crossed-out state was good for, and it is kept.
             IconButton(
-              tooltip: 'Sound',
-              icon: Icon(_audible ? Icons.volume_up : Icons.volume_off),
-              onPressed: _openSoundSettings,
-            ),
-            // Separate from the speaker on purpose: this decides what traffic reaches
-            // the phone at all, which is not an audio question and read wrongly behind
-            // a speaker icon. Filled while something is being followed, so the bar says
-            // whether you are listening in without opening anything.
-            IconButton(
-              tooltip: 'Follow the whole event',
-              icon: Icon(MonitorService.instance.monitoringAll
-                  ? Icons.settings
-                  : Icons.settings_outlined),
-              onPressed: _openFollowSettings,
+              tooltip: 'What you see and hear',
+              icon: Icon(_anythingOn ? Icons.settings : Icons.settings_outlined),
+              onPressed: _openSettings,
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 6),
