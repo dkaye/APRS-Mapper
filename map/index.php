@@ -2019,9 +2019,19 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
     border-bottom: 1px solid #f0f0f0; cursor: pointer;
 }
 .msg-conv-item:hover { background: #f6f9fb; }
-/* Separates the three destinations that always exist from the conversations that come
-   and go. Heavier than the hairline between rows, or it reads as one more row. */
-.msg-conv-sep { border: 0; border-top: 2px solid #e3e8ec; margin: 0; }
+/* Section headings. Small caps in a muted grey so they read as labels rather than as
+   another row to click — the rows below them are the same width and a heading that looked
+   clickable would be tried. */
+.msg-conv-head {
+    padding: 9px 12px 5px; font-size: 10px; font-weight: 700;
+    letter-spacing: .07em; text-transform: uppercase; color: #7a8a99;
+    background: #fafcfd; user-select: none;
+}
+/* The second heading also does the job the divider used to: separating the destinations
+   that always exist from the conversations that come and go. Heavier than the hairline
+   between rows, and there is no separate rule as well — a heading under a line reads as
+   two separations where there is one. */
+.msg-conv-head.next { border-top: 2px solid #e3e8ec; }
 .msg-conv-avatar {
     flex: 0 0 auto; width: 38px; height: 38px; border-radius: 50%;
     background: #dce6ee; color: #1a5276; font-size: 12px; font-weight: 700;
@@ -2409,7 +2419,7 @@ body.msg-window #msg-panel-grip { display: none; }
 				<div class="qs-sec-title">Messaging</div>
 				<div class="qs-tip">While you are sharing your location, net control can send you text messages. An incoming message plays a tone and shows a pop-up with the sender's name and text.</div>
 				<div class="qs-tip">Click <strong>Reply</strong> to respond, or use the <strong>Messaging</strong> button to start a new message.</div>
-				<div class="qs-tip">Operators: the panel lists your conversations on the left and the selected one on the right. <strong>All Messages</strong>, <strong>All Trackers</strong> and the <strong>Event Log</strong> stay pinned at the top, above a divider; below it, stations not heard from in a day drop off the list. Click <strong>New message</strong> to start one, or right-click a tracker in the sidebar to message it directly.</div>
+				<div class="qs-tip">Operators: the panel lists your conversations on the left and the selected one on the right. <strong>All Messages</strong>, <strong>All Trackers</strong> and the <strong>Event Log</strong> stay pinned at the top under <strong>Monitor</strong>; under <strong>Trackers</strong> below them, stations not heard from in a day drop off the list. Click <strong>New message</strong> to start one, or right-click a tracker in the sidebar to message it directly.</div>
 				<div class="qs-tip">Each message has a small <strong>copy</strong> icon that copies just the text &mdash; no sender or timestamp &mdash; ready to paste into a log or an email.</div>
 				<div class="qs-tip">To record something without sending it to anyone, click <strong>&#128203; Log</strong> or press <strong>Ctrl+L</strong>. Entries go into the event's log and reach no one &mdash; times, arrivals, decisions.</div>
 				<div class="qs-tip">Two monitors? The panel menu has <strong>Open messages in a separate window</strong>. Drag it to the second screen: the map keeps the first, only one window reads messages aloud, and clicking a message's location pin moves the map on the other screen.</div>
@@ -6142,10 +6152,11 @@ function _renderConvList() {
 	// which put the broadest destination in the least visible place on the panel.
 	const bc = [..._convs.values()].find(c => c.kind === 'broadcast');
 	const lg = [..._convs.values()].find(c => c.kind === 'log');
-	const head = row(null, 'All Messages', 'Everything in the event, in order', null, 'all', _msgViewAll)
+	const head = '<div class="msg-conv-head">Monitor</div>'
+		+ row(null, 'All Messages', 'Everything in the event, in order', null, 'all', _msgViewAll)
 		+ row(bc, 'All Trackers', 'Broadcast to everyone', bc ? bc.id : null, 'broadcast')
 		+ row(lg, '📋 Event Log', 'Written to the log, sent to no one', lg ? lg.id : null, 'log')
-		+ '<hr class="msg-conv-sep">';
+		+ '<div class="msg-conv-head next">Trackers</div>';
 
 	scroll.innerHTML = head + (items.length
 		? items.map(c => row(c, _convLabel(c), '', c.id)).join('')
