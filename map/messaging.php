@@ -172,6 +172,51 @@ function _msg_ensure_all_mobiles(MessagingDb $db, array $ctx): void
  */
 if (!defined('MSG_ADDRESSABLE_SECONDS')) define('MSG_ADDRESSABLE_SECONDS', 6 * 3600);
 
+/** Who a broadcast is actually delivered to.
+ *
+ *  NOT "every participant row this event has ever had", which is what
+ *  conversationRecipients() used to answer for a broadcast and what put "Read by 1 of 66"
+ *  under a message sent to two dozen live devices. Of that 67-row event: 49 mobiles of
+ *  which 22 had been heard from in six hours, 13 operators of which 1 had, and 5
+ *  transcribers. Two thirds of the denominator were identities nobody could reach — test
+ *  sessions, phones that left days ago, operators who signed out — and a receipt whose
+ *  denominator can never be satisfied stops meaning anything at all.
+ *
+ *  The test is the recipient picker's, deliberately: what an operator can select and what
+ *  actually receives a message must not disagree.
+ *
+ *    - Mobiles are judged by their tracker lastUpdate (_msg_addressable), NOT by
+ *      participants.last_seen. upsertParticipant rewrites last_seen on every write, and
+ *      _msg_ensure_all_mobiles touches every tracker in the file immediately before this
+ *      runs — so a last_seen test would call all of them fresh and filter nothing.
+ *      _msg_mark_stale documents the same trap at length.
+ *    - Operators keep last_seen, which for them is only ever written by touchParticipant
+ *      and so means what it says.
+ *    - Transcribers are excluded. A receiver does not read anything, so its delivery row
+ *      can never be marked read and would sit in the denominator for good.
+ */
+function _msg_broadcast_recipients(MessagingDb $db, array $ctx, int $senderId): array
+{
+    $now  = time();
+    $live = [];
+    foreach (_msg_load_trackers($ctx['mobileFile']) as $t) {
+        if (_msg_addressable($t, $now)) $live[(string)$t['callsign']] = true;
+    }
+    $ids = [];
+    foreach ($db->listParticipants($ctx['event']) as $p) {
+        $id = (int)$p['id'];
+        if ($id === $senderId) continue;
+        $kind = (string)($p['kind'] ?? '');
+        if ($kind === 'mobile') {
+            if (isset($live[(string)($p['key'] ?? '')])) $ids[] = $id;
+        } elseif ($kind === 'operator') {
+            if (!empty($p['last_seen'])
+                && ($now - (int)$p['last_seen']) <= MSG_ADDRESSABLE_SECONDS) $ids[] = $id;
+        }
+    }
+    return $ids;
+}
+
 function _msg_addressable(array $t, int $now): bool
 {
     return !empty($t['callsign']) && empty($t['blocked'])
@@ -486,7 +531,9 @@ function messaging_handle(string $action, array $body, array $ctx): void
             }
             // A broadcast reaches every registered mobile, so make sure they all exist.
             if ($kind === 'broadcast') _msg_ensure_all_mobiles($db, $ctx);
-            $deliverTo = $db->conversationRecipients($event, $conv, $kind === 'broadcast', (int)$me['id']);
+            $deliverTo = $kind === 'broadcast'
+                ? _msg_broadcast_recipients($db, $ctx, (int)$me['id'])
+                : $db->conversationRecipients($event, $conv, false, (int)$me['id']);
             // An OPERATOR replying into an entity thread: recompute from who is in the
             // entity NOW, so a device whose display_id moved elsewhere stops receiving
             // even though it remains a historical member of the thread.

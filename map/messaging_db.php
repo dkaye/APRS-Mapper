@@ -676,11 +676,16 @@ class MessagingDb
     public function conversationRecipients(string $event, int $conversationId, bool $broadcast, int $senderId): array
     {
         if ($broadcast) {
-            $rows = $this->all('SELECT id FROM participants WHERE event=:e', [':e'=>$event]);
-        } else {
-            $rows = $this->all('SELECT participant_id AS id FROM conversation_members WHERE conversation_id=:c',
-                               [':c'=>$conversationId]);
+            // Deliberately no longer answered here. This returned every participant row
+            // the event had ever held — retired sessions, phones gone for days, test
+            // identities — which put "Read by 1 of 66" under a message that reached two
+            // dozen devices. A broadcast's real recipients depend on the tracker feed's
+            // lastUpdate, which this class cannot see; _msg_broadcast_recipients() in
+            // messaging.php decides it, using the same test as the recipient picker.
+            throw new RuntimeException('broadcast recipients are decided in messaging.php');
         }
+        $rows = $this->all('SELECT participant_id AS id FROM conversation_members WHERE conversation_id=:c',
+                           [':c'=>$conversationId]);
         $ids = array_map(fn($r) => (int)$r['id'], $rows);
         return array_values(array_filter($ids, fn($id) => $id !== $senderId));  // sender doesn't receive own msg
     }
