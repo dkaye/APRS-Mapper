@@ -10,6 +10,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'messaging_client.dart';
 import 'audio_queue.dart';
+import 'mobile_session.dart';
 import 'widgets/audio_queue_bar.dart';
 import 'monitor_service.dart';
 import 'speaker.dart';
@@ -89,7 +90,7 @@ class _MessagingScreenState extends State<MessagingScreen> {
       setState(() {
         // Default ON: this is a net-control tool and the operator is usually not
         // watching the screen. An explicit mute is still remembered.
-        _speak = p.getBool('aprs_msg_speak') ?? true;
+        _speak = p.getBool(MobileSession.kPrefSpeakMessages) ?? true;
         _lastRecipients = p.getStringList(_kLastRecipients) ?? const [];
       });
       // One switch drives both now. An install coming from the two-switch version can
@@ -363,7 +364,7 @@ class _MessagingScreenState extends State<MessagingScreen> {
   Future<void> _setSpeakText(bool v) async {
     setState(() => _speak = v);
     final p = await SharedPreferences.getInstance();
-    await p.setBool('aprs_msg_speak', v);
+    await p.setBool(MobileSession.kPrefSpeakMessages, v);
     await MonitorService.instance.setSpeakAll(v);
     WatchBridge.instance.pushSpeak(v);
     if (!v) {

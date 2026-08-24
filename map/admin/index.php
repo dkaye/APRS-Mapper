@@ -1081,6 +1081,11 @@ if (isset($_GET['mobiletrackers'])) {
                 'device_info'  => $t['device_info'] ?? null,
                 'sharing_mode' => $t['sharing_mode'] ?? '',
                 'pending_mode' => $t['pending_mode'] ?? '',
+                // Null means the device has never reported them — an older client, not a
+                // device with everything switched off. The modal shows nothing at all in
+                // that case rather than three struck-out words it has no evidence for.
+                'msg_opts'     => isset($t['msg_opts']) && is_array($t['msg_opts'])
+                                  ? array_values($t['msg_opts']) : null,
                 'ham_callsign' => $ham,
                 'display_id'   => $t['display_id'] ?? null,
                 'radio'        => $radio];
@@ -3559,7 +3564,10 @@ async function loadMobileTrackers() {
 
         // [buttons]
         const actEls = [];
-        if (t.device_info && Object.keys(t.device_info).length) actEls.push(makeBtn('Info', () => showDeviceInfoModal(t)));
+        // Either half is reason enough to offer the panel: device_info arrives at join,
+        // msg_opts on every beacon, and a tracker can have one without the other.
+        if ((t.device_info && Object.keys(t.device_info).length) || Array.isArray(t.msg_opts))
+            actEls.push(makeBtn('Info', () => showDeviceInfoModal(t)));
         if (canEditTrackers) {
             actEls.push(makeBtn(t.hidden ? 'Unhide' : 'Hide', () => toggleHideMobileTracker(t.id, !t.hidden)));
             actEls.push(makeBtn('Remove', () => removeMobileTracker(t.id, row, listEl)));
@@ -3663,6 +3671,28 @@ function showSetModeModal(t, modeEl) {
     document.body.appendChild(modal);
 }
 
+/**
+ * The three message settings, reported on every beacon.
+ *
+ * All three words are always shown and the ones that are off are struck through, so the
+ * row has the same shape on every tracker and the answer is read rather than counted. A
+ * list of only what is enabled looks identical to a list that failed to arrive.
+ *
+ * Nothing is drawn at all when the device has never reported them — an older client is
+ * not a device with everything switched off, and three struck-out words would say it was.
+ */
+function msgOptsRow(t) {
+    if (!Array.isArray(t.msg_opts)) return '';
+    const on = new Set(t.msg_opts);
+    const cell = [['speak', 'Speak'], ['radio', 'Radio'], ['all', 'All']]
+        .map(([k, lbl]) => on.has(k)
+            ? `<span style="color:#1a7f37">${lbl}</span>`
+            : `<span style="color:#999;text-decoration:line-through">${lbl}</span>`)
+        .join('&nbsp;&nbsp;');
+    return `<tr><td style="color:#666;padding:5px 14px 5px 0;white-space:nowrap">Messages</td>`
+         + `<td style="font-weight:600">${cell}</td></tr>`;
+}
+
 function showDeviceInfoModal(t) {
     let modal = document.getElementById('device-info-modal');
     if (!modal) {
@@ -3694,7 +3724,8 @@ function showDeviceInfoModal(t) {
         .filter(([k]) => di2[k])
         .map(([k, lbl]) => `<tr><td style="color:#666;padding:5px 14px 5px 0;white-space:nowrap">${lbl}</td><td style="font-weight:600">${di2[k]}</td></tr>`)
         .join('')
-      + (t.sharing_mode || t.pending_mode ? `<tr><td style="color:#666;padding:5px 14px 5px 0;white-space:nowrap">Sharing mode</td><td style="font-weight:600">${modeLabels[t.sharing_mode] || t.sharing_mode || '—'}${t.pending_mode ? ' → <span style="color:#e67e22">' + (modeLabels[t.pending_mode] || t.pending_mode) + ' (pending)</span>' : ''}</td></tr>` : '');
+      + (t.sharing_mode || t.pending_mode ? `<tr><td style="color:#666;padding:5px 14px 5px 0;white-space:nowrap">Sharing mode</td><td style="font-weight:600">${modeLabels[t.sharing_mode] || t.sharing_mode || '—'}${t.pending_mode ? ' → <span style="color:#e67e22">' + (modeLabels[t.pending_mode] || t.pending_mode) + ' (pending)</span>' : ''}</td></tr>` : '')
+      + msgOptsRow(t);
     modal.innerHTML = `
         <div style="background:#fff;border-radius:10px;padding:24px 28px;min-width:280px;box-shadow:0 8px 32px rgba(0,0,0,0.22)">
             <div style="font-weight:700;font-size:15px;margin-bottom:14px;color:#2c3e50">Device info — ${t.name} (${t.id})</div>

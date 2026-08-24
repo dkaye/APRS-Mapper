@@ -120,7 +120,8 @@ if (isset($_GET['json'])) {
 				'fix_ts' => isset($t['aprs_fix_ts']) ? (int)$t['aprs_fix_ts'] : null,
 				'ham_callsign' => $t['ham_callsign'] ?? null, 'has_session' => $hasSession,
 				'hidden' => !empty($t['hidden']),
-				'carrier' => _mobile_network_label($t['device_info'] ?? null)];
+				'carrier' => _mobile_network_label($t['device_info'] ?? null),
+				'msg_opts' => isset($t['msg_opts']) && is_array($t['msg_opts']) ? $t['msg_opts'] : null];
 		}
 	}
 	// Index ham tracker entries by callsign so mobile sessions can absorb their position data.
@@ -903,11 +904,26 @@ if (isset($_GET['mobile'])) {
 		$rawMode = trim($input['sharing_mode'] ?? '');
 		if ($rawMode === 'drive_cycle') $rawMode = 'drive';
 		$updMode = in_array($rawMode, ['walk_run', 'cycle', 'drive', 'stationary', 'unknown'], true) ? $rawMode : '';
+		// Which of the three message settings this device has on, reported every beacon
+		// because they are changed during a net and the admin page is asked whether a
+		// station will hear you NOW. Filtered against the known set rather than stored as
+		// sent: it lands in a JSON file that is read back and rendered.
+		$msgOpts = [];
+		foreach (explode(',', (string)($input['msg_opts'] ?? '')) as $o) {
+			$o = trim($o);
+			if (in_array($o, ['speak', 'radio', 'all'], true) && !in_array($o, $msgOpts, true)) {
+				$msgOpts[] = $o;
+			}
+		}
+		// An empty string is a device that says "none of them"; absent is a device too old
+		// to say anything, and the two must not be confused into showing three struck-out
+		// options for every phone in the field that has not updated yet.
+		$msgOptsGiven = array_key_exists('msg_opts', $input);
 		if (!$token) { http_response_code(400); echo json_encode(['error' => 'Missing token']); exit; }
 
 		$found = false; $blocked = false; $foundCallsign = null; $foundHamCallsign = null; $foundName = ''; $pendingMsgs = []; $pendingMode = '';
 		$shouldInject = false;
-		modifyMobileTrackers($mobileFile, function($data) use ($token, $lat, $lon, $acc, $fixTs, $ackIds, $updMode, &$found, &$blocked, &$foundCallsign, &$foundHamCallsign, &$foundName, &$pendingMode, &$shouldInject) {
+		modifyMobileTrackers($mobileFile, function($data) use ($token, $lat, $lon, $acc, $fixTs, $ackIds, $updMode, $msgOpts, $msgOptsGiven, &$found, &$blocked, &$foundCallsign, &$foundHamCallsign, &$foundName, &$pendingMode, &$shouldInject) {
 			$now = time();
 			foreach ($data as &$t) {
 				if (empty($t['token']) || !hash_equals($t['token'], $token)) continue;
@@ -921,6 +937,9 @@ if (isset($_GET['mobile'])) {
 				} elseif ($updMode !== '') {
 					$t['sharing_mode'] = $updMode;
 				}
+				// Only when the device actually said. A client too old to report them must
+				// keep whatever is on record rather than be recorded as having them all off.
+				if ($msgOptsGiven) $t['msg_opts'] = $msgOpts;
 				// Track last 10 beacon timestamps for admin delta display
 				$t['recent_beacons'] = array_slice(array_merge([$now], $t['recent_beacons'] ?? []), 0, 10);
 				$t['lastUpdate'] = $now;

@@ -5,6 +5,7 @@ import 'dart:io' show Platform;
 import 'dart:math';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'monitor_service.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
@@ -86,6 +87,11 @@ class MobileSession {
   String? pendingSetMode; // set_mode delivered by last update(); cleared after each call
 
   bool get active => token != null;
+
+  /// Where the Messages screen keeps its speech setting. Named here because the beacon
+  /// reports it and the screen owns it, and a key spelled out in two files is a key that
+  /// gets renamed in one of them.
+  static const kPrefSpeakMessages = 'aprs_msg_speak';
 
   static const _deviceIdKey = 'aprs_device_id';
   static const _keychain = FlutterSecureStorage(
@@ -199,6 +205,32 @@ class MobileSession {
   /// Heartbeat update. On iOS, include lat/lon so the server injects to APRS-IS
   /// (raw TCP sockets are blocked in iOS background; HTTP is not).
   /// Returns null if session is gone (404), otherwise list of pending messages.
+  /// Which of the three message settings are on, for the beacon to report.
+  ///
+  /// Sent on EVERY beacon rather than at join, because these are the settings an operator
+  /// changes during a net — the whole value of showing them on the admin page is knowing
+  /// whether a station will actually hear you right now, and a copy from whenever they
+  /// signed in answers a different question.
+  ///
+  /// Read from preferences rather than from the widgets that own them: the beacon runs
+  /// from a background timer with no screen attached, and the Messages screen may never
+  /// have been built this launch.
+  ///
+  /// Speech defaults ON to match the Messages screen, which defaults it on because this
+  /// is a net-control tool and the operator is usually not watching.
+  static Future<String> _messageOptions() async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      final on = <String>[];
+      if (p.getBool(kPrefSpeakMessages) ?? true) on.add('speak');
+      if (p.getBool(MonitorService.kPrefRadioAudio) ?? false) on.add('radio');
+      if (p.getBool(MonitorService.kPrefAll) ?? false) on.add('all');
+      return on.join(',');
+    } catch (_) {
+      return '';
+    }
+  }
+
   Future<List<InboundMessage>?> update({double? lat, double? lon, double? accuracyM, DateTime? fixTime, List<int> ackIds = const [], String sharingMode = ''}) async {
     final t = token;
     if (t == null) return null;
@@ -217,6 +249,7 @@ class MobileSession {
       }
       if (ackIds.isNotEmpty) body['ack_ids'] = ackIds;
       if (sharingMode.isNotEmpty) body['sharing_mode'] = sharingMode;
+      body['msg_opts'] = await _messageOptions();
       final response = await http.post(
         Uri.parse('${MapConfig.serverBaseUrl}/index.php?mobile=update'),
         headers: {'Content-Type': 'application/json'},
