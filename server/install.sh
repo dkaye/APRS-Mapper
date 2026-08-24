@@ -170,6 +170,11 @@ crontab - << 'EOF'
 0 2 * * * /home/pi/aprs-backup.sh >> /var/log/aprs-backup/aprs-backup.log 2>&1
 # Nightly WiFi update at 4:00am
 0 4 * * * php /home/pi/update-wifi.php ssids=/var/www/html/wifi/wifi.yaml >> /tmp/server-wifi-update.log 2>&1
+# Rebuild the IP -> network table on the 3rd of each month at 3:20am. iptoasn.com
+# republishes daily; monthly is ample for naming a carrier, and a failed rebuild leaves
+# the previous table serving. As www-data because /var/lib/marsaprs is www-data:www-data
+# and mode 770, and pi is not in that group -- run as pi it could not create the directory.
+20 3 3 * * sudo -u www-data /usr/bin/python3 /home/pi/build-asn-table.py >> /var/log/asn-table.log 2>&1
 # Nightly reboot at 4:10am (after any updates)
 10 4 * * * sudo reboot
 EOF

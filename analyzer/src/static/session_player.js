@@ -212,14 +212,29 @@ function initSessionPlayer(data, opts) {
     let showNames            = true;
     let selectedCarriers     = new Set(['all']);
 
+    // Carrier names arrive already normalised: map/asn_lookup.php maps a well-known AS
+    // number to one agreed spelling, so a popup, the admin panel and this filter cannot
+    // disagree about what a network is called. The substring tests below are kept for
+    // sessions recorded before that — those hold whatever ip-api.com said at the time
+    // ("Comcast Cable Communications", "Space Exploration Technologies Corporation"), and
+    // an old recording has to stay filterable.
+    const CARRIER_NAMES = ['AT&T', 'Comcast', 'Spectrum', 'Cox', 'CenturyLink', 'Frontier',
+                           'Starlink', 'T-Mobile', 'US Cellular', 'Verizon',
+                           'Google', 'Amazon', 'Cloudflare'];
+
     function normalizeCarrier(raw) {
         if (!raw) return 'Other';
+        // Already one of ours — the table answered.
+        if (CARRIER_NAMES.includes(raw)) return raw;
         const r = raw.toLowerCase();
         if (r.includes('at&t')) return 'AT&T';
         if (r.includes('comcast')) return 'Comcast';
-        if (r.includes('space exploration')) return 'Starlink';
+        if (r.includes('space exploration') || r.includes('starlink')) return 'Starlink';
         if (r.includes('t-mobile')) return 'T-Mobile';
-        if (r.includes('verizon')) return 'Verizon';
+        if (r.includes('verizon') || r.includes('cellco')) return 'Verizon';
+        if (r.includes('spectrum') || r.includes('charter')) return 'Spectrum';
+        if (r.includes('us cellular')) return 'US Cellular';
+        if (r.includes('cox')) return 'Cox';
         return 'Other';
     }
 

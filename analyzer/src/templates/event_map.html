@@ -216,12 +216,20 @@
                         <option value="all" selected>All</option>
                     </select>
                     <div class="ctrl-section-label" style="margin-top:4px">Cellular Carrier</div>
-                    <select id="carrier-select" multiple size="7">
+                    <!-- Values must match what normalizeCarrier() returns, which is what
+                         map/asn_lookup.php decided to call each network. "Space Exploration"
+                         became "Starlink" when the lookup moved to the local AS table; old
+                         sessions still holding ip-api.com's wording are folded onto these
+                         same names by normalizeCarrier, so both remain filterable. -->
+                    <select id="carrier-select" multiple size="8">
                         <option value="all" selected>All</option>
                         <option value="AT&T">AT&amp;T</option>
                         <option value="Comcast">Comcast</option>
-                        <option value="Space Exploration">Starlink</option>
+                        <option value="Cox">Cox</option>
+                        <option value="Spectrum">Spectrum</option>
+                        <option value="Starlink">Starlink</option>
                         <option value="T-Mobile">T-Mobile</option>
+                        <option value="US Cellular">US Cellular</option>
                         <option value="Verizon">Verizon</option>
                         <option value="Other">Other</option>
                     </select>

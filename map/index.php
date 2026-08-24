@@ -747,20 +747,19 @@ if (isset($_GET['mobile'])) {
 			}
 			if (!empty($cleaned)) $deviceInfo = $cleaned;
 		}
-		// Carrier/ISP lookup by client IP — no app permissions needed.
+		// Which network this device joined through, from the local table rather than a
+		// call to ip-api.com. That call blocked this handler for 50-200 ms, capped the
+		// server at 45 lookups a minute across every device, and sent a volunteer's IP
+		// address to a third party over plain HTTP. See map/asn_lookup.php.
+		require_once __DIR__ . '/asn_lookup.php';
 		$_joinIp = trim($_SERVER['HTTP_CF_CONNECTING_IP']
 		    ?? (isset($_SERVER['HTTP_X_FORWARDED_FOR']) ? explode(',', $_SERVER['HTTP_X_FORWARDED_FOR'])[0] : null)
 		    ?? $_SERVER['REMOTE_ADDR']);
 		if (filter_var($_joinIp, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-		    $_ipCtx = stream_context_create(['http' => ['timeout' => 3, 'header' => "User-Agent: MARS-APRS/1.0\r\n"]]);
-		    $_ipResp = @file_get_contents("http://ip-api.com/json/{$_joinIp}?fields=isp", false, $_ipCtx);
-		    if ($_ipResp) {
-		        $_ipData = json_decode($_ipResp, true);
-		        $_isp = trim($_ipData['isp'] ?? '');
-		        if ($_isp !== '') {
-		            if ($deviceInfo === null) $deviceInfo = [];
-		            $deviceInfo['carrier'] = $_isp;
-		        }
+		    $_net = asn_lookup($_joinIp);
+		    if ($_net !== null && $_net !== '') {
+		        if ($deviceInfo === null) $deviceInfo = [];
+		        $deviceInfo['carrier'] = $_net;
 		    }
 		}
 		$rawMode = trim($input['sharing_mode'] ?? '');
