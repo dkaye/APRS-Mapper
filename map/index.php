@@ -2063,6 +2063,14 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
 	color: #b0b6bb; line-height: 0; border-radius: 3px;
 }
 .msg-all-loc2:hover { color: #c0392b; background: #eef1f4; }
+.msg-all-copy {
+    background: none; border: none; padding: 2px 4px; margin-left: 2px; cursor: pointer;
+    color: #b0b6bb; line-height: 0; border-radius: 4px; vertical-align: middle;
+}
+.msg-all-copy:hover { color: #2980b9; background: #eef1f4; }
+/* Held for a beat after a copy: a clipboard write is silent, so without this there is
+   no way to tell a copy that worked from a click that did nothing. */
+.msg-all-copy.copied { color: #27ae60; }
 #msg-allview-empty { padding: 26px 20px; text-align: center; color: #999; font-size: 13px; }
 
 /* Conversation list */
@@ -6098,8 +6106,14 @@ function _renderAllView() {
 		const to = m.broadcast ? 'All Trackers' : (m.to_label || '');
 		const loc = (typeof m.lat === 'number' && typeof m.lon === 'number')
 			? '<button class="msg-all-loc2" data-mid="' + m.id + '" title="Show where this message was sent from">' + MSG_PIN_SVG + '</button>' : '';
+		// Same copy the thread bubbles offer, for the same reason: this is the view an
+		// operator reads a whole net back from, and a line lifted out of it goes into an
+		// incident report as the words that were said and nothing else. Carries the id
+		// rather than the text, so nothing has to be escaped into an attribute.
+		const copy = m.text
+			? '<button class="msg-all-copy" data-mid="' + m.id + '" title="Copy message text">' + MSG_COPY_SVG + '</button>' : '';
 		return '<div class="msg-all-item" data-mid="' + m.id + '" title="Open this conversation to reply"><div class="who"><span class="nm">' + _esc(_msgSenderName(m)) +
-			' <span class="to">→ ' + _esc(to) + '</span></span><span class="tm">' + _esc(_msgFmtStamp(m.ts)) + '</span>' + loc + '</div>' +
+			' <span class="to">→ ' + _esc(to) + '</span></span><span class="tm">' + _esc(_msgFmtStamp(m.ts)) + '</span>' + loc + copy + '</div>' +
 			'<div class="tx">' + (m.photo ? '📷 ' : '') + _hlText(_esc(m.text || (m.photo ? 'Photo' : '')), q) + '</div></div>';
 	}).join('');
 	// Clicking a message opens its conversation so the operator can reply.
@@ -6108,6 +6122,12 @@ function _renderAllView() {
 		if (m) _openFromAllView(m);
 	}));
 	// The map-pin drops a marker where the message was sent from (doesn't open the thread).
+	// stopPropagation, or copying a line would also open its thread and leave the view.
+	scroll.querySelectorAll('.msg-all-copy').forEach(b => b.addEventListener('click', e => {
+		e.stopPropagation();
+		const m = _allViewRows.find(x => x.id === +b.dataset.mid);
+		if (m && m.text) _copyMsgText(m.text, b);
+	}));
 	scroll.querySelectorAll('.msg-all-loc2').forEach(b => b.addEventListener('click', e => {
 		e.stopPropagation();
 		const m = _allViewRows.find(x => x.id === +b.dataset.mid);
