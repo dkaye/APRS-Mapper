@@ -3673,15 +3673,26 @@ function showDeviceInfoModal(t) {
         document.body.appendChild(modal);
     }
     const di = t.device_info || {};
-    // `carrier` is the ISP of the address the device joined from, looked up once at
-    // join time — not read from a SIM. So a phone on cellular shows its carrier, one on
-    // WiFi shows the house's ISP, and Starlink shows as Space Exploration Technologies.
-    // Which network a tracker came in on is worth knowing at an event, so it is shown.
+    // `carrier` is the ISP of the address the device joined from, looked up once at join
+    // time — not read from a SIM. On cellular that address belongs to the carrier, so it
+    // already names the right thing. On WiFi it names the broadband provider, which read
+    // as a carrier and misled: a phone on home WiFi was listed as "Comcast Cable
+    // Communications", which is true and is not what anybody took it to mean. `net` comes
+    // from the device, because nothing at this end can tell the two apart; a client that
+    // does not send it keeps the bare ISP, which is honest about not knowing.
+    //
+    // _mobile_network_label() in map/index.php is the same rule for the map's own popups
+    // and tooltips. This modal builds from device_info directly and never goes through it.
+    const di2 = Object.assign({}, di);
+    if (di2.carrier) {
+        if (di2.net === 'wifi')          di2.carrier = 'via WiFi: ' + di2.carrier;
+        else if (di2.net === 'ethernet') di2.carrier = 'via Ethernet: ' + di2.carrier;
+    }
     const labels = { app: 'App version', os: 'Operating system', browser: 'Browser', model: 'Device model', manufacturer: 'Manufacturer', carrier: 'Carrier', screen: 'Screen resolution' };
     const modeLabels = { walk_run: 'Walk / Run', cycle: 'Cycle', drive: 'Drive', drive_cycle: 'Drive', stationary: 'Stationary' };
     const rows = Object.entries(labels)
-        .filter(([k]) => di[k])
-        .map(([k, lbl]) => `<tr><td style="color:#666;padding:5px 14px 5px 0;white-space:nowrap">${lbl}</td><td style="font-weight:600">${di[k]}</td></tr>`)
+        .filter(([k]) => di2[k])
+        .map(([k, lbl]) => `<tr><td style="color:#666;padding:5px 14px 5px 0;white-space:nowrap">${lbl}</td><td style="font-weight:600">${di2[k]}</td></tr>`)
         .join('')
       + (t.sharing_mode || t.pending_mode ? `<tr><td style="color:#666;padding:5px 14px 5px 0;white-space:nowrap">Sharing mode</td><td style="font-weight:600">${modeLabels[t.sharing_mode] || t.sharing_mode || '—'}${t.pending_mode ? ' → <span style="color:#e67e22">' + (modeLabels[t.pending_mode] || t.pending_mode) + ' (pending)</span>' : ''}</td></tr>` : '');
     modal.innerHTML = `

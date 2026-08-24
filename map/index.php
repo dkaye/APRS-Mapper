@@ -120,7 +120,7 @@ if (isset($_GET['json'])) {
 				'fix_ts' => isset($t['aprs_fix_ts']) ? (int)$t['aprs_fix_ts'] : null,
 				'ham_callsign' => $t['ham_callsign'] ?? null, 'has_session' => $hasSession,
 				'hidden' => !empty($t['hidden']),
-				'carrier' => $t['device_info']['carrier'] ?? null];
+				'carrier' => _mobile_network_label($t['device_info'] ?? null)];
 		}
 	}
 	// Index ham tracker entries by callsign so mobile sessions can absorb their position data.
@@ -535,6 +535,35 @@ if (isset($_GET['messaging'])) {
 // True when the caller holds a signed-in marsaprs session carrying $perm.
 // Separate from the messaging password: subscribing to messages does not imply
 // any administrative rights.
+/** How a device's network is described wherever a "carrier" is shown.
+ *
+ * `carrier` is the ISP of the address the device joined from, resolved through ip-api.com.
+ * On cellular that address belongs to the carrier, so the lookup is already the right
+ * answer and is shown as it stands. On WiFi it is whoever provides the broadband, which
+ * read as a carrier and misled: an iPhone sitting on home WiFi was listed as "Comcast
+ * Cable Communications" -- true, and not what anybody took it to mean.
+ *
+ * `net` comes from the device (connectivity_plus), because nothing at this end can tell
+ * the two apart. Clients predating it send nothing and keep the bare-ISP wording, which is
+ * the honest thing to show when the connection type is genuinely unknown.
+ *
+ * Declared below the code that calls it, which PHP allows for an unconditional top-level
+ * function, and kept beside the other helpers rather than in the middle of the feed.
+ *
+ * The admin page's device-info modal applies the same rule in its own script: it builds
+ * from device_info directly and never comes through here.
+ */
+function _mobile_network_label(?array $di): ?string {
+	if (!is_array($di)) return null;
+	$isp = trim((string)($di['carrier'] ?? ''));
+	if ($isp === '') return null;
+	switch (strtolower(trim((string)($di['net'] ?? '')))) {
+		case 'wifi':     return 'via WiFi: ' . $isp;
+		case 'ethernet': return 'via Ethernet: ' . $isp;
+		default:         return $isp;      // cellular, or a client that does not say
+	}
+}
+
 function msgHasAuthPermission(string $perm): bool {
 	$authFile = __DIR__ . '/auth/auth.php';
 	if (!is_readable($authFile)) return false;
@@ -712,7 +741,7 @@ if (isset($_GET['mobile'])) {
 		$deviceInfo = null;
 		if (is_array($rawInfo)) {
 			$cleaned = [];
-			foreach (['app', 'os', 'model', 'manufacturer', 'browser', 'screen'] as $k) {
+			foreach (['app', 'os', 'model', 'manufacturer', 'browser', 'screen', 'net'] as $k) {
 				$v = isset($rawInfo[$k]) ? substr(trim((string)$rawInfo[$k]), 0, 80) : '';
 				if ($v !== '') $cleaned[$k] = $v;
 			}

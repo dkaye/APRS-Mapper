@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:io' show Platform;
 import 'dart:math';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
@@ -126,6 +127,30 @@ class MobileSession {
         info['os'] = 'Android ${d.version.release}';
         info['model'] = d.model;
         info['manufacturer'] = d.manufacturer;
+      }
+    } catch (_) {}
+    // Which kind of connection this device is on, which ONLY the device knows.
+    //
+    // The server resolves an ISP from the joining address, and on cellular that address
+    // belongs to the carrier — so the lookup already gives the right answer, it just
+    // cannot tell whether it is naming a carrier or somebody's home broadband. This is
+    // the missing half: with it, "Comcast Cable" on a phone reads as "via WiFi: Comcast
+    // Cable" instead of looking like a cellular carrier nobody has heard of.
+    //
+    // Not the SIM's own name, which is no longer readable: iOS deprecated CTCarrier and
+    // returns "--" from 16 onwards, so a carrier name straight off the phone is not
+    // available to ask for on the platform most of this fleet runs.
+    //
+    // WiFi wins when both are up, because that is what the OS routes over and therefore
+    // whose address the server will have seen.
+    try {
+      final on = await Connectivity().checkConnectivity();
+      if (on.contains(ConnectivityResult.wifi)) {
+        info['net'] = 'wifi';
+      } else if (on.contains(ConnectivityResult.mobile)) {
+        info['net'] = 'cellular';
+      } else if (on.contains(ConnectivityResult.ethernet)) {
+        info['net'] = 'ethernet';
       }
     } catch (_) {}
     return info;
