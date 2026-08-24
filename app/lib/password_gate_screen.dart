@@ -67,11 +67,24 @@ class _PasswordGateScreenState extends State<PasswordGateScreen> {
     final storedPw   = prefs.getString(_prefsPwKey);
     if (storedName == eventName && storedPw != null && storedPw.isNotEmpty) {
       final ok = await MobileSession.authEventPassword(storedPw);
-      if (ok) {
-        _controller.text = storedPw;
-      } else {
+      if (ok == true) {
+        // Straight through. The server has just confirmed this password, so there is
+        // nothing left to ask anybody. This used to pre-fill the field and show the gate
+        // regardless, which meant every launch ended in tapping a button underneath a
+        // password the app had already checked for itself — and iOS relaunches a
+        // backgrounded app often enough that it read as "it forgot my password again".
+        _goToMap();
+        return;
+      }
+      if (ok == false) {
+        // Refused, which is the one answer that means this password is no longer any
+        // use: the event password has been changed. Forget it and ask.
         await prefs.remove(_prefsPwKey);
         await prefs.remove(_prefsNameKey);
+      } else {
+        // Could not ask. Keep it — offering it back is one tap once the server returns,
+        // where deleting it is a trip to find where the password was written down.
+        _controller.text = storedPw;
       }
     }
 
@@ -91,13 +104,21 @@ class _PasswordGateScreenState extends State<PasswordGateScreen> {
     final ok = await MobileSession.authEventPassword(pw);
     if (!mounted) return;
 
-    if (ok) {
+    if (ok == true) {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_prefsPwKey,   pw);
       await prefs.setString(_prefsNameKey, _eventName);
       _goToMap();
     } else {
-      setState(() { _submitting = false; _error = 'Incorrect password — please try again.'; });
+      setState(() {
+        _submitting = false;
+        // A password that was refused and a server that could not be reached are not the
+        // same news, and telling somebody their password is wrong when it is not sends
+        // them looking for a problem that does not exist.
+        _error = ok == false
+            ? 'Incorrect password — please try again.'
+            : 'Could not reach the server — check your connection.';
+      });
     }
   }
 

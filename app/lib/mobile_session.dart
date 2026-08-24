@@ -298,18 +298,24 @@ class MobileSession {
     return const [];
   }
 
-  /// Validates the event password with the server.
-  /// Returns true if accepted (or no password is required), false if wrong.
-  static Future<bool> authEventPassword(String password) async {
+  /// Validates the event password with the server. Three answers, not two.
+  ///
+  /// `true` accepted, `false` REFUSED — the server answers 403 and nothing else does —
+  /// and `null` for "could not ask": a timeout, a dropped connection, a 500. The caller
+  /// deletes the saved password on a refusal, so collapsing "could not ask" into "wrong"
+  /// let one bad moment on the network throw away a password the operator then had to go
+  /// and find again.
+  static Future<bool?> authEventPassword(String password) async {
     try {
       final response = await http.post(
         Uri.parse('${MapConfig.serverBaseUrl}/index.php?mobile=auth'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'password': password}),
       ).timeout(const Duration(seconds: 8));
-      return response.statusCode == 200;
+      if (response.statusCode == 200) return true;
+      if (response.statusCode == 403) return false;
     } catch (_) {}
-    return false;
+    return null;
   }
 
   /// Restores an in-memory session from previously saved credentials.
