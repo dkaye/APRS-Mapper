@@ -17,6 +17,7 @@ if (!defined('MARSAPRS_SPOKEN_IDS')) define('MARSAPRS_SPOKEN_IDS', sys_get_temp_
 // Reads a binary index built by build-asn-table.py; tests point MARSAPRS_ASN_DIR at a
 // temp tree and write that format by hand, so the layout is pinned from both ends.
 require_once $repoRoot . '/map/asn_lookup.php';
+require_once $repoRoot . '/map/device_models.php';
 require_once $repoRoot . '/map/messaging_db.php';
 // Only defines functions at load; the ?messaging= dispatch happens in index.php.
 require_once $repoRoot . '/map/messaging.php';

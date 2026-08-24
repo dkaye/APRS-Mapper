@@ -80,6 +80,17 @@ if (file_exists($configPath)) {
 
 require_once __DIR__ . '/config_yaml.php';
 
+/** device_info with the Apple identifier translated, where it is one we know. */
+function _admin_named_device(?array $di): ?array
+{
+    if (!is_array($di) || empty($di['model'])) return $di;
+    require_once __DIR__ . '/../device_models.php';
+    $name = apple_device_name((string)$di['model']);
+    if ($name !== null) $di['model_name'] = $name;
+    return $di;
+}
+
+
 // ── Authentication ────────────────────────────────────────────────────────────
 
 require_once '/var/www/html/auth/auth.php';
@@ -1078,7 +1089,11 @@ if (isset($_GET['mobiletrackers'])) {
                 'hidden'       => !empty($t['hidden']),
                 'delta'        => $delta,
                 'mobile_delta' => $ham !== null ? ($mobileDeltas[$cs] ?? null) : null,
-                'device_info'  => $t['device_info'] ?? null,
+                // Enriched here rather than stored: the app sends utsname.machine because
+                // iOS offers nothing friendlier, and translating on the way out means a
+                // handset released after this deploy is named by editing one file instead
+                // of waiting for every phone in the field to update.
+                'device_info'  => _admin_named_device($t['device_info'] ?? null),
                 'sharing_mode' => $t['sharing_mode'] ?? '',
                 'pending_mode' => $t['pending_mode'] ?? '',
                 // Null means the device has never reported them — an older client, not a
@@ -3718,17 +3733,31 @@ function showDeviceInfoModal(t) {
         if (di2.net === 'wifi')          di2.carrier = 'via WiFi: ' + di2.carrier;
         else if (di2.net === 'ethernet') di2.carrier = 'via Ethernet: ' + di2.carrier;
     }
+    // iOS can only report utsname.machine, so "iPhone16,2" is the iPhone 15 Pro Max —
+    // the numbers do not track the marketing names. The name is shown and the identifier
+    // kept in small type beside it, because the identifier is the diagnostic half: it is
+    // what tells you which hardware you are actually looking at when something is odd.
     const labels = { app: 'App version', os: 'Operating system', browser: 'Browser', model: 'Device model', manufacturer: 'Manufacturer', carrier: 'Carrier', screen: 'Screen resolution' };
     const modeLabels = { walk_run: 'Walk / Run', cycle: 'Cycle', drive: 'Drive', drive_cycle: 'Drive', stationary: 'Stationary' };
+    // Every value here was typed by a client and arrives unescaped from the server, which
+    // stores it as sent. Interpolating it raw put an authenticated admin page at the mercy
+    // of anything a tracker cared to send as its OS string; esc() is the fix, and it is
+    // why the one row that carries markup on purpose is built separately below.
+    const modelCell = di2.model_name
+        // iOS can only report utsname.machine, so "iPhone16,2" is the iPhone 15 Pro Max --
+        // the numbers do not track the marketing names. The identifier stays in small type
+        // because it is the diagnostic half: it says which hardware this actually is.
+        ? `${esc(di2.model_name)} <span style="color:#999;font-weight:400">${esc(di2.model)}</span>`
+        : esc(di2.model || '');
     const rows = Object.entries(labels)
         .filter(([k]) => di2[k])
-        .map(([k, lbl]) => `<tr><td style="color:#666;padding:5px 14px 5px 0;white-space:nowrap">${lbl}</td><td style="font-weight:600">${di2[k]}</td></tr>`)
+        .map(([k, lbl]) => `<tr><td style="color:#666;padding:5px 14px 5px 0;white-space:nowrap">${lbl}</td><td style="font-weight:600">${k === 'model' ? modelCell : esc(di2[k])}</td></tr>`)
         .join('')
       + (t.sharing_mode || t.pending_mode ? `<tr><td style="color:#666;padding:5px 14px 5px 0;white-space:nowrap">Sharing mode</td><td style="font-weight:600">${modeLabels[t.sharing_mode] || t.sharing_mode || '—'}${t.pending_mode ? ' → <span style="color:#e67e22">' + (modeLabels[t.pending_mode] || t.pending_mode) + ' (pending)</span>' : ''}</td></tr>` : '')
       + msgOptsRow(t);
     modal.innerHTML = `
         <div style="background:#fff;border-radius:10px;padding:24px 28px;min-width:280px;box-shadow:0 8px 32px rgba(0,0,0,0.22)">
-            <div style="font-weight:700;font-size:15px;margin-bottom:14px;color:#2c3e50">Device info — ${t.name} (${t.id})</div>
+            <div style="font-weight:700;font-size:15px;margin-bottom:14px;color:#2c3e50">Device info — ${esc(t.name)} (${esc(t.id)})</div>
             <table style="border-collapse:collapse;font-size:14px">${rows || '<tr><td style="color:#999">No data</td></tr>'}</table>
             <div style="text-align:right;margin-top:18px">
                 <button class="btn" onclick="document.getElementById('device-info-modal').remove()">Close</button>
