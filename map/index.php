@@ -6073,10 +6073,17 @@ function _renderAllView() {
 // operator lands in the thread and can reply. If they aren't a member of that
 // conversation (traffic between others), build a stub so it renders — the reply
 // is still delivered to the conversation's members via its id.
-function _openFromAllView(m) {
+async function _openFromAllView(m) {
 	const cid = m.conversation_id;
 	if (!cid) return;
 	if (_msgViewAll) _toggleViewAll();
+	// Ask the server before inventing anything. The stub below has to guess a kind from
+	// the single message in hand, and its guess of 'direct' is WRONG for the Event Log —
+	// which is where every radio entry lives, 438 of them against 23 typed by hand. A
+	// conversation stubbed in as 'direct' is then invisible to _openLog(), which looks
+	// for kind 'log', so clicking Event Log afterwards reported an empty log with four
+	// hundred entries in it.
+	if (!_convs.get(cid)) await _refreshConversations();
 	if (!_convs.get(cid)) {
 		const others = (m.from_id !== _msgMeId)
 			? [{id:m.from_id, kind:m.from_kind, key:m.from_key, short_id:m.from_short, display_name:m.from_name}] : [];
@@ -6729,8 +6736,16 @@ function _syncComposerMode() {
 
 /** Open the event's running log. Entries go in the archive and nowhere else: no
  *  recipients, no delivery, no alert on anyone's phone. */
-function _openLog() {
-	const lg = [..._convs.values()].find(c => c.kind === 'log');
+async function _openLog() {
+	let lg = [..._convs.values()].find(c => c.kind === 'log');
+	// The list can be behind — a panel opened before the first refresh landed, or a
+	// conversation stubbed in from the Everything view. "Nothing logged yet" printed
+	// over a log with hundreds of entries in it is the worst thing this can say, so ask
+	// the server before saying it.
+	if (!lg) {
+		await _refreshConversations();
+		lg = [..._convs.values()].find(c => c.kind === 'log');
+	}
 	_pendingConv = null;
 	if (lg) {
 		_pendingLog = false;
