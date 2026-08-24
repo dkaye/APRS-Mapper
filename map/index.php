@@ -6001,7 +6001,7 @@ function _toggleViewAll() {
 	panel.classList.toggle('allview', _msgViewAll);
 	document.getElementById('msg-viewall-btn').classList.toggle('on', _msgViewAll);
 	document.getElementById('msg-allsearch-btn').style.display = _msgViewAll ? '' : 'none';
-	document.getElementById('msg-panel-title').textContent = _msgViewAll ? 'All Messages' : 'Messages';
+	document.getElementById('msg-panel-title').textContent = _msgViewAll ? 'Everything' : 'Messages';
 	document.getElementById('msg-panel-sub').textContent = _msgViewAll ? 'every message, chronological' : (_msgName ? 'as ' + _msgName : '');
 	if (_msgViewAll) {
 		// Anything queued for reading when a thread is next opened is history the moment
@@ -6168,7 +6168,7 @@ function _renderConvList() {
 	const bc = [..._convs.values()].find(c => c.kind === 'broadcast');
 	const lg = [..._convs.values()].find(c => c.kind === 'log');
 	const head = '<div class="msg-conv-head">Monitor</div>'
-		+ row(null, 'All Messages', 'Trackers and Event Log', null, 'all', _msgViewAll)
+		+ row(null, 'Everything', 'Trackers and Event Log', null, 'all', _msgViewAll)
 		+ row(bc, 'All Trackers', 'Broadcast to everyone', bc ? bc.id : null, 'broadcast')
 		+ row(lg, '📋 Event Log', 'Written to the log, sent to no one', lg ? lg.id : null, 'log')
 		+ '<div class="msg-conv-head next">Trackers</div>';
