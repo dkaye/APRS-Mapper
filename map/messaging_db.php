@@ -293,11 +293,35 @@ class MessagingDb
         while ($row = $r->fetchArray(SQLITE3_ASSOC)) $out[] = $row;
         return $out;
     }
+    /**
+     * Every write in this class goes through here, and every one of them was allowed to
+     * fail in silence: SQLite3Stmt::execute() returns false on error and nothing looked
+     * at it.
+     *
+     * What that cost, once: a rename that hit UNIQUE(event,kind,key) warned into the
+     * Apache log and changed nothing, the endpoint returned {ok:true}, and the web client
+     * — which correctly waits for the server before relabelling itself — believed it. One
+     * operator was "Net Control" on their own screen and "test9" to every phone in the
+     * event, with no error anywhere either of them could see.
+     *
+     * Nothing here relies on a failed write being ignored: the only INSERT that can
+     * conflict carries ON CONFLICT DO UPDATE, and the rest are guarded by a lookup first.
+     * So a write that does not happen is a bug every time, and now says so.
+     */
     private function run(string $sql, array $params = []): void
     {
         $st = $this->db->prepare($sql);
+        if ($st === false) {
+            throw new RuntimeException('prepare failed: ' . $this->db->lastErrorMsg());
+        }
         foreach ($params as $k => $v) $st->bindValue($k, $v);
-        $st->execute();
+        // Suppressed because it is not lost: SQLite3 both warns AND returns false, and
+        // lastErrorMsg() puts the same text in the exception below. Left unsuppressed,
+        // every failed write is reported twice — once as a warning nobody is looking at
+        // and once as the exception that actually stops something.
+        if (@$st->execute() === false) {
+            throw new RuntimeException('write failed: ' . $this->db->lastErrorMsg());
+        }
     }
 
     // ── participants ──────────────────────────────────────────────────────────
@@ -1188,9 +1212,41 @@ class MessagingDb
     }
 
     /** Rename an operator (updates both key and display name). */
+    /**
+     * Rename a participant, taking the name back from a retired session if one holds it.
+     *
+     * UNIQUE(event,kind,key) does not care that a name's holder left days ago; the
+     * caller's clash test — not seen for 90 seconds, so treat it as gone — very much
+     * does. The two disagreed, so the endpoint handed out a name the schema then
+     * refused, and every operator name an event had ever used was permanently
+     * unclaimable by anybody else. The comment beside that test says a departed
+     * operator's name auto-frees. This is what makes that true.
+     *
+     * The retired row's KEY moves aside and its DISPLAY_NAME does not. Old messages are
+     * attributed by display_name, so rewriting it would relabel traffic that identity
+     * really did send. Clearing token and last_seen is what disconnectParticipant means
+     * by signing a session out, and it keeps the retired row out of the addressable list
+     * so the picker never offers the same name twice.
+     *
+     * The "#<id>" suffix cannot itself collide: ids are unique, so the row being moved is
+     * the only one that could ever hold that key.
+     */
     public function renameParticipant(int $id, string $name): void
     {
-        $this->run('UPDATE participants SET key=:k, display_name=:k WHERE id=:i', [':k'=>$name, ':i'=>$id]);
+        $me = $this->participantById($id);
+        if (!$me) return;
+
+        $held = $this->one(
+            'SELECT id, last_seen FROM participants
+              WHERE event=:e AND kind=:k AND key=:key AND id<>:i',
+            [':e'=>$me['event'], ':k'=>$me['kind'], ':key'=>$name, ':i'=>$id]);
+        if ($held) {
+            $this->run('UPDATE participants SET key=:k, token=NULL, last_seen=0 WHERE id=:i',
+                       [':k'=>$name . ' #' . (int)$held['id'], ':i'=>(int)$held['id']]);
+        }
+
+        $this->run('UPDATE participants SET key=:k, display_name=:k WHERE id=:i',
+                   [':k'=>$name, ':i'=>$id]);
     }
 
     /** Change only what a participant is called.

@@ -352,8 +352,9 @@ function messaging_handle(string $action, array $body, array $ctx): void
         $trackers = _msg_load_trackers($ctx['mobileFile']);
         $out      = [];
 
-        // Operators: addressable if seen in the last 24 h. Drops the retired
-        // identities ("Net Control (ended)") that otherwise sat in the list forever.
+        // Operators: addressable if seen within MSG_ADDRESSABLE_SECONDS. Drops the
+        // retired identities that would otherwise sit in the list forever — including
+        // the ones renameParticipant signs out when it takes their name back.
         foreach ($db->listParticipants($event) as $p) {
             if ($p['kind'] !== 'operator') continue;
             if (empty($p['last_seen']) || ($now - (int)$p['last_seen']) > MSG_ADDRESSABLE_SECONDS) continue;
@@ -738,7 +739,14 @@ function messaging_handle(string $action, array $body, array $ctx): void
             && !empty($clash['token'])) {
             _msg_fail(409, 'That name is in use — choose another.');
         }
-        $db->renameParticipant((int)$me['id'], $newName);
+        // run() throws now, and the web client relabels itself from this response — so a
+        // rename that did not happen has to come back as an error rather than an ok.
+        try {
+            $db->renameParticipant((int)$me['id'], $newName);
+        } catch (Throwable $e) {
+            error_log('rename failed for participant ' . (int)$me['id'] . ': ' . $e->getMessage());
+            _msg_fail(500, 'Could not save that name.');
+        }
         echo json_encode(['ok'=>true, 'name'=>$newName]);
         exit;
     }
