@@ -3673,7 +3673,11 @@ function showDeviceInfoModal(t) {
         document.body.appendChild(modal);
     }
     const di = t.device_info || {};
-    const labels = { app: 'App version', os: 'Operating system', browser: 'Browser', model: 'Device model', manufacturer: 'Manufacturer', screen: 'Screen resolution' };
+    // `carrier` is the ISP of the address the device joined from, looked up once at
+    // join time — not read from a SIM. So a phone on cellular shows its carrier, one on
+    // WiFi shows the house's ISP, and Starlink shows as Space Exploration Technologies.
+    // Which network a tracker came in on is worth knowing at an event, so it is shown.
+    const labels = { app: 'App version', os: 'Operating system', browser: 'Browser', model: 'Device model', manufacturer: 'Manufacturer', carrier: 'Carrier', screen: 'Screen resolution' };
     const modeLabels = { walk_run: 'Walk / Run', cycle: 'Cycle', drive: 'Drive', drive_cycle: 'Drive', stationary: 'Stationary' };
     const rows = Object.entries(labels)
         .filter(([k]) => di[k])
