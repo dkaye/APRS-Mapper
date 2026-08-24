@@ -6155,7 +6155,12 @@ function _renderConvList() {
 		const badge = c && c.unread > 0 ? '<span class="msg-badge">' + c.unread + '</span>' : '';
 		// All Messages is not a conversation and has no id to match, so its selected
 		// state is passed in rather than derived.
-		const sel = (forceSel ?? (cid != null && cid === _openConvId)) ? ' sel' : '';
+		//
+		// And while it is up, no conversation row is selected: opening the view does not
+		// close the thread underneath it, so _openConvId still names whatever was last
+		// read and its row kept the highlight — two rows lit at once, one of them for a
+		// thread nobody is looking at.
+		const sel = (forceSel ?? (!_msgViewAll && cid != null && cid === _openConvId)) ? ' sel' : '';
 		return '<div class="msg-conv-item' + sel + '" data-cid="' + (cid == null ? '' : cid) + '"' +
 			(pin ? ' data-pin="' + pin + '"' : '') + '>' +
 			'<div class="msg-conv-main"><div class="msg-conv-name">' + _esc(name) + '</div>' +
