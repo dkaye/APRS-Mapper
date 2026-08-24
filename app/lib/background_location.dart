@@ -163,6 +163,12 @@ class BackgroundLocationService {
   /// with the saved name+PIN (which should return the same callsign via
   /// device_id).  Returns true if sharing is successfully resumed.
   Future<bool> resumeSharing() async {
+    // Idempotent, and it has to be: both permission branches can ask for a resume on a
+    // single launch, and _activateSharing() installs fresh timers WITHOUT cancelling the
+    // ones already running — which keep firing, because _sharingActive is still true. A
+    // second call would quietly double the beacon rate. Already sharing is resumed.
+    if (_sharingActive) return true;
+
     final prefs = await SharedPreferences.getInstance();
     if (prefs.getBool(kPrefActive) != true) return false;
 

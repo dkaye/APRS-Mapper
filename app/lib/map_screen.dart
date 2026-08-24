@@ -190,7 +190,14 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         setState(() => _locationState = _LocationState.whileInUse);
         unawaited(_bgLocation.startTracking());
         _startPositionStream();
-        if (Platform.isAndroid) unawaited(_maybeResumeSharing());
+        // Resumes on iOS too. This was Android-only, on the reasoning that a foreground
+        // service works with whileInUse and iOS wants Always for background location.
+        // True as far as it goes, and it left the app inconsistent with itself: nothing
+        // gates STARTING a session on the permission, so an iOS user on "While Using the
+        // App" could share all day and then be asked for the event password again the
+        // next time the app was launched, with a live session sitting unused in
+        // preferences. Starting and resuming now agree.
+        unawaited(_maybeResumeSharing());
       } else if (permission == LocationPermission.deniedForever) {
         setState(() => _locationState = _LocationState.permanentlyDenied);
       } else {
@@ -707,8 +714,14 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         setState(() => _locationState = _LocationState.whileInUse);
         unawaited(_bgLocation.startTracking());
         _startPositionStream();
-        // Android foreground service works with whileInUse; iOS needs always.
-        if (Platform.isAndroid) unawaited(_maybeResumeSharing());
+        // Resumes on iOS too. This was Android-only, on the reasoning that a foreground
+        // service works with whileInUse and iOS wants Always for background location.
+        // True as far as it goes, and it left the app inconsistent with itself: nothing
+        // gates STARTING a session on the permission, so an iOS user on "While Using the
+        // App" could share all day and then be asked for the event password again the
+        // next time the app was launched, with a live session sitting unused in
+        // preferences. Starting and resuming now agree.
+        unawaited(_maybeResumeSharing());
       } else if (permission == LocationPermission.deniedForever) {
         setState(() => _locationState = _LocationState.permanentlyDenied);
       } else {
@@ -1024,16 +1037,22 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     final resumed = await _bgLocation.resumeSharing();
     if (!mounted) return;
     if (resumed) {
+      // Two permission paths can both reach here on one launch, and resumeSharing() is
+      // now idempotent — so this can be a genuine resume or just the UI catching up with
+      // a service that never stopped. Only the first is worth telling anybody about.
+      final wasAlreadySharing = _isSharing;
       // The token only exists once a session is live, and the watch cannot do
       // anything without it -- so a session starting is the one event it most
       // needs, pushed immediately rather than waiting for the next natural one.
       WatchBridge.instance.pushContextNow();
       setState(() { _isSharing = true; _sharingActivityMode = _bgLocation.activityMode; });
       _resetAutoModeDetection();
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Location sharing resumed'),
-        duration: Duration(seconds: 3),
-      ));
+      if (!wasAlreadySharing) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Location sharing resumed'),
+          duration: Duration(seconds: 3),
+        ));
+      }
     }
   }
 
