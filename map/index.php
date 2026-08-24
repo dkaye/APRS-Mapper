@@ -1133,7 +1133,15 @@ button:hover{background:#2471a3}
   </div>
   <form method="POST">
     <label for="epw">Event Password</label>
-    <input type="password" id="epw" name="map_event_pw" autofocus autocomplete="current-password" placeholder="">
+    <!-- Shown, not masked. This is an event password shared with everyone working the
+         net, read off a card or a text message and typed on a phone in daylight — a
+         secret from the public, not from the person standing next to you. Masking it
+         bought nothing and cost a retype every time a thumb slipped.
+         The three attributes after it matter more here than they did behind a mask: a
+         visible field is one a phone keyboard will happily capitalise and autocorrect. -->
+    <input type="text" id="epw" name="map_event_pw" autofocus
+           autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false"
+           placeholder="">
     <div class="err"><?= $_pwError ? 'Incorrect password — please try again.' : '' ?></div>
     <button type="submit">Enter</button>
   </form>
