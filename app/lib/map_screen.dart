@@ -790,6 +790,37 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   // Not a system dialog — our own UI. Shown once per app session.
   // backgroundLimited: true when permission is only "While Using" so we warn
   // that sharing pauses when the screen locks.
+  /// What the consent sheet says about background sharing, which is not the same
+  /// sentence on the two platforms because the two platforms do not behave the same.
+  ///
+  /// This used to give every operator iOS's Settings path. On Android that named menus
+  /// that do not exist, and told them sharing would pause when it does not: Android runs
+  /// a foreground service, so location keeps going with the screen locked for as long as
+  /// the notification is there. The advice that matters on Android is to leave that
+  /// notification alone; the advice that matters on iOS is to grant Always.
+  String _sharingConsentBody(bool backgroundLimited) {
+    const shared =
+        'Others will be able to see your location on the map. Your name and callsign '
+        'will also be visible if entered.\n\n'
+        'You will be assigned an ad-hoc callsign such as MARSQ-123, which can also be '
+        'used with APRS-aware apps such as aprs.fi and CalTopo.com.\n\n';
+    if (Platform.isAndroid) {
+      return '$shared'
+          'Sharing continues when the screen locks or you switch apps. A notification '
+          'stays in the status bar while it does — leaving it there is what keeps '
+          'sharing running.';
+    }
+    if (backgroundLimited) {
+      return '$shared'
+          'Sharing will pause when the screen locks or you switch apps. To share in the '
+          'background, go to Settings → Privacy & Security → Location Services → '
+          'APRS Map and choose “Always”.';
+    }
+    return '$shared'
+        'Because you have allowed Always access, sharing continues when the screen is '
+        'locked or you switch apps.';
+  }
+
   Future<bool> _showSharingConsentScreen({bool backgroundLimited = false}) async {
     if (!mounted) return false;
     final confirmed = await showModalBottomSheet<bool>(
@@ -816,28 +847,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             ),
             const Icon(Icons.share_location, size: 52, color: Colors.blue),
             const SizedBox(height: 16),
-            const Text('Share Your Location with Participants',
+            const Text('Share Your Location',
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 12),
             Text(
-              backgroundLimited
-                ? 'Others will be able to see your location on the map — '
-                  'including users of this app, our website, and third-party '
-                  'apps like aprs.fi and CalTopo.com.\n\n'
-                  'Your name and ham-radio callsign will also be visible, '
-                  'if entered.\n\n'
-                  'Sharing will pause when the screen locks or you switch apps. '
-                  'To share in the background, go to Settings → Privacy & Security → '
-                  'Location Services → APRS Map and choose “Always”.'
-                : 'Others will be able to see your location on the map — '
-                  'including users of this app, our website, and third-party '
-                  'apps like aprs.fi and CalTopo.com.\n\n'
-                  'Your name and ham-radio callsign will also be visible, '
-                  'if entered.\n\n'
-                  'Because you\'ve allowed background access, sharing will '
-                  'continue even when the screen is locked.',
+              _sharingConsentBody(backgroundLimited),
               style: TextStyle(fontSize: 15, color: Colors.grey[600]),
             ),
             const SizedBox(height: 28),
