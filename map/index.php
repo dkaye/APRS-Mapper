@@ -2488,7 +2488,7 @@ body.msg-window #msg-panel-grip { display: none; }
 				<div class="qs-sec-title">Messaging</div>
 				<div class="qs-tip">While you are sharing your location, net control can send you text messages. An incoming message plays a tone and shows a pop-up with the sender's name and text.</div>
 				<div class="qs-tip">Click <strong>Reply</strong> to respond, or use the <strong>Messaging</strong> button to start a new message.</div>
-				<div class="qs-tip">Operators: the panel lists your conversations on the left and the selected one on the right. <strong>All Messages</strong>, <strong>All Trackers</strong> and the <strong>Event Log</strong> stay pinned at the top under <strong>Monitor</strong>; under <strong>Trackers</strong> below them, stations not heard from in a day drop off the list. Click <strong>New message</strong> to start one, or right-click a tracker in the sidebar to message it directly.</div>
+				<div class="qs-tip">Operators: the panel lists your conversations on the left and the selected one on the right. <strong>Everything</strong> and <strong>All Trackers</strong> stay pinned at the top under <strong>Monitor</strong>; under <strong>Trackers</strong> below them, stations not heard from in a day drop off the list. The <strong>&#128203; Log</strong> button above the list opens the event log, as does Ctrl+L. Click <strong>New message</strong> to start one, or right-click a tracker in the sidebar to message it directly.</div>
 				<div class="qs-tip">Each message has a small <strong>copy</strong> icon that copies just the text &mdash; no sender or timestamp &mdash; ready to paste into a log or an email.</div>
 				<div class="qs-tip">To record something without sending it to anyone, click <strong>&#128203; Log</strong> or press <strong>Ctrl+L</strong>. Entries go into the event's log and reach no one &mdash; times, arrivals, decisions.</div>
 				<div class="qs-tip">Two monitors? The panel menu has <strong>Open messages in a separate window</strong>. Drag it to the second screen: the map keeps the first, only one window reads messages aloud, and clicking a message's location pin moves the map on the other screen.</div>
@@ -6249,15 +6249,20 @@ function _renderConvList() {
 	// it — nor scroll for it once ordinary traffic has pushed it down.
 	// The Event Log is pinned beside it for the same reason: it always exists, it is
 	// reached constantly during a net, and it must not drift down the list.
-	// All Messages leads them, because it is the widest view of the same three and the
-	// one an operator drops back to. It used to be a link in the footer of this column,
-	// which put the broadest destination in the least visible place on the panel.
+	// Everything leads, because it is the widest view of the same traffic and the one an
+	// operator drops back to. It used to be a link in the footer of this column, which put
+	// the broadest destination in the least visible place on the panel.
+	//
+	// The Event Log is NOT listed here. It sat beside these two and went to exactly the
+	// same place as the 📋 Log button above the list — same function, same thread, same
+	// composer — so the column carried a third route to somewhere already reachable by a
+	// button and by Ctrl+L. The button is the one that survives: it works with the panel
+	// shut, which a row inside the panel cannot. Everything still contains the log's
+	// entries, which is what its subtitle says.
 	const bc = [..._convs.values()].find(c => c.kind === 'broadcast');
-	const lg = [..._convs.values()].find(c => c.kind === 'log');
 	const head = '<div class="msg-conv-head">Monitor</div>'
 		+ row(null, 'Everything', 'Trackers and Event Log', null, 'all', _msgViewAll)
 		+ row(bc, 'All Trackers', 'Broadcast to everyone', bc ? bc.id : null, 'broadcast')
-		+ row(lg, '📋 Event Log', 'Written to the log, sent to no one', lg ? lg.id : null, 'log')
 		+ '<div class="msg-conv-head next">Trackers</div>';
 
 	scroll.innerHTML = head + (items.length
@@ -6270,9 +6275,10 @@ function _renderConvList() {
 			// All Messages is a view of the panel rather than a thread in it, so it is
 			// answered before anything looks for a conversation to open.
 			if (el.dataset.pin === 'all') { if (!_msgViewAll) _toggleViewAll(); return; }
-			// A pinned row has no thread behind it until something has been put in it,
-			// so which opener to call is decided by the pin, not by the missing id.
-			if (cid === '') { if (el.dataset.pin === 'log') _openLog(); else _openBroadcast(); }
+			// A pinned row has no thread behind it until something has been put in it, so
+			// an empty id is not a missing conversation. All Trackers is the only such row
+			// left: Everything was answered above, and the Event Log is no longer listed.
+			if (cid === '') _openBroadcast();
 			else _openConversation(+cid);
 		}));
 }

@@ -496,9 +496,9 @@ Messaging opens as a **chat panel docked to the right of the map**, in two parts
 
 - **Conversations list** — every conversation you are part of, each with the other party's ID and name and an unread badge. Click one to open its thread.
 
-  Two entries are **pinned at the top** and always present: **All Trackers**, for broadcasting to everyone, and the **Event Log** (below). Neither has to be composed or scrolled to once ordinary traffic builds up.
+  The list is in two labelled sections. Under **Monitor**, two entries are **pinned at the top** and always present: **Everything**, the whole event in one chronological feed, and **All Trackers**, for broadcasting to everyone. Neither has to be composed or scrolled to once ordinary traffic builds up. Under **Trackers** below them come the conversations themselves.
 
-  Below them, conversations whose other end has not been seen for a day are **hidden**, on the same 24-hour rule the New message list uses — you are looking for someone to talk to, and a station that left the event yesterday is not that. Anything unread, and whatever thread you have open, stays regardless, so the list cannot empty out under you mid-read.
+  In that lower section, conversations whose other end has not been seen for a day are **hidden**, on the same 24-hour rule the New message list uses — you are looking for someone to talk to, and a station that left the event yesterday is not that. Anything unread, and whatever thread you have open, stays regardless, so the list cannot empty out under you mid-read.
 - **Resizing** — drag the **left edge** of the message window to make it wider or narrower, and drag the **divider** between the conversation list and the messages to rebalance them. Both are remembered for next time.
 
 **Thread + composer** — the selected conversation's messages, newest at the bottom, with an **always-visible message box** that is never covered by an incoming message. New messages appear live as they arrive — nothing to reload. Only your own conversations are shown; traffic between other operators and trackers is not.
@@ -572,7 +572,7 @@ Not everything worth recording is worth sending to anyone. Times, arrivals, deci
 
 Write an entry with the **📋 Log** button beside **New message**, or press **Ctrl+L** (**⌘L** on a Mac) from anywhere with the panel open — the cursor lands in the box ready to type, so an entry can be made mid-net without reaching for the mouse.
 
-Entries are **stored and sent nowhere**. No tracker receives them, no phone or watch chimes, and no receipt comes back. They appear only in the pinned **Event Log** thread, each stamped with **who wrote it** — the log is shared between operators and gets read later by someone reconstructing what happened, so every entry names its author, including your own.
+Entries are **stored and sent nowhere**. No tracker receives them, no phone or watch chimes, and no receipt comes back. They appear only in the **Event Log** thread — reached with that same **📋 Log** button or **Ctrl+L**, not from the conversations list — each stamped with **who wrote it** — the log is shared between operators and gets read later by someone reconstructing what happened, so every entry names its author, including your own.
 
 Mobile trackers never see the log, and it appears in **View all messages** alongside everything else, marked as going to *Log*, so an exported CSV carries the log and the traffic together in one timeline.
 
