@@ -2092,9 +2092,9 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
    another row to click — the rows below them are the same width and a heading that looked
    clickable would be tried. */
 .msg-conv-head {
-    padding: 9px 12px 5px; font-size: 10px; font-weight: 700;
-    letter-spacing: .07em; text-transform: uppercase; color: #7a8a99;
-    background: #fafcfd; user-select: none;
+    padding: 11px 12px 6px; font-size: 13px; font-weight: 700;
+    letter-spacing: .06em; text-transform: uppercase; color: #2980b9;
+    background: #fafcfd; user-select: none; cursor: default;
 }
 /* The second heading also does the job the divider used to: separating the destinations
    that always exist from the conversations that come and go. Heavier than the hairline
