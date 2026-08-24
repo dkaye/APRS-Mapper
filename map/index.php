@@ -1978,12 +1978,18 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
     #msg-panel.thread-active #msg-panel-back { display: block; }
     /* One pane at a time here, so neither handle has anything to drag. */
     #msg-split, #msg-panel-grip { display: none; }
+    /* Same rule for the all-messages view: on a phone it takes the whole panel, because
+       232px of inbox beside it would leave neither readable. */
+    #msg-panel.allview #msg-list-view { display: none; }
 }
 
 /* ── All-messages view (View All toggle) ─────────────────────────────────── */
 #msg-viewall-btn.on, #msg-allsearch-btn.on { background: rgba(255,255,255,0.28); opacity: 1; }
 #msg-allview { display: none; }
-#msg-panel.allview #msg-list-view, #msg-panel.allview #msg-thread-view { display: none; }
+/* Only the thread gives up its place. The conversation column used to be hidden along
+   with it, so choosing All Messages cost you the inbox — and with the inbox gone there
+   was no way back into a conversation without leaving the view first. */
+#msg-panel.allview #msg-thread-view { display: none; }
 #msg-panel.allview #msg-allview { display: flex; flex: 1; min-width: 0; }
 #msg-allview-search { flex: 0 0 auto; padding: 8px; border-bottom: 1px solid #eee; display: none; }
 #msg-allview-search.on { display: block; }
@@ -5970,6 +5976,15 @@ function _showListView() {
 	_renderConvList();
 }
 function _showThreadView(titleHtml, subText) {
+	// Leave the all-messages view first. .allview hides the thread pane, so opening a
+	// conversation without this would put it behind something covering it and the click
+	// would look like it had done nothing. Harmless when the view is not up, and
+	// _openFromAllView has already left by the time it reaches here.
+	//
+	// It matters now that the conversation column stays visible in that view: choosing a
+	// conversation from it is a normal thing to do, where before this the only way to
+	// reach one was through a message in the view itself.
+	if (_msgViewAll) _toggleViewAll();
 	document.getElementById('msg-panel').classList.add('thread-active');
 	const head = document.getElementById('msg-thread-head');
 	head.classList.add('on');
@@ -6153,7 +6168,7 @@ function _renderConvList() {
 	const bc = [..._convs.values()].find(c => c.kind === 'broadcast');
 	const lg = [..._convs.values()].find(c => c.kind === 'log');
 	const head = '<div class="msg-conv-head">Monitor</div>'
-		+ row(null, 'All Messages', 'Everything in the event, in order', null, 'all', _msgViewAll)
+		+ row(null, 'All Messages', 'Trackers and Event Log', null, 'all', _msgViewAll)
 		+ row(bc, 'All Trackers', 'Broadcast to everyone', bc ? bc.id : null, 'broadcast')
 		+ row(lg, '📋 Event Log', 'Written to the log, sent to no one', lg ? lg.id : null, 'log')
 		+ '<div class="msg-conv-head next">Trackers</div>';
