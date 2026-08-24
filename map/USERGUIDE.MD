@@ -610,26 +610,27 @@ The people list shows only those you can reach — operators and participants ac
 
 **Receipts:** Your sent messages show **Delivered ✓** and **Read ✓✓** (or **Delivered to N of M** / **Read by N of M** in a group).
 
-**Read aloud:** Arriving messages are **spoken aloud by default** — this is a net-control tool and you are usually not watching the screen. Each is announced as *“From CRD Stanton”*, then a short pause, then the message. Tap the **⚙ gear** icon in the top bar for **What you see and hear**, which holds this and everything else the phone does with the event’s traffic; your choices are remembered. The icon itself tells you where you stand: filled if anything is switched on, outlined if nothing is.
+**Read aloud:** Arriving messages are **spoken aloud by default** — this is a net-control tool and you are usually not watching the screen. Each is announced as *“From CRD Stanton”*, then a short pause, then the message. Tap the **⚙ gear** icon in the top bar for **What you see and hear**, and turn **Speak text messages** off to mute; your choices are remembered. The icon itself tells you where you stand: filled if anything is switched on, outlined if nothing is.
 
 **Stopping it.** Whenever anything is being spoken or played, a **Stop** button appears at the bottom of the screen showing how many items are waiting and roughly how long they will take — both, because “six waiting” could be twenty seconds or four minutes. Tap it to clear everything, not just the sentence in progress.
 
 Nothing ever interrupts anything else: a new message waits for the current one to finish. And nothing more than **five minutes old** is read aloud, measured from when it was *sent* — so coming back from a spell without signal does not start a recital of a net that has moved on. The messages themselves all still arrive and are waiting in their threads; only the *speaking* is rationed.
 
-**Following the whole event.** By default you see only what was sent to you. The **⚙ gear** icon in the top bar opens **What you see and hear**, with four switches:
+**Following the whole event.** By default you see only what was sent to you. The **⚙ gear** icon in the top bar opens **What you see and hear**, with three switches:
 
 | Switch | What it does |
 |---|---|
-| **See everyone’s messages** | You see everything anyone sends, whoever it was addressed to |
-| **Read them aloud** | Speaks each one as it arrives; needs the switch above it |
-| **Listen to the radio** | Plays the receivers’ recordings, just after each transmission |
-| **Read my messages aloud** | Speaks messages sent to you; off means an alert tone instead |
+| **Speak text messages** | Every text message on this phone is read aloud; off means an alert tone instead |
+| **Hear radio traffic** | Plays the receivers’ recordings, just after each transmission |
+| **Receive all messages** | You see everything anyone sends, whoever it was addressed to — not just yours |
+
+**Speak text messages** covers everything the phone shows you. Turn **Receive all messages** on as well and the rest of the net is read aloud too — there is no second switch to find.
 
 Followed traffic appears in a separate **Monitor** view and **never raises a notification** — on a busy net that is a message every few seconds, and a phone that buzzed for each would be unusable within a minute. If you were offline for a while, it tells you how many it skipped rather than leaving a silent gap.
 
-There used to be a second **🔊 speaker** icon beside the gear holding the two sound switches, on the grounds that what *reaches* your phone is not a sound setting. All four live in the one sheet now, so there is nothing to hunt between — and **Read them aloud** sits directly beneath the switch it depends on.
+There used to be a second **🔊 speaker** icon beside the gear holding the sound switches, on the grounds that what *reaches* your phone is not a sound setting. All three live in the one sheet now, so there is nothing to hunt between.
 
-**Hearing the actual radio.** When a channel sends its recordings, a radio entry carries a **Play** button. Tap it to hear what was really said — useful on the one line in fifty that came out garbled in the transcription. Recordings are fetched only when you tap them, never in advance, so following a net as text costs almost no cellular data. **Listen to the radio**, under the **⚙ gear**, turns this on.
+**Hearing the actual radio.** When a channel sends its recordings, a radio entry carries a **Play** button. Tap it to hear what was really said — useful on the one line in fifty that came out garbled in the transcription. Recordings are fetched only when you tap them, never in advance, so following a net as text costs almost no cellular data. **Hear radio traffic**, under the **⚙ gear**, turns this on.
 
 **When the app is in the background:** an **alert tone** sounds and the message is then **read aloud**, followed by a **notification** you can tap — so you get the message itself without having to look, even with the screen locked.
 

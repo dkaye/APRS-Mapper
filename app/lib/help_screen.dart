@@ -168,7 +168,7 @@ class HelpScreen extends StatelessWidget {
             _tip('Chat with net control and other participants. Your Conversations list shows each thread with an unread count; tap New message to start a conversation or a group.'),
             _tip('Attach a photo — take one or choose from your library — and send it with or without text. Tap any photo to view it full-screen.'),
             _tip('Your sent messages show Delivered ✓ and Read ✓✓ (or “Read by 2 of 3” in a group).'),
-            _tip('Tap the gear icon for what you see and hear: everyone\'s messages, reading them aloud, listening to the radio, and reading your own messages aloud.'),
+            _tip('Tap the gear icon for what you see and hear: speak text messages, hear radio traffic, and receive all messages — not just yours.'),
             _tip('If a message arrives while the app is in the background or the screen is locked, a notification with a distinct alert sound appears — tap it to open the conversation.'),
           ]),
 

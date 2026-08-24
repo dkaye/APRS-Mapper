@@ -92,6 +92,11 @@ class _MessagingScreenState extends State<MessagingScreen> {
         _speak = p.getBool('aprs_msg_speak') ?? true;
         _lastRecipients = p.getStringList(_kLastRecipients) ?? const [];
       });
+      // One switch drives both now. An install coming from the two-switch version can
+      // have them disagreeing — speech on for your own messages, off for everyone
+      // else's — and the sheet would then promise speech it does not deliver. Done here
+      // rather than when the sheet opens, so it holds for somebody who never opens it.
+      await MonitorService.instance.setSpeakAll(_speak);
     }
   }
 
@@ -238,7 +243,7 @@ class _MessagingScreenState extends State<MessagingScreen> {
     }
   }
 
-  /// Whether any of the four settings is on. Drives the app-bar gear, so a glance says
+  /// Whether any of the three settings is on. Drives the app-bar gear, so a glance says
   /// whether this phone is following the event or about to make a noise, without
   /// opening the sheet — which is what the speaker icon used to say, back when there
   /// were two icons to say it with.
@@ -342,12 +347,26 @@ class _MessagingScreenState extends State<MessagingScreen> {
     }
   }
 
-  Future<void> _toggleSpeak() async {
-    setState(() => _speak = !_speak);
+  /// One switch for speech, covering every text message this phone shows.
+  ///
+  /// There were two — one for messages addressed to you, one for the rest of the event's
+  /// traffic — and they were separable rather than usefully separate. A phone that reads
+  /// your own messages aloud but sits silent through everyone else's is not a state
+  /// anybody set on purpose; it is one people arrived at by finding only one of the two
+  /// switches. "Receive all messages" already decides whether that traffic reaches this
+  /// phone at all, so speech has nothing left to qualify: if a text message is here, it
+  /// is spoken.
+  ///
+  /// Both flags are still written. map_screen gates monitored speech on
+  /// `speakingAll && monitoringAll`, and the second half of that is still a real
+  /// question — this only removes the first as a separate thing to decide.
+  Future<void> _setSpeakText(bool v) async {
+    setState(() => _speak = v);
     final p = await SharedPreferences.getInstance();
-    await p.setBool('aprs_msg_speak', _speak);
-    WatchBridge.instance.pushSpeak(_speak);
-    if (!_speak) {
+    await p.setBool('aprs_msg_speak', v);
+    await MonitorService.instance.setSpeakAll(v);
+    WatchBridge.instance.pushSpeak(v);
+    if (!v) {
       _deferredSpeak.clear();
       AudioQueue.instance.cancelAll();
     }
@@ -355,66 +374,43 @@ class _MessagingScreenState extends State<MessagingScreen> {
 
   // ── What reaches this phone, and what it says out loud ────────────────────
 
-  /// Four independent choices, and they are independent on purpose.
+  /// Three choices: whether text is spoken, whether the radio is heard, and whether
+  /// anybody else's traffic arrives at all.
   ///
-  /// Following the event as text costs almost nothing; the audio is the part that
-  /// costs cellular data, so it is never implied by either of the others. Nothing is
-  /// ever pushed to a device that did not ask — the feed carries a flag, and a phone
-  /// with audio off simply never makes the request.
+  /// They stay independent. Following the event as text costs almost nothing; the audio
+  /// is the part that costs cellular data, so it is never implied by either of the
+  /// others. Nothing is ever pushed to a device that did not ask — the feed carries a
+  /// flag, and a phone with audio off simply never makes the request.
   ///
-  /// One sheet, behind the gear. It was two — a speaker for what this phone says out
-  /// loud, a gear for what reaches it at all — on the reasoning that a subscription is
-  /// not an audio setting. That is true, and it still cost two icons, two panels, and a
-  /// row at the foot of each pointing at the other, to arrange four switches. The one
-  /// ordering rule that ever mattered survives: "Read them aloud" sits directly beneath
-  /// the subscription it depends on, where a dependent option needs no explaining.
+  /// It was four switches behind two icons, then four behind one, and now three. The
+  /// pair that went was speech: one switch for messages addressed to you and another for
+  /// everyone else's, which is a distinction the operator never had a reason to draw.
+  /// "Speak text messages" now means every text message this phone shows — including the
+  /// ones that arrive because "Receive all messages" is on. That also retires the only
+  /// dependent row in the sheet, so nothing here greys out or has to explain itself.
   ///
-  /// Every subtitle is one short line, and that is a constraint rather than a style: the
-  /// sheet caps at 85% of the screen and clips the overflow SILENTLY. Four switches with
-  /// the old three-line descriptions did not fit.
+  /// Titles carry the meaning and only the one line that needs qualifying has a subtitle:
+  /// the sheet caps at 85% of screen height and clips the overflow SILENTLY.
   Future<void> _openSettings() async {
     final m = MonitorService.instance;
     await _sheet((setSheet) => [
           const ListTile(
             title: Text('What you see and hear',
                 style: TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: Text('Following the event never buzzes or interrupts you.'),
           ),
           const Divider(height: 1),
           SwitchListTile(
-            secondary: const Icon(Icons.forum_outlined),
-            title: const Text("See everyone's messages"),
-            subtitle: const Text("Everyone's traffic, not just yours."),
-            value: m.monitoringAll,
+            secondary: const Icon(Icons.record_voice_over_outlined),
+            title: const Text('Speak text messages'),
+            value: _speak,
             onChanged: (v) async {
-              await m.setAll(v);
+              await _setSpeakText(v);
               setSheet();
             },
           ),
-          // Indented, to read as belonging to the switch above rather than standing
-          // beside it.
-          Padding(
-            padding: const EdgeInsets.only(left: 24),
-            child: SwitchListTile(
-              secondary: const Icon(Icons.record_voice_over_outlined),
-              title: const Text('Read them aloud'),
-              subtitle: Text(m.monitoringAll
-                  ? 'Spoken as they arrive.'
-                  : 'Turn on the switch above first.'),
-              value: m.speakingAll && m.monitoringAll,
-              onChanged: m.monitoringAll
-                  ? (v) async {
-                      await m.setSpeakAll(v);
-                      setSheet();
-                    }
-                  : null,
-            ),
-          ),
           SwitchListTile(
             secondary: const Icon(Icons.radio),
-            title: const Text('Listen to the radio'),
-            subtitle: const Text(
-                "The operators' own voices, just after each over. Uses data."),
+            title: const Text('Hear radio traffic'),
             value: m.playingRadioAudio,
             onChanged: (v) async {
               await m.setRadioAudio(v);
@@ -422,12 +418,12 @@ class _MessagingScreenState extends State<MessagingScreen> {
             },
           ),
           SwitchListTile(
-            secondary: const Icon(Icons.volume_up),
-            title: const Text('Read my messages aloud'),
-            subtitle: const Text('Off means a tone instead.'),
-            value: _speak,
+            secondary: const Icon(Icons.forum_outlined),
+            title: const Text('Receive all messages'),
+            subtitle: const Text('Not just yours.'),
+            value: m.monitoringAll,
             onChanged: (v) async {
-              await _toggleSpeak();
+              await m.setAll(v);
               setSheet();
             },
           ),
@@ -519,10 +515,10 @@ class _MessagingScreenState extends State<MessagingScreen> {
                   ? IconButton(icon: const Icon(Icons.arrow_back), tooltip: 'Back to conversations', onPressed: _backToInbox)
                   : null,
           actions: [
-            // One icon for all four switches. There was a speaker beside this gear, and
+            // One icon for all three switches. There was a speaker beside this gear, and
             // between them they needed a cross-link in each panel pointing at the other
-            // — which is a lot of furniture for four switches, and still left people
-            // hunting for the radio behind a speaker that did not own it.
+            // — a lot of furniture for what is now three switches, and it still left
+            // people hunting for the radio behind a speaker that did not own it.
             //
             // Filled while ANY of them is on, so the bar says at a glance whether this
             // phone is following the event or about to make a noise. That is the one

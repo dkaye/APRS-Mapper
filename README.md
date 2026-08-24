@@ -846,34 +846,39 @@ the messaging core works: the delivered feed is a join on `deliveries`, and a me
 not addressed to you has no row there. Transcriber log entries have no rows at all, so
 the radio has always been invisible to phones.
 
-Four independent switches, behind **one** ⚙ gear on the Messages screen, in the sheet
-**What you see and hear** — in this order:
+Three independent switches, behind **one** ⚙ gear on the Messages screen, in the sheet
+**What you see and hear**:
 
 | Switch | Holds |
 |---|---|
-| **See everyone's messages** | every message in the event, whoever it was meant for |
-| **Read them aloud** | speaks each one as it arrives; depends on the switch above |
-| **Listen to the radio** | the operators' own recordings, just after each over |
-| **Read my messages aloud** | speech for messages sent to you; off means a tone instead |
+| **Speak text messages** | every text message this phone shows is read aloud |
+| **Hear radio traffic** | the operators' own recordings, just after each over |
+| **Receive all messages** | everyone's traffic, not just yours |
 
 They are independent because following the event as text costs almost nothing and the
 audio is the part that costs cellular data — so nothing is ever implied.
 
-It was **two** icons, a 🔊 speaker for sound beside the gear for the subscription, on the
-reasoning that *what reaches this phone at all* is not an audio setting. That reasoning
-is sound and it was still the wrong trade: arranging four switches took two panels and a
-row at the foot of each pointing at the other, and people went looking for the radio
-behind a speaker that did not own it. One sheet needs no cross-links, and the single
-ordering rule that ever mattered survives — "Read them aloud" sits directly beneath the
-subscription it depends on, where a dependent option needs no greying or explaining.
+**Speech is one switch, not two.** There were separate settings for messages addressed to
+you and for everybody else's, and that is a distinction the operator never had a reason
+to draw — a phone that reads your own messages aloud but sits silent through the rest of
+the net is not a state anyone chose, it is one they reached by finding only one of the
+two switches. **Receive all messages** already decides whether that traffic arrives, so
+speech has nothing left to qualify: if a text message is on this phone, it is spoken.
+That also retires the sheet's only dependent row, so nothing greys out or explains itself.
 
-The gear fills while **any** of the four is on, which keeps the one thing the speaker's
+Getting there took two goes. It was **two** icons, a 🔊 speaker for sound beside the gear
+for the subscription, on the reasoning that *what reaches this phone at all* is not an
+audio setting. The reasoning is sound; the trade was not, because arranging the switches
+then took two panels and a row at the foot of each pointing at the other, and people went
+looking for the radio behind a speaker that did not own it.
+
+The gear fills while **any** of the three is on, which keeps the one thing the speaker's
 crossed-out state was good for: the bar says whether this phone is following the event or
 about to make a noise, without opening anything.
 
-Every subtitle in the sheet is one short line, and that is a constraint rather than a
-style — the sheet caps at 85% of screen height and clips the overflow **silently**, which
-once hid two rows entirely until somebody screenshotted it.
+Titles carry the meaning and only **Receive all messages** needs a subtitle. That is a
+constraint rather than a style — the sheet caps at 85% of screen height and clips the
+overflow **silently**, which once hid two rows entirely until somebody screenshotted it.
 
 **Monitored traffic never raises a notification.** None of it was sent to this
 operator, and on a busy net that is a message every few seconds; a phone that buzzed
