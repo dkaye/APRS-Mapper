@@ -1892,6 +1892,17 @@ def write_clip(directory, audio, seq, capped=False):
 SQUELCH_CANDIDATES = list(range(10, 201, 10))
 QUIET_FRACTION = 0.05        # under 5% of the full sample rate counts as "shut"
 
+# How long each look at a candidate listens, and how long the confirming look does.
+# Deliberately NOT much longer than that. Measured against overnight48.s16, 10.8 hours of
+# 146.700 at this gain: a 2 s window sees 2.6% of the night's idle-noise range and a 300 s
+# window sees 138%, but the p90 distance between one window's level and the night's typical
+# level only falls from 319 to 284 across that whole span. The floor wanders slowly — tens
+# of minutes to hours — so no window a person will wait for can average the drift out, and
+# buying 11% with 150x the airtime is not a trade worth making. The confirming look is here
+# to catch a TRANSMISSION arriving mid-measurement, which it does at this length.
+SQUELCH_SECONDS = 4.0
+SQUELCH_CONFIRM_SECONDS = 8.0
+
 # Tuner gains to try, in dB, all of them steps the R820T actually offers. A subset of its
 # 29, about 4 dB apart: the knee is found from the SLOPE between neighbours, and steps
 # closer together than a floor measurement is repeatable would be reading noise.
@@ -1952,14 +1963,30 @@ def choose_squelch(sample, candidates=SQUELCH_CANDIDATES, quiet=QUIET_FRACTION):
     answer upwards, leaving the receiver deaf to anything quieter. Confirming with a
     longer second look costs a few seconds and makes that need two coincidences rather
     than one.
+
+    The answer must be a BOUNDARY: the level below it has to be provably open. Without
+    that this returned the floor, and did — squelch 10 was cached on a channel that then
+    ran 99.56% open. The reason is the walk-down below. During a lull every candidate
+    looks quiet, so the walk-down slides all the way to the lowest one and caches it, and
+    the lull needs to last only as long as the scan. A level that gates with nothing
+    audible beneath it has not been measured, it has been guessed, so say so and let the
+    caller fall back rather than cache a number that leaves the receiver ungated for a day.
+
+    The limit, stated because it is not a guarantee: a lull that outlasts the re-check as
+    well is still indistinguishable from a genuinely quiet site, and still returns the
+    floor. What the re-check buys is that the quiet has to hold for roughly thirty seconds
+    rather than fifteen, and that the answer has audible noise underneath it. It also
+    means a lull STARTING during the re-check throws away a measurement that was sound —
+    the right way round to be wrong, since the cost is pressing Recalibrate again rather
+    than a day of ungated hiss on somebody's phone.
     """
     expected = SAMPLE_RATE * 2
 
     def shut(level):
-        # Twice, because a level that looks quiet for two seconds and is not would be
-        # cached for a day.
-        return (sample(level, 2.0) < expected * 2.0 * quiet
-                and sample(level, 3.0) < expected * 3.0 * quiet)
+        # Twice, because a level that looks quiet once and is not would be cached for a day.
+        return (sample(level, SQUELCH_SECONDS) < expected * SQUELCH_SECONDS * quiet
+                and sample(level, SQUELCH_CONFIRM_SECONDS)
+                < expected * SQUELCH_CONFIRM_SECONDS * quiet)
 
     # Is the receiver producing anything at all? With the squelch off, rtl_fm cannot gate
     # and must emit at the full rate; if it does not, it is not running — the dongle is
@@ -1985,6 +2012,22 @@ def choose_squelch(sample, candidates=SQUELCH_CANDIDATES, quiet=QUIET_FRACTION):
         # quiet undoes that, and costs nothing when the scan was clean.
         while i > 0 and shut(candidates[i - 1]):
             i -= 1
+
+        # A fresh look at what is underneath, which is also a look at the channel a good
+        # dozen seconds later than the one that produced the answer. It has to be OPEN.
+        # If it gates too, nothing here is a boundary and the scan was sitting in a lull.
+        if i > 0:
+            if shut(candidates[i - 1]):
+                log.warning("squelch %d gates, and so does %d underneath it — the channel "
+                            "went quiet for the whole scan, so this is a lull and not a "
+                            "measurement", candidates[i], candidates[i - 1])
+                return None
+        elif not shut(candidates[0]):
+            # Nothing below the floor to compare against, so the floor has to prove itself
+            # twice. A site really is this quiet sometimes; a lull is not, a few seconds on.
+            log.warning("squelch %d gated once and does not any more — a lull, not a site "
+                        "this quiet", candidates[0])
+            return None
         return candidates[i]
     return None
 

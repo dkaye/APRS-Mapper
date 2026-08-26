@@ -1014,6 +1014,51 @@ def test_calibration_refuses_to_measure_a_dead_input():
     check("0 is not offered as an answer", 0 in transcriber.SQUELCH_CANDIDATES, False)
 
 
+def lull(floor, quiet_looks):
+    """A site whose noise stops for the first `quiet_looks` samples and then comes back.
+
+    Every level reads as gating while it lasts, which is exactly what a scan sees when it
+    runs during a quiet moment on a channel that is not quiet.
+    """
+    full = transcriber.SAMPLE_RATE * 2
+    state = {"n": 0}
+
+    def sample(level, seconds):
+        if level == 0:                       # the liveness check, not part of the scan
+            return int(full * seconds)
+        state["n"] += 1
+        if state["n"] <= quiet_looks:
+            return 0
+        return int(full * seconds) if level < floor else 0
+    return sample
+
+
+def test_a_lull_is_not_mistaken_for_a_quiet_channel():
+    """The failure that cost the most: squelch 10 cached on a channel that then ran
+    99.56% open, filing noise to people's phones for a day.
+
+    Nothing was wrong with the receiver and nothing was wrong with the threshold. The
+    scan simply ran while 146.700 happened to be quiet, and the walk-down — which steps
+    down for as long as the level beneath also gates — slid from wherever it started all
+    the way to the lowest candidate. A lull lasting only as long as the scan is enough.
+
+    Measuring for longer does not fix it. Over 10.8 hours of this channel a 2 s window
+    sees 2.6% of the night's idle-noise range and a 300 s window sees 138%, yet the p90
+    distance from one window's level to the night's typical level only moves 319 -> 284.
+    The floor wanders over tens of minutes, so the answer is not a longer look: it is
+    refusing to believe an answer with nothing audible underneath it.
+    """
+    print("calibration — a lull, not a quiet channel")
+    # Two looks is what the scan spends before it would have returned the floor. The
+    # re-check is a THIRD look, a good fifteen seconds later, and by then the noise is back.
+    check("returns None rather than the floor",
+          transcriber.choose_squelch(lull(floor=60, quiet_looks=2)), None)
+    # And the honest version of the same site still measures.
+    check("a real boundary still measures", transcriber.choose_squelch(site(floor=55)), 60)
+    check("a site that really is this quiet still measures",
+          transcriber.choose_squelch(site(floor=1)), 10)
+
+
 def test_calibration_gives_up_rather_than_guessing():
     """If nothing shuts it up, say so — the caller falls back to the default instead of
     returning a made-up number."""
@@ -3165,6 +3210,7 @@ if __name__ == "__main__":
         test_a_wedged_tuner_is_not_mistaken_for_a_quiet_frequency,
         test_calibration_refuses_to_measure_a_dead_input,
         test_calibration_gives_up_rather_than_guessing,
+        test_a_lull_is_not_mistaken_for_a_quiet_channel,
         test_the_gain_is_the_knee_where_the_receiver_starts_hearing_the_band,
         test_a_gain_sweep_with_no_knee_is_used_but_never_called_measured,
         test_a_carrier_left_open_is_not_a_transmission,
