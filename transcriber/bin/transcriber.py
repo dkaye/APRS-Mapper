@@ -965,6 +965,19 @@ def _tone_scan(wav_path):
     frames, rate, seconds = _tone_frames(wav_path)
     if not frames:
         return None
+    # Each frame about its OWN mean, never about zero. The FM discriminator carries a DC
+    # offset, and a squelch crash carries a large one: measured on two clips a courtesy
+    # tone reached the phone from, the crashes at each end read 1654 and 1843 rms with the
+    # offset in and 1056 and 1144 with it out. TONE_FLOOR_RATIO is a fraction of the
+    # loudest frame, so an inflated peak lifts the floor over the tone itself — which is
+    # one of the quietest things on the channel at about 235 rms. That left 5 and 6 audible
+    # frames against the 6 TONE_MIN_FRAMES needs, so the scan said "not enough clip to
+    # judge", the caller correctly transcribed it, and a beep played on somebody's phone.
+    # With the offset removed the same clips show 25 audible frames and are named.
+    #
+    # The same trap has now cost this project twice: it also reads a DC offset as zcr 0.000
+    # and inverts a band-power ratio. Anything measuring a level here removes the mean first.
+    frames = [[x - (sum(f) / len(f)) for x in f] for f in frames]
     powers = [sum(x * x for x in f) / len(f) for f in frames]
     loudest = max(powers)
     if loudest <= 0:

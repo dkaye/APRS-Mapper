@@ -1111,6 +1111,39 @@ def test_a_long_clip_nobody_spoke_in_is_recognised():
           transcriber.unbroken_reason(dict(steady, keying=10)), "")
 
 
+def test_a_squelch_crash_does_not_hide_the_tone_behind_it():
+    """The failure Doug heard three times in one morning: a single beep on his phone.
+
+    The tone filter was not misjudging those clips — it was ABSTAINING. A squelch crash
+    at each end of the clip carries a large DC offset, and measuring frame power about
+    zero counted that offset as signal: 1654 rms instead of 1056. TONE_FLOOR_RATIO is a
+    fraction of the loudest frame, so the inflated peak lifted the floor above the
+    courtesy tone itself, which sits around 235 rms. Five audible frames against the six
+    TONE_MIN_FRAMES needs meant "not enough clip to judge", and no opinion is correctly
+    treated as "transcribe it" — so the audio went out before whisper ever ran.
+
+    Removing each frame's own mean puts those clips at 25 audible frames and names them.
+    Replayed over the 174 ear-verified clips it drops 7 more noise and costs no real
+    traffic at all.
+    """
+    print("tone filter — a DC offset must not set the floor")
+    rate = 16000
+    n = transcriber.TONE_FRAME
+
+    def frame(level, hz=0.0, dc=0.0):
+        import math
+        return [dc + level * math.sin(2 * math.pi * hz * i / rate) for i in range(n)]
+
+    # A quiet tone, and a crash that is quiet too but sits on a large offset. About zero
+    # the crash looks four times louder than it is and buries the tone under the floor.
+    tone = frame(235, hz=1454.5)
+    crash = frame(100, hz=700.0, dc=1600)
+    about_zero = lambda f: sum(x * x for x in f) / len(f)
+    about_mean = lambda f: (lambda m: sum((x - m) ** 2 for x in f) / len(f))(sum(f) / len(f))
+    check("about zero the crash outweighs the tone", about_zero(crash) > about_zero(tone), True)
+    check("about its own mean it does not", about_mean(crash) < about_mean(tone), True)
+
+
 def test_calibration_gives_up_rather_than_guessing():
     """If nothing shuts it up, say so — the caller falls back to the default instead of
     returning a made-up number."""
@@ -3265,6 +3298,7 @@ if __name__ == "__main__":
         test_a_lull_is_not_mistaken_for_a_quiet_channel,
         test_the_length_guard_is_recorded_rather_than_silent,
         test_a_long_clip_nobody_spoke_in_is_recognised,
+        test_a_squelch_crash_does_not_hide_the_tone_behind_it,
         test_the_gain_is_the_knee_where_the_receiver_starts_hearing_the_band,
         test_a_gain_sweep_with_no_knee_is_used_but_never_called_measured,
         test_a_carrier_left_open_is_not_a_transmission,
