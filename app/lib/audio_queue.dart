@@ -42,6 +42,16 @@ const kAudioMaxAge = Duration(minutes: 5);
 /// exists to tell somebody whether to wait or press stop.
 const _kCharsPerSecond = 14.0;
 
+/// How long a clip may take to arrive before the attempt is abandoned. Generous,
+/// because this covers a cold cellular connection fetching a file that is only a few
+/// tens of kB — the wait is the network finding its feet, not the size of the download.
+const _kFetchBudget = Duration(seconds: 30);
+
+/// Added to a clip's own length to get the longest it may hold the speaker. Covers
+/// buffering part way through and a duration that is slightly short, and no more: past
+/// this, something has gone wrong and the queue has to have its turn back.
+const _kPlaySlack = Duration(seconds: 10);
+
 enum _Kind { speech, clip }
 
 class _Item {
@@ -307,9 +317,70 @@ class AudioQueue {
   /// else. Failure is not fatal: the words matter more than the noise before them.
   Future<void> _chime() async {
     try {
+      await _player.stop();
       await _player.setAsset('assets/sounds/message.wav');
-      await _player.play().timeout(const Duration(seconds: 4));
+      await _playToEnd(const Duration(seconds: 4));
     } catch (_) {}
+  }
+
+  /// Play what is already loaded, and return when it has actually finished.
+  ///
+  /// `play()` cannot be asked that question, and this is the whole reason clips
+  /// misbehaved on iPhone. just_audio clears its `playing` flag on `pause()` and
+  /// `stop()` and nowhere else — reaching the end of a track leaves it set — so from
+  /// the first tone or clip of the session onwards it is true for the life of the
+  /// process. Two things then go wrong at once on every item after the first:
+  ///
+  ///   * `setUrl` sees `playing` and starts the new source itself, the moment it
+  ///     finishes loading, outside anybody's control;
+  ///   * `play()` opens with `if (playing) return;` and hands back an already-complete
+  ///     future.
+  ///
+  /// So the queue believed each clip was over the instant it began. That is the Stop
+  /// button appearing and vanishing in the same frame, and the queue moving on to load
+  /// the next item over the top of one that had only just started — whose interrupted
+  /// load throws, which is where "Unavailable — tap to retry" came from. Nothing was
+  /// wrong with the recordings, the URLs, or the session.
+  ///
+  /// The cure is both halves: `stop()` before every load, so `playing` is false and
+  /// nothing self-starts, and finishing judged by the processing state rather than by
+  /// a future that no longer means what it reads as.
+  ///
+  /// `idle` counts as finished as well as `completed`, because that is what `stop()`
+  /// produces — Stop has to end this wait, not leave it sitting out the full budget.
+  Future<void> _playToEnd(Duration budget) async {
+    final done = Completer<void>();
+    void finish([Object? error]) {
+      if (done.isCompleted) return;
+      if (error == null) {
+        done.complete();
+      } else {
+        done.completeError(error);
+      }
+    }
+
+    final sub = _player.processingStateStream.listen(
+      (s) {
+        if (s == ProcessingState.completed || s == ProcessingState.idle) finish();
+      },
+      onError: (Object e) => finish(e),
+    );
+    // play()'s completion is meaningless here, but its errors are not — a source the
+    // OS will not play, or a session it will not activate, has to reach the caller so
+    // the row can say so rather than sitting out the whole budget in silence.
+    unawaited(_player.play().catchError((Object e) => finish(e)));
+    try {
+      await done.future.timeout(budget);
+    } finally {
+      await sub.cancel();
+      // Unconditional, and it is the half of the cure that outlives this call: reaching
+      // the end does not clear `playing`, so leaving without stopping would hand the
+      // next item a player that starts itself. It also frees the decoder, and after a
+      // timeout it is what actually silences a clip that overran.
+      try {
+        await _player.stop();
+      } catch (_) {}
+    }
   }
 
   Future<void> _drain() async {
@@ -325,17 +396,17 @@ class AudioQueue {
         _current = item;
         _publish();
         try {
-          // Bounded, and that is not belt-and-braces. Speaker sets
-          // awaitSpeakCompletion(true), so speakNow() resolves when the utterance
-          // FINISHES — and if iOS refuses the audio session, which it can do on a
-          // locked phone while a notification sound holds it, the utterance never
-          // starts, never finishes, and this await never returns. The queue would then
-          // be stalled for the life of the process with nothing played again and no
-          // error anywhere. A timeout costs one skipped item; the alternative costs
-          // every item after it.
-          final budget = Duration(seconds: item.estSeconds.ceil() + 15);
           if (item.kind == _Kind.speech) {
             if (item.chime) await _chime();
+            // Bounded, and that is not belt-and-braces. Speaker sets
+            // awaitSpeakCompletion(true), so speakNow() resolves when the utterance
+            // FINISHES — and if iOS refuses the audio session, which it can do on a
+            // locked phone while a notification sound holds it, the utterance never
+            // starts, never finishes, and this await never returns. The queue would then
+            // be stalled for the life of the process with nothing played again and no
+            // error anywhere. A timeout costs one skipped item; the alternative costs
+            // every item after it.
+            final budget = Duration(seconds: item.estSeconds.ceil() + 15);
             await Speaker.instance
                 .speakNow(senderLabel: item.senderLabel, text: item.text)
                 .timeout(budget, onTimeout: () => Speaker.instance.stop());
@@ -350,8 +421,20 @@ class AudioQueue {
             item.onSpoken?.call();
             _markSpoken(item.msgId);
           } else {
-            await _player.setUrl(item.url).timeout(budget);
-            await _player.play().timeout(budget, onTimeout: () => _player.stop());
+            // Stopped before loading, and not for tidiness: see `_playToEnd`. A player
+            // left flagged `playing` — which it is after anything reaches its end —
+            // starts the next source by itself the moment setUrl finishes loading it.
+            await _player.stop();
+            // Fetching and playing get their own budgets. Sharing one meant a clip that
+            // took twenty seconds to arrive over cellular had only what was left to play
+            // in, and got cut off part way through the over. They are different waits and
+            // neither says anything about the other.
+            final dur = await _player.setUrl(item.url).timeout(_kFetchBudget);
+            // The duration the file actually has, in preference to the audio_secs the
+            // message claimed. The claim comes from the recorder and is what the "Play 4s"
+            // label is drawn from; the file is the thing about to be played.
+            final len = dur ?? Duration(seconds: item.seconds.ceil());
+            await _playToEnd(len + _kPlaySlack);
           }
         } catch (e) {
           // Remember which message failed, so the bubble can say "Unavailable" instead
@@ -360,7 +443,14 @@ class AudioQueue {
           // is what turned a broken audio session into an afternoon of diagnosis.
           // _publish() runs a few lines below on the way out of this item, and the
           // queue count changes when it does, so the row rebuilds and sees this.
-          if (item.kind == _Kind.clip && item.msgId != 0) _failedClips.add(item.msgId);
+          //
+          // Except when the operator stopped it. Both cancel paths clear `_current`,
+          // and stopping the player mid-fetch makes the load throw — so without this
+          // test, pressing Stop reported the clip as unavailable, which is a lie about
+          // a button that did exactly what it said.
+          if (item.kind == _Kind.clip && item.msgId != 0 && identical(_current, item)) {
+            _failedClips.add(item.msgId);
+          }
           // A clip that will not fetch or decode, or an audio session the OS refused.
           // Skipped in silence — the radio is not worth an error dialog, and the next
           // over is already on its way.
