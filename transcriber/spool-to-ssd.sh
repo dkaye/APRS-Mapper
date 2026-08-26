@@ -50,6 +50,35 @@ echo "=== Moving $SPOOL to $TARGET ==="
 lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT,MODEL "$TARGET"
 echo
 
+# ── say what is about to be copied, before anything is destroyed ─────────────
+# This script copies from $SPOOL *as currently mounted*, and that is the trap. Swapping
+# one SSD for another, the natural move is to unplug the old drive first — at which point
+# $SPOOL silently reverts to the stale directory sitting on the SD card underneath the
+# mountpoint, and this copies THAT onto the new drive and reports success. On
+# 2026-08-25 the directory underneath held 36 files from six weeks earlier while the
+# drive that had just been unplugged held 628.
+#
+# So: both drives attached when replacing one, and the counts below are what tells you
+# whether that actually happened. Refusing outright is not possible — a first-time
+# migration legitimately copies from a plain directory — so this reports and asks.
+SRC_DEV=$(findmnt -n -o SOURCE --target "$SPOOL" 2>/dev/null || echo "?")
+SRC_FILES=$(find "$SPOOL" -type f 2>/dev/null | wc -l)
+SRC_SIZE=$(du -sh "$SPOOL" 2>/dev/null | cut -f1)
+echo "Source : $SPOOL"
+echo "  on   : $SRC_DEV"
+echo "  holds: $SRC_FILES files, $SRC_SIZE"
+if [ "$SRC_DEV" = "$(findmnt -n -o SOURCE / 2>/dev/null)" ]; then
+    echo "  NOTE : that is the ROOT filesystem, not a spool drive. If you meant to copy"
+    echo "         from an SSD you are replacing, stop and plug it back in first."
+fi
+echo
+if [ -t 0 ]; then
+    printf "Copy this onto %s, destroying everything on it? [y/N] " "$TARGET"
+    read -r reply
+    case "$reply" in [Yy]*) ;; *) echo "Aborted."; exit 1 ;; esac
+    echo
+fi
+
 # ── quiesce ──────────────────────────────────────────────────────────────────
 # Real unit names, never a glob: `systemctl stop 'transcriber@*'` matches loaded units
 # but `start` with the same pattern matches nothing and exits 0, which stops the
@@ -107,7 +136,11 @@ UUID=$(blkid -s UUID -o value "$PART")
 echo "Adding $SPOOL to fstab (UUID=$UUID)"
 # By UUID, not /dev/sda1: USB enumeration order is not a promise, and a second drive
 # plugged in one day must not silently become the spool.
+# Both the mount line AND the comment block above it. Deleting only the line left the
+# comment behind, and after three runs /etc/fstab carried three identical four-line
+# explanations of a single mount.
 sed -i "\#[[:space:]]$SPOOL[[:space:]]#d" /etc/fstab
+sed -i '/^# Transcriber spool on USB SSD\./,/^# With it, the Pi boots and the spool falls back to the SD card underneath\.$/d' /etc/fstab
 cat >> /etc/fstab <<EOF
 # Transcriber spool on USB SSD. nofail is not optional: without it a drive that has
 # died or been unplugged leaves systemd waiting on the mount and drops the machine to

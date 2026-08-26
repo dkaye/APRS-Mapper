@@ -20,6 +20,16 @@
 # space too, reproduces the old partition sizes, and leaves a filesystem that has to be
 # grown afterwards. A filesystem-level copy takes what is actually there.
 #
+# The partition table it builds instead is the part to be careful with. A Pi 5 refuses
+# to boot a table laid out the conventional way, silently and with no fallback, so the
+# geometry below is copied sector-for-sector from a stock Pi OS image. If USB boot ever
+# stops working, suspect that before anything else, and read the drive's own journal:
+#
+#   sudo journalctl -D /mnt/<clone>/var/log/journal --list-boots
+#
+# If the newest entry is the moment the rsync started, the drive never ran at all — as
+# opposed to running and falling back to the SD card, which looks identical from outside.
+#
 # Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
 # ©2026 Doug Kaye, K6DRK <doug@rds.com>
 
@@ -124,15 +134,41 @@ if [ "$RESYNC" -eq 0 ]; then
     # msdos rather than GPT: it is what Pi OS images use, so the PARTUUIDs come out in
     # the same short <disk-id>-<nn> form the firmware and fstab already speak, and
     # nothing downstream has to care which kind of table it is looking at.
+    #
+    # THE GEOMETRY BELOW IS COPIED FROM A STOCK PI OS IMAGE AND MUST STAY THAT WAY.
+    #
+    # This script used to start partition 1 at 1MiB and set the MBR boot flag on it,
+    # which is what every general-purpose guide tells you to do. A Pi 5 will not boot
+    # it. Nothing says so: the firmware neither falls back to the SD card nor reports
+    # an error, it simply stops, and because it never reaches Linux there is no journal
+    # to read afterwards. Two full migrations were lost to that on 2026-08-25 before a
+    # stock image was written to the same drive, in the same port, on the same board,
+    # and booted first try.
+    #
+    # So the numbers here are not a preference. 8MiB is sector 16384 and 520MiB is
+    # sector 1064960, which is byte-for-byte where `raspios_lite_arm64` puts its two
+    # partitions, and there is deliberately no `set 1 boot on`. Both differences were
+    # changed together when this was fixed, so which one the firmware actually objects
+    # to is not known — do not "tidy" either of them back.
     parted -s "$TARGET" mklabel msdos
-    parted -s "$TARGET" mkpart primary fat32 1MiB 513MiB
-    parted -s "$TARGET" set 1 boot on
-    parted -s "$TARGET" mkpart primary ext4 513MiB 100%
+    parted -s "$TARGET" mkpart primary fat32 8MiB 520MiB
+    parted -s "$TARGET" mkpart primary ext4 520MiB 100%
     partprobe "$TARGET"; sleep 2
 
     echo "Formatting..."
     mkfs.vfat -F 32 -n bootfs "$BOOT_PART" >/dev/null
     mkfs.ext4 -F -L rootfs "$ROOT_PART" >/dev/null
+
+    # Every disk written from the same stock image carries the same MBR disk id, and the
+    # PARTUUIDs are derived from it — so two such drives attached at once are
+    # indistinguishable to cmdline.txt and fstab, and root= can land on the wrong one.
+    # A table built here is unique already; this only matters if the geometry above is
+    # ever replaced by an image copy, and the check is cheap enough to keep either way.
+    if [ "$(blkid -s PTUUID -o value "$TARGET")" = "$(blkid -s PTUUID -o value "$ROOT_DISK" 2>/dev/null)" ]; then
+        echo "  $TARGET shares its disk id with $ROOT_DISK — reassigning" >&2
+        sfdisk --disk-id "$TARGET" "0x$(head -c4 /dev/urandom | od -An -tx4 | tr -d ' ')"
+        partprobe "$TARGET"; sleep 2
+    fi
 fi
 
 # ── copy ─────────────────────────────────────────────────────────────────────
@@ -196,20 +232,28 @@ if [ "$SET_BOOT" -eq 1 ]; then
     # by then and there is nothing left to fall back to — the recovery is to unplug the
     # SSD and power-cycle, which is why the first boot after this wants somebody within
     # reach of the machine.
-    # WARNING, and it is not obvious: this does not write the EEPROM. It writes
-    # recovery.bin and pieeprom.upd onto /boot/firmware -- the SD CARD -- and the
-    # firmware applies them on the next boot. So the change belongs to the CARD until
-    # it has been consumed, not to the machine.
+    # Where the change actually lands depends on the board, and getting that wrong has
+    # bitten this project once already.
     #
-    # Move that card to another Pi before rebooting, and the other Pi reflashes its own
-    # EEPROM from it. That is how a boot-order change intended for a spare ended up on
-    # the production receiver, whose EEPROM this script had never been pointed at.
+    # On a **Pi 4** this does NOT write the EEPROM. It writes recovery.bin and
+    # pieeprom.upd onto /boot/firmware -- the SD CARD -- and the firmware applies them
+    # on the next boot. The change belongs to the CARD until it is consumed, so moving
+    # that card to another Pi before rebooting makes the other Pi reflash its own EEPROM
+    # from it. That is how a boot-order change meant for a spare landed on the
+    # production receiver. `rpi-eeprom-update -r` cancels a pending update.
     #
-    # So: reboot this machine before moving its card anywhere. `rpi-eeprom-update -r`
-    # cancels a pending update if you change your mind.
+    # On a **Pi 5** it writes the EEPROM immediately, via the A/B scheme ("Force
+    # committing update / UPDATE SUCCESSFUL"), and puts nothing on the card at all. The
+    # trap above does not apply. Either way the new value only shows up in
+    # `rpi-eeprom-config` after a reboot, so reading it straight back reports the old one
+    # and that is not a failure.
     echo "Setting BOOT_ORDER=0xf14 (USB first, SD second)..."
-    echo "NOTE: this stages an EEPROM update ON THE SD CARD. Reboot THIS Pi before"
-    echo "      moving the card to another machine, or that machine will apply it too."
+    if grep -q "Raspberry Pi 5" /proc/device-tree/model 2>/dev/null; then
+        echo "NOTE: Pi 5 — this writes the EEPROM now; nothing is staged on the card."
+    else
+        echo "NOTE: this stages an EEPROM update ON THE SD CARD. Reboot THIS Pi before"
+        echo "      moving the card to another machine, or that machine will apply it too."
+    fi
     CFG=$(mktemp)
     rpi-eeprom-config > "$CFG"
     if grep -q '^BOOT_ORDER=' "$CFG"; then
