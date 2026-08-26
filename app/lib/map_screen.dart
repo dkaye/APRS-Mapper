@@ -750,36 +750,46 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         ),
         padding: EdgeInsets.fromLTRB(24, 12, 24,
             24 + MediaQuery.of(ctx).viewPadding.bottom),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40, height: 4,
-              margin: const EdgeInsets.only(bottom: 24),
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(2),
+        // Scrollable, because the sheet is sized to its content and on a small screen
+        // the content is taller than the screen. A Column that overruns a bottom sheet
+        // is clipped at the bottom, and the bottom is where Continue is — so a 240x320
+        // handset showed a request for consent with no way to give it: text cut off
+        // mid-sentence, button gone, and nothing on screen to say there was more below.
+        //
+        // The sheet still shrinks to fit its content wherever there is room for it.
+        // Only past that does it fill the screen and scroll.
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40, height: 4,
+                margin: const EdgeInsets.only(bottom: 24),
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ),
-            Icon(icon, size: 52, color: Colors.blue),
-            const SizedBox(height: 16),
-            Text(title,
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 12),
-            Text(body,
-              style: TextStyle(fontSize: 15, color: Colors.grey[600]),
-            ),
-            const SizedBox(height: 28),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('Continue'),
+              Icon(icon, size: 52, color: Colors.blue),
+              const SizedBox(height: 16),
+              Text(title,
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
               ),
-            ),
-          ],
+              const SizedBox(height: 12),
+              Text(body,
+                style: TextStyle(fontSize: 15, color: Colors.grey[600]),
+              ),
+              const SizedBox(height: 28),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('Continue'),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -834,45 +844,50 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         ),
         padding: EdgeInsets.fromLTRB(24, 12, 24,
             24 + MediaQuery.of(ctx).viewPadding.bottom),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40, height: 4,
-              margin: const EdgeInsets.only(bottom: 24),
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(2),
+        // Sized to content and scrolled once that outgrows the screen, for the reason
+        // set out on the pre-alert sheet above: the buttons are at the bottom, and the
+        // bottom is what a bottom sheet clips.
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40, height: 4,
+                margin: const EdgeInsets.only(bottom: 24),
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ),
-            const Icon(Icons.share_location, size: 52, color: Colors.blue),
-            const SizedBox(height: 16),
-            const Text('Share Your Location',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              _sharingConsentBody(backgroundLimited),
-              style: TextStyle(fontSize: 15, color: Colors.grey[600]),
-            ),
-            const SizedBox(height: 28),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('Continue'),
+              const Icon(Icons.share_location, size: 52, color: Colors.blue),
+              const SizedBox(height: 16),
+              const Text('Share Your Location',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
               ),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              child: TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Cancel'),
+              const SizedBox(height: 12),
+              Text(
+                _sharingConsentBody(backgroundLimited),
+                style: TextStyle(fontSize: 15, color: Colors.grey[600]),
               ),
-            ),
-          ],
+              const SizedBox(height: 28),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('Continue'),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Cancel'),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

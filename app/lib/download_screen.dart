@@ -184,92 +184,88 @@ class _DownloadScreenState extends State<DownloadScreen> {
 
     return Scaffold(
       body: SafeArea(
-        child: Padding(
+        child: _centeredScroll(
           padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Icon(
-                final_ != null ? Icons.check_circle_rounded : Icons.download_rounded,
-                size: 64,
-                color: final_ != null ? Colors.green : Colors.blue,
+          children: [
+            Icon(
+              final_ != null ? Icons.check_circle_rounded : Icons.download_rounded,
+              size: 64,
+              color: final_ != null ? Colors.green : Colors.blue,
+            ),
+            const SizedBox(height: 24),
+            Text(
+              final_ != null
+                  ? 'Map Ready'
+                  : widget.forceRefresh
+                      ? 'Refreshing Offline Map'
+                      : 'Downloading Offline Map',
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '${(widget.config.offlineRadiusMiles ?? MapConfig.downloadRadiusMiles).toStringAsFixed(0)} mi radius · '
+              'zoom ${MapConfig.downloadMinZoom}–${widget.config.offlineMaxZoom}',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.grey, fontSize: 11, fontFamily: 'monospace'),
+            ),
+            const SizedBox(height: 40),
+            if (_errorMessage != null) ...[
+              Text(
+                'Download error: $_errorMessage',
+                style: const TextStyle(color: Colors.red),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () {
+                  setState(() {
+                    _errorMessage = null;
+                    _progress = null;
+                    _finalProgress = null;
+                  });
+                  _startDownload();
+                },
+                child: const Text('Retry'),
+              ),
+            ] else if (final_ != null) ...[
+              Text(
+                _completionSummary(final_),
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 15),
               ),
               const SizedBox(height: 24),
-              Text(
-                final_ != null
-                    ? 'Map Ready'
-                    : widget.forceRefresh
-                        ? 'Refreshing Offline Map'
-                        : 'Downloading Offline Map',
-                style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center,
+              ElevatedButton(
+                onPressed: _goToMap,
+                child: const Text('Open Map'),
               ),
-              const SizedBox(height: 8),
-              Text(
-                '${(widget.config.offlineRadiusMiles ?? MapConfig.downloadRadiusMiles).toStringAsFixed(0)} mi radius · '
-                'zoom ${MapConfig.downloadMinZoom}–${widget.config.offlineMaxZoom}',
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.grey, fontSize: 11, fontFamily: 'monospace'),
+            ] else if (progress == null) ...[
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              const Text('Preparing download...', textAlign: TextAlign.center),
+            ] else ...[
+              LinearProgressIndicator(
+                value: progress.percentageProgress / 100,
+                minHeight: 8,
+                borderRadius: BorderRadius.circular(4),
               ),
-              const SizedBox(height: 40),
-              if (_errorMessage != null) ...[
+              const SizedBox(height: 16),
+              Text(
+                '${progress.successfulTilesCount} / ${progress.maxTilesCount} tiles'
+                '  •  ${progress.percentageProgress.toStringAsFixed(0)}%',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 15),
+              ),
+              if (progress.elapsedDuration.inSeconds > 2) ...[
+                const SizedBox(height: 8),
                 Text(
-                  'Download error: $_errorMessage',
-                  style: const TextStyle(color: Colors.red),
+                  _eta(progress.estRemainingDuration),
                   textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.grey, fontSize: 13),
                 ),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: () {
-                    setState(() {
-                      _errorMessage = null;
-                      _progress = null;
-                      _finalProgress = null;
-                    });
-                    _startDownload();
-                  },
-                  child: const Text('Retry'),
-                ),
-              ] else if (final_ != null) ...[
-                Text(
-                  _completionSummary(final_),
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 15),
-                ),
-                const SizedBox(height: 24),
-                ElevatedButton(
-                  onPressed: _goToMap,
-                  child: const Text('Open Map'),
-                ),
-              ] else if (progress == null) ...[
-                const CircularProgressIndicator(),
-                const SizedBox(height: 16),
-                const Text('Preparing download...', textAlign: TextAlign.center),
-              ] else ...[
-                LinearProgressIndicator(
-                  value: progress.percentageProgress / 100,
-                  minHeight: 8,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  '${progress.successfulTilesCount} / ${progress.maxTilesCount} tiles'
-                  '  •  ${progress.percentageProgress.toStringAsFixed(0)}%',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 15),
-                ),
-                if (progress.elapsedDuration.inSeconds > 2) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    _eta(progress.estRemainingDuration),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.grey, fontSize: 13),
-                  ),
-                ],
               ],
             ],
-          ),
+          ],
         ),
       ),
     );
@@ -284,53 +280,84 @@ class _DownloadScreenState extends State<DownloadScreen> {
 
     return Scaffold(
       body: SafeArea(
-        child: Padding(
+        child: _centeredScroll(
           padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Icon(Icons.download_for_offline_outlined,
-                  size: 64, color: Colors.blue),
-              const SizedBox(height: 24),
-              const Text(
-                'Download Offline Map?',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Map tiles for a $radius-mile radius around the event will be '
-                'saved to your device (zoom levels $minZ–$maxZ).\n\n'
-                'Estimated download size: $_estimatedSizeLabel.\n\n'
-                'Once downloaded, the map works without an internet connection.',
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 15, height: 1.55),
-              ),
-              const SizedBox(height: 40),
-              FilledButton.icon(
-                icon: const Icon(Icons.download_rounded),
-                label: const Text('Download Map'),
-                onPressed: () async {
-                  final prefs = await SharedPreferences.getInstance();
-                  await prefs.setBool(_consentKey, true);
-                  setState(() => _confirmed = true);
-                  _startDownload();
-                },
-              ),
-              const SizedBox(height: 14),
-              TextButton(
-                onPressed: () async {
-                  final prefs = await SharedPreferences.getInstance();
-                  await prefs.setBool(_consentKey, false);
-                  _goToMap();
-                },
-                child: const Text('Skip — use online map only'),
-              ),
-            ],
-          ),
+          children: [
+            const Icon(Icons.download_for_offline_outlined,
+                size: 64, color: Colors.blue),
+            const SizedBox(height: 24),
+            const Text(
+              'Download Offline Map?',
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Map tiles for a $radius-mile radius around the event will be '
+              'saved to your device (zoom levels $minZ–$maxZ).\n\n'
+              'Estimated download size: $_estimatedSizeLabel.\n\n'
+              'Once downloaded, the map works without an internet connection.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 15, height: 1.55),
+            ),
+            const SizedBox(height: 40),
+            FilledButton.icon(
+              icon: const Icon(Icons.download_rounded),
+              label: const Text('Download Map'),
+              onPressed: () async {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setBool(_consentKey, true);
+                setState(() => _confirmed = true);
+                _startDownload();
+              },
+            ),
+            const SizedBox(height: 14),
+            TextButton(
+              onPressed: () async {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setBool(_consentKey, false);
+                _goToMap();
+              },
+              child: const Text('Skip — use online map only'),
+            ),
+          ],
         ),
       ),
+    );
+  }
+
+  /// Centered while the screen is tall enough for the content, scrolling once it is
+  /// not.
+  ///
+  /// A centered Column clips whatever does not fit, and it clips at BOTH ends — so
+  /// what falls off a short screen is the row of buttons. On a small Android phone the
+  /// download prompt lost "Download Map" and "Skip", which left the operator looking at
+  /// a question with no visible way to answer it and no hint that there was more below.
+  ///
+  /// `minHeight` rather than a fixed height is what keeps the centering. With room to
+  /// spare the column fills the viewport and centers exactly as it did before; only
+  /// when the content is taller does it grow past the viewport and become scrollable.
+  /// The padding comes out of the available height for the same reason it is applied
+  /// inside the scroll view: it is part of what has to fit.
+  Widget _centeredScroll({
+    required EdgeInsets padding,
+    required List<Widget> children,
+  }) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final available = constraints.maxHeight - padding.vertical;
+        return SingleChildScrollView(
+          padding: padding,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: available > 0 ? available : 0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: children,
+            ),
+          ),
+        );
+      },
     );
   }
 
