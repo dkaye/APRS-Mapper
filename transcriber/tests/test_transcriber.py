@@ -1059,6 +1059,31 @@ def test_a_lull_is_not_mistaken_for_a_quiet_channel():
           transcriber.choose_squelch(site(floor=1)), 10)
 
 
+def test_the_length_guard_is_recorded_rather_than_silent():
+    """The failure this is the first half of: a Morse identifier longer than
+    TONE_MAX_SECONDS is never labelled one, so it reaches post_log_audio — which runs
+    BEFORE whisper — and plays on somebody's phone as a burst of beeping.
+
+    It cannot be fixed by moving a threshold, because the guard is what assigns the label:
+    every Morse clip in the corpus is under 8 s BY CONSTRUCTION, so there is nothing to
+    measure a longer one against. Asking with the guard lifted is how the example gets
+    collected, and it must change no verdict while it does.
+    """
+    print("tone filter — what the length guard hides")
+    beep = {"tonal": 0.9, "agree": 0.9, "keying": 12, "hz": 1454.5, "seconds": 4.0}
+    long_beep = dict(beep, seconds=30.0)
+    check("a short identifier is still named", transcriber.tone_reason(beep),
+          "a Morse identifier at 1454 Hz")
+    check("a long one is still left alone", transcriber.tone_reason(long_beep), "")
+    check("and is named when the guard is lifted",
+          transcriber.tone_reason(long_beep, max_seconds=float("inf")),
+          "a Morse identifier at 1454 Hz")
+    # Lifting the guard must not promote things that were never tonal to begin with.
+    speech = {"tonal": 0.1, "agree": 0.2, "keying": 26, "hz": 300.0, "seconds": 30.0}
+    check("speech stays speech with the guard lifted",
+          transcriber.tone_reason(speech, max_seconds=float("inf")), "")
+
+
 def test_calibration_gives_up_rather_than_guessing():
     """If nothing shuts it up, say so — the caller falls back to the default instead of
     returning a made-up number."""
@@ -3211,6 +3236,7 @@ if __name__ == "__main__":
         test_calibration_refuses_to_measure_a_dead_input,
         test_calibration_gives_up_rather_than_guessing,
         test_a_lull_is_not_mistaken_for_a_quiet_channel,
+        test_the_length_guard_is_recorded_rather_than_silent,
         test_the_gain_is_the_knee_where_the_receiver_starts_hearing_the_band,
         test_a_gain_sweep_with_no_knee_is_used_but_never_called_measured,
         test_a_carrier_left_open_is_not_a_transmission,

@@ -1002,8 +1002,14 @@ def _tone_scan(wav_path):
     }
 
 
-def tone_reason(scan):
+def tone_reason(scan, max_seconds=TONE_MAX_SECONDS):
     """Why this clip is a tone rather than speech, in a few words, or "" if it is not.
+
+    `max_seconds` is the length guard, and it is a parameter for one reason: the guard is
+    also what stops a long Morse identifier from ever being LABELLED one, so a corpus
+    gathered under it contains no example of the thing a better threshold would have to be
+    measured against. Asking the same question with the guard lifted is how that example
+    gets collected. Nothing in the capture path passes anything but the default.
 
     Both conditions, and neither alone: "most frames are periodic" passes on a clip of
     sustained singing or a long vowel, and "the periodic ones agree" passes on a clip
@@ -1017,7 +1023,7 @@ def tone_reason(scan):
     # Long enough to be somebody talking. See TONE_MAX_SECONDS: a voice over a steady hum
     # measures as tonal, and the only thing that reliably tells it from a beep is that a
     # beep is short.
-    if scan.get("seconds", 0) > TONE_MAX_SECONDS:
+    if scan.get("seconds", 0) > max_seconds:
         return ""
     # Four transitions is two key-downs — a courtesy tone re-triggering the squelch can
     # produce two, and a CW identifier produces dozens.
@@ -2635,7 +2641,8 @@ class Retention:
             return False
         return True
 
-    def keep(self, path, seconds, heard, cleaned, logged, why, tone=None, would_drop=""):
+    def keep(self, path, seconds, heard, cleaned, logged, why, tone=None, would_drop="",
+             past_guard=""):
         """Copy one clip to the card and write its line of the manifest.
 
         Both, or neither. Audio with no line means re-listening to an hour of radio by
@@ -2688,6 +2695,11 @@ class Retention:
                 # Absent when the channel has the detector off.
                 "tone": tone,
                 "would_drop": would_drop,
+                # What the tone detector would have said with the length guard lifted, on
+                # a clip it did not say it about. This is the long-Morse column: empty for
+                # almost everything, and the only place an example of the failure is
+                # written down. See tone_reason's max_seconds.
+                "past_guard": past_guard,
             }, ensure_ascii=False) + "\n"
             with open(self.manifest, "a", encoding="utf-8") as fh:
                 fh.write(line)
@@ -3028,6 +3040,22 @@ def handle_clip(channel, path, whisper, model, outbox, retention=None):
     filtering = getattr(channel, "tone_filter", "observe") != "off"
     tone = tone_scan(path) if filtering else None
     tone_why = tone_reason(tone)
+    # What the length guard is hiding, recorded and acted on in no way whatsoever.
+    #
+    # TONE_MAX_SECONDS exists because a voice over a steady hum measures as tonal and the
+    # only thing that reliably separates it from a beep is that a beep is short. The cost
+    # is that a Morse identifier longer than the guard is never labelled one, reaches
+    # post_log_audio — which runs BEFORE whisper — and arrives on somebody's phone. It
+    # cannot be fixed by moving the threshold, because the guard is what assigns the label
+    # and so the corpus holds no long-Morse clip to move it against. This asks the same
+    # question with the guard lifted and writes the answer down. The clip is kept either
+    # way; only the manifest and the log learn anything.
+    past_guard = ""
+    if filtering and not tone_why:
+        past_guard = tone_reason(tone, max_seconds=float("inf"))
+        if past_guard:
+            log.info("past the %.0fs guard (%.1fs): %s — kept, and its audio sent",
+                     TONE_MAX_SECONDS, seconds, past_guard)
     if not tone_why and filtering:
         tone_why = flat_reason(flat_scan(path))
     if tone_why and getattr(channel, "tone_filter", "observe") == "drop":
@@ -3089,7 +3117,7 @@ def handle_clip(channel, path, whisper, model, outbox, retention=None):
     if retention is not None:
         retention.keep(path, seconds, heard, text, logged,
                        "" if keep else (rejection(text) or "a loop once it was trimmed"),
-                       tone=tone, would_drop=tone_why)
+                       tone=tone, would_drop=tone_why, past_guard=past_guard)
     os.unlink(path)
     return bool(logged)
 
