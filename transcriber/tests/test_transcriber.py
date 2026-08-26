@@ -1144,6 +1144,35 @@ def test_a_squelch_crash_does_not_hide_the_tone_behind_it():
     check("about its own mean it does not", about_mean(crash) < about_mean(tone), True)
 
 
+def test_a_capture_knows_how_many_transmissions_are_in_it():
+    """GAP_SECONDS closes a capture when rtl_fm stops SENDING, and between overs it never
+    does — it keeps emitting near-silent samples through its squelch hang. So a brisk
+    conversation arrives as one block and lands on somebody's phone all at once.
+
+    The gap is in the audio, and it is not subtle: measured on three real captures, every
+    over ends with about 0.95 s of near-silence, a 0.30 s courtesy beep, then another
+    second of it. Comfortably longer than GAP_SECONDS, and nothing was looking.
+
+    Counted on LEVELS, not on the beep. The beep only exists on a repeater and this is
+    pointed at simplex too, where a carrier drops just the same. Checked against the beeps
+    on three captures — 5 boundaries to 5 beeps, 4 to 4, 5 to 5 — with the beeps found
+    independently by band energy.
+    """
+    print("carrier gaps — how many overs in one capture")
+    # The two near-silences either side of a beep are ONE boundary, not two.
+    beep = [(11.8, 0.96), (13.2, 1.06), (26.8, 0.93), (28.2, 1.06)]
+    check("a beep's two halves count once",
+          transcriber.transmission_count(beep, 40.0), 3)
+    # A gap running to the end is the last over finishing, not another one starting.
+    check("a trailing gap does not invent an over",
+          transcriber.transmission_count([(5.0, 1.0), (19.2, 1.0)], 20.0), 2)
+    check("audio after the last gap is another over",
+          transcriber.transmission_count([(5.0, 1.0)], 20.0), 2)
+    check("no gaps means it cannot say", transcriber.transmission_count([], 20.0), 0)
+    # Nothing here may cost the channel a transmission.
+    check("a missing file says nothing", transcriber.carrier_gaps("/no/such/file.wav"), [])
+
+
 def test_calibration_gives_up_rather_than_guessing():
     """If nothing shuts it up, say so — the caller falls back to the default instead of
     returning a made-up number."""
@@ -3299,6 +3328,7 @@ if __name__ == "__main__":
         test_the_length_guard_is_recorded_rather_than_silent,
         test_a_long_clip_nobody_spoke_in_is_recognised,
         test_a_squelch_crash_does_not_hide_the_tone_behind_it,
+        test_a_capture_knows_how_many_transmissions_are_in_it,
         test_the_gain_is_the_knee_where_the_receiver_starts_hearing_the_band,
         test_a_gain_sweep_with_no_knee_is_used_but_never_called_measured,
         test_a_carrier_left_open_is_not_a_transmission,

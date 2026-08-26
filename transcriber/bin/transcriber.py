@@ -25,6 +25,7 @@
 # ©2026 Doug Kaye, K6DRK <doug@rds.com>
 
 import argparse
+import array
 import calendar
 import collections
 import copy
@@ -856,6 +857,90 @@ def _frame_pitch(frame, rate):
     if best_lag == 0 or best < TONE_PERIODICITY:
         return 0, best
     return rate / float(best_lag), best
+
+
+# ── where the carrier dropped inside one capture ─────────────────────────────
+#
+# GAP_SECONDS closes a capture when rtl_fm stops SENDING. It never fires between overs,
+# because rtl_fm keeps emitting near-silent samples through its squelch hang — so a brisk
+# conversation arrives as one block. Measured on three real captures: every over ends with
+# about 0.95 s of near-silence, then a 0.30 s courtesy beep, then another 1.0 s of it. The
+# gap is right there in the audio, comfortably longer than GAP_SECONDS, and nothing looks.
+#
+# Levels, not tones, and that is the point. A courtesy beep only exists on a repeater, and
+# this transcriber is also pointed at simplex where there is none — but a carrier dropping
+# looks the same either way. Validated against the beeps on three captures: 5 boundaries
+# against 5 beeps, 4 against 4, 5 against 5, the beeps found independently by band energy.
+#
+# The threshold is a fraction of the clip's OWN loud level, so gain cannot move it — the
+# property that carried FLAT_DYN_DB from 30 dB to 38.6.
+CARRIER_GAP_SECONDS = 0.85   # how long the level stays down for the carrier to have gone
+CARRIER_GAP_RATIO = 0.02     # ...measured against the clip's 95th percentile frame
+CARRIER_GAP_MIN_CLIP = 8.0   # shorter than this cannot hold two overs and is not scanned
+CARRIER_GAP_JOIN = 1.0       # gaps closer than this are the two halves of one boundary
+
+
+def carrier_gaps(path, min_seconds=CARRIER_GAP_SECONDS, ratio=CARRIER_GAP_RATIO):
+    """Every stretch inside this clip where the carrier appears to have dropped, as
+    (start, seconds). Never raises: nothing here may cost the channel a transmission.
+
+    Peak about each frame's own mean rather than rms, because max() and min() and sum()
+    over an array are C and a Python loop over two million samples is not — a two-minute
+    clip has to stay in milliseconds. About its own mean for the reason recorded in
+    _tone_scan: a DC offset counted as signal is what let a beep reach somebody's phone.
+    """
+    try:
+        with wave.open(path) as w:
+            if w.getsampwidth() != 2 or w.getnchannels() != 1:
+                return []          # not the mono 16-bit this expects; say nothing
+            rate = w.getframerate() or SAMPLE_RATE
+            raw = w.readframes(w.getnframes())
+        block = array.array("h")
+        block.frombytes(raw)
+        peaks = []
+        for i in range(0, len(block) - TONE_FRAME + 1, TONE_FRAME):
+            chunk = block[i:i + TONE_FRAME]
+            middle = sum(chunk) / TONE_FRAME
+            peaks.append(max(max(chunk) - middle, middle - min(chunk)))
+        if not peaks:
+            return []
+        loud = sorted(peaks)[int(0.95 * (len(peaks) - 1))]
+        if loud <= 0:
+            return []
+        per_second = rate / float(TONE_FRAME)
+        floor, out, run = loud * ratio, [], 0
+        for i, peak in enumerate(peaks):
+            if peak < floor:
+                run += 1
+                continue
+            if run / per_second >= min_seconds:
+                out.append(((i - run) / per_second, run / per_second))
+            run = 0
+        if run / per_second >= min_seconds:
+            out.append(((len(peaks) - run) / per_second, run / per_second))
+        return out
+    except Exception as e:              # noqa: BLE001 - same rule as tone_scan
+        log.debug("carrier scan failed, saying nothing: %s", e)
+        return []
+
+
+def transmission_count(gaps, seconds, join=CARRIER_GAP_JOIN):
+    """How many separate transmissions one capture appears to hold, or 0 if it cannot say.
+
+    The two near-silences either side of a courtesy beep are one boundary, not two, so
+    gaps closer together than `join` are merged before counting. A boundary that runs to
+    the end of the clip is the last over finishing rather than another one starting.
+    """
+    if not gaps:
+        return 0
+    bounds = []
+    for start, length in gaps:
+        if bounds and start - bounds[-1][1] < join:
+            bounds[-1] = (bounds[-1][0], start + length)
+        else:
+            bounds.append((start, start + length))
+    trailing = bounds and bounds[-1][1] >= seconds - 0.5
+    return len(bounds) if trailing else len(bounds) + 1
 
 
 # ── a dead carrier: loud, steady, and not anybody talking ────────────────────
@@ -2696,7 +2781,7 @@ class Retention:
         return True
 
     def keep(self, path, seconds, heard, cleaned, logged, why, tone=None, would_drop="",
-             past_guard="", unbroken=""):
+             past_guard="", unbroken="", overs=0):
         """Copy one clip to the card and write its line of the manifest.
 
         Both, or neither. Audio with no line means re-listening to an hour of radio by
@@ -2757,6 +2842,9 @@ class Retention:
                 # The keying rule's verdict on a long clip, observed only. This is the
                 # column that says whether it survives squelch 50. See unbroken_reason.
                 "unbroken": unbroken,
+                # How many transmissions the carrier-gap scan thinks are in here. 0 means
+                # it did not look or could not say; 1 is one over. See carrier_gaps.
+                "overs": overs,
             }, ensure_ascii=False) + "\n"
             with open(self.manifest, "a", encoding="utf-8") as fh:
                 fh.write(line)
@@ -3123,6 +3211,17 @@ def handle_clip(channel, path, whisper, model, outbox, retention=None):
         if unbroken:
             log.info("would drop on keying (%.1fs): %s — kept, and its audio sent",
                      seconds, unbroken)
+    # How many transmissions this capture appears to hold. Observed, and acted on in no
+    # way: GAP_SECONDS still decides where a capture ends. See carrier_gaps for why the
+    # gap between overs never closes one, and why this counts levels rather than beeps.
+    overs = 0
+    if seconds > CARRIER_GAP_MIN_CLIP:
+        gaps = carrier_gaps(path)
+        overs = transmission_count(gaps, seconds)
+        if overs > 1:
+            log.info("%d transmissions in this %.1fs capture — carrier dropped at %s",
+                     overs, seconds,
+                     ", ".join("%.1fs" % start for start, _ in gaps))
     if not tone_why and filtering:
         tone_why = flat_reason(flat_scan(path))
     if tone_why and getattr(channel, "tone_filter", "observe") == "drop":
@@ -3185,7 +3284,7 @@ def handle_clip(channel, path, whisper, model, outbox, retention=None):
         retention.keep(path, seconds, heard, text, logged,
                        "" if keep else (rejection(text) or "a loop once it was trimmed"),
                        tone=tone, would_drop=tone_why, past_guard=past_guard,
-                       unbroken=unbroken)
+                       unbroken=unbroken, overs=overs)
     os.unlink(path)
     return bool(logged)
 
