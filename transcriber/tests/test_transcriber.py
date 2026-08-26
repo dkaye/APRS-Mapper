@@ -1084,6 +1084,33 @@ def test_the_length_guard_is_recorded_rather_than_silent():
           transcriber.tone_reason(speech, max_seconds=float("inf")), "")
 
 
+def test_a_long_clip_nobody_spoke_in_is_recognised():
+    """The rule measured against ear-verified labels on the 82 long clips whose truth is
+    known: noise breaks 0 to 8 times, real traffic breaks 10 to 30, and nothing lands
+    between. Counting transitions, not loudness — noise at 38.6 dB is LOUDER than speech,
+    so anything measuring level has the sign backwards.
+
+    Observed only for now. The corpus behind it was gathered at squelch 10 and the
+    population surviving 50 is a different one.
+    """
+    print("long clips — nobody talking")
+    steady = {"tonal": 0.4, "agree": 0.6, "keying": 2, "hz": 2666.7, "seconds": 26.4}
+    talking = {"tonal": 0.1, "agree": 1.0, "keying": 20, "hz": 1454.5, "seconds": 26.4}
+    check("a steady long clip is named",
+          transcriber.unbroken_reason(steady).startswith("nobody talking"), True)
+    check("a long clip with speech rhythm is left alone",
+          transcriber.unbroken_reason(talking), "")
+    # The guard's own population is untouched: short clips are tone_reason's job.
+    check("a short steady clip is not its business",
+          transcriber.unbroken_reason(dict(steady, seconds=4.0)), "")
+    check("no scan is no opinion", transcriber.unbroken_reason(None), "")
+    # The boundary sits in the empty gap between the two classes.
+    check("8 transitions is still nobody",
+          transcriber.unbroken_reason(dict(steady, keying=8)) != "", True)
+    check("10 transitions is somebody",
+          transcriber.unbroken_reason(dict(steady, keying=10)), "")
+
+
 def test_calibration_gives_up_rather_than_guessing():
     """If nothing shuts it up, say so — the caller falls back to the default instead of
     returning a made-up number."""
@@ -3237,6 +3264,7 @@ if __name__ == "__main__":
         test_calibration_gives_up_rather_than_guessing,
         test_a_lull_is_not_mistaken_for_a_quiet_channel,
         test_the_length_guard_is_recorded_rather_than_silent,
+        test_a_long_clip_nobody_spoke_in_is_recognised,
         test_the_gain_is_the_knee_where_the_receiver_starts_hearing_the_band,
         test_a_gain_sweep_with_no_knee_is_used_but_never_called_measured,
         test_a_carrier_left_open_is_not_a_transmission,

@@ -1002,6 +1002,47 @@ def _tone_scan(wav_path):
     }
 
 
+# Below this many key-down/key-up transitions, a clip that ran past TONE_MAX_SECONDS has
+# nobody talking in it. Measured on the 08-24 corpus against ear-verified labels, over the
+# 82 long clips whose truth is known: noise runs 0 to 8 transitions and 52 of the 62 sit at
+# exactly 2, while real traffic runs 10 to 30. Nothing lands between 8 and 10.
+#
+# The two real clips below the line are both 120 s captures that hit the ceiling with
+# somebody talking inside a stuck carrier — the failure squelch 50 took from 9-11/hour to
+# none, so the rule's only measured cost is a thing that stopped happening.
+#
+# Counting transitions rather than measuring loudness is the point. It asks how often the
+# clip goes quiet and loud again, which is what talking does and what a steady carrier
+# never does, and it is a ratio against the clip's own peak — so raising the gain cannot
+# move it, the same reason FLAT_DYN_DB survived 30 dB to 38.6 dB. A rate per second is
+# worse than the raw count: a 120 s transmission has 25 transitions and an 8.7 s burst of
+# noise has 8.
+LONG_KEYING_MIN = 10
+
+
+def unbroken_reason(scan, min_keying=LONG_KEYING_MIN, min_seconds=TONE_MAX_SECONDS):
+    """Why this long clip has nobody talking in it, or "" if somebody might be.
+
+    Only ever asked about clips past `min_seconds`, because that is the population it was
+    measured on and the one nothing else looks at: tone_reason gives up above the guard by
+    design, so a long transmission with no speech in it currently reaches post_log_audio --
+    which runs BEFORE whisper -- and plays on somebody's phone.
+
+    Not the same question as flat_reason. That one measures the SPREAD between a clip's
+    loud and quiet frames, so it catches a carrier sitting at one level and nothing else;
+    on this corpus it caught 14 of 55. This counts how many times the level crosses back
+    and forth, which separates all 62.
+    """
+    if not scan:
+        return ""
+    if scan.get("seconds", 0) <= min_seconds:
+        return ""
+    if scan.get("keying", 0) >= min_keying:
+        return ""
+    return ("nobody talking in %.1fs — the level broke %d times"
+            % (scan["seconds"], scan.get("keying", 0)))
+
+
 def tone_reason(scan, max_seconds=TONE_MAX_SECONDS):
     """Why this clip is a tone rather than speech, in a few words, or "" if it is not.
 
@@ -2642,7 +2683,7 @@ class Retention:
         return True
 
     def keep(self, path, seconds, heard, cleaned, logged, why, tone=None, would_drop="",
-             past_guard=""):
+             past_guard="", unbroken=""):
         """Copy one clip to the card and write its line of the manifest.
 
         Both, or neither. Audio with no line means re-listening to an hour of radio by
@@ -2700,6 +2741,9 @@ class Retention:
                 # almost everything, and the only place an example of the failure is
                 # written down. See tone_reason's max_seconds.
                 "past_guard": past_guard,
+                # The keying rule's verdict on a long clip, observed only. This is the
+                # column that says whether it survives squelch 50. See unbroken_reason.
+                "unbroken": unbroken,
             }, ensure_ascii=False) + "\n"
             with open(self.manifest, "a", encoding="utf-8") as fh:
                 fh.write(line)
@@ -3051,11 +3095,21 @@ def handle_clip(channel, path, whisper, model, outbox, retention=None):
     # question with the guard lifted and writes the answer down. The clip is kept either
     # way; only the manifest and the log learn anything.
     past_guard = ""
+    unbroken = ""
     if filtering and not tone_why:
         past_guard = tone_reason(tone, max_seconds=float("inf"))
         if past_guard:
             log.info("past the %.0fs guard (%.1fs): %s — kept, and its audio sent",
                      TONE_MAX_SECONDS, seconds, past_guard)
+        # The candidate rule for the same gap, observed and never acted on. See
+        # unbroken_reason: it is the one thing measured that separates the long clips
+        # nobody spoke in from the ones somebody did, and it has not yet been seen at
+        # squelch 50 — the corpus behind it was gathered at 10, and the population that
+        # survives 50 is a different one. It ships here to be counted, not to drop.
+        unbroken = unbroken_reason(tone)
+        if unbroken:
+            log.info("would drop on keying (%.1fs): %s — kept, and its audio sent",
+                     seconds, unbroken)
     if not tone_why and filtering:
         tone_why = flat_reason(flat_scan(path))
     if tone_why and getattr(channel, "tone_filter", "observe") == "drop":
@@ -3117,7 +3171,8 @@ def handle_clip(channel, path, whisper, model, outbox, retention=None):
     if retention is not None:
         retention.keep(path, seconds, heard, text, logged,
                        "" if keep else (rejection(text) or "a loop once it was trimmed"),
-                       tone=tone, would_drop=tone_why, past_guard=past_guard)
+                       tone=tone, would_drop=tone_why, past_guard=past_guard,
+                       unbroken=unbroken)
     os.unlink(path)
     return bool(logged)
 
