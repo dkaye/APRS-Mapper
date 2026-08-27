@@ -2823,11 +2823,26 @@ Admin endpoints additionally require `analyzer.admin`.
 
 ### Server Pi
 
-The server is backed up nightly to an FTP server using `aprs-backup.sh` (requires `lftp`).
-The backup includes event configs, tracker history, and the WiFi credential file.
+The server Pi and the Transcriber are pulled nightly onto the Mac by
+`backup/marsaprs-backup.sh`, launched by the `com.doug.marsaprs-backup` launchd agent at
+2:00 am. Snapshots land in `~/aprs-backups/<device>/YYYYMMDD-HHMMSS/`, hardlinked against
+the previous night so unchanged files cost no extra disk, and pruned after 30 days. The
+backup covers event configs, tracker history, tickets, the NetBird address list, and the
+WiFi and admin credentials.
 
-To restore: run `aprs-recover.sh`, which downloads the latest backup from the FTP server
-and restores files in place.
+The Mac pulls rather than the Pis pushing, because the Mac sleeps. launchd runs a missed
+calendar job on the next wake, so a backup arrives late instead of never; and the machine
+that owns the schedule is the one that can tell "the Pi was unreachable" from "the backup
+never ran". `~/aprs-backups/STATUS.txt` records the result of the last run, and a failure
+also raises a macOS notification.
+
+To restore: run `backup/marsaprs-restore.sh <device>` on the Mac. It prints what would
+change and writes nothing unless you add `--apply`.
+
+> This replaced a nightly FTP push to `ftp.w6sg.net`, retired in August 2026. That job had
+> not run since the day it was installed: its cron line redirected output into a
+> root-owned directory the `pi` account could not write, so the shell failed the
+> redirection and never executed the script — silently, every night, for eight weeks.
 
 ### Display Pis
 
@@ -2892,16 +2907,16 @@ Log rotation is configured via `/etc/logrotate.d/aprs`, installed by `install.sh
 |------|-----------|
 | `/var/log/aprs-daemon/daemon.log` | `aprsDaemon.php` (APRS-IS connection, packet processing) |
 | `/var/log/netbird-poller.log` | `netbird-poller.py` (NetBird device polling) |
-| `/var/log/aprs-backup.log` | `aprs-backup.sh` (nightly FTP backup) |
 | `/var/log/boot.log` | System boot messages (kernel + service startup output) |
 
-All three APRS-specific logs are covered by `/etc/logrotate.d/aprs` (installed by `install.sh`). `boot.log` is managed by the system's default logrotate config. Logs are rotated daily, compressed, and seven days of history are retained.
+All the APRS-specific logs above are covered by `/etc/logrotate.d/aprs` (installed by `install.sh`). `boot.log` is managed by the system's default logrotate config. Logs are rotated daily, compressed, and seven days of history are retained.
 
 ---
 
 ## Building & Deploying Devices
 
-Master SD card images for each device type are stored on the FTP server: [ftp://ftp.w6sg.net/APRS-SD-Masters](ftp://ftp.w6sg.net/APRS-SD-Masters). They include
+Master SD card images for each device type are kept offline. (They previously lived on
+`ftp.w6sg.net`, which was retired in August 2026 — record the current location here.) They include
 the results of running `install.sh` but not `configure.sh` — so packages, services, and
 scripts are pre-installed, but site-specific settings (callsign, location, hostname) are
 set when deploying each individual device.
@@ -2940,7 +2955,7 @@ As part of configuring any device, you will need a NetBird key. At the moment, t
 The server master image is a complete, fully-configured copy of the running server. Flashing
 it to a replacement Pi produces a working server immediately — no further steps needed.
 
-1. Download and flash the server master image from the FTP server using **Apple Pi Baker** or Raspberry Pi Imager.
+1. Download and flash the server master image using **Apple Pi Baker** or Raspberry Pi Imager.
 2. Insert SD card and boot. The server is ready.
 3. Configuration should only be necessary if something (such as a NetBird address) has changed from the standard setup.
 
@@ -2989,7 +3004,7 @@ needed (and none is available — the script would be served by the very Pi bein
 5. **Do not run `configure.sh`** — that step is done when deploying each device.
 6. Shut down: `sudo shutdown -h now`
 7. Copy the SD card using **Apple Pi Baker** — this is the new display Pi master.
-8. Upload the image file to **`ftp.w6sg.net/APRS-SD-Masters`** for later cloning.
+8. Store the image file with the other SD masters for later cloning.
 
 > **Cloning a master is safe; cloning a deployed device is not.** Step 5 is what makes the
 > difference — a master has never run `configure.sh`, so it carries no NetBird enrolment, no
@@ -3024,7 +3039,7 @@ needed (and none is available — the script would be served by the very Pi bein
 5. **Do not run `configure.sh`** — that step is done when deploying each device.
 6. Shut down: `sudo shutdown -h now`
 7. Copy the SD card using **Apple Pi Baker** — this is the new iGate master.
-8. Upload the image file to **`ftp.w6sg.net/APRS-SD-Masters`** for later cloning.
+8. Store the image file with the other SD masters for later cloning.
 
 ---
 

@@ -3536,10 +3536,25 @@ Admin endpoints additionally require <code>analyzer.admin</code>.</p>
 <hr />
 <h2 id="backup-recovery-and-updates">Backup, Recovery and Updates</h2>
 <h3 id="server-pi">Server Pi</h3>
-<p>The server is backed up nightly to an FTP server using <code>aprs-backup.sh</code> (requires <code>lftp</code>).
-The backup includes event configs, tracker history, and the WiFi credential file.</p>
-<p>To restore: run <code>aprs-recover.sh</code>, which downloads the latest backup from the FTP server
-and restores files in place.</p>
+<p>The server Pi and the Transcriber are pulled nightly onto the Mac by
+<code>backup/marsaprs-backup.sh</code>, launched by the <code>com.doug.marsaprs-backup</code> launchd agent at
+2:00 am. Snapshots land in <code>~/aprs-backups/&lt;device&gt;/YYYYMMDD-HHMMSS/</code>, hardlinked against
+the previous night so unchanged files cost no extra disk, and pruned after 30 days. The
+backup covers event configs, tracker history, tickets, the NetBird address list, and the
+WiFi and admin credentials.</p>
+<p>The Mac pulls rather than the Pis pushing, because the Mac sleeps. launchd runs a missed
+calendar job on the next wake, so a backup arrives late instead of never; and the machine
+that owns the schedule is the one that can tell "the Pi was unreachable" from "the backup
+never ran". <code>~/aprs-backups/STATUS.txt</code> records the result of the last run, and a failure
+also raises a macOS notification.</p>
+<p>To restore: run <code>backup/marsaprs-restore.sh &lt;device&gt;</code> on the Mac. It prints what would
+change and writes nothing unless you add <code>--apply</code>.</p>
+<blockquote>
+<p>This replaced a nightly FTP push to <code>ftp.w6sg.net</code>, retired in August 2026. That job had
+not run since the day it was installed: its cron line redirected output into a
+root-owned directory the <code>pi</code> account could not write, so the shell failed the
+redirection and never executed the script — silently, every night, for eight weeks.</p>
+</blockquote>
 <h3 id="display-pis">Display Pis</h3>
 <p>Each display Pi runs <code>auto-update.sh</code> nightly at 4:00 am. It downloads a tar archive of
 updated scripts from the server, applies them via rsync, updates WiFi credentials, and
@@ -3621,19 +3636,16 @@ relay sentinel appears. Just run it again. Seen across six gates on 2026-08-07 u
 <td><code>netbird-poller.py</code> (NetBird device polling)</td>
 </tr>
 <tr>
-<td><code>/var/log/aprs-backup.log</code></td>
-<td><code>aprs-backup.sh</code> (nightly FTP backup)</td>
-</tr>
-<tr>
 <td><code>/var/log/boot.log</code></td>
 <td>System boot messages (kernel + service startup output)</td>
 </tr>
 </tbody>
 </table>
-<p>All three APRS-specific logs are covered by <code>/etc/logrotate.d/aprs</code> (installed by <code>install.sh</code>). <code>boot.log</code> is managed by the system's default logrotate config. Logs are rotated daily, compressed, and seven days of history are retained.</p>
+<p>All the APRS-specific logs above are covered by <code>/etc/logrotate.d/aprs</code> (installed by <code>install.sh</code>). <code>boot.log</code> is managed by the system's default logrotate config. Logs are rotated daily, compressed, and seven days of history are retained.</p>
 <hr />
 <h2 id="building-deploying-devices">Building &amp; Deploying Devices</h2>
-<p>Master SD card images for each device type are stored on the FTP server: <a href="ftp://ftp.w6sg.net/APRS-SD-Masters">ftp://ftp.w6sg.net/APRS-SD-Masters</a>. They include
+<p>Master SD card images for each device type are kept offline. (They previously lived on
+<code>ftp.w6sg.net</code>, which was retired in August 2026 — record the current location here.) They include
 the results of running <code>install.sh</code> but not <code>configure.sh</code> — so packages, services, and
 scripts are pre-installed, but site-specific settings (callsign, location, hostname) are
 set when deploying each individual device.</p>
@@ -3661,7 +3673,7 @@ minutes), and the third took it from <strong>1,046 events/day to zero over five 
 <p>The server master image is a complete, fully-configured copy of the running server. Flashing
 it to a replacement Pi produces a working server immediately — no further steps needed.</p>
 <ol>
-<li>Download and flash the server master image from the FTP server using <strong>Apple Pi Baker</strong> or Raspberry Pi Imager.</li>
+<li>Download and flash the server master image using <strong>Apple Pi Baker</strong> or Raspberry Pi Imager.</li>
 <li>Insert SD card and boot. The server is ready.</li>
 <li>Configuration should only be necessary if something (such as a NetBird address) has changed from the standard setup.</li>
 </ol>
@@ -3705,7 +3717,7 @@ needed (and none is available — the script would be served by the very Pi bein
 <li><strong>Do not run <code>configure.sh</code></strong> — that step is done when deploying each device.</li>
 <li>Shut down: <code>sudo shutdown -h now</code></li>
 <li>Copy the SD card using <strong>Apple Pi Baker</strong> — this is the new display Pi master.</li>
-<li>Upload the image file to <strong><code>ftp.w6sg.net/APRS-SD-Masters</code></strong> for later cloning.</li>
+<li>Store the image file with the other SD masters for later cloning.</li>
 </ol>
 <blockquote>
 <p><strong>Cloning a master is safe; cloning a deployed device is not.</strong> Step 5 is what makes the
@@ -3739,7 +3751,7 @@ deploy time and re-run <code>/home/pi/update-wifi.php</code>.</p>
 <li><strong>Do not run <code>configure.sh</code></strong> — that step is done when deploying each device.</li>
 <li>Shut down: <code>sudo shutdown -h now</code></li>
 <li>Copy the SD card using <strong>Apple Pi Baker</strong> — this is the new iGate master.</li>
-<li>Upload the image file to <strong><code>ftp.w6sg.net/APRS-SD-Masters</code></strong> for later cloning.</li>
+<li>Store the image file with the other SD masters for later cloning.</li>
 </ol>
 <hr />
 <h2 id="supporting-systems">Supporting Systems</h2>

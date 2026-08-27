@@ -35,7 +35,6 @@ sudo apt-get install -y \
     python3-paramiko \
     avahi-daemon \
     curl rsync \
-    lftp \
     ufw
 ok "Packages installed"
 
