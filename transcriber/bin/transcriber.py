@@ -880,19 +880,43 @@ CARRIER_GAP_MIN_CLIP = 8.0   # shorter than this cannot hold two overs and is no
 CARRIER_GAP_JOIN = 1.0       # gaps closer than this are the two halves of one boundary
 
 
-def carrier_gaps(path, min_seconds=CARRIER_GAP_SECONDS, ratio=CARRIER_GAP_RATIO):
-    """Every stretch inside this clip where the carrier appears to have dropped, as
-    (start, seconds). Never raises: nothing here may cost the channel a transmission.
+# Below this much sound in a clip, nobody said anything in it.
+#
+# Measured against ears, not against whisper. Doug listened to the 24 clips the tone scan
+# had no opinion about and named each one: 5 real, 5 courtesy beeps, 11 Morse identifiers,
+# 3 nothing at all. Sound-carrying time separates the beeps from the speech completely —
+# beeps run 0.38 to 0.61 s, real traffic 0.90 to 3.17 — and the threshold sits in the gap.
+#
+# Referenced to the clip's 95th-percentile frame rather than its LOUDEST, which is the
+# whole trick. A squelch crash is louder than anything said, so measuring against the peak
+# asks "how much of this is within 16 dB of the crash" and answers the same small number
+# for a beep and for somebody talking. Against p95 it asks how much of the clip carries
+# sound at all, which is the actual question.
+#
+# It does NOT catch the Morse identifiers: they run 1.73 to 1.94 s of sound and sit above
+# real traffic's own minimum of 0.90. Those need something else.
+#
+# And the p95 reference has a limit worth knowing: a clip more than 95% silence takes its
+# reference FROM the silence, so every frame clears the floor and the whole clip reads as
+# sound. Nothing measured comes close — the emptiest real capture was 40% sound — but a
+# very short beep inside a very long capture would defeat this, and would want the carrier
+# gaps to cut the capture up first.
+CONTENT_RATIO = 0.10          # how far under the clip's loud level still counts as sound
+CONTENT_MIN_SECONDS = 0.80    # ...and how little of it means nothing was said
 
-    Peak about each frame's own mean rather than rms, because max() and min() and sum()
-    over an array are C and a Python loop over two million samples is not — a two-minute
-    clip has to stay in milliseconds. About its own mean for the reason recorded in
-    _tone_scan: a DC offset counted as signal is what let a beep reach somebody's phone.
+
+def _frame_peaks(path):
+    """(peaks about each frame's own mean, sample rate), or ([], 0).
+
+    Peak rather than rms because max(), min() and sum() over an array are C and a Python
+    loop over two million samples is not — a two-minute clip has to stay in milliseconds.
+    About its own mean for the reason recorded in _tone_scan: a DC offset counted as
+    signal is what let a beep reach somebody's phone.
     """
     try:
         with wave.open(path) as w:
             if w.getsampwidth() != 2 or w.getnchannels() != 1:
-                return []          # not the mono 16-bit this expects; say nothing
+                return [], 0       # not the mono 16-bit this expects; say nothing
             rate = w.getframerate() or SAMPLE_RATE
             raw = w.readframes(w.getnframes())
         block = array.array("h")
@@ -902,26 +926,51 @@ def carrier_gaps(path, min_seconds=CARRIER_GAP_SECONDS, ratio=CARRIER_GAP_RATIO)
             chunk = block[i:i + TONE_FRAME]
             middle = sum(chunk) / TONE_FRAME
             peaks.append(max(max(chunk) - middle, middle - min(chunk)))
-        if not peaks:
-            return []
-        loud = sorted(peaks)[int(0.95 * (len(peaks) - 1))]
-        if loud <= 0:
-            return []
-        per_second = rate / float(TONE_FRAME)
-        floor, out, run = loud * ratio, [], 0
-        for i, peak in enumerate(peaks):
-            if peak < floor:
-                run += 1
-                continue
-            if run / per_second >= min_seconds:
-                out.append(((i - run) / per_second, run / per_second))
-            run = 0
-        if run / per_second >= min_seconds:
-            out.append(((len(peaks) - run) / per_second, run / per_second))
-        return out
+        return peaks, rate
     except Exception as e:              # noqa: BLE001 - same rule as tone_scan
-        log.debug("carrier scan failed, saying nothing: %s", e)
+        log.debug("frame scan failed, saying nothing: %s", e)
+        return [], 0
+
+
+def content_seconds(peaks, rate, ratio=CONTENT_RATIO):
+    """How many seconds of this clip carry sound, or None if it cannot say."""
+    if not peaks or not rate:
+        return None
+    loud = sorted(peaks)[int(0.95 * (len(peaks) - 1))]
+    if loud <= 0:
+        return None
+    floor = loud * ratio
+    return sum(1 for p in peaks if p >= floor) * TONE_FRAME / float(rate)
+
+
+def nothing_said_reason(peaks, rate, minimum=CONTENT_MIN_SECONDS):
+    """Why nobody said anything in this clip, or "" if somebody might have."""
+    sound = content_seconds(peaks, rate)
+    if sound is None or sound >= minimum:
+        return ""
+    return "nothing said in it — only %.2fs of the clip carries sound" % sound
+
+
+def carrier_gaps(peaks, rate, min_seconds=CARRIER_GAP_SECONDS, ratio=CARRIER_GAP_RATIO):
+    """Every stretch inside this clip where the carrier appears to have dropped, as
+    (start, seconds)."""
+    if not peaks or not rate:
         return []
+    loud = sorted(peaks)[int(0.95 * (len(peaks) - 1))]
+    if loud <= 0:
+        return []
+    per_second = rate / float(TONE_FRAME)
+    floor, out, run = loud * ratio, [], 0
+    for i, peak in enumerate(peaks):
+        if peak < floor:
+            run += 1
+            continue
+        if run / per_second >= min_seconds:
+            out.append(((i - run) / per_second, run / per_second))
+        run = 0
+    if run / per_second >= min_seconds:
+        out.append(((len(peaks) - run) / per_second, run / per_second))
+    return out
 
 
 def transmission_count(gaps, seconds, join=CARRIER_GAP_JOIN):
@@ -2781,7 +2830,7 @@ class Retention:
         return True
 
     def keep(self, path, seconds, heard, cleaned, logged, why, tone=None, would_drop="",
-             past_guard="", unbroken="", overs=0):
+             past_guard="", unbroken="", overs=0, quiet=""):
         """Copy one clip to the card and write its line of the manifest.
 
         Both, or neither. Audio with no line means re-listening to an hour of radio by
@@ -2845,6 +2894,9 @@ class Retention:
                 # How many transmissions the carrier-gap scan thinks are in here. 0 means
                 # it did not look or could not say; 1 is one over. See carrier_gaps.
                 "overs": overs,
+                # What the "nothing said in it" test made of the clip, observed only.
+                # See nothing_said_reason.
+                "quiet": quiet,
             }, ensure_ascii=False) + "\n"
             with open(self.manifest, "a", encoding="utf-8") as fh:
                 fh.write(line)
@@ -3215,13 +3267,27 @@ def handle_clip(channel, path, whisper, model, outbox, retention=None):
     # way: GAP_SECONDS still decides where a capture ends. See carrier_gaps for why the
     # gap between overs never closes one, and why this counts levels rather than beeps.
     overs = 0
-    if seconds > CARRIER_GAP_MIN_CLIP:
-        gaps = carrier_gaps(path)
-        overs = transmission_count(gaps, seconds)
-        if overs > 1:
-            log.info("%d transmissions in this %.1fs capture — carrier dropped at %s",
-                     overs, seconds,
-                     ", ".join("%.1fs" % start for start, _ in gaps))
+    quiet_why = ""
+    if filtering:
+        peaks, peak_rate = _frame_peaks(path)
+        # Nobody said anything in it. This is what the tone scan cannot answer: it has no
+        # opinion on 27 of 91 live clips, and no opinion is correctly treated as
+        # "transcribe it", so the audio goes out before whisper ever runs. Measured
+        # against Doug's ears on the clips it abstained from — 5 real, 5 beeps, 11 Morse
+        # identifiers, 3 nothing — and against the ear-verified corpus: it fires on 27
+        # live clips that logged nothing and 25 of 140 corpus noise clips, and on none of
+        # the 47 live or 34 corpus clips that carried real traffic.
+        quiet_why = nothing_said_reason(peaks, peak_rate)
+        if quiet_why:
+            log.info("would drop as empty (%.1fs): %s — kept, and its audio sent",
+                     seconds, quiet_why)
+        if seconds > CARRIER_GAP_MIN_CLIP:
+            gaps = carrier_gaps(peaks, peak_rate)
+            overs = transmission_count(gaps, seconds)
+            if overs > 1:
+                log.info("%d transmissions in this %.1fs capture — carrier dropped at %s",
+                         overs, seconds,
+                         ", ".join("%.1fs" % start for start, _ in gaps))
     if not tone_why and filtering:
         tone_why = flat_reason(flat_scan(path))
     if tone_why and getattr(channel, "tone_filter", "observe") == "drop":
@@ -3284,7 +3350,7 @@ def handle_clip(channel, path, whisper, model, outbox, retention=None):
         retention.keep(path, seconds, heard, text, logged,
                        "" if keep else (rejection(text) or "a loop once it was trimmed"),
                        tone=tone, would_drop=tone_why, past_guard=past_guard,
-                       unbroken=unbroken, overs=overs)
+                       unbroken=unbroken, overs=overs, quiet=quiet_why)
     os.unlink(path)
     return bool(logged)
 

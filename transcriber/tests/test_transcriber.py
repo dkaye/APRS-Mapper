@@ -1170,7 +1170,62 @@ def test_a_capture_knows_how_many_transmissions_are_in_it():
           transcriber.transmission_count([(5.0, 1.0)], 20.0), 2)
     check("no gaps means it cannot say", transcriber.transmission_count([], 20.0), 0)
     # Nothing here may cost the channel a transmission.
-    check("a missing file says nothing", transcriber.carrier_gaps("/no/such/file.wav"), [])
+    peaks, rate = transcriber._frame_peaks("/no/such/file.wav")
+    check("a missing file says nothing", transcriber.carrier_gaps(peaks, rate), [])
+
+
+def test_a_clip_nobody_said_anything_in_is_recognised():
+    """The hole the tone scan leaves. It has no opinion on 27 of 91 live clips, and no
+    opinion is correctly treated as "transcribe it" — so the audio is uploaded before
+    whisper ever runs and a beep plays on somebody's phone with nothing in the log.
+
+    Measured against ears rather than whisper. Doug named all 24 clips the scan abstained
+    from: 5 real, 5 courtesy beeps, 11 Morse identifiers, 3 nothing at all. Sound-carrying
+    time separates the beeps from the speech with a gap between them — beeps 0.38 to
+    0.61 s, real traffic 0.90 to 3.17 — and it holds on data it was not fitted to: 27
+    live clips that logged nothing and 25 of 140 ear-verified corpus clips gathered at a
+    different gain and squelch, against none of the 47 live and 34 corpus clips that
+    carried real traffic.
+
+    Referenced to the clip's 95th-percentile frame and NOT its loudest, which is the whole
+    trick: a squelch crash is louder than anything anybody says, so measuring against the
+    peak asks "how much of this is within 16 dB of the crash" and gives the same small
+    answer for a beep and for a sentence.
+    """
+    print("empty clips — nothing said in it")
+    rate = 16000
+    n = transcriber.TONE_FRAME
+    per_second = rate / float(n)
+
+    def clip(total_seconds, sound_seconds, crash=False):
+        """peaks for a clip of `total_seconds` carrying `sound_seconds` of sound, with an
+        optional squelch crash — one frame far louder than anything said, which is what
+        breaks a reference taken from the loudest frame."""
+        loud = int(sound_seconds * per_second)
+        peaks = [900] * loud + [5] * (int(total_seconds * per_second) - loud)
+        if crash:
+            peaks[0] = 30000
+        return peaks
+
+    # A courtesy beep as they actually arrive: about half a second inside a 2.5 s capture.
+    check("a beep is named",
+          transcriber.nothing_said_reason(clip(2.5, 0.5), rate) != "", True)
+    check("a sentence is not",
+          transcriber.nothing_said_reason(clip(5.0, 2.0), rate), "")
+    check("and a squelch crash does not change either answer",
+          (transcriber.nothing_said_reason(clip(2.5, 0.5, crash=True), rate) != "",
+           transcriber.nothing_said_reason(clip(5.0, 2.0, crash=True), rate)),
+          (True, ""))
+    # The limit, written down because it is not obvious: the reference is the clip's own
+    # 95th percentile, so a clip that is more than 95% silence has a reference taken from
+    # the silence, every frame clears the floor, and it reports the whole clip as sound.
+    # Nothing measured comes close — the emptiest real capture was 40% sound — but a very
+    # short beep inside a very long capture would defeat this, and would need the carrier
+    # gaps to cut it up first.
+    check("a clip that is almost entirely silence defeats it",
+          transcriber.nothing_said_reason(clip(20.0, 0.3), rate), "")
+    check("no audio is no opinion", transcriber.nothing_said_reason([], 0), "")
+    check("content of nothing is None", transcriber.content_seconds([], 0), None)
 
 
 def test_calibration_gives_up_rather_than_guessing():
@@ -3329,6 +3384,7 @@ if __name__ == "__main__":
         test_a_long_clip_nobody_spoke_in_is_recognised,
         test_a_squelch_crash_does_not_hide_the_tone_behind_it,
         test_a_capture_knows_how_many_transmissions_are_in_it,
+        test_a_clip_nobody_said_anything_in_is_recognised,
         test_the_gain_is_the_knee_where_the_receiver_starts_hearing_the_band,
         test_a_gain_sweep_with_no_knee_is_used_but_never_called_measured,
         test_a_carrier_left_open_is_not_a_transmission,
