@@ -1615,11 +1615,32 @@ the prompt and with it, over real traffic **and** over static captured unsquelch
 purpose. Zero loggable lines from the noise on both arms clears it; one entry naming the
 roster is the veto. See Transcriber Diagnostics.
 
-**A gap in the byte stream is the boundary between transmissions, and that is the whole
-of the segmentation.** `rtl_fm`'s squelch gates on RF power *before* demodulation, so
-while it is closed the process emits nothing at all — measured on a real receiver at
-exactly zero bytes over eight seconds of idle channel. Samples arriving means a carrier
-is up; samples stopping for `GAP_SECONDS` means it dropped.
+**A gap in the byte stream is the boundary between transmissions — but only when the
+channel goes properly idle.** `rtl_fm`'s squelch gates on RF power *before* demodulation,
+so on an idle channel the process emits nothing at all: measured on a real receiver at
+exactly zero bytes over eight seconds. Samples arriving means a carrier is up; samples
+stopping for `GAP_SECONDS` means it dropped.
+
+**Between overs of a live conversation it does not stop, and that is why several
+transmissions arrive as one.** `rtl_fm` keeps emitting near-silent samples through its
+squelch hang, so the capture loop sees data and holds the capture open. Measured on three
+real captures, every over ends the same way: about 0.95 s of near-silence, the repeater's
+0.30 s courtesy beep, then another second of near-silence — each of them comfortably
+longer than the 0.8 s `GAP_SECONDS` waits for, and none of them a gap in the byte stream.
+So a brisk exchange becomes one clip, and because audio is uploaded when a capture
+*closes*, it reaches a phone as a single block after the fact. An 88-second capture held
+six separate transmissions.
+
+The gap is in the audio even though it is not in the byte stream, and `carrier_gaps()`
+measures it: frame level against the clip's own 95th percentile, so gain cannot move it.
+Checked against the courtesy beeps — located independently by band energy — it found 5
+boundaries to 5 beeps, 4 to 4 and 5 to 5, and correctly rejected a spurious beep candidate
+a tone-only split would have cut on. It counts **levels, not beeps**, because a courtesy
+tone exists only on a repeater and these receivers are also pointed at simplex, where a
+carrier drops just the same. It is measured and recorded per clip and **acts on nothing**:
+`GAP_SECONDS` still decides where a capture ends. Splitting the audio, and closing a
+capture at a seam so a phone tracks a conversation live, are larger changes — a false seam
+would chop somebody mid-sentence.
 
 A software audio-level squelch ran on top of that for a while, meant to find the edges of
 each over. It could not work, for a reason the measurement above makes obvious in
@@ -1705,6 +1726,25 @@ catches a carrier that came up mid-sweep and stayed; and the knee itself is conf
 measuring its two points a second time, the same way `choose_squelch()` confirms a quiet
 level. Any of them and the calibration is abandoned and says why. A failed calibration
 that says so is worth far more than a plausible one that is wrong.
+
+**The squelch answer has to be a boundary, and refusing is a valid answer.** A level that
+gates with nothing audible beneath it has not been measured, it has been guessed. Squelch
+10 — the floor — was once cached on a channel that then ran 99.56% open, filing noise to
+people's phones for a day, and neither the receiver nor the threshold was at fault: the
+scan simply ran while the channel happened to be quiet, and the walk-down that steps
+downwards for as long as the level beneath also gates slid from wherever it started to the
+lowest candidate. A lull lasting only as long as the scan is enough. So the level below
+the answer is measured again, a dozen seconds later, and has to be **open**; at the floor,
+where there is nothing below, the floor has to gate twice. Either way `choose_squelch()`
+returns nothing and the caller falls back rather than caching a receiver that will not
+gate for a day.
+
+Measuring for *longer* does not fix that, which was the first theory and is worth writing
+down. Over 10.8 hours of one channel a 2-second window sees 2.6% of the night's
+idle-noise range and a 300-second window sees 138% — yet the p90 distance between one
+window's level and the night's typical level only moves from 319 to 284. The floor wanders
+over tens of minutes, so no window anybody will wait for averages it out, and 150x the
+airtime buys 11%.
 
 **On demand only, and therefore "never calibrated" is a state the manager shows.** There
 is no expiry and nothing measures at startup: it takes the channel off the air for two or
