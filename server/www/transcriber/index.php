@@ -16,7 +16,7 @@ require_once '/var/www/html/track_ip.php'; track_client_ip('transcriber');
  *   ?standing   GET  — the standing vocabulary as typed, with a fingerprint
  *   ?standing   POST — {text, fingerprint}, write the standing vocabulary
  *   ?calibrate  POST — {channel} → ask that channel to measure its gain and squelch
- *   ?status     GET  — per-device check-in, and per-channel calibration state
+ *   ?status     GET  — per-device check-in, calibration state, and channel heartbeats
  *   ?logout     GET  — end the session
  *
  * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
@@ -106,6 +106,15 @@ if (isset($_GET['load'])) {
     // from ?status so the page can say "never calibrated" the moment it opens, rather than
     // showing nothing until somebody presses something.
     $data['calibration'] = transcriber_calibration_load();
+    // When each channel last said it was running. Sent here as well as from ?status so
+    // the page can answer "is the receiver alive" the moment it opens, rather than
+    // showing nothing for the first thirty seconds -- which is the same nothing it shows
+    // when the receiver is dead, and telling those apart is the entire point.
+    $data['heartbeat'] = transcriber_heartbeat_load();
+    // The server's clock, so the page judges a heartbeat's age against the same clock
+    // that stamped it. A browser ten minutes out would otherwise call a live receiver
+    // dead, or a dead one live.
+    $data['now'] = time();
     jsonOut($data);
 }
 
@@ -147,7 +156,8 @@ if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
 if (isset($_GET['status'])) {
     jsonOut(['now'         => time(),
              'devices'     => transcriber_device_status(),
-             'calibration' => transcriber_calibration_load()]);
+             'calibration' => transcriber_calibration_load(),
+             'heartbeat'   => transcriber_heartbeat_load()]);
 }
 
 // The calibration meter's feed. Polled about once a second while somebody is setting a
@@ -313,6 +323,14 @@ input:focus, select:focus { outline: 2px solid #2563eb; outline-offset: -1px; bo
    squelch never gated, and eight hours of a net produced twenty-five entries of which
    most read "the the the you." The row said so; nobody was looking at the row.
    This says it once, at the top, in the words that describe the consequence. */
+/* Whether the channel is running at all, which is a different question from whether
+   anybody is talking on it. Green only for a receiver that spoke within the last five
+   minutes; everything else is a fault until proven otherwise, because the failure this
+   exists to catch -- a unit that will not start -- looks identical to a quiet band from
+   every angle except this one. */
+.beat.live { color: #16a34a; font-weight: 600; }
+.beat.stale { color: #dc2626; font-weight: 600; }
+.beat.none { color: #b45309; font-weight: 600; }
 .cal { font-size: 12px; white-space: nowrap; }
 .cal.never { color: #b45309; font-weight: 600; }
 .cal.busy { color: #2563eb; }
@@ -686,7 +704,7 @@ const MODELS = [{file: 'ggml-tiny.en.bin', name: 'Fast'},
 let data = {devices: [], channels: [], event: '',
             settings: {label: '', model: 'ggml-base.en.bin', enabled: true,
                        send_audio: false, sheet_url: '', vocabulary_extra: ''},
-            vocabulary: {}};
+            vocabulary: {}, heartbeat: {}};
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
@@ -774,6 +792,10 @@ function notice(title, body) {
 async function load() {
     const r = await fetch('?load');
     data = await r.json();
+    // Before render(), so the first paint of the status row has a clock to measure
+    // against instead of showing an age of zero for a beat that is an hour old.
+    serverNow = data.now || 0;
+    serverAt  = Date.now();
     baseline = data.baseline || '';
     dirty = false;
     const b = $('save-btn');
@@ -1355,6 +1377,84 @@ async function pollLevel() {
     bar.className = 'vu-bar ' + cls;
 }
 
+/* How long ago, in words somebody can act on. Minutes up to two hours, then hours:
+ * "not heard from for 94 minutes" is harder to read than "for 2 hours", and past a
+ * couple of hours the exact figure has stopped mattering anyway. */
+function ago(sec) {
+    sec = Math.max(0, Math.round(sec));
+    if (sec < 90) return sec + ' seconds';
+    const m = Math.round(sec / 60);
+    if (m < 120) return m + ' minutes';
+    return Math.round(m / 60) + ' hours';
+}
+
+/* Five minutes, not thirty.
+ *
+ * The obvious threshold is "no traffic for a while", and it is the wrong one: a net can
+ * be genuinely silent for half an hour and there is no figure that separates that from a
+ * dead receiver. The heartbeat has no such ambiguity -- it arrives every sixty seconds
+ * for as long as the worker is running, whatever the band is doing -- so the threshold
+ * only has to outlast a network blip. Five missed beats is not weather.
+ *
+ * The clock is the SERVER's. A browser whose time is ten minutes out would otherwise
+ * report a healthy receiver as dead, or worse, a dead one as healthy. `serverNow` is
+ * stamped at each fetch and advanced locally between them. */
+const BEAT_STALE = 300;
+let serverNow = 0, serverAt = 0;
+
+function nowOnServer() {
+    return serverNow ? serverNow + (Date.now() - serverAt) / 1000 : 0;
+}
+
+function renderStatus() {
+    const el = $('rx-status');
+    if (!el) return;
+    const c = (data.channels || [])[0] || {};
+    const b = (data.heartbeat || {})[c.id];
+    const now = nowOnServer();
+    if (!b || !b.at) {
+        // Not the same as dead, and it must not be dressed as dead: a receiver running
+        // a worker older than the heartbeat sends nothing either, and saying "silent"
+        // for that would be a false alarm on a channel that is transcribing perfectly.
+        el.className = 'beat none';
+        el.textContent = 'No heartbeat yet — either the receiver is not running, or its '
+                       + 'worker predates this check.';
+        return;
+    }
+    const age = now ? now - b.at : 0;
+    if (age > BEAT_STALE) {
+        el.className = 'beat stale';
+        el.textContent = 'Not heard from for ' + ago(age) + ' — the channel is not running.';
+        return;
+    }
+    el.className = 'beat live';
+    const heard = b.last_heard
+        ? 'last transmission ' + ago(now - b.last_heard) + ' ago'
+        : 'nothing heard yet';
+    el.textContent = 'Listening (' + heard
+                   + (b.version ? ', worker ' + b.version : '') + ')';
+}
+
+/* The status row is the one thing on this page that is worth refreshing by itself.
+ *
+ * The rest deliberately does not auto-refresh -- see the note on `dirty`, where a page
+ * left open for an hour used to overwrite somebody's work. This touches no field and no
+ * baseline: it replaces the text of one span. Thirty seconds against a sixty-second
+ * heartbeat, so a receiver that stops is red within about six minutes without anybody
+ * reloading anything. */
+function pollStatus() {
+    fetch('?status').then(r => r.json()).then(d => {
+        serverNow = d.now || 0;
+        serverAt  = Date.now();
+        if (d.heartbeat) data.heartbeat = d.heartbeat;
+        renderStatus();
+    }).catch(() => {
+        // The page's own connection blipping is not the receiver failing. Leave the last
+        // known state alone and try again; the age shown keeps growing on its own, which
+        // is the honest thing for it to do.
+    });
+}
+
 function renderRows() {
     // Identity comes from the registry (it is a fact about the machine); everything
     // else comes from the active event's settings.
@@ -1364,6 +1464,10 @@ function renderRows() {
     $('receiver-empty').style.display = data.channels.length ? 'none' : '';
     box.innerHTML = `
       <table class="explain">
+        <tr><th>Status</th><td><span id="rx-status">&mdash;</span>
+            <div class="derived">Whether the worker is running, which is not the same as
+            whether anybody is talking. A channel that cannot start writes no entries, and
+            so does a quiet band.</div></td></tr>
         <tr><th>Event</th><td>${ro(data.event || '(none)')}
             <div class="derived">These settings belong to this event. Switching events
             switches all of them.</div></td></tr>
@@ -1395,6 +1499,7 @@ function renderRows() {
         <tr><th>Log token</th><td>${tokenCell(c, 'channel', c.id)}
             <div class="derived">Belongs to the receiver, not the event.</div></td></tr>
       </table>`;
+    renderStatus();
     renderMeterChannels();
     renderVocabulary();
 }
@@ -1402,6 +1507,10 @@ function renderRows() {
 
 load();
 loadIds();
+// Ticks every 30 s; also re-renders between fetches so the age counts up rather than
+// sitting still for half a minute at a time.
+setInterval(pollStatus, 30000);
+setInterval(renderStatus, 5000);
 </script>
 </body>
 </html>

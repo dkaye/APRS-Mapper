@@ -997,4 +997,73 @@ class TranscriberStoreTest extends TestCase
         $reg['settings']['vocabulary_extra'] = $text;
         transcriber_save($reg, $this->file);
     }
+
+    // ── heartbeats ────────────────────────────────────────────────────────────
+    //
+    // The point of this store is what it says when nothing arrives. On 2026-08-29 the
+    // channel crash-looped for eighty-three minutes and every screen in the system
+    // showed the same thing it shows on a quiet band: nothing. So the tests worth
+    // having are about absence -- a channel that has never reported, and a row that
+    // must survive long enough to be noticed.
+
+    public function testAChannelThatHasNeverReportedIsAbsent(): void
+    {
+        $all = transcriber_heartbeat_load($this->file);
+        $this->assertArrayNotHasKey('rx1-146520', $all);
+    }
+
+    public function testAHeartbeatIsRecordedWithTheServersClock(): void
+    {
+        $before = time();
+        transcriber_heartbeat_update('rx1-146520',
+            ['version' => '1.3', 'last_heard' => 1756500000, 'heard' => 7], $this->file);
+        $row = transcriber_heartbeat_load($this->file)['rx1-146520'];
+        $this->assertGreaterThanOrEqual($before, $row['at']);
+        $this->assertSame('1.3', $row['version']);
+        $this->assertSame(1756500000, $row['last_heard']);
+        $this->assertSame(7, $row['heard']);
+    }
+
+    public function testAChannelThatHasHeardNothingStillReportsItIsAlive(): void
+    {
+        // The distinction the whole feature exists for: running but with nothing to
+        // transcribe is a different state from not running, and must not collapse into it.
+        transcriber_heartbeat_update('rx1-146520', ['version' => '1.3'], $this->file);
+        $row = transcriber_heartbeat_load($this->file)['rx1-146520'];
+        $this->assertGreaterThan(0, $row['at']);
+        $this->assertSame(0, $row['last_heard']);
+    }
+
+    public function testAnOldHeartbeatIsKeptRatherThanExpired(): void
+    {
+        // Unlike the level feed, which drops rows after five minutes. A stale heartbeat
+        // is the alarm; expiring it would put the page back to showing nothing, which is
+        // indistinguishable from a healthy receiver on a quiet band.
+        transcriber_heartbeat_update('rx1-146520', ['version' => '1.3'], $this->file);
+        $f = transcriber_heartbeat_path($this->file);
+        $raw = json_decode((string)file_get_contents($f), true);
+        $raw['rx1-146520']['at'] = time() - 86400;
+        file_put_contents($f, json_encode($raw));
+
+        transcriber_heartbeat_update('rx2-146520', ['version' => '1.3'], $this->file);
+        $all = transcriber_heartbeat_load($this->file);
+        $this->assertArrayHasKey('rx1-146520', $all, 'a day-old heartbeat is the signal, not litter');
+        $this->assertLessThan(time() - 3600, $all['rx1-146520']['at']);
+    }
+
+    public function testOneChannelsHeartbeatDoesNotOverwriteAnothers(): void
+    {
+        transcriber_heartbeat_update('rx1-146520', ['version' => '1.3'], $this->file);
+        transcriber_heartbeat_update('rx2-146520', ['version' => '1.2'], $this->file);
+        $all = transcriber_heartbeat_load($this->file);
+        $this->assertSame('1.3', $all['rx1-146520']['version']);
+        $this->assertSame('1.2', $all['rx2-146520']['version']);
+    }
+
+    public function testAGarbledHeartbeatFileDoesNotTakeThePageDown(): void
+    {
+        file_put_contents(transcriber_heartbeat_path($this->file), 'not json at all');
+        $this->assertSame([], transcriber_heartbeat_load($this->file));
+    }
+
 }

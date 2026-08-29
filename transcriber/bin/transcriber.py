@@ -2126,6 +2126,46 @@ def report_level(channel, db):
         pass
 
 
+
+# One minute. The point of this is to make a channel that cannot start distinguishable
+# from a channel on a quiet band, and in a crash loop the unit restarts every ten
+# seconds -- so the interval only has to be short enough that a few missed beats mean
+# something. A minute of silence proves nothing; five in a row is not weather.
+HEARTBEAT_SECONDS = 60
+
+
+def post_heartbeat(channel, last_heard, heard_recently):
+    """Tell the manager this channel is alive, whether or not anybody is talking.
+
+    A channel that will not start looks exactly like a channel on a quiet frequency:
+    both produce no log entries. That is not hypothetical -- on 2026-08-29 this unit
+    crash-looped for eighty-three minutes across a hundred and sixty-two restarts, and
+    the only thing that noticed was a person hearing traffic on a handheld and seeing
+    nothing appear on the screen. Nothing in the system was looking.
+
+    So the useful signal is not "was anything transcribed", which is ambiguous, but "is
+    the worker running", which is not. This says so once a minute, and carries when it
+    last captured anything so the manager can tell a working receiver on a dead band
+    from a working receiver on a busy one.
+
+    Best effort, like report_level: a receiver that cannot reach the server still has a
+    net to listen to, and it must not exit because a status post failed. The same
+    Cloudflare User-Agent rule applies -- see report_level.
+    """
+    body = json.dumps({"device": os.uname().nodename, "token": device_token(),
+                       "channel": channel.id, "state": "alive",
+                       "version": VERSION,
+                       "last_heard": int(last_heard) if last_heard else 0,
+                       "heard": heard_recently}).encode()
+    req = urllib.request.Request(channel.server + "/transcriber/report.php", data=body,
+                                 headers={"Content-Type": "application/json",
+                                          "User-Agent": "marsaprs-transcriber/" + VERSION})
+    try:
+        urllib.request.urlopen(req, timeout=5).read()
+    except Exception:
+        pass
+
+
 def capture_complaint(clips, limit=300):
     """The last thing arecord said before it died, for the journal.
 
@@ -2982,6 +3022,9 @@ def main(argv=None):
     max_bytes = int(MAX_CLIP_SECONDS * SAMPLE_RATE) * 2
     last_report, heard = time.time(), 0
     last_any_data = time.time()   # for the deaf-receiver check, not per-transmission
+    # Sent at once rather than a minute from now: a channel that has just come back from
+    # a crash loop is exactly the one somebody is watching the page for.
+    last_beat, last_heard_at, heard_total = 0.0, 0, 0
 
     try:
         while running:
@@ -3036,6 +3079,8 @@ def main(argv=None):
                             elif event == "end":
                                 seq += 1
                                 heard += 1
+                                heard_total += 1
+                                last_heard_at = now
                                 if not carrier.skipping:
                                     enqueue(write_clip(clips, bytes(audio), seq))
                                 audio.clear()
@@ -3070,6 +3115,14 @@ def main(argv=None):
                     log.info("no audio at all for %d minutes — restarting to re-check "
                              "the receiver", DEAF_CHECK_SECONDS // 60)
                     return 0
+
+                # Say so to the server, not only to the local journal. The line below is
+                # only useful to somebody already reading this device's log, which is
+                # nobody until they have a reason to look -- and "the receiver is dead"
+                # is precisely the reason they do not have yet.
+                if now - last_beat >= HEARTBEAT_SECONDS:
+                    post_heartbeat(channel, last_heard_at, heard_total)
+                    last_beat = now
 
                 # A periodic sign of life. With no audio level left to report, the useful
                 # question is whether anything has been heard at all — a channel that has

@@ -135,6 +135,7 @@ log "=== marsaprs backup start ($STAMP) ==="
 backup_device "aprs-pi" "aprs-pi" --sudo \
     --exclude 'transcriber-level.json' \
     --exclude 'transcriber-state.json' \
+    --exclude 'transcriber-heartbeat.json' \
     --exclude '*.lock' \
     --exclude '*.tmp' \
     -- \

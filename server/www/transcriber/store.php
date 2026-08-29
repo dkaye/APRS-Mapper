@@ -453,6 +453,59 @@ function transcriber_level_update(string $channel, float $db, float $wide, ?stri
     rename($tmp, $file);
 }
 
+/**
+ * Heartbeats: {channel: {at, version, last_heard, heard}}.
+ *
+ * Separate from the level feed because it means the opposite thing. A level reading is
+ * worthless three seconds later and is only sent while somebody is turning a knob; a
+ * heartbeat is worth most when it STOPS, and its absence is the whole signal. Nothing
+ * expires rows here for the same reason: a channel that has not been heard from in a
+ * week is exactly what the manager needs to show, and dropping the row would put it back
+ * to displaying nothing at all -- which is the state this was written to fix.
+ */
+function transcriber_heartbeat_path(?string $path = null): string
+{
+    return dirname(transcriber_path($path)) . '/transcriber-heartbeat.json';
+}
+
+function transcriber_heartbeat_load(?string $path = null): array
+{
+    $f = transcriber_heartbeat_path($path);
+    $raw = is_readable($f) ? (json_decode((string)file_get_contents($f), true) ?: []) : [];
+    $out = [];
+    foreach ($raw as $id => $row) {
+        if (!is_array($row)) continue;
+        $out[(string)$id] = [
+            'at'         => (int)   ($row['at']         ?? 0),
+            'version'    => (string)($row['version']    ?? ''),
+            'last_heard' => (int)   ($row['last_heard'] ?? 0),
+            'heard'      => (int)   ($row['heard']      ?? 0),
+        ];
+    }
+    return $out;
+}
+
+/** Record one channel's heartbeat. Whole-file rewrite without a lock, as in
+ *  transcriber_level_update: one writer per channel, once a minute, and a lost beat
+ *  costs nothing because the next one is sixty seconds behind it. */
+function transcriber_heartbeat_update(string $channel, array $beat, ?string $path = null): void
+{
+    $file = transcriber_heartbeat_path($path);
+    $dir  = dirname($file);
+    if (!is_dir($dir)) @mkdir($dir, 0775, true);
+    $all = transcriber_heartbeat_load($path);
+    $all[$channel] = [
+        'at'         => time(),
+        'version'    => substr(trim((string)($beat['version'] ?? '')), 0, 20),
+        'last_heard' => max(0, (int)($beat['last_heard'] ?? 0)),
+        'heard'      => max(0, (int)($beat['heard'] ?? 0)),
+    ];
+    $tmp = $file . '.tmp';
+    file_put_contents($tmp, json_encode($all, JSON_PRETTY_PRINT) . "\n");
+    @chmod($tmp, 0640);
+    rename($tmp, $file);
+}
+
 function transcriber_calibration_path(?string $path = null): string
 {
     return dirname(transcriber_path($path)) . '/transcriber-calibration.json';
