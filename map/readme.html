@@ -1873,6 +1873,14 @@ apksigner verify --print-certs ../build/wear/outputs/apk/release/wear-release.ap
 transcribes each transmission with <code>whisper.cpp</code>, and appends it to the event log by
 itself. Net control hears everything on the radio and writes down almost none of it;
 this is the part that writes it down.</p>
+<blockquote>
+<p><strong>Hardware receiver trial.</strong> An alternative front end — a conventional receiver whose own
+squelch gates the audio, into a USB sound card — was validated end to end on 2026-08-29.
+It removes the need for the software squelch and the three filters built on top of it,
+at the cost of frequency agility. See
+<a href="../transcriber/HARDWARE-RECEIVER.md">transcriber/HARDWARE-RECEIVER.md</a>. The SDR version
+below remains the production path and is preserved at git tag <code>pre-hardware-receiver</code>.</p>
+</blockquote>
 <pre><code>146.520 MHz RF                       rtl_fm -d serial=… -f … -M fm -l &lt;squelch&gt;
       │                                    │  raw S16LE
       ▼                                    ▼

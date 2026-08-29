@@ -1464,6 +1464,13 @@ transcribes each transmission with `whisper.cpp`, and appends it to the event lo
 itself. Net control hears everything on the radio and writes down almost none of it;
 this is the part that writes it down.
 
+> **Hardware receiver trial.** An alternative front end — a conventional receiver whose own
+> squelch gates the audio, into a USB sound card — was validated end to end on 2026-08-29.
+> It removes the need for the software squelch and the three filters built on top of it,
+> at the cost of frequency agility. See
+> [transcriber/HARDWARE-RECEIVER.md](../transcriber/HARDWARE-RECEIVER.md). The SDR version
+> below remains the production path and is preserved at git tag `pre-hardware-receiver`.
+
 ```
 146.520 MHz RF                       rtl_fm -d serial=… -f … -M fm -l <squelch>
       │                                    │  raw S16LE
