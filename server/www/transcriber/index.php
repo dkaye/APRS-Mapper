@@ -325,13 +325,18 @@ input:focus, select:focus { outline: 2px solid #2563eb; outline-offset: -1px; bo
 /* The acceptable window, drawn once: -38 to -20 dBFS on a -70..0 scale. */
 .vu-band { position: absolute; top: 0; bottom: 0; left: 45.7%; width: 25.7%;
            background: #dcfce7; border-left: 1px solid #86efac; border-right: 1px solid #86efac; }
+/* Drawn over the band but under the bar, so a bar that has reached it still shows it. */
+.vu-target { position: absolute; top: -3px; bottom: -3px; left: 61.4%; width: 2px;
+             background: #15803d; }
 .vu-bar { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: #64748b;
           opacity: .85; transition: width .15s linear; }
 .vu-bar.vu-ok  { background: #16a34a; }
 .vu-bar.vu-mid { background: #ca8a04; }
 .vu-bar.vu-hot { background: #dc2626; }
 .vu-bar.vu-low { background: #2563eb; }
-.vu-peak { position: absolute; top: 0; bottom: 0; width: 2px; background: #0f172a; display: none; }
+.vu-target { z-index: 2; }
+.vu-peak { position: absolute; top: 0; bottom: 0; width: 2px; background: #0f172a;
+           display: none; z-index: 3; }
 .vu-read { margin-top: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
 .vu-read .vu-ok  { color: #16a34a; font-weight: 600; }
 .vu-read .vu-mid { color: #ca8a04; }
@@ -462,6 +467,9 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
     <div class="vu">
       <div class="vu-track">
         <div class="vu-band"></div>
+        <!-- The target itself, -27 dBFS: (-27 - -70) / 70. Aiming at the middle of a
+             band is harder than aiming at a line. -->
+        <div class="vu-target"></div>
         <div class="vu-bar" id="vu-bar"></div>
         <div class="vu-peak" id="vu-peak"></div>
       </div>
