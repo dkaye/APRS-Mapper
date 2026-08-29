@@ -2984,9 +2984,9 @@ def main(argv=None):
         raise SystemExit(f"{whisper} is not usable: "
                          f"{(probe.stderr or probe.stdout).strip()[:200]}")
 
-    rtl = None          # the arecord process; named for what it is below
+    capture = None      # the arecord process, or None under --spool-only
     if not args.spool_only:
-        rtl = start_capture(channel, clips, spool)
+        capture = start_capture(channel, clips, spool)
         # Version first, so `journalctl -u transcriber@… ` answers "what is this running"
         # without anyone having to go and look.
         #
@@ -3046,11 +3046,11 @@ def main(argv=None):
 
     try:
         while running:
-            if rtl is not None:
-                ready, _, _ = select.select([rtl.stdout], [], [], 0.2)
+            if capture is not None:
+                ready, _, _ = select.select([capture.stdout], [], [], 0.2)
                 now = time.time()
                 if ready:
-                    chunk = os.read(rtl.stdout.fileno(), GATE_FRAME * 2)
+                    chunk = os.read(capture.stdout.fileno(), GATE_FRAME * 2)
                     if chunk:
                         last_any_data = now
                         pending += chunk
@@ -3166,7 +3166,7 @@ def main(argv=None):
             # transmission simply never arriving: the first one logged, the second
             # vanished, and the journal filled with FileNotFoundError from the duplicates
             # chasing a file the worker had already finished with.
-            if rtl is None:
+            if capture is None:
                 for path in settled_clips(clips):
                     if args.once:
                         handle_clip(channel, path, whisper, model, outbox, retention)
@@ -3179,11 +3179,11 @@ def main(argv=None):
                 break
             # A dead radio must not look like a quiet frequency. systemd restarts us,
             # and a failed unit is a state somebody notices.
-            if rtl is not None and rtl.poll() is not None:
-                log.error("arecord exited (%s): %s", rtl.returncode,
+            if capture is not None and capture.poll() is not None:
+                log.error("arecord exited (%s): %s", capture.returncode,
                           capture_complaint(clips))
                 return 1
-            if rtl is None:
+            if capture is None:
                 time.sleep(0.5)
     finally:
         # Whatever was mid-transmission when we were told to stop is still a
@@ -3195,8 +3195,8 @@ def main(argv=None):
             audio.clear()
         # Stop listening first, then let the backlog finish: a transmission already
         # recorded should still reach the log, and systemd allows time for it.
-        if rtl is not None and rtl.poll() is None:
-            rtl.terminate()
+        if capture is not None and capture.poll() is None:
+            capture.terminate()
         stopping.set()
         worker.join(timeout=30)
         if len(work):

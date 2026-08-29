@@ -10,7 +10,7 @@
  *                                            radio assignment sheet
  *
  * Two kinds of token, deliberately. A device token fetches that device's configuration
- * and reports on that device's own channels — see the calibration section below; a
+ * and reports on that device's own channels — its level and its heartbeat; a
  * channel token only writes log entries. Neither can do the other's job, so a
  * Transcriber left in a shed with a readable config file cannot be used to read the
  * net's traffic, and cannot speak for a receiver somewhere else.
@@ -21,9 +21,9 @@
  * Three more files sit beside it, each holding something written at a moment the manager
  * did not choose, so that none of them moves the registry's fingerprint and makes an open
  * page refuse its own Save: transcriber-state.json (device check-ins),
- * transcriber-calibration.json (what each receiver measured) and transcriber-standing.json
- * (the standing vocabulary). transcriber-vocabulary.json holds the sheet's lists for the
- * same reason. None of them holds a token.
+ * transcriber-heartbeat.json (which channels are still running) and
+ * transcriber-standing.json (the standing vocabulary). transcriber-vocabulary.json holds
+ * the sheet's lists for the same reason. None of them holds a token.
  *
  * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
  * ©2026 Doug Kaye, K6DRK <doug@rds.com>
@@ -369,39 +369,28 @@ function transcriber_fingerprint(?string $path = null): string
     return is_readable($f) ? hash('sha256', (string)file_get_contents($f)) : 'empty';
 }
 
-/* ── Calibration ───────────────────────────────────────────────────────────────
+/* ── What a device reports about itself ───────────────────────────────────────
  *
- * A channel's tuner gain and squelch are measured at the site the receiver is actually
- * on, because 30 dB and a squelch of 25 were measured at ONE site and these go up
- * different hills with different antennas and different neighbours. Measuring takes the
- * channel off the air for a couple of minutes, so it happens when somebody presses
- * Recalibrate against one channel — never at boot, and never on a timer.
+ * Two things, each in its own file: the live audio level while somebody sets a radio's
+ * volume, and a heartbeat saying the channel is still running.
  *
- * Which makes three moments worth recording, and this file holds all three: what the
- * manager asked for, when the device reported that it had started, and what it found.
- * The middle one is not bookkeeping. Devices poll once a minute, so a countdown started
- * when the button was pressed is wrong by up to a minute, in the direction that tells
- * somebody the channel is back on the air while the radio is still busy.
- *
- * Its own file, and that is the whole of what keeps an open manager page working. This
- * is written by devices at moments nobody chose, and the page carries a fingerprint of
- * the registry so a stale write is refused — put these together and a receiver reporting
- * in would make an open page refuse its own Save. The same reasoning that gave the
- * vocabulary its own file, and the same conclusion.
+ * Their own files, and that is the whole of what keeps an open manager page working.
+ * Both are written by devices at moments nobody chose, and the page carries a fingerprint
+ * of the registry so a stale write is refused — put these together and a receiver
+ * reporting in would make an open page refuse its own Save. The same reasoning that gave
+ * the vocabulary its own file, and the same conclusion.
  *
  * Not in transcriber-state.json either, which is the file that looks like the obvious
  * home. That one is rewritten by every device on every 60-second poll, and a
- * read-modify-write arriving from two directions at once loses whichever landed first —
- * which here would be the report the page is waiting for.
+ * read-modify-write arriving from two directions at once loses whichever landed first.
  */
 
 /**
- * Where the live audio level lives, for the calibration meter.
+ * Where the live audio level lives, for the meter on the manager page.
  *
- * A separate file from the calibration record, and deliberately: that one is a durable
- * fact about a receiver ("this is the gain it measured, on this date"), while this is a
- * reading that is worthless three seconds later. Mixing them would mean rewriting a
- * record every second to carry a number nobody wants to keep.
+ * Its own file, and deliberately: this is a reading that is worthless three seconds
+ * later, and putting it anywhere durable would mean rewriting a record every second to
+ * carry a number nobody wants to keep.
  */
 function transcriber_level_path(?string $path = null): string
 {
@@ -429,7 +418,7 @@ function transcriber_level_load(?string $path = null): array
 /**
  * Record one channel's current level.
  *
- * No lock and no read-modify-write, unlike the calibration record. This is written about
+ * No lock and no read-modify-write. This is written about
  * once a second per channel by the only device that can speak for it, and the whole file
  * is rewritten each time -- so two channels reporting in the same instant can lose one
  * reading. That is the right trade here: a lost sample is invisible on a meter that
@@ -506,93 +495,6 @@ function transcriber_heartbeat_update(string $channel, array $beat, ?string $pat
     rename($tmp, $file);
 }
 
-function transcriber_calibration_path(?string $path = null): string
-{
-    return dirname(transcriber_path($path)) . '/transcriber-calibration.json';
-}
-
-/** Every channel that has ever been asked to calibrate, keyed by channel id. A channel
- *  that is absent has never been calibrated, and the manager says so in those words. */
-function transcriber_calibration_load(?string $path = null): array
-{
-    $f = transcriber_calibration_path($path);
-    $raw = is_readable($f) ? (json_decode((string)file_get_contents($f), true) ?: []) : [];
-    $out = [];
-    foreach ($raw as $id => $row) {
-        if (!is_array($row)) continue;
-        $out[(string)$id] = [
-            'requested' => (int)($row['requested'] ?? 0),
-            'started'   => (int)($row['started']   ?? 0),
-            'finished'  => (int)($row['finished']  ?? 0),
-            'expected'  => (int)($row['expected']  ?? 0),
-            'gain'      => (float)($row['gain']    ?? 0),
-            'squelch'   => (int)($row['squelch']   ?? 0),
-            'error'     => (string)($row['error']  ?? ''),
-        ];
-    }
-    return $out;
-}
-
-/** Merge `$fields` into one channel's record and store it. Returns the record.
- *
- *  Read-modify-write under a lock, unlike everything else here. The other writers are a
- *  person pressing Save; these arrive from receivers, several of which can be measuring
- *  at once, and losing a "finished" is a page that spins until it times out on a
- *  calibration that worked. */
-function transcriber_calibration_update(string $channel, array $fields, ?string $path = null): array
-{
-    $file = transcriber_calibration_path($path);
-    $dir  = dirname($file);
-    if (!is_dir($dir)) @mkdir($dir, 0775, true);
-
-    $lock = @fopen($file . '.lock', 'c');
-    if ($lock !== false) flock($lock, LOCK_EX);
-    try {
-        $all = transcriber_calibration_load($path);
-        $blank = ['requested' => 0, 'started' => 0, 'finished' => 0, 'expected' => 0,
-                  'gain' => 0.0, 'squelch' => 0, 'error' => ''];
-        $all[$channel] = $fields + ($all[$channel] ?? $blank);
-        $tmp = $file . '.tmp';
-        file_put_contents($tmp, json_encode($all, JSON_PRETTY_PRINT) . "\n");
-        @chmod($tmp, 0640);
-        rename($tmp, $file);
-    } finally {
-        if ($lock !== false) { flock($lock, LOCK_UN); fclose($lock); }
-    }
-    return $all[$channel];
-}
-
-/** Ask one channel to measure its site at its next check. Returns the stamp.
- *
- *  The start and the finish are cleared and the measured pair is not: until the new one
- *  lands, the old one is still what the receiver is using, and the page should go on
- *  saying so rather than blanking the only numbers anybody knows. */
-function transcriber_request_calibration(string $channel, ?string $path = null): int
-{
-    $now = time();
-    transcriber_calibration_update($channel, [
-        'requested' => $now, 'started' => 0, 'finished' => 0, 'expected' => 0, 'error' => '',
-    ], $path);
-    return $now;
-}
-
-/** What this device's channels have been asked to do, as {channel id: stamp}.
- *
- *  Only its own, exactly as the channel list is. A device compares each stamp with the
- *  last one it acted on, so nothing has to be written back and a device that was switched
- *  off does not run a calibration somebody asked for last week. */
-function transcriber_calibration_requests_for(string $device, ?string $path = null): array
-{
-    $all = transcriber_calibration_load($path);
-    $out = [];
-    foreach (transcriber_load($path)['channels'] as $c) {
-        $id = (string)($c['id'] ?? '');
-        if ($id === '' || ($c['device'] ?? '') !== $device) continue;
-        if (!empty($all[$id]['requested'])) $out[$id] = (int)$all[$id]['requested'];
-    }
-    return $out;
-}
-
 /** Which device owns a channel, or '' if no channel by that name exists.
  *
  *  The check that keeps one Transcriber from reporting about another's channels. A report
@@ -608,51 +510,18 @@ function transcriber_channel_device(string $channel, ?string $path = null): stri
     return '';
 }
 
-/** One report from a device. Returns the stored record, or ['error' => why].
+/* The calibration record lived here until 2026-08-29: what each channel had measured
+ * for tuner gain and software squelch, which channel had been asked to measure itself,
+ * and the started/done/failed report a device sent back while it did.
  *
- *  Three states and no others: `started`, with how long the device expects to take;
- *  `done`, with what it measured; `failed`, with a sentence saying why. Anything else is
- *  a device running code the server has not seen — the archive lands on the nightly run
- *  and the server is deployed separately — and is refused rather than stored, because a
- *  record in a state nothing knows how to display is worse than no record.
+ * All of it belonged to the SDR. A receiver whose own squelch gates the audio has no
+ * tuner gain to set and no software squelch to measure -- it has a volume knob, and the
+ * meter on the manager page is how that gets set. The whole path went out with rtl_fm.
  *
- *  A failure keeps the measured pair. The channel goes back on the air using exactly what
- *  it was using before, so that is what the manager should go on showing, beside the
- *  reason the new measurement was abandoned. */
-function transcriber_record_calibration(string $channel, array $body, ?string $path = null): array
-{
-    $state = (string)($body['state'] ?? '');
-    $now   = time();
-    if ($state === 'started') {
-        return transcriber_calibration_update($channel, [
-            'started'  => $now,
-            // Bounded: it is a countdown in somebody's browser, not a promise.
-            'expected' => max(0, min(3600, (int)($body['expected'] ?? 0))),
-            'finished' => 0,
-            'error'    => '',
-        ], $path);
-    }
-    if ($state === 'done') {
-        return transcriber_calibration_update($channel, [
-            'finished' => $now,
-            'gain'     => max(0.0, min(60.0, (float)($body['gain'] ?? 0))),
-            'squelch'  => max(0, min(1000, (int)($body['squelch'] ?? 0))),
-            'error'    => '',
-        ], $path);
-    }
-    if ($state === 'failed') {
-        // substr, not mb_substr: the Pi's PHP has no mbstring, and a fatal here is a
-        // device whose report vanishes with a 500 nobody reads.
-        return transcriber_calibration_update($channel, [
-            'finished' => $now,
-            'error'    => substr(trim((string)($body['error'] ?? 'it did not say why')), 0, 300),
-        ], $path);
-    }
-    // `refused` rather than the absence of some other key, so the caller is testing what it
-    // means rather than a side effect of the shape: a stored record carries an `error`
-    // field of its own, and a failed calibration is a perfectly good record.
-    return ['refused' => true, 'error' => 'unknown state'];
-}
+ * transcriber-calibration.json is left on disk rather than deleted here. Nothing reads
+ * it, and a store function that exists only to remove a file is a worse thing to keep
+ * than the file.
+ */
 
 /* ── Assignment-sheet vocabulary ───────────────────────────────────────────────
  *
@@ -988,7 +857,7 @@ function transcriber_vocabulary_save(array $v, ?string $path = null): void
  *     written from its own button, at its own moment, and if it lived in the registry then
  *     saving it would move that fingerprint and the open page would refuse its own next
  *     Save — a page that breaks itself, for a reason nobody could see. The same reasoning
- *     as the calibration file and the vocabulary file, and the same conclusion.
+ *     as the vocabulary file and the heartbeat file, and the same conclusion.
  *   - It is not in transcriber-vocabulary.json either, which is the file that looks like
  *     the obvious home. That one is overwritten whole by every sheet refresh, so a standing
  *     list kept in it would be erased by the next poll — silently, fifteen minutes later,

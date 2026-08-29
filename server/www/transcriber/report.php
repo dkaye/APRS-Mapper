@@ -1,29 +1,28 @@
 <?php
 /**
- * Transcriber calibration report — marsaprs.org/transcriber/report.php
+ * Transcriber device report — marsaprs.org/transcriber/report.php
  *
  * The one thing a device tells the server about itself. Everything else a Transcriber
- * does is a fetch — it collects its channels and acts on them — but a calibration takes a
- * channel off the air for a couple of minutes, and the manager cannot show an honest
- * countdown for something it can only guess the start of. So the device says when it has
- * started, how long it expects to take, and what it measured:
+ * does is a fetch — it collects its channels and acts on them — so this is the only
+ * direction that runs the other way:
  *
  *   POST /transcriber/report.php
- *   {"device":"rx1","token":"…","channel":"rx1-146520","state":"started","expected":90}
- *   {"device":"rx1","token":"…","channel":"rx1-146520","state":"done","gain":16.6,"squelch":30}
- *   {"device":"rx1","token":"…","channel":"rx1-146520","state":"failed","error":"…"}
  *   {"device":"rx1","token":"…","channel":"rx1-146520","state":"level","level_db":-27.4}
  *   {"device":"rx1","token":"…","channel":"rx1-146520","state":"alive","last_heard":…}
  *
- * The fourth is the calibration meter's feed: a band-limited (200-4000 Hz) audio level,
- * sent about once a second while a channel is being levelled by hand. It is kept apart
- * from the calibration record because it is worthless three seconds later.
+ * The first is the level meter's feed: a band-limited (200-4000 Hz) audio level, sent
+ * about once a second while somebody is setting a radio's volume by hand. Nothing keeps
+ * it, because it is worthless three seconds later.
  *
- * The last is the heartbeat, once a minute for as long as the channel is running. It
+ * The second is the heartbeat, once a minute for as long as the channel is running. It
  * exists because a channel that cannot start and a channel on a quiet band produce the
  * same thing -- no log entries -- and on 2026-08-29 that let this receiver crash-loop for
- * eighty-three minutes with nothing anywhere reporting a fault. A level reading is
- * worthless three seconds later; a heartbeat is worth most when it stops arriving.
+ * eighty-three minutes with nothing anywhere reporting a fault. The level is worthless
+ * three seconds later; a heartbeat is worth most when it stops arriving.
+ *
+ * There were three calibration states here as well — started, done, failed — carrying a
+ * tuner gain and a software squelch. Both belonged to the SDR and neither exists on a
+ * receiver whose own squelch gates the audio. Removed 2026-08-29.
  *
  * The DEVICE token, and the channel is checked against the device that owns it. The two
  * kinds of token do not blur: a device token fetches this device's configuration and now
@@ -70,11 +69,9 @@ if (transcriber_channel_device($channel) !== $device) {
     exit(json_encode(['error' => 'Forbidden']));
 }
 
-// A level reading is not a calibration state, so it does not go through
-// record_calibration's state machine at all: it has no started/finished, it does not
-// belong in the durable record, and it arrives about once a second while somebody is
-// setting a knob. Same authentication, different store, and it answers immediately so a
-// device streaming these is never waiting on a lock.
+// Nothing durable is kept: a level arrives about once a second while somebody is setting
+// a knob, and the next one replaces it. It answers immediately so a device streaming
+// these is never waiting on a lock.
 //
 // The level is band-limited (200-4000 Hz) by the DEVICE before it is sent. That is not
 // an implementation detail to move here later: judging a radio's level by its raw peak is
@@ -88,18 +85,18 @@ if (($body['state'] ?? '') === 'level') {
     exit(json_encode(['ok' => true]));
 }
 
-// A heartbeat, for the same reason a level reading is here: same authentication, same
-// "this device may speak only for its own channels" check, and no business in the
-// calibration record. It answers immediately -- a channel posting once a minute must
-// never be waiting on a lock to go back to listening.
+// A heartbeat: same authentication, and the same "this device may speak only for its
+// own channels" check. It answers immediately -- a channel posting once a minute must
+// never be waiting on anything to go back to listening.
 if (($body['state'] ?? '') === 'alive') {
     transcriber_heartbeat_update($channel, $body);
     exit(json_encode(['ok' => true]));
 }
 
-$row = transcriber_record_calibration($channel, $body);
-if (!empty($row['refused'])) {
-    http_response_code(400);
-    exit(json_encode(['error' => $row['error']]));
-}
-echo json_encode(['ok' => true]);
+// Anything else. Until 2026-08-29 this fell through to the calibration record, which a
+// receiver with a hardware squelch has nothing to say to: there is no tuner gain to
+// measure and no software squelch to set. Refused by name rather than accepted silently,
+// so a device sending a state this server retired finds out, instead of posting into
+// nothing for a week.
+http_response_code(400);
+echo json_encode(['error' => 'Unknown state']);

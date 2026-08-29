@@ -15,8 +15,7 @@ require_once '/var/www/html/track_ip.php'; track_client_ip('transcriber');
  *   ?vocabulary POST — re-read the assignment sheet now, return what it found
  *   ?standing   GET  — the standing vocabulary as typed, with a fingerprint
  *   ?standing   POST — {text, fingerprint}, write the standing vocabulary
- *   ?calibrate  POST — {channel} → ask that channel to measure its gain and squelch
- *   ?status     GET  — per-device check-in, calibration state, and channel heartbeats
+ *   ?status     GET  — per-device check-in, and per-channel heartbeats
  *   ?logout     GET  — end the session
  *
  * Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
@@ -101,11 +100,6 @@ if (isset($_GET['load'])) {
     // this within a quarter of an hour on its own. The button is there for the case that
     // matters, which is a sheet edited two minutes ago.
     $data['vocabulary'] = transcriber_vocabulary_report();
-    // What each channel was last measured at, and when — including the channels that have
-    // never been measured at all, which are simply absent. Loaded here as well as polled
-    // from ?status so the page can say "never calibrated" the moment it opens, rather than
-    // showing nothing until somebody presses something.
-    $data['calibration'] = transcriber_calibration_load();
     // When each channel last said it was running. Sent here as well as from ?status so
     // the page can answer "is the receiver alive" the moment it opens, rather than
     // showing nothing for the first thirty seconds -- which is the same nothing it shows
@@ -145,18 +139,17 @@ if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     jsonOut(['ok' => true, 'event' => $evName]);
 }
 
-// Polled by the page while it waits for the fleet to check in, or for one channel to
-// finish measuring itself. Deliberately cheap: three small files and a hash per device,
-// no writes.
+// Polled by the page while it waits for the fleet to check in, and once every thirty
+// seconds for the receiver's Status row. Deliberately cheap: two small files and a hash
+// per device, no writes.
 //
 // `now` is the server's clock and the page does its arithmetic against it rather than
-// against the browser's. A calibration countdown runs from a timestamp a device reported,
-// and a laptop two minutes out would otherwise show a measurement finishing before it
-// started.
+// against the browser's. A heartbeat's age is the difference between two timestamps, and
+// a laptop two minutes out would otherwise call a live receiver dead — or a dead one
+// live, which is worse.
 if (isset($_GET['status'])) {
     jsonOut(['now'         => time(),
              'devices'     => transcriber_device_status(),
-             'calibration' => transcriber_calibration_load(),
              'heartbeat'   => transcriber_heartbeat_load()]);
 }
 
@@ -170,21 +163,6 @@ if (isset($_GET['level'])) {
 if (isset($_GET['update']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$canEdit) jsonOut(['error' => 'Missing permission: netbird.admin'], 403);
     jsonOut(['ok' => true, 'requested' => transcriber_request_update()]);
-}
-
-// Recalibrate one channel: measure the tuner gain for the site it is on, and then the
-// squelch at that gain. Per channel rather than per device or fleet-wide, because it
-// takes that one channel off the air for a couple of minutes and its neighbour on the
-// same Pi has no reason to stop listening.
-//
-// The channel has to exist here and not only on the device. A request for one that does
-// not is a request no device will ever answer, and the page would count down to nothing.
-if (isset($_GET['calibrate']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!$canEdit) jsonOut(['error' => 'Missing permission: netbird.admin'], 403);
-    $body = json_decode(file_get_contents('php://input'), true);
-    $channel = trim((string)($body['channel'] ?? ''));
-    if (transcriber_channel_device($channel) === '') jsonOut(['error' => 'Not found'], 404);
-    jsonOut(['ok' => true, 'requested' => transcriber_request_calibration($channel)]);
 }
 
 // Re-read the assignment sheet now. Unconditional — this is the button somebody presses
@@ -201,8 +179,8 @@ if (isset($_GET['vocabulary']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
 // Its own endpoint and its own file rather than a field in the registry, and that is not
 // tidiness. A write through ?save would move the registry's fingerprint, and the page that
 // just made the edit would be refused its own next Save as a stale write — a page that
-// breaks itself for a reason nobody can see. Same reasoning as the calibration and
-// vocabulary files; see the comment in store.php.
+// breaks itself for a reason nobody can see. Same reasoning as the vocabulary and
+// heartbeat files; see the comment in store.php.
 if (isset($_GET['standing'])) {
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$canEdit) jsonOut(['error' => 'Missing permission: netbird.admin'], 403);
@@ -314,15 +292,6 @@ input:focus, select:focus { outline: 2px solid #2563eb; outline-offset: -1px; bo
 .ro { color: #374151; }                  /* read-only: plain text, never an empty box */
 .tok { font-size: 12px; white-space: nowrap; }
 .tok.set { color: #16a34a; } .tok.unset { color: #dc2626; font-weight: 600; }
-/* Never calibrated is colored like the thing it is: not an error, but a receiver running
-   numbers measured on somebody else's hill, which nobody would otherwise think to look
-   for. Same amber as a missing vocabulary section, for the same reason. */
-/* The banner, not the column. A channel running on built-in numbers already says
-   "Never" in its own row, in amber, and on 2026-08-22 that was not enough: a channel
-   added the night before an event ran all day on defaults measured for nowhere, the
-   squelch never gated, and eight hours of a net produced twenty-five entries of which
-   most read "the the the you." The row said so; nobody was looking at the row.
-   This says it once, at the top, in the words that describe the consequence. */
 /* Whether the channel is running at all, which is a different question from whether
    anybody is talking on it. Green only for a receiver that spoke within the last five
    minutes; everything else is a fault until proven otherwise, because the failure this
@@ -331,10 +300,6 @@ input:focus, select:focus { outline: 2px solid #2563eb; outline-offset: -1px; bo
 .beat.live { color: #16a34a; font-weight: 600; }
 .beat.stale { color: #dc2626; font-weight: 600; }
 .beat.none { color: #b45309; font-weight: 600; }
-.cal { font-size: 12px; white-space: nowrap; }
-.cal.never { color: #b45309; font-weight: 600; }
-.cal.busy { color: #2563eb; }
-.cal.bad { color: #dc2626; font-weight: 600; }
 .vu-wrap { margin: 10px 0 22px; }
 .vu-wrap select { margin-left: 8px; }
 .vu { margin-top: 12px; max-width: 640px; }
@@ -1188,47 +1153,6 @@ function renderVocabulary() {
           + ' shorten one of the lists.'
         : '';
 }
-
-/* What this channel was measured at, or that it never has been.
- *
- * "Never" is the state this column exists for. A receiver that has never been calibrated
- * works — it runs the built-in gain and squelch — and looks exactly like one that has, so
- * a newly sited Pi would quietly use numbers measured on a different hill with a different
- * antenna for as long as nobody thought to ask. Nobody presses a button they have no
- * reason to know about, so the page has to say it.
- *
- * A failure keeps showing the last good pair beside the reason, because that pair is what
- * the receiver went back on the air with. */
-/* Say once, at the top, that a channel is about to listen using numbers measured
- * somewhere else.
- *
- * Only ENABLED channels count. A disabled row is not listening, so warning about it is
- * noise — and noise in a warning is how the row-level "Never" came to be ignored.
- *
- * The wording names the consequence rather than the state. "Never calibrated" is a fact
- * about a config file; "will not hear the net properly" is what actually happened on
- * 2026-08-22, and is what makes somebody press the button before the event rather than
- * read past it.
- */
-/* Measure one channel's gain and squelch, at the site it is on.
- *
- * Off the air while it runs, so it says so first — the same shape as "Update devices",
- * which also asks before doing something a receiver will notice. */
-/* Wait for one channel to measure itself, and count down honestly while it does.
- *
- * Two phases, because there are two waits and only the second one has a length. The
- * device collects its settings once a minute, so the first phase is the same wait as
- * everything else on this page — up to 75 seconds before it even hears about this. A
- * countdown started at the button press would spend that minute counting down to a
- * measurement that had not begun, and would then claim the channel was back on the air
- * while the radio was still busy.
- *
- * So the device reports that it has STARTED, and how long it expects to take, and the
- * second phase counts down from that against the server's clock rather than the
- * browser's. When the estimate runs out and the device has not reported back, the page
- * says it is still measuring rather than pretending to know something it does not. */
-const CALIBRATE_PICKUP = WAIT_SECONDS;      // the same 60-second poll, and the same slack
-const CALIBRATE_OVERRUN = 420;              // ...after which the receiver is not answering
 
 function tokenCell(row, kind, key) {
     const state = row.has_token ? '<span class="tok set">set</span>'
