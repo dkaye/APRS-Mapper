@@ -29,6 +29,12 @@
  * ©2026 Doug Kaye, K6DRK <doug@rds.com>
  */
 
+// Where the events live. The transcriber's per-event settings sit beside each event's
+// own files, so this is the one place the manager reaches into the web root.
+if (!defined('MARSAPRS_WEB_ROOT')) {
+    define('MARSAPRS_WEB_ROOT', getenv('MARSAPRS_WEB_ROOT') ?: '/var/www/html');
+}
+
 if (!defined('MARSAPRS_CHANNELS')) {
     define('MARSAPRS_CHANNELS', getenv('MARSAPRS_CHANNELS') ?: '/var/lib/marsaprs/transcriber.json');
 }
@@ -173,6 +179,86 @@ function transcriber_token(): string
  *  rewriting the file that holds every token that often is a good way to eventually lose
  *  one to a truncated write. Nothing here is secret.
  */
+/* ── per-event settings ────────────────────────────────────────────────────────
+ *
+ * What a receiver is called, how carefully it transcribes, and which vocabulary it uses
+ * are facts about an EVENT, not about the hardware. "Tam West" at one event is "Radio" at
+ * the next; the assignment sheet changes every time; the tracker ID names are the tactical
+ * calls of whoever is out today. Holding one global copy meant the Dipsea vocabulary was
+ * still loaded at Escape from Alcatraz.
+ *
+ * Stored in the event's own directory rather than in the registry, for two reasons: it
+ * travels with the event, and `events/` is in the nightly backup where
+ * /var/lib/marsaprs/transcriber.json is not.
+ *
+ * The RECEIVER stays global -- host, config token, log token. There is one of it and no
+ * event has an opinion about which machine is listening.
+ */
+
+/** The active event's name, from the config.yaml symlink the whole server keys off. */
+function transcriber_event_name(): string
+{
+    $cfg = MARSAPRS_WEB_ROOT . '/config.yaml';
+    if (!is_readable($cfg)) return '';
+    foreach (file($cfg, FILE_IGNORE_NEW_LINES) as $line) {
+        if (preg_match('/^\s*event\s*:\s*(.+?)\s*$/', $line, $m)) {
+            return trim($m[1], " \"'");
+        }
+    }
+    return '';
+}
+
+/** Where one event's transcriber settings live. '' if the name is unusable as a path --
+ *  an event called "../../etc" must not be able to name a file outside the events tree. */
+function transcriber_event_path(string $event): string
+{
+    $event = trim($event);
+    if ($event === '' || strpos($event, '/') !== false || strpos($event, "\0") !== false
+        || $event === '.' || $event === '..') {
+        return '';
+    }
+    return MARSAPRS_WEB_ROOT . '/events/' . $event . '/transcriber.json';
+}
+
+/** One event's settings, with every key present so callers never test for absence. */
+function transcriber_event_load(string $event): array
+{
+    $blank = ['label' => '', 'model' => 'ggml-base.en.bin', 'enabled' => true,
+              'send_audio' => false, 'sheet_url' => '', 'vocabulary_extra' => '',
+              'spoken_ids' => []];
+    $f = transcriber_event_path($event);
+    if ($f === '' || !is_readable($f)) return $blank;
+    $raw = json_decode((string)file_get_contents($f), true);
+    if (!is_array($raw)) return $blank;
+    return [
+        'label'            => substr(trim((string)($raw['label'] ?? '')), 0, 40),
+        'model'            => in_array($raw['model'] ?? '', ['ggml-tiny.en.bin', 'ggml-base.en.bin'], true)
+                              ? $raw['model'] : 'ggml-base.en.bin',
+        'enabled'          => !empty($raw['enabled']),
+        'send_audio'       => !empty($raw['send_audio']),
+        'sheet_url'        => substr(trim((string)($raw['sheet_url'] ?? '')), 0, 300),
+        'vocabulary_extra' => substr((string)($raw['vocabulary_extra'] ?? ''), 0, 20000),
+        'spoken_ids'       => is_array($raw['spoken_ids'] ?? null) ? $raw['spoken_ids'] : [],
+    ];
+}
+
+/** Write one event's settings. Same tmp-then-rename as everything else here, so a reader
+ *  never sees a half-written file. */
+function transcriber_event_save(string $event, array $settings): bool
+{
+    $f = transcriber_event_path($event);
+    if ($f === '') return false;
+    $dir = dirname($f);
+    if (!is_dir($dir)) return false;      // an event directory is created by the map, not here
+    $merged = array_merge(transcriber_event_load($event), $settings);
+    $tmp = $f . '.tmp';
+    if (file_put_contents($tmp, json_encode($merged, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n") === false) {
+        return false;
+    }
+    @chmod($tmp, 0664);
+    return rename($tmp, $f);
+}
+
 function transcriber_state_path(?string $path = null): string
 {
     return dirname(transcriber_path($path)) . '/transcriber-state.json';

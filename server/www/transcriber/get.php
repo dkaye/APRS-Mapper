@@ -45,8 +45,30 @@ transcriber_vocabulary_refresh_if_stale();
 
 header('Content-Type: application/json');
 header('Cache-Control: no-store');
+// What a receiver is CALLED, how carefully it transcribes, and whether it sends audio are
+// facts about the event, not the hardware -- so they are overlaid here from the active
+// event's own file rather than read from the registry. The registry keeps only what is
+// true of the machine: which channel it is, and the token it logs with.
+//
+// Overlaid at serve time rather than stored merged, so changing the active event changes
+// what the receiver is called at its next poll, with nothing to edit and nothing to
+// migrate. An event with no file of its own falls back to the blanks in
+// transcriber_event_load(), which is a working receiver with an empty label -- not a
+// broken one.
+$evName  = transcriber_event_name();
+$evSet   = transcriber_event_load($evName);
+$channels = transcriber_channels_for($device);
+foreach ($channels as &$c) {
+    if ($evSet['label'] !== '') $c['label'] = $evSet['label'];
+    $c['model']      = $evSet['model'];
+    $c['enabled']    = $evSet['enabled'];
+    $c['send_audio'] = $evSet['send_audio'];
+}
+unset($c);
+
 echo json_encode([
-    'channels'         => transcriber_channels_for($device),
+    'event'            => $evName,
+    'channels'         => $channels,
     'update_requested' => $state['update_requested'],
     // Recalibrate, pressed against one channel in the manager. Per channel and not
     // fleet-wide, because it takes that channel off the air for a couple of minutes: a
