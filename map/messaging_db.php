@@ -819,7 +819,21 @@ class MessagingDb
             // has no members, so deriving a recipient the usual way yields nothing.
             if ($kind === 'log') { $m['to_label'] = 'Log'; continue; }
             if ($kind === 'entity' || $kind === 'entity_multi') {
-                $m['to_label'] = (string)($conv['title'] ?? '');
+                // The title names the mobile entity this thread is ABOUT, which is the
+                // recipient only while somebody else is writing to them. When the entity
+                // itself replies the title names the SENDER, and using it announced
+                // "from Android, to Android" on every monitoring phone. So the title is
+                // right for messages INTO the thread and wrong for messages out of it.
+                $sender = null;
+                foreach ($mem as $p) {
+                    if ((int)$p['id'] === (int)$m['from_id']) { $sender = $p; break; }
+                }
+                if (($sender['kind'] ?? '') === 'mobile') {
+                    $others = array_filter($mem, fn($p) => (int)$p['id'] !== (int)$m['from_id']);
+                    $m['to_label'] = implode(', ', array_map($label, $others));
+                } else {
+                    $m['to_label'] = (string)($conv['title'] ?? '');
+                }
                 continue;
             }
             $others = array_filter($mem, fn($p) => (int)$p['id'] !== (int)$m['from_id']);
@@ -862,7 +876,20 @@ class MessagingDb
             // this; history() did not, so the all-messages view labelled a multi-device
             // recipient with a list of their phones.
             if ($k === 'entity' || $k === 'entity_multi') {
-                $msg['to_label'] = (string)($title[$cid] ?? '');
+                // See thread() above: the title names the entity the thread is about, so
+                // it is the recipient only when somebody else is writing to them. An
+                // entity replying to Net Control was labelled with its own name.
+                $sender = null;
+                foreach ($members[$cid] ?? [] as $p) {
+                    if ((int)$p['id'] === (int)$msg['from_id']) { $sender = $p; break; }
+                }
+                if (($sender['kind'] ?? '') === 'mobile') {
+                    $others = array_filter($members[$cid] ?? [],
+                                           fn($p) => (int)$p['id'] !== (int)$msg['from_id']);
+                    $msg['to_label'] = implode(', ', array_map($label, $others));
+                } else {
+                    $msg['to_label'] = (string)($title[$cid] ?? '');
+                }
                 continue;
             }
             $others = array_filter($members[$cid] ?? [], fn($p) => (int)$p['id'] !== $msg['from_id']);
