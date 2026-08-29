@@ -2875,15 +2875,97 @@ def test_a_standalone_tone_costs_the_log_neither_a_line_nor_a_second_of_audio():
     The audio block deliberately runs even when the transcription is rejected, so a
     garbled human over is still audible. A courtesy tone is the case where that is
     wrong, and it is only wrong if the verdict is reached first.
+
+    whisper is stubbed to return a plainly loggable sentence rather than "Beep.", and
+    that is the difference between this test working and only appearing to. With "Beep."
+    it passed with the tone filter's drop removed entirely -- clean() rejects "Beep." on
+    its own, and Handler.seen is empty on any machine whose ffmpeg cannot encode, so both
+    assertions held while the thing under test did nothing. A sentence that WOULD be
+    logged is the only version that can tell the two apart, and it is also what whisper
+    really does with a tone.
     """
     with tempfile.TemporaryDirectory() as tmp:
         rc, texts = run_pipeline(
-            tmp, "Beep.", channel={"tone_filter": "drop", "send_audio": True},
+            tmp, "Aid three we have a rider down.",
+            channel={"tone_filter": "drop", "send_audio": True},
             audio=lambda p: _tone_wav(p, 3.0, hz=800))
         check("the channel finishes normally", rc, 0)
-        check("nothing is written to the log", texts, [])
-        check("and nothing at all is posted — no text row, no audio row",
-              len(Handler.seen), 0)
+        check("the tone never reached whisper, so nothing was invented from it",
+              texts, [])
+
+
+def _brief_noise_wav(path, seconds, sound_seconds, rate=16000):
+    """A short burst of broadband noise in an otherwise silent clip.
+
+    Deliberately NOT a tone: the point is the case the tone scan abstains on, which is
+    where every courtesy beep that reached a phone on 2026-08-29 got through. Noise has
+    no frequency to agree on, so tone_scan says nothing and the decision falls to how
+    much of the clip carries sound at all.
+    """
+    n = int(rate * seconds)
+    on = int(rate * sound_seconds)
+    frames = []
+    state = 99
+    for i in range(n):
+        if i < on:
+            state = (1103515245 * state + 12345) % (1 << 31)
+            v = (state % 16000) - 8000
+        else:
+            v = 0
+        frames.append(struct.pack("<h", int(v)))
+    with wave.open(path, "w") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate)
+        w.writeframes(b"".join(frames))
+
+
+def test_a_transmission_nobody_spoke_in_costs_the_log_no_audio_either():
+    """The gap that let courtesy beeps through, closed on 2026-08-29.
+
+    The tone scan has no opinion on a short non-tonal burst, and no opinion is correctly
+    read as "transcribe it" -- so the audio was posted BEFORE whisper ran, and by the
+    time the transcription came back as '' or 'BEEP!' it was already on somebody's
+    phone. Eight of those arrived that afternoon against six real transmissions.
+
+    Both detectors now feed the one decision, so this must beat the audio post exactly
+    the way a recognised tone does.
+
+    whisper is stubbed to return a plainly loggable sentence, which is the point rather
+    than a convenience: it is what whisper actually does with a beep -- the invented
+    speech every filter here exists to keep out -- and it is the only assertion that
+    separates the two behaviours on any machine. Counting posted rows does not: this
+    Mac's ffmpeg is broken, so no audio row is posted whatever the code decides, and a
+    check on Handler.seen passes with the promotion reverted.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, texts = run_pipeline(
+            tmp, "Aid three we have a rider down.",
+            channel={"tone_filter": "drop", "send_audio": True},
+            audio=lambda p: _brief_noise_wav(p, 2.0, 0.45))
+        check("the channel finishes normally", rc, 0)
+        check("whisper never ran, so its invention never reached the log", texts, [])
+
+
+def test_a_short_real_over_is_not_taken_for_an_empty_one():
+    """The thin margin, pinned.
+
+    Courtesy beeps carried 0.38-0.61 s of sound in the corpus and real traffic 0.90-3.17,
+    with the threshold at 0.80 -- a tenth of a second of daylight. A brief over is the
+    shape that tests it, and it must survive with both its text and its audio.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, texts = run_pipeline(
+            tmp, "Roger.", channel={"tone_filter": "drop", "send_audio": True},
+            audio=lambda p: _speechlike_wav(p, 1.2))
+        check("the transmission still reaches the log", texts, ["Roger."])
+
+
+def test_observing_an_empty_transmission_still_sends_it():
+    """Observe mode still changes nothing, for the new detector as for the old one."""
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, texts = run_pipeline(
+            tmp, "K6DRK testing.", channel={"tone_filter": "observe", "send_audio": True},
+            audio=lambda p: _brief_noise_wav(p, 2.0, 0.45))
+        check("observe mode keeps the transcription", texts, ["K6DRK testing."])
 
 
 def test_observing_a_tone_still_logs_and_still_sends_the_audio():
@@ -3009,6 +3091,9 @@ if __name__ == "__main__":
         test_an_unreadable_or_tiny_clip_is_no_opinion_not_a_drop,
         test_the_filter_defaults_to_observing_and_rejects_a_typo,
         test_a_standalone_tone_costs_the_log_neither_a_line_nor_a_second_of_audio,
+        test_a_transmission_nobody_spoke_in_costs_the_log_no_audio_either,
+        test_a_short_real_over_is_not_taken_for_an_empty_one,
+        test_observing_an_empty_transmission_still_sends_it,
         test_observing_a_tone_still_logs_and_still_sends_the_audio,
         test_a_tone_in_front_of_speech_is_not_a_standalone_tone,
     ]:

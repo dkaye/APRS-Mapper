@@ -2811,7 +2811,9 @@ def handle_clip(channel, path, whisper, model, outbox, retention=None):
         # live clips that logged nothing and 25 of 140 corpus noise clips, and on none of
         # the 47 live or 34 corpus clips that carried real traffic.
         quiet_why = nothing_said_reason(peaks, peak_rate)
-        if quiet_why:
+        # Only in observe mode. In drop mode the decision below says "dropped" and this
+        # would contradict it in the same second, on the same clip.
+        if quiet_why and getattr(channel, "tone_filter", "observe") != "drop":
             log.info("would drop as empty (%.1fs): %s — kept, and its audio sent",
                      seconds, quiet_why)
         if seconds > CARRIER_GAP_MIN_CLIP:
@@ -2823,20 +2825,41 @@ def handle_clip(channel, path, whisper, model, outbox, retention=None):
                          ", ".join("%.1fs" % start for start, _ in gaps))
     if not tone_why and filtering:
         tone_why = flat_reason(flat_scan(path))
-    if tone_why and getattr(channel, "tone_filter", "observe") == "drop":
-        log.info("dropped (%.1fs): %s", seconds, tone_why)
+    # Both detectors, one decision.
+    #
+    # tone_why is "this was a tone"; quiet_why is "nobody said anything in it". To
+    # somebody holding a radio those are the same event, and the setting has been worded
+    # for both since it was written -- see the note on `filtering` above. Until
+    # 2026-08-29 only the first acted, and the second merely said what it would have
+    # done, which on a live repeater meant every courtesy beep the tone scan had no
+    # opinion about arrived on somebody's phone: eight of them that afternoon against six
+    # real transmissions.
+    #
+    # tone_why first when both fire, because "a Morse identifier at 1454 Hz" tells an
+    # operator reading the log more than "only 0.45s of the clip carries sound" does.
+    #
+    # The margin here is thinner than the tone scan's and worth stating: the corpus put
+    # courtesy beeps at 0.38-0.61 s of sound and real traffic at 0.90-3.17, and
+    # CONTENT_MIN_SECONDS sits at 0.80 -- a tenth of a second below the quietest real
+    # transmission measured. A one-word over is the shape that would test it. That is
+    # what the retention manifest below is for: a clip taken by this rule is still
+    # written down, so "it dropped something real" is a question the card can answer
+    # rather than one that needs somebody to have been listening at the time.
+    drop_why = tone_why or quiet_why
+    if drop_why and getattr(channel, "tone_filter", "observe") == "drop":
+        log.info("dropped (%.1fs): %s", seconds, drop_why)
         if retention is not None:
             # Recorded with everything else, so an operator reading the card back can see
             # what the detector took as well as what it let through. The whisper and clean
             # columns are empty because it never ran — which is the saving, and is visible
             # here as the difference between a dropped clip and a rejected one.
-            retention.keep(path, seconds, "", "", "", tone_why, tone=tone)
+            retention.keep(path, seconds, "", "", "", drop_why, tone=tone)
         os.unlink(path)
         return False
-    if tone_why:
+    if drop_why:
         # Observe mode. Says what it would have done and does not do it — including that
         # it would have suppressed the audio, which is why this says "and its audio".
-        log.info("would drop (%.1fs): %s, and its audio", seconds, tone_why)
+        log.info("would drop (%.1fs): %s, and its audio", seconds, drop_why)
     entry_id = None
     if getattr(channel, "send_audio", False):
         clip = encode_audio(path, outbox.audio_dir, time.time())
