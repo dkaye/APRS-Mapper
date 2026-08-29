@@ -34,10 +34,6 @@ python3 "$SRC_DIR/tests/test_transcriber.py" >/dev/null || {
     exit 1
 }
 # Shared with the iGates, so a change here reaches two fleets.
-python3 "$SRC_DIR/../sdr/test_sdr_selftest.py" >/dev/null || {
-    echo "SDR SELFTEST TESTS FAILED — not deploying" >&2
-    exit 1
-}
 echo "  tests pass"
 
 ssh "$REMOTE" "mkdir -p $REMOTE_DIR"
@@ -47,11 +43,10 @@ ssh "$REMOTE" "mkdir -p $REMOTE_DIR"
 # as in server/deploy.sh and igate/deploy.sh.
 echo "Syncing files to aprs-pi..."
 ssh "$REMOTE" "sudo chown -R pi:www-data $REMOTE_DIR 2>/dev/null || true
-               rm -rf $STAGING && mkdir -p $STAGING/{bin,systemd,etc/transcriber,udev,home}"
+               rm -rf $STAGING && mkdir -p $STAGING/{bin,systemd,etc/transcriber,home}"
 
 rsync -az --ignore-times --exclude='__pycache__' "$SRC_DIR/bin/" "$REMOTE:$STAGING/bin/"
 rsync -az --ignore-times "$SRC_DIR/systemd/" "$REMOTE:$STAGING/systemd/"
-rsync -az --ignore-times "$SRC_DIR/udev/"    "$REMOTE:$STAGING/udev/"   2>/dev/null || true
 rsync -az --ignore-times "$SRC_DIR/etc/transcriber/" "$REMOTE:$STAGING/etc/transcriber/"
 rsync -az --ignore-times "$SRC_DIR/home/"    "$REMOTE:$STAGING/home/"
 # auto-update.sh goes into the archive as well as being uploaded on its own. install.sh
@@ -61,7 +56,6 @@ rsync -az --ignore-times "$SRC_DIR/home/"    "$REMOTE:$STAGING/home/"
 # One source file, delivered two ways, so the two cannot drift.
 rsync -az --ignore-times "$SRC_DIR/auto-update.sh" "$REMOTE:$STAGING/home/"
 # Shared with the iGates — see igate/deploy.sh for why it lives outside both trees.
-rsync -az --ignore-times --exclude='test_*' --exclude='__pycache__' "$SRC_DIR/../sdr/" "$REMOTE:$STAGING/home/"
 # Fleet-wide tools shared by every device type — see common/power-check.sh. Kept out of
 # each device's own home/ so there is one copy to fix rather than four to drift.
 rsync -a --exclude='test_*' --exclude='__pycache__' "$SRC_DIR/../common/" "$REMOTE:$STAGING/home/"

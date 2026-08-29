@@ -78,11 +78,11 @@ PAUSE = "/tmp/transcriber-bench.pause"
 STATIC_SECONDS = 10.0
 STATIC_CLIPS = 12
 
-# Squelch off. Not a low threshold — the absence of one: with -l 0 rtl_fm gates nothing
-# and emits at the full sample rate whatever is on the air, which on an idle frequency is
-# the noise floor and nothing else. This is the one place that value is wanted, and
-# SQUELCH_CANDIDATES starts at 10 precisely so calibration can never return it.
-UNSQUELCHED = 0
+# The static pass wants whatever is on the frequency with nothing gating it. With an SDR
+# that meant asking rtl_fm for squelch 0; with a radio it means OPENING THE SQUELCH ON THE
+# RADIO, which is a knob and not something this program can reach. So the pass reads the
+# card the same way as everything else and simply does not consult the gate -- if the
+# operator has left the squelch closed it will capture silence, and say so.
 
 # One arm of the comparison: a model, and whatever it is primed with.
 Arm = collections.namedtuple("Arm", "name model prompt")
@@ -195,7 +195,7 @@ def capture(channel, clips_dir, spool, want, deadline):
                 del audio[:max_bytes]
                 yield tr.write_clip(clips_dir, segment, seq, capped=True)
             if rtl.poll() is not None:
-                print(f"  rtl_fm exited: {tr.rtl_complaint(clips_dir)}")
+                print(f"  arecord exited: {tr.capture_complaint(clips_dir)}")
                 return
     finally:
         if rtl.poll() is None:
@@ -206,18 +206,17 @@ def capture_noise(channel, clips_dir, seconds, want, deadline):
     """Yield clips of whatever is on the frequency with the gate wide open.
 
     The channel itself would never record any of these, and that is the point. There is
-    no waiting for a carrier and no segmenting on gaps: with the squelch off there are no
-    gaps, so the stream is simply cut into clips the length of an over.
+    no waiting for a carrier and no segmenting: the stream is simply cut into clips the
+    length of an over. Open the radio's squelch before running this, or it captures
+    silence.
     """
-    stderr = open(os.path.join(clips_dir, tr.RTL_LOG), "wb")
-    rtl = subprocess.Popen(tr.rtl_argv(channel, UNSQUELCHED),
+    stderr = open(os.path.join(clips_dir, tr.CAPTURE_LOG), "wb")
+    rtl = subprocess.Popen(tr.audio_argv(channel),
                            stdout=subprocess.PIPE, stderr=stderr)
     want_bytes = int(seconds * tr.SAMPLE_RATE) * 2
     audio, seq = bytearray(), 0
     try:
-        # Opening the device and settling the tuner produces a burst that is not this
-        # site's noise floor. _sample_rtl discards the same second and a half before it
-        # counts anything, for the same reason.
+        # Opening the card produces a burst that is not this site's noise floor.
         warmup = time.time() + 1.5
         while time.time() < warmup:
             if select.select([rtl.stdout], [], [], 0.2)[0]:
@@ -231,7 +230,7 @@ def capture_noise(channel, clips_dir, seconds, want, deadline):
                 del audio[:want_bytes]
                 yield tr.write_clip(clips_dir, segment, seq)
             if rtl.poll() is not None:
-                print(f"  rtl_fm exited: {tr.rtl_complaint(clips_dir)}")
+                print(f"  arecord exited: {tr.capture_complaint(clips_dir)}")
                 return
     finally:
         if rtl.poll() is None:
@@ -394,7 +393,7 @@ def main(argv=None):
     unit = unit_for(channel.id)
 
     # The gain this channel actually opens with, settled before anything is captured.
-    # start_capture does this for itself, but the static pass builds its own rtl_fm
+    # start_capture does this for itself, but the static pass builds its own capture
     # command — and a comparison run at a different gain from the channel it is about is a
     # comparison of a different receiver.
     channel.gain, _, _ = tr.calibration_for(channel, spool)
@@ -436,14 +435,9 @@ def main(argv=None):
     systemctl("stop", unit)
     time.sleep(2)
 
-    if not tr.receiver_alive(channel):
-        systemctl("start", unit)
-        try:
-            os.unlink(PAUSE)
-        except OSError:
-            pass
-        raise SystemExit("the receiver is not producing samples — see Transcriber "
-                         "Diagnostics in the README")
+    # No liveness probe. The SDR needed one because a wedged tuner is indistinguishable
+    # from a quiet frequency; a sound card either opens or it does not, and arecord says
+    # which in one line the moment a pass starts.
 
     # Both passes fill a list handed to them rather than returning one, so that a run
     # stopped with Ctrl-C still reports what it heard. A six-hour run that summarized
@@ -568,7 +562,7 @@ def static_pass(args, channel, arms, whisper, vocabulary, rows):
     """Noise, captured on purpose, both arms. Appends to `rows`.
 
     Its own temporary directory, because it is its own recording: nothing from the
-    traffic pass may end up counted here, and rtl_fm writes its complaints by a fixed
+    traffic pass may end up counted here, and arecord writes its complaints by a fixed
     name into whichever directory it is given.
     """
     if args.static_clips <= 0:

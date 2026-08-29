@@ -3,16 +3,26 @@
 # into the event log.
 #
 # One process per channel, started by systemd as transcriber@<channel-id>.service.
-# Several run side by side on one Pi, each bound to its own SDR dongle by USB serial.
+# One per Pi in practice: one receiver, one sound card. The plumbing still allows
+# several, each bound to its own capture device.
 #
-#   rtl_fm -d <serial> -f <freq> -M fm -l <squelch>
-#      → RF squelch decides whether anything is transmitting: it gates on received
-#        power, before demodulation, which is the only reliable question to ask —
-#        FM noise is loudest precisely when there is no carrier
-#      → gaps in the byte stream are the boundaries between overs: rtl_fm emits
-#        nothing at all while squelched, so samples stopping IS the carrier dropping
+#   arecord -D plughw:… -f S16_LE -r 16000 -c 1
+#      → a conventional receiver's own squelch decides whether anything is
+#        transmitting. It gates in hardware, on the carrier, which is the only
+#        reliable question to ask — FM noise is loudest precisely when there is
+#        no carrier, so an audio-level squelch has it exactly backwards
+#      → the LEVEL is the boundary between overs. Unlike rtl_fm, which emitted
+#        nothing at all while squelched, a sound card delivers silence forever —
+#        so a gap in the byte stream never comes and every over would run into
+#        the next. What ends a transmission here is the level falling back to
+#        the floor and staying there
 #      → whisper.cpp                        → text
 #      → POST index.php?messaging=log       → "146.520 → Log"
+#
+# The SDR this replaced needed level_db, zcr, keying counts and carrier_gaps to
+# guess at all of that, because a software squelch cannot close hard. Measured on
+# 2026-08-29: squelch closed sits at -91 dBFS and speech at -30, so a threshold
+# dropped anywhere in a 60 dB gap is unambiguous.
 #
 # Stdlib only, like isproxy.py — nothing to install and nothing to break on a
 # distribution upgrade.
@@ -20,6 +30,7 @@
 # Usage:
 #   transcriber.py --channel rx1-146520
 #   transcriber.py --channel rx1-146520 --spool-only DIR   (no radio; see below)
+#   transcriber.py --channel rx1-146520 --device plughw:2,0
 #
 # Docs: https://github.com/dkaye/APRS-Mapper/blob/main/map/README.MD
 # ©2026 Doug Kaye, K6DRK <doug@rds.com>
@@ -61,39 +72,16 @@ CONFIG = "/etc/transcriber/channels.json"
 SPOOL = "/var/spool/transcriber"
 # What must not touch the card lives in RAM. See clip_dir().
 CLIPS = "/run/transcriber"
-RTL_LOG = "rtl_fm.err"
+CAPTURE_LOG = "arecord.err"
+
+# Reporting the level to the channel manager, for its calibration meter.
+#
+# Not every second forever: that is 86,000 requests a day for a number nobody is watching.
+# Sent while there is something to see, plus a keepalive so the page can distinguish a
+# quiet channel from a device that has stopped.
+LEVEL_REPORT_FLOOR = -60.0
+LEVEL_KEEPALIVE = 20.0
 SERVER = "https://marsaprs.org"
-
-# rtl_fm's RF squelch — the gate that decides whether anything is transmitting at all.
-# Measured working on a real repeater. A site that needs a different value can set one
-# per channel in the manager.
-DEFAULT_SQUELCH = 25
-
-# Tuner gain in dB, fixed rather than automatic.
-#
-# Automatic gain and an RF squelch cannot both work. rtl_fm's -l compares received power
-# against a threshold, and AGC changes what that power means: on a quiet band it winds the
-# gain up until the noise crosses whatever level you set. Measured on an idle frequency,
-# with nothing whatsoever on the air — squelch 40 open 92% of the time, 50 open 25%, 60
-# open 22%, and the same level of 50 reading 0% ten minutes earlier. Not a threshold that
-# was slightly wrong: a threshold that meant something different every few minutes.
-#
-# The channel had been recording that noise all day. Six hours of it produced 154 minutes
-# of "audio" on a frequency whose real duty cycle is nearer 1%, and whisper was run twice
-# over every second of it.
-#
-# 30 dB, not the 40 that was hardcoded here once: 40 is near this tuner's 49.6 dB maximum
-# and overloads the front end anywhere with a strong signal nearby, which is why it was
-# removed in favour of automatic in the first place. At a fixed 30 the same idle frequency
-# is silent at every squelch level from 10 to 40.
-#
-# It is a starting value and not an answer, because 30 was measured at ONE site. These
-# receivers go up hills and into sheds with different antennas and different neighbours,
-# and the gain a site wants is decided by how much noise its antenna hears — see
-# choose_gain(). The squelch is already measured per site, and a squelch measured at the
-# wrong gain means nothing, so the two are measured and cached together when somebody
-# presses Recalibrate in the channel manager. Until they are, a channel runs on this pair.
-DEFAULT_GAIN = 30
 
 # A transmission shorter than this is a squelch tail, a key-up, or someone knocking
 # their PTT — never words worth logging, and exactly what whisper invents speech from.
@@ -105,8 +93,7 @@ MIN_CLIP_SECONDS = 1.2
 # ten to twenty seconds and a conversation is four to six of them, with minutes of
 # nothing in between; two unbroken minutes is not a talkative operator. It is one of
 # two faults, and both have happened here: a transmitter stuck down, or a squelch that
-# has stopped gating and is handing us the noise floor as one endless carrier — which
-# is exactly what automatic gain did before DEFAULT_GAIN pinned it.
+# has stopped gating and is handing us the noise floor as one endless carrier.
 #
 # So the cap is a sampling boundary rather than a chapter break: no sentence is being
 # cut in half and there is no pause worth hunting for. What matters is that the audio
@@ -209,21 +196,15 @@ class Channel:
         self.id = d["id"]
         self.label = d.get("label") or d["id"]
         self.token = d.get("token") or ""
-        self.frequency = str(d.get("frequency") or "")
-        self.serial = str(d.get("serial") or "")
-        self.squelch = int(d.get("squelch") or 0)
-        # Tuner gain in dB, and squelch above it: both are OVERRIDES here, None and 0
-        # meaning "nobody has said", not "use the default". What a channel actually opens
-        # with is settled by calibration_for(), which needs the spool to know what was
-        # measured for this site — and the difference between "set" and "unset" is the
-        # whole of how a measurement gets a chance to be used.
+        # Which sound card to open. Absent on every channel in practice -- there is one
+        # receiver and one card -- and present only for a Pi carrying two.
         #
-        # Fixed, never automatic: see DEFAULT_GAIN for why the squelch cannot work
-        # without it. The manager does not offer a gain box and should not — the whole
-        # point is that it is measured rather than guessed at — so this is the escape
-        # hatch: a "gain" written into this device's channels.json by hand, for the site
-        # with something so strong nearby that the knee is the wrong answer.
-        self.gain = float(d["gain"]) if d.get("gain") not in (None, "", 0) else None
+        # No frequency, serial, gain or squelch any more. The receiver is tuned at the
+        # radio and its squelch is a knob on the front panel; the level is set once with
+        # the meter in the channel manager and lives in the card's own mixer state.
+        # Nothing about the radio is this program's business except the audio coming out
+        # of it, which is the entire reason for the change.
+        self.device = str(d.get("device") or "")
         self.model = d.get("model") or "ggml-tiny.en.bin"
         self.enabled = bool(d.get("enabled", True))
         self.server = (d.get("server") or SERVER).rstrip("/")
@@ -858,23 +839,7 @@ def _frame_pitch(frame, rate):
         return 0, best
     return rate / float(best_lag), best
 
-
-# ── where the carrier dropped inside one capture ─────────────────────────────
-#
-# GAP_SECONDS closes a capture when rtl_fm stops SENDING. It never fires between overs,
-# because rtl_fm keeps emitting near-silent samples through its squelch hang — so a brisk
-# conversation arrives as one block. Measured on three real captures: every over ends with
-# about 0.95 s of near-silence, then a 0.30 s courtesy beep, then another 1.0 s of it. The
-# gap is right there in the audio, comfortably longer than GAP_SECONDS, and nothing looks.
-#
-# Levels, not tones, and that is the point. A courtesy beep only exists on a repeater, and
-# this transcriber is also pointed at simplex where there is none — but a carrier dropping
-# looks the same either way. Validated against the beeps on three captures: 5 boundaries
-# against 5 beeps, 4 against 4, 5 against 5, the beeps found independently by band energy.
-#
-# The threshold is a fraction of the clip's OWN loud level, so gain cannot move it — the
-# property that carried FLAT_DYN_DB from 30 dB to 38.6.
-CARRIER_GAP_SECONDS = 0.85   # how long the level stays down for the carrier to have gone
+5   # how long the level stays down for the carrier to have gone
 CARRIER_GAP_RATIO = 0.02     # ...measured against the clip's 95th percentile frame
 CARRIER_GAP_MIN_CLIP = 8.0   # shorter than this cannot hold two overs and is not scanned
 CARRIER_GAP_JOIN = 1.0       # gaps closer than this are the two halves of one boundary
@@ -949,6 +914,28 @@ def nothing_said_reason(peaks, rate, minimum=CONTENT_MIN_SECONDS):
     if sound is None or sound >= minimum:
         return ""
     return "nothing said in it — only %.2fs of the clip carries sound" % sound
+
+# ── where the carrier dropped inside one capture ─────────────────────────────
+#
+# The gate closes a capture when the LEVEL drops, but HANG_SECONDS is deliberately long
+# enough to ride out a Morse word gap — so a brisk conversation, where one station comes
+# back inside the hang, still arrives as one block. Measured on three real captures: every
+# over ends with about 0.95 s of near-silence, then a 0.30 s courtesy beep, then another
+# 1.0 s of it. The boundary is right there in the audio and nothing else looks for it.
+#
+# Levels, not tones, and that is the point. A courtesy beep only exists on a repeater, and
+# this transcriber is also pointed at simplex where there is none — but a carrier dropping
+# looks the same either way. Validated against the beeps on three captures: 5 boundaries
+# against 5 beeps, 4 against 4, 5 against 5, the beeps found independently by band energy.
+#
+# The threshold is a fraction of the clip's OWN loud level, so gain cannot move it — the
+# property that carried FLAT_DYN_DB from 30 dB to 38.6.
+CARRIER_GAP_SECONDS = 0.85   # how long the level stays down for the carrier to have gone
+CARRIER_GAP_RATIO = 0.02     # ...measured against the clip's 95th percentile frame
+CARRIER_GAP_MIN_CLIP = 8.0   # shorter than this cannot hold two overs and is not scanned
+CARRIER_GAP_JOIN = 1.0       # gaps closer than this are the two halves of one boundary
+
+
 
 
 def carrier_gaps(peaks, rate, min_seconds=CARRIER_GAP_SECONDS, ratio=CARRIER_GAP_RATIO):
@@ -1941,25 +1928,120 @@ def correct_callsigns(text, vocab=None):
 
 # ── capture ──────────────────────────────────────────────────────────────────
 
-SAMPLE_RATE = 16000          # what whisper wants; rtl_fm can produce it directly
+SAMPLE_RATE = 16000          # what whisper wants, and what the sound card is opened at
 
-# How long the data has to stop before a transmission counts as over.
+# The ALSA capture device. Overridable per channel for a Pi with more than one card;
+# plughw rather than hw so ALSA converts rate and format if the card cannot do 16 kHz
+# mono natively.
+AUDIO_DEVICE = "plughw:2,0"
+
+# The audio gate. A conventional receiver's squelch is closed between overs, so the
+# level -- not a gap in the byte stream -- says when a transmission starts and ends.
 #
-# The gap is the only signal used, and it is a reliable one: rtl_fm's RF squelch gates
-# before demodulation, so while it is closed the process emits nothing at all — measured,
-# on a real receiver, at exactly zero bytes over eight seconds of idle channel. Samples
-# arriving means a carrier is up; samples stopping means it dropped.
+# Measured on 146.700 on 2026-08-29 with the squelch closed: -91 dBFS band-limited,
+# flat within 2 dB. Speech peaks at -30. OPEN sits 36 dB above the floor and 25 below
+# speech, in the middle of a gap nothing else occupies.
 #
-# Long enough to ride out a squelch flicker on a fading signal, short enough that two
-# overs a second apart do not merge into one entry.
-GAP_SECONDS = 0.8
+# Hysteresis, because opening and closing at one threshold chatters on every syllable
+# whose tail crosses it. CLOSE is 5 dB below OPEN.
+OPEN_DB, CLOSE_DB = -55.0, -60.0
+
+# 1.2 s, and not the 0.6 it started at.
+#
+# A Morse ID keys its tone on and off, and at the ~11 wpm this repeater sends a word gap
+# is about 770 ms -- so a shorter hang closed the gate inside the ID's own gaps and
+# delivered one identification as two or three fragments, each with too few marks to
+# decode and each with a misleading duration.
+#
+# Not longer, either. Two overs on a busy net are about 1.5 s apart, and a hang that long
+# merges them into one clip with both stations in it. 1.2 s clears a Morse word gap by
+# 55% and still leaves 300 ms between one over ending and the next being allowed to start.
+HANG_SECONDS = 1.2
+
+# Only 200-4000 Hz counts. A squelch thump is loud and sub-audible -- 97.6% of one
+# measured clip's energy was below 100 Hz, against 0.1% in the band the Morse ID lives in
+# -- so a broadband level reads it as signal and opens the gate on nothing. Voice and the
+# ID tones are 300-3000 Hz; nothing below 100 Hz here is ever real.
+BAND_LO_HZ, BAND_HI_HZ = 200.0, 4000.0
+
+# 100 ms of audio per decision. Long enough for the FFT to resolve the band, short enough
+# that the start of an over is not clipped off.
+GATE_FRAME = 1600
+
+
+class AudioGate:
+    """Level of the audio band, and whether a transmission is in progress.
+
+    Two cascaded one-pole high-passes at BAND_LO_HZ, then rms. Not an FFT: this runs ten
+    times a second on a Pi with stdlib only, and a pure-Python DFT wide enough to keep the
+    1500 Hz Morse tone would cost tens of thousands of multiplies per frame. Decimating to
+    make that affordable is worse than useless -- decimating by 8 puts Nyquist at 1 kHz and
+    aliases the ID tone away entirely, so the gate would sit deaf through every
+    identification.
+
+    Two poles rather than one because the thing being rejected is enormous. A squelch
+    thump measured 97.6% of a clip's energy below 100 Hz against 0.1% in the band the ID
+    lives in; one pole gives ~26 dB at 10 Hz and two give ~52, which turns the loudest
+    thing in the clip into the quietest.
+
+    Filter state lives on the instance and persists across frames. A per-frame filter
+    restarts its history 10 times a second and rings at every boundary.
+    """
+
+    def __init__(self, rate=SAMPLE_RATE, cutoff=BAND_LO_HZ):
+        rc = 1.0 / (2.0 * math.pi * cutoff)
+        dt = 1.0 / float(rate)
+        self.a = rc / (rc + dt)
+        self.x1 = self.y1 = 0.0      # first pole
+        self.x2 = self.y2 = 0.0      # second
+        self.open = False
+        self.quiet = 0.0
+
+    def level_db(self, frame):
+        """dBFS of `frame` (bytes, S16_LE mono) above BAND_LO_HZ."""
+        n = len(frame) // 2
+        if n == 0:
+            return -99.0
+        a = array.array("h")
+        a.frombytes(frame[:n * 2])
+        k, total = self.a, 0.0
+        x1, y1, x2, y2 = self.x1, self.y1, self.x2, self.y2
+        for v in a:
+            x = float(v)
+            y1 = k * (y1 + x - x1); x1 = x
+            y2 = k * (y2 + y1 - x2); x2 = y1
+            total += y2 * y2
+        self.x1, self.y1, self.x2, self.y2 = x1, y1, x2, y2
+        return 20.0 * math.log10(max(math.sqrt(total / n), 1e-9) / 32768.0)
+
+    def feed(self, frame, seconds):
+        """(level_db, event) where event is 'start', 'end' or None.
+
+        Hysteresis with a hang: a transmission ends only after the level has stayed below
+        CLOSE_DB for HANG_SECONDS, so neither a syllable gap nor a Morse word gap can cut
+        one over into two.
+        """
+        db = self.level_db(frame)
+        if not self.open:
+            if db > OPEN_DB:
+                self.open, self.quiet = True, 0.0
+                return db, "start"
+            return db, None
+        self.quiet = 0.0 if db >= CLOSE_DB else self.quiet + seconds
+        if self.quiet >= HANG_SECONDS:
+            self.open, self.quiet = False, 0.0
+            return db, "end"
+        return db, None
+
+
 
 # How often to say whether anything has been heard.
 REPORT_SECONDS = 1800
 
 # How long total silence may last before the receiver itself is re-checked.
 #
-# A closed squelch and a wedged tuner produce exactly the same thing — nothing — so
+# A closed squelch and a card that has stopped delivering produce the same thing —
+# nothing — so
 # silence alone proves neither. After this long with no samples at all, the channel
 # restarts, which re-runs the liveness probe below and turns the question into an answer.
 # An hour, because on a quiet frequency the cost is a three-second gap once an hour, and
@@ -2004,16 +2086,56 @@ def clip_dir(channel_id, override=None, fallback=None):
         return fallback
 
 
-def rtl_complaint(clips, limit=300):
-    """The last thing rtl_fm said before it died, for the journal.
+DEVICE_TOKEN_FILE = "/home/pi/.transcriber-token"
 
-    It is verbose while running and the useful line is always the last one, so only the
-    tail is worth reporting — "No supported devices found." is the whole diagnosis when a
-    dongle has fallen off the bus, and it is what tells a deaf channel apart from a
-    missing one.
+
+def device_token():
+    """This Pi's config token, as auto-update.sh uses to collect its channels.
+
+    Distinct from a channel's token, and the distinction matters: a channel token writes
+    log entries and nothing else, while this one speaks for the device. report.php checks
+    the device token and then that the channel belongs to it, so a receiver in a shed
+    cannot report about a receiver on another hill.
     """
     try:
-        with open(os.path.join(clips, RTL_LOG), "rb") as fh:
+        with open(DEVICE_TOKEN_FILE) as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def report_level(channel, db):
+    """Tell the manager the current audio level, for the calibration meter.
+
+    Best effort and never fatal: a receiver that cannot reach the server still has a net
+    to listen to, and the meter is a convenience for somebody setting a knob.
+
+    The User-Agent is required, not decoration. marsaprs.org is behind Cloudflare, whose
+    browser-integrity check answers a bare Python request with 403 and error code 1010 --
+    which reads exactly like a bad token until somebody opens the body.
+    """
+    body = json.dumps({"device": os.uname().nodename, "token": device_token(),
+                       "channel": channel.id, "state": "level",
+                       "level_db": round(db, 1)}).encode()
+    req = urllib.request.Request(channel.server + "/transcriber/report.php", data=body,
+                                 headers={"Content-Type": "application/json",
+                                          "User-Agent": "marsaprs-transcriber/" + VERSION})
+    try:
+        urllib.request.urlopen(req, timeout=3).read()
+    except Exception:
+        pass
+
+
+def capture_complaint(clips, limit=300):
+    """The last thing arecord said before it died, for the journal.
+
+    The useful line is always the last one: "audio open error: No such file or directory"
+    is the whole diagnosis when the card has been unplugged or renumbered, and
+    "Device or resource busy" says something else already holds it -- which is the single
+    most common way this fails, because only one process can open a capture device.
+    """
+    try:
+        with open(os.path.join(clips, CAPTURE_LOG), "rb") as fh:
             fh.seek(0, os.SEEK_END)
             fh.seek(max(0, fh.tell() - limit * 4))
             tail = fh.read().decode("utf-8", "replace")
@@ -2021,7 +2143,6 @@ def rtl_complaint(clips, limit=300):
         return "no output"
     lines = [ln.strip() for ln in tail.splitlines() if ln.strip()]
     return " / ".join(lines[-3:])[-limit:] or "no output"
-
 
 def sweep_clips(directory):
     """Clear anything left from a previous run.
@@ -2062,674 +2183,6 @@ def write_clip(directory, audio, seq, capped=False):
     return path
 
 
-# ── calibration ──────────────────────────────────────────────────────────────
-#
-# Two numbers, measured in this order and cached together: the tuner gain, and then the
-# squelch level AT that gain. Together because a squelch level means nothing on its own —
-# rtl_fm's -l compares received power against a threshold and the gain decides what that
-# power is, so a squelch cached beside no gain is a number measured against something
-# nobody wrote down. That is the bug this pairing exists to prevent, and we have had it.
-#
-# On demand only. There is no expiry and nothing measures at startup: calibration takes
-# the channel off the air for a couple of minutes, and a channel going deaf at an hour
-# nobody chose — during a net, say — is a worse outcome than one running slightly stale
-# numbers. It happens when somebody presses Recalibrate in the channel manager, and the
-# consequence is that a freshly deployed receiver runs on the compiled-in defaults until
-# they do. The manager says "never calibrated" in so many words for exactly that reason.
-
-# Ascending, so the winner is the LOWEST level that shuts out this site's
-# noise — the most sensitive setting that still gates, rather than a safe-but-deaf one.
-# The step is the margin: landing on 30 means 20 let noise through, so the true edge is
-# between them and there is up to a step of headroom against drift.
-# From 10, not 0. Zero is not a squelch level — it is the absence of one, and rtl_fm
-# with -l 0 gates nothing at all. It was in this list, and a measurement returned it.
-SQUELCH_CANDIDATES = list(range(10, 201, 10))
-QUIET_FRACTION = 0.05        # under 5% of the full sample rate counts as "shut"
-
-# How long each look at a candidate listens, and how long the confirming look does.
-# Deliberately NOT much longer than that. Measured against overnight48.s16, 10.8 hours of
-# 146.700 at this gain: a 2 s window sees 2.6% of the night's idle-noise range and a 300 s
-# window sees 138%, but the p90 distance between one window's level and the night's typical
-# level only falls from 319 to 284 across that whole span. The floor wanders slowly — tens
-# of minutes to hours — so no window a person will wait for can average the drift out, and
-# buying 11% with 150x the airtime is not a trade worth making. The confirming look is here
-# to catch a TRANSMISSION arriving mid-measurement, which it does at this length.
-SQUELCH_SECONDS = 4.0
-SQUELCH_CONFIRM_SECONDS = 8.0
-
-# Tuner gains to try, in dB, all of them steps the R820T actually offers. A subset of its
-# 29, about 4 dB apart: the knee is found from the SLOPE between neighbours, and steps
-# closer together than a floor measurement is repeatable would be reading noise.
-#
-# The list stops short of the tuner's 49.6 dB maximum, and that cap is doing real work.
-# The knee is measured on an IDLE channel, and the failure that got a hardcoded 40 removed
-# is not visible from there: front-end overload from a strong transmitter somewhere else
-# in the band, which is not on this frequency and need not be transmitting while the sweep
-# runs. Nothing the sweep can measure would object to 40 dB. So the sweep is allowed to
-# find the knee and is not allowed to chase it up to where this tuner stops being linear.
-#
-# The ceiling was 32.8 until 2026-08-23, and that was one step too low to answer the
-# question at a quiet site. Measured on an idle 2m antenna: the floor sat on the
-# converter's own quantisation noise — 0.44 counts RMS, flat to within a hundredth of a dB
-# per dB — from 8.7 all the way up to 32.8, and only lifted off at 36.4. The sweep ended
-# BELOW the knee, so it found no knee and reported a disconnected antenna. It said that on
-# three separate channels with the antenna connected the whole time, which is a day of
-# looking at connectors. 36.4 and 38.6 are the two steps the R820T offers between the old
-# ceiling and the 40 that overloaded; both stay under it, and they cost five seconds.
-GAIN_CANDIDATES = [8.7, 12.5, 16.6, 20.7, 25.4, 29.7, 32.8, 36.4, 38.6]
-
-# How much of each dB of gain has to reach the noise floor before the receiver counts as
-# hearing the band rather than its own converter.
-#
-# At the knee itself the two contribute equally and the floor rises 0.5 dB per dB, which
-# is 3 dB of sensitivity given away to the receiver's own noise. At 0.7 the converter adds
-# about 1 dB and everything above that buys hundredths of a dB in exchange for headroom
-# the sweep cannot measure the cost of. So: past the knee, and not far past it.
-KNEE_SLOPE = 0.7
-
-# How far a repeated floor measurement may differ, in dB, before the sweep is thrown away.
-# An RMS over a quarter of a million samples repeats to a small fraction of a dB, so this
-# is not measurement scatter — it is somebody transmitting.
-FLOOR_TOLERANCE = 1.0
-
-# How long each floor measurement listens, and how long opening the dongle and letting the
-# tuner settle costs before it can. The second is not a guess: _sample_rtl has discarded
-# exactly this much as warm-up since the first idle-frequency measurement, and both the
-# floor sweep and the countdown the manager shows are built on it.
-FLOOR_SECONDS = 1.0
-RTL_OPEN_SECONDS = 1.5
-
-# What the raw I/Q is sampled at. Not the 200000 rtl_argv asks for: rtl_fm oversamples and
-# decimates internally, while rtl_sdr hands the rate straight to the tuner, and the
-# RTL2832U will not deliver below about 225 kHz.
-IQ_RATE = 250000
-
-
-def choose_squelch(sample, candidates=SQUELCH_CANDIDATES, quiet=QUIET_FRACTION):
-    """Lowest squelch level at which an idle channel goes quiet.
-
-    `sample(level, seconds) -> bytes observed`, injected so this can be tested without
-    a radio.
-
-    Two passes at each candidate. rtl_fm only emits samples while its squelch is open,
-    so "no bytes" means "nothing is getting through" — but a transmission arriving
-    mid-measurement looks identical to a level that is too low, and would push the
-    answer upwards, leaving the receiver deaf to anything quieter. Confirming with a
-    longer second look costs a few seconds and makes that need two coincidences rather
-    than one.
-
-    The answer must be a BOUNDARY: the level below it has to be provably open. Without
-    that this returned the floor, and did — squelch 10 was cached on a channel that then
-    ran 99.56% open. The reason is the walk-down below. During a lull every candidate
-    looks quiet, so the walk-down slides all the way to the lowest one and caches it, and
-    the lull needs to last only as long as the scan. A level that gates with nothing
-    audible beneath it has not been measured, it has been guessed, so say so and let the
-    caller fall back rather than cache a number that leaves the receiver ungated for a day.
-
-    The limit, stated because it is not a guarantee: a lull that outlasts the re-check as
-    well is still indistinguishable from a genuinely quiet site, and still returns the
-    floor. What the re-check buys is that the quiet has to hold for roughly thirty seconds
-    rather than fifteen, and that the answer has audible noise underneath it. It also
-    means a lull STARTING during the re-check throws away a measurement that was sound —
-    the right way round to be wrong, since the cost is pressing Recalibrate again rather
-    than a day of ungated hiss on somebody's phone.
-    """
-    expected = SAMPLE_RATE * 2
-
-    def shut(level):
-        # Twice, because a level that looks quiet once and is not would be cached for a day.
-        return (sample(level, SQUELCH_SECONDS) < expected * SQUELCH_SECONDS * quiet
-                and sample(level, SQUELCH_CONFIRM_SECONDS)
-                < expected * SQUELCH_CONFIRM_SECONDS * quiet)
-
-    # Is the receiver producing anything at all? With the squelch off, rtl_fm cannot gate
-    # and must emit at the full rate; if it does not, it is not running — the dongle is
-    # busy, or has fallen off the USB bus, and every sample below will read as silence.
-    #
-    # Without this check that silence is indistinguishable from a beautifully quiet site,
-    # and the scan walks the answer down to the lowest candidate. It happened: a restart
-    # raced rtl_fm's release of the dongle, every sample came back empty, and the measured
-    # answer was 0 — no gating whatsoever, so the channel then recorded continuous hiss
-    # and filed a steady stream of clips that whisper had nothing to say about.
-    if shut(0):
-        log.warning("receiver produced no audio even with the squelch off — "
-                    "not measuring against a dead input")
-        return None
-
-    for i, level in enumerate(candidates):
-        if not shut(level):
-            continue
-        # Walk back down. A transmission during an earlier sample is indistinguishable
-        # from a level that was too low, so it pushes the scan past the right answer —
-        # and the result is a receiver that gates reliably and hears less than it could,
-        # which nobody would notice. Stepping down while the level below also proves
-        # quiet undoes that, and costs nothing when the scan was clean.
-        while i > 0 and shut(candidates[i - 1]):
-            i -= 1
-
-        # A fresh look at what is underneath, which is also a look at the channel a good
-        # dozen seconds later than the one that produced the answer. It has to be OPEN.
-        # If it gates too, nothing here is a boundary and the scan was sitting in a lull.
-        if i > 0:
-            if shut(candidates[i - 1]):
-                log.warning("squelch %d gates, and so does %d underneath it — the channel "
-                            "went quiet for the whole scan, so this is a lull and not a "
-                            "measurement", candidates[i], candidates[i - 1])
-                return None
-        elif not shut(candidates[0]):
-            # Nothing below the floor to compare against, so the floor has to prove itself
-            # twice. A site really is this quiet sometimes; a lull is not, a few seconds on.
-            log.warning("squelch %d gated once and does not any more — a lull, not a site "
-                        "this quiet", candidates[0])
-            return None
-        return candidates[i]
-    return None
-
-
-def gain_text(gain):
-    """A tuner gain written the way a person would write it: 30, not 30.0, and 16.6 as it
-    is. It reaches rtl_fm's command line and the journal, and both are read by people."""
-    return f"{float(gain):g}"
-
-
-def choose_gain(measure, candidates=GAIN_CANDIDATES, slope=KNEE_SLOPE,
-                tolerance=FLOOR_TOLERANCE):
-    """The lowest gain at which this receiver hears the band rather than itself.
-
-    Returns (gain, "") when it found a knee, (None, why) when the sweep is not a
-    measurement at all, and (top_of_sweep, caveat) when the sweep was clean but no knee
-    appeared in it. A gain arriving with a non-empty second value is usable and is NOT
-    measured, and the caller has to keep those apart.
-
-    `measure(gain) -> the noise floor in dB, or None if the receiver produced nothing`,
-    injected the way choose_squelch's sampler is, so the knee-finding can be tested
-    against synthetic curves without a radio.
-
-    NOT "the most sensitive gain whose noise the squelch still gates", which is the
-    obvious thing to measure and is wrong. Gating and sensitivity pull in opposite
-    directions, and on a dead band only gating can be measured at all — so optimizing for
-    it alone walks the gain down until the receiver gates beautifully and hears nothing.
-    That is this project's recurring failure and it must not come back.
-
-    The knee is a question a dead band can answer. Raise the gain a step at a time and
-    watch the noise floor. While the receiver is limited by its own converter the floor
-    rises LESS than each gain increment — the ADC's noise does not care how much gain
-    precedes it. Once it is limited by thermal noise arriving from the antenna, the floor
-    rises 1:1, because that noise is being amplified along with everything else. Where the
-    slope crosses KNEE_SLOPE is where the receiver stops hearing itself and starts hearing
-    the band, and no signal has to be present for any of it.
-
-    Two ways it refuses to answer, and each names itself:
-
-      - the receiver hands back nothing            the tuner has not locked
-      - the floor moves while being measured       somebody is transmitting
-
-    And one it answers with a caveat rather than refusing. A floor that never follows the
-    gain used to be reported as "there is no antenna on it", which is one of its two
-    causes and was the wrong one every time it was said: the other is a site quieter than
-    the sweep reaches. Nothing measurable here separates them, so it says so, hands back
-    the top of the sweep, and lets the caller cache it as knee=False.
-
-    The last is the one worth being careful about, because what traffic produces is not a
-    wild answer but a plausible one: a floor that jumps at one gain looks exactly like a
-    knee. Three checks catch it, and none of them depends on hearing what was said. A
-    floor that FALLS as the gain rises cannot happen, so it is proof something was on the
-    air and has stopped. The bottom of the sweep is measured again at the end, which
-    catches the harder case — a carrier that comes up mid-sweep and is still up at the
-    end, agreeing with itself everywhere it is asked. And the knee itself is confirmed by
-    measuring its two points a second time, the way choose_squelch confirms a quiet level.
-    """
-    floors = []
-    for gain in candidates:
-        floor = measure(gain)
-        if floor is None:
-            return None, "the receiver produced no samples — the tuner has not locked"
-        floors.append(floor)
-    # The sweep itself, not just the verdict it produced. Every failure below describes
-    # the SHAPE of this curve — did not rise, fell, rose twice differently — and until
-    # these numbers were logged there was no way to tell "flat because the antenna is
-    # off" from "flat because the site is genuinely quiet and the knee is below the
-    # sweep". Cheap: one line per calibration, and only when a run is being watched.
-    log.info("gain sweep: %s",
-             ", ".join(f"{g:g}dB={f:.1f}" for g, f in zip(candidates, floors)))
-
-    # The band has to have been idle throughout, not merely idle when we started.
-    again = measure(candidates[0])
-    if again is None:
-        return None, "the receiver stopped producing samples part way through"
-    if abs(again - floors[0]) > tolerance:
-        return None, ("the noise floor moved while it was being measured — something was "
-                      "transmitting")
-    for i in range(1, len(floors)):
-        if floors[i] < floors[i - 1] - tolerance:
-            return None, ("the noise floor fell as the gain rose, which cannot happen — "
-                          "something was transmitting")
-
-    for i in range(1, len(candidates)):
-        rise = (floors[i] - floors[i - 1]) / (candidates[i] - candidates[i - 1])
-        if rise < slope:
-            continue
-        # The first candidate can never be the answer: it has nothing below it to measure
-        # a slope against. A site noisy enough to be past the knee at the bottom of the
-        # sweep therefore gets the second step, which is the lowest gain we can actually
-        # show is hearing the band — a lower one might do as well, and might not.
-        #
-        # Confirm before caching it, exactly as choose_squelch confirms a quiet level:
-        # measure the same two points again and require the same 1:1 rise. A single
-        # measurement that happened to catch a key-up is the whole failure mode here.
-        below, at = measure(candidates[i - 1]), measure(candidates[i])
-        if below is None or at is None:
-            return None, "the receiver stopped producing samples part way through"
-        if (at - below) / (candidates[i] - candidates[i - 1]) < slope:
-            return None, ("the noise floor did not rise the same way twice — something "
-                          "was transmitting")
-        return candidates[i], ""
-
-    # No knee anywhere in the sweep. Two things produce that and NOTHING here can tell
-    # them apart: nothing is reaching the tuner, or the site is quieter than the top of
-    # the ladder reaches. Refusing outright used to be the answer, on the honest grounds
-    # that returning the top of the sweep and calling it a measurement is a lie.
-    #
-    # It is a lie — but refusing was the worse one, because the caller's fallback for a
-    # refusal is a gain compiled in from somebody else's site. At the site that prompted
-    # this, that fallback was 30 dB against a knee at 38.6, which left the receiver
-    # converter-limited and about 6 dB deaf for as long as nobody looked. Refusing did not
-    # avoid guessing. It guessed lower, and it guessed silently.
-    #
-    # So hand back the top of the sweep — the best gain anything measured here points to —
-    # and say plainly that it is not a knee. The caller caches it with knee=False and
-    # carries this text with it, so nothing downstream can mistake it for a measurement.
-    return candidates[-1], (
-        f"the noise floor did not rise with the gain anywhere up to "
-        f"{gain_text(candidates[-1])} dB, so this is the top of the sweep and not a "
-        f"measured knee — either nothing is reaching the tuner (check the antenna and "
-        f"its connector) or this site is quieter than the sweep can reach")
-
-
-def calibration_seconds():
-    """About how long a calibration takes, for the countdown the manager shows.
-
-    An estimate, and the manager says "about". The gain sweep is exact — a fixed number of
-    measurements of a known length. The squelch scan is not: it stops at the first level
-    that gates, which on a normal site is the second or third of twenty, and it is worth
-    being wrong here rather than making the page invent a number of its own.
-    """
-    floor = RTL_OPEN_SECONDS + FLOOR_SECONDS
-    # The sweep, the re-measured bottom, and the two-point confirmation.
-    sweep = (len(GAIN_CANDIDATES) + 3) * floor
-    # One full look at one squelch level is two passes, each with its own warm-up. Four
-    # levels: the dead-input check, and the two or three the scan gets through.
-    look = 2 * RTL_OPEN_SECONDS + 5.0
-    return int(sweep + 4 * look)
-
-
-def rtl_iq_argv(channel, gain, seconds):
-    """How the raw I/Q is captured for a noise-floor measurement.
-
-    rtl_sdr rather than rtl_fm, and that is not an inconsistency with rtl_argv. The noise
-    floor is a question about RF power, and FM demodulation throws power away: on a dead
-    band rtl_fm's output is full-scale hiss whatever the tuner gain is, so a floor
-    measured through it would barely move across the sweep and the knee would never
-    appear. The raw I/Q is the only place the question can be asked.
-
-    By bare serial, for the reason rtl_argv gives at length — the same verbose_device_search
-    is behind both, and the same wrong forms fail the same silent way.
-
-    -n rather than a timer: rtl_sdr exits after that many samples, which is exact, and the
-    warm-up is taken off the front of what comes back instead of being waited out.
-    """
-    return ["rtl_sdr", "-d", channel.serial, "-f", str(channel.frequency),
-            "-s", str(IQ_RATE), "-g", gain_text(gain),
-            "-n", str(int(IQ_RATE * (RTL_OPEN_SECONDS + seconds))), "-"]
-
-
-def floor_db(iq):
-    """The power in a block of raw unsigned-8-bit I/Q, in dB, or None if there is none.
-
-    Each half keeps its own DC offset, which is why they are counted separately: the
-    tuner's I and Q offsets differ by a count or two, and at the bottom of the sweep —
-    where the entire point is that the floor is barely above the converter's own noise —
-    a DC error of one count would be most of the answer.
-
-    Counted through a 256-entry histogram rather than sample by sample. This runs on a Pi
-    over half a megabyte per measurement, and bytes.count() does each scan in C.
-    """
-    power = 0.0
-    for half in (iq[0::2], iq[1::2]):
-        if not half:
-            return None
-        hist = [half.count(v) for v in range(256)]
-        mean = sum(v * n for v, n in enumerate(hist)) / len(half)
-        power += sum((v - mean) ** 2 * n for v, n in enumerate(hist)) / len(half)
-    if power <= 0:
-        return None                      # a constant stream is not a noise floor
-    return 10 * math.log10(power)
-
-
-def measure_floor(channel, gain, seconds=FLOOR_SECONDS):
-    """This site's noise floor at one tuner gain, in dB, or None if nothing came back."""
-    try:
-        out = subprocess.run(rtl_iq_argv(channel, gain, seconds),
-                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                             timeout=RTL_OPEN_SECONDS + seconds + 15)
-    except (OSError, subprocess.SubprocessError) as e:
-        log.warning("could not measure the noise floor at %s dB (%s)", gain, e)
-        return None
-    # The burst produced while the device opens and the tuner settles says nothing about
-    # the noise floor, so it is cut off the front rather than waited out.
-    settled = out.stdout[int(IQ_RATE * RTL_OPEN_SECONDS) * 2:]
-    if len(settled) < IQ_RATE:           # less than half the wanted samples: not a reading
-        return None
-    return floor_db(settled)
-
-
-def calibration_path(spool):
-    return os.path.join(spool, "calibration.json")
-
-
-def calibration_load(spool, frequency=None):
-    """What was measured for this channel, or None if nothing usable was.
-
-    Both numbers or neither. A cache carrying a squelch and no gain is what the previous
-    version of this file wrote, and honouring half of it would put a level measured at an
-    unknown gain back on the air — which is the failure the pairing exists to prevent, so
-    it reads as "never calibrated" and the channel falls back to the compiled-in pair.
-
-    No age check. A measurement describes where the receiver is, not when it was taken,
-    and re-measuring it on a timer takes a channel off the air at an hour nobody chose.
-    """
-    try:
-        with open(calibration_path(spool), encoding="utf-8") as fh:
-            saved = json.load(fh)
-        gain = float(saved["gain"])
-        squelch = int(saved["squelch"])
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
-    if gain <= 0 or squelch <= 0:
-        return None
-    # Belt and braces: the channel id already carries the frequency, so a retune makes a
-    # new spool directory. If one ever does not, a measurement made on another frequency
-    # is exactly the kind of borrowed number this whole change is about.
-    if frequency and str(saved.get("frequency") or "") not in ("", str(frequency)):
-        log.warning("the cached calibration was measured on %s, not %s; ignoring it",
-                    saved.get("frequency"), frequency)
-        return None
-    return {"gain": gain, "squelch": squelch, "when": float(saved.get("when") or 0)}
-
-
-def calibration_save(spool, result):
-    try:
-        with open(calibration_path(spool), "w", encoding="utf-8") as fh:
-            json.dump(result, fh)
-    except OSError as e:
-        log.error("could not write the calibration down (%s); it will have to be "
-                  "measured again", e)
-
-
-def calibration_for(channel, spool):
-    """The gain and squelch this channel should open with, and what was measured here.
-
-    Precedence is the same for both and in this order: a value set in the manager wins,
-    because somebody typed it on purpose; then whatever was measured for this site; then
-    the compiled-in default. The third case is a receiver nobody has calibrated yet, and
-    it is a normal state to be in rather than an error — it is just one the manager has to
-    show, or a new Pi quietly runs numbers measured somewhere else.
-    """
-    measured = calibration_load(spool, channel.frequency)
-    gain = channel.gain or (measured or {}).get("gain") or DEFAULT_GAIN
-    squelch = channel.squelch or (measured or {}).get("squelch") or DEFAULT_SQUELCH
-    return gain, squelch, measured
-
-
-def calibrate(channel, spool, measure=None, sample=None):
-    """Measure this channel's gain and then its squelch AT that gain, and cache the two
-    together. Returns (what was written, "") or (None, why).
-
-    In that order and never the other way round: the squelch is a threshold on received
-    power, and changing the gain afterwards would change what it is a threshold on. Both
-    samplers are injectable for the tests, which is the only way any of this can be
-    exercised without a radio.
-
-    The order also covers the one thing the sweep cannot see for itself. A carrier that
-    was already up before the sweep began and is still up at the end is consistent
-    everywhere the sweep looks, and it tracks the gain 1:1 from the bottom — so it reads
-    as a receiver that was past the knee all along. The squelch scan that follows cannot
-    miss it: nothing gates a channel somebody is transmitting on, so it returns None and
-    the whole calibration is abandoned rather than cached.
-    """
-    measure = measure or (lambda gain: measure_floor(channel, gain))
-    gain, why = choose_gain(measure)
-    if gain is None:
-        return None, why
-    # A gain WITH a warning is the no-knee case: usable, but not measured. It is cached
-    # so the receiver stops running on a number from another site, and it is marked so
-    # the manager and the self-test can say which of the two it is looking at.
-    if why:
-        log.warning("%s", why)
-    else:
-        log.info("gain %s dB — the knee, measured for this site", gain_text(gain))
-
-    # The squelch is measured through a receiver opened at the gain just chosen. A copy,
-    # so nothing here changes what the caller holds.
-    at_gain = copy.copy(channel)
-    at_gain.gain = gain
-    sample = sample or (lambda level, secs: _sample_rtl(at_gain, level, secs))
-    level = choose_squelch(sample)
-    if level is None:
-        return None, (f"nothing shut the receiver up at {gain_text(gain)} dB — either "
-                      f"the channel was busy throughout, or the receiver stopped "
-                      f"producing samples")
-
-    result = {"gain": gain, "squelch": level, "when": time.time(),
-              "frequency": str(channel.frequency), "knee": not why}
-    if why:
-        result["note"] = why
-    calibration_save(spool, result)
-    return result, ""
-
-
-def emit(**fields):
-    """One line of JSON on stdout, flushed as it is written.
-
-    calibrate.sh reads these as they appear and forwards each to the server. That is what
-    makes the manager's countdown honest: the device says when the radio work actually
-    started, which can be up to a minute after the button was pressed, rather than the
-    page counting down from a moment that meant nothing.
-
-    stdout is these lines and nothing else — everything else the worker says goes to the
-    log, which is stderr.
-    """
-    print(json.dumps(fields), flush=True)
-
-
-def run_calibration(channel, spool):
-    """Measure this channel now, reporting on stdout as it goes. 0 if it worked.
-
-    Everything around it — stopping the channel, telling the server, starting it again —
-    belongs to calibrate.sh, which runs as root and holds the DEVICE token. This holds the
-    channel token and the radio, and does neither of those jobs.
-    """
-    if not receiver_alive(channel):
-        emit(state="failed",
-             error="the receiver is not producing samples — the tuner has not locked")
-        return 1
-    emit(state="started", expected=calibration_seconds())
-    result, why = calibrate(channel, spool)
-    if result is None:
-        log.error("calibration failed: %s", why)
-        emit(state="failed", error=why)
-        return 1
-    log.info("gain %s dB, squelch %s — %s and cached",
-             gain_text(result["gain"]), result["squelch"],
-             "measured" if result.get("knee", True) else "NOT measured")
-    done = {"gain": result["gain"], "squelch": result["squelch"],
-            "knee": bool(result.get("knee", True))}
-    if result.get("note"):
-        done["note"] = result["note"]
-    emit(state="done", **done)
-    return 0
-
-
-def rtl_argv(channel, level):
-    """How this receiver is opened, at a given squelch level.
-
-    One definition, because three things open the dongle and every one of them has to do
-    it identically or it is measuring a different receiver: the capture loop, the
-    calibration sampler, and compare-models.py's deliberate noise pass. Only the squelch
-    level differs between them, and that is the argument.
-
-    The dongle is addressed by USB SERIAL, never by index: index order is not stable
-    across reboots or re-plugs, and two channels silently swapping frequencies is the
-    kind of fault nobody notices until the log is wrong. "-d <serial>", not
-    "-d serial=<serial>" — rtl_fm's verbose_device_search tries the argument as an index,
-    then as an exact serial, then as a prefix, and the SoapySDR "serial=" form is none of
-    them. It fails in the worst possible way: the device is listed and then not selected,
-    so rtl_fm exits without ever tuning and the channel looks like a dead frequency.
-
-    Oversample and resample — "-s 200000 -r 16000", never "-s 16000" directly. The
-    RTL2832U cannot sample below about 225 kHz, so asking for the low rate makes rtl_fm
-    decimate internally and the audio comes out mangled. It is not obviously broken to
-    look at — the recording had a healthy 0.10 RMS and a clean waveform — but it is
-    unintelligible, and whisper answers unintelligible audio by inventing something. On a
-    30-second recording of a station reading out temperatures it produced "(I'm not a
-    fan)" and nothing else; the same 30 seconds captured this way transcribed every place
-    name and number correctly. 16000 is whisper's own rate, so nothing resamples it
-    afterwards.
-
-    -E deemp applies FM de-emphasis, which voice needs and without which the high end is
-    harsh enough to cost accuracy.
-    """
-    # Never without -g. rtl_fm's default is automatic gain, and automatic gain and an RF
-    # squelch cannot both work — see DEFAULT_GAIN. A channel with nothing measured and
-    # nothing set falls back to the compiled-in value rather than to AGC, so there is no
-    # path through this file that opens the receiver with the gain floating.
-    return ["rtl_fm", "-d", channel.serial, "-f", str(channel.frequency),
-            "-M", "fm", "-s", "200000", "-r", str(SAMPLE_RATE), "-E", "deemp",
-            "-l", str(level), "-g", gain_text(channel.gain or DEFAULT_GAIN)]
-
-
-def _sample_rtl(channel, level, seconds):
-    """Bytes rtl_fm emits at this squelch level over `seconds`."""
-    p = subprocess.Popen(rtl_argv(channel, level),
-                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    try:
-        # Opening the device and settling the tuner produces a burst that says nothing
-        # about the noise floor. Discard it before counting.
-        warmup = time.time() + RTL_OPEN_SECONDS
-        while time.time() < warmup:
-            if select.select([p.stdout], [], [], 0.2)[0]:
-                os.read(p.stdout.fileno(), 65536)
-        total = 0
-        deadline = time.time() + seconds
-        while time.time() < deadline:
-            if select.select([p.stdout], [], [], 0.2)[0]:
-                total += len(os.read(p.stdout.fileno(), 65536))
-        return total
-    finally:
-        p.terminate()
-        try:
-            p.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            p.kill()
-
-
-def receiver_alive(channel):
-    """Does the dongle actually produce samples?
-
-    With the squelch off rtl_fm cannot gate anything, so a working receiver must emit at
-    close to the full rate. Nothing means the tuner is not delivering — and it does fail
-    this way, silently, while every command still reports success: rtl_fm prints "Tuned
-    to 146700000 Hz", allocates its buffers, announces its sample rate and then produces
-    not one byte. rtl_test says "[R82XX] PLL not locked!" and exits 0.
-
-    Worth two seconds at every start, because the alternative is a channel that sits there
-    logging "no transmissions in the last 30 minutes" on a frequency somebody is listening
-    to on a handheld. That has now happened twice, and both times the receiver looked
-    perfectly healthy from every angle except this one.
-    """
-    got = _sample_rtl(channel, 0, 2.0)
-    want = SAMPLE_RATE * 2 * 2.0 * 0.25       # a quarter of full rate is generous
-    return got >= want
-
-
-def start_capture(channel, clips, spool):
-    """rtl_fm, squelched, writing raw 16 kHz samples for the main loop to segment.
-
-    Both directories: clips and rtl_fm's own output belong in RAM, while the measured
-    squelch belongs on the card in `spool`, because re-measuring it costs a minute of
-    deafness on every restart.
-
-    How the dongle itself is opened is rtl_argv's business — the serial, the oversampling
-    and the de-emphasis are the same for everything that opens it, and the squelch level
-    is the only thing this decides.
-    """
-    # Gate on SIGNAL STRENGTH, not audio level, and cut clips on gaps in the data
-    # rather than on quiet passages in the audio.
-    #
-    # The first version piped rtl_fm into sox and split on silence. That cannot work on
-    # an un-squelched FM receiver: idle hiss and speech sit at similar audio levels
-    # (measured, on a real repeater: hiss at 1.2% of full scale), so an amplitude gate
-    # either treats hiss as sound or never opens at all. Sweeping the threshold showed
-    # a usable window only between 0.5% and 1%, and even inside it the transmission was
-    # not cleanly separated — 90 seconds containing a clear callsign split into an 80s
-    # clip of hiss and a 3.8s clip of hiss.
-    #
-    # Squelch is the mechanism radios use for exactly this, and it works on received
-    # power. With -l set, rtl_fm emits NOTHING while closed rather than emitting silence
-    # — which is why sox could never cut on it either — so the gaps in the byte stream
-    # are the transmission boundaries, and reading the stream directly is both simpler
-    # and correct. -r 16000 gives whisper its rate with no resampling, so sox leaves the
-    # capture path entirely.
-    # Hardware squelch, and nothing on top of it.
-    #
-    # rtl_fm's -l gates on RF POWER before demodulation. That is a different and much
-    # better question than "is the audio loud", because FM noise is loud precisely when
-    # there is no carrier — an audio-level gate sees hiss peaking at 0.295 against a
-    # floor of 0.036 and opens on it. Measured on a real repeater, hardware squelch at
-    # 25 produced clean captures and a correct transcription, while audio-level gating
-    # alone filled the spool with ten-second recordings of static.
-    #
-    # A software squelch ran on top of this for a while, to find the edges of each over.
-    # It could not work, for a reason the measurement above should have made obvious:
-    # rtl_fm emits nothing while closed, so the only audio it ever saw was speech, and
-    # the "noise floor" it computed was a speech level. It then discarded anything
-    # quieter — which is to say the start of every over — and cut overs in half at the
-    # first pause. Gone. The gap in the byte stream is the boundary, and it needs no
-    # help deciding that.
-    # The gain and the squelch, settled together — see calibration_for(). Nothing is
-    # measured here: calibration runs when somebody asks for it, and a channel starting up
-    # must be listening again in seconds rather than deaf for minutes.
-    #
-    # Say where both numbers came from, every time. They are the only two that decide what
-    # gets recorded — too low a squelch and the Pi spends its afternoon transcribing
-    # static, too high and it is quietly deaf, and the gain decides what "low" means — and
-    # the first line after a restart is where anybody looks. The never-calibrated case
-    # says so at length, because the alternative is a receiver running numbers measured on
-    # a different hill and looking perfectly healthy while it does.
-    gain, level, measured = calibration_for(channel, spool)
-    channel.gain = gain
-    if channel.squelch:
-        log.info("squelch %s — set in the manager for this channel", channel.squelch)
-    if measured:
-        log.info("gain %s dB, squelch %s — measured for this site %.1f hours ago",
-                 gain_text(gain), measured["squelch"],
-                 (time.time() - measured["when"]) / 3600)
-    else:
-        log.info("gain %s dB, squelch %s — the built-in defaults. This channel has never "
-                 "been calibrated; press Recalibrate in the channel manager to measure "
-                 "the site it is actually on.", gain_text(gain), level)
-    argv = rtl_argv(channel, level)
-    # rtl_fm's stderr went to /dev/null, which threw away the only thing it ever says
-    # that matters. A dongle that has dropped off the USB bus produces "No supported
-    # devices found." and exit 1; all the journal showed was "rtl_fm exited (1)", and
-    # working out which of the several things that could mean took a session. It cannot
-    # be a pipe — rtl_fm chatters about signal level and nothing would be draining it,
-    # which is the same deadlock transcription used to cause on stdout. A file on tmpfs
-    # costs the card nothing and is read back only when rtl_fm dies.
-    return subprocess.Popen(argv, stdout=subprocess.PIPE,
-                            stderr=open(os.path.join(clips, RTL_LOG), "wb"))
-
-
 def settled_clips(spool, quiet_for=1.0):
     """Wavs already on disk, for --spool-only.
 
@@ -2757,6 +2210,51 @@ def settled_clips(spool, quiet_for=1.0):
         except OSError:
             pass
     return out
+
+
+def start_capture(channel, clips, spool):
+    """Open the sound card and hand back the process reading it.
+
+    Hardware squelch, and nothing on top of it. A conventional receiver gates on the
+    CARRIER, before demodulation, which is a different and much better question than "is
+    the audio loud" -- FM noise is loudest precisely when there is no carrier, so an
+    audio-level gate opens on hiss and closes on speech. The SDR this replaces spent a
+    long time proving that: an audio-level squelch on its output saw a noise floor that
+    was really a speech level, discarded the quiet opening syllables of every over, and
+    cut the middle of one in two.
+
+    What remains here is not a squelch but a BOUNDARY detector: the radio has already
+    decided whether anything is transmitting, and AudioGate only decides where one over
+    stops and the next begins. It can afford to, because a closed squelch reads -91 dBFS
+    and speech reads -30, and there is nothing in between to be wrong about.
+
+    stderr to a file on tmpfs, not a pipe: arecord says one useful line when it fails and
+    nothing would be draining a pipe, which is the same deadlock transcription used to
+    cause on stdout. See capture_complaint.
+    """
+    argv = audio_argv(channel)
+    return subprocess.Popen(argv, stdout=subprocess.PIPE,
+                            stderr=open(os.path.join(clips, CAPTURE_LOG), "wb"))
+
+
+def audio_argv(channel):
+    """The capture command: a sound card, not a tuner.
+
+    plughw rather than hw so ALSA converts if the card cannot do 16 kHz mono natively --
+    the C-Media dongles in use can, but a different card silently failing to open is a
+    channel that looks like a dead frequency.
+
+    16000 is whisper's own rate, so nothing resamples afterwards. -t raw because this is
+    read as a byte stream and segmented here; a WAV header would have to be skipped, and
+    arecord writes an unseekable header with a bogus length when its output is a pipe.
+
+    No gain argument, deliberately. Level is set once at the radio, against the meter on
+    the channel manager, and the ALSA capture gain is stored in the card's own mixer
+    state. Nothing here should be moving it per-run: the SDR's automatic gain was the
+    single biggest source of confusion in the version this replaces.
+    """
+    return ["arecord", "-D", channel.device or AUDIO_DEVICE,
+            "-f", "S16_LE", "-r", str(SAMPLE_RATE), "-c", "1", "-t", "raw", "-q"]
 
 
 # ── keeping the audio ────────────────────────────────────────────────────────
@@ -3135,8 +2633,8 @@ def transcribe_loop(work, channel, whisper, model, outbox, stopping, carrier=Non
     """Transcribe and post, off the capture thread.
 
     This has to be its own thread. whisper is blocking and posting has a fifteen-second
-    timeout, and while either ran inline nothing was draining rtl_fm's pipe — which
-    holds 64 KB, about two seconds of audio, after which rtl_fm blocks on write, stops
+    timeout, and while either ran inline nothing was draining the capture pipe — which
+    holds 64 KB, about two seconds of audio, after which arecord blocks on write, stops
     reading the SDR, and the samples are gone. A ten-second over takes four seconds to
     transcribe on the fast model, so a second over arriving behind the first was already
     being clipped; on the careful model, which runs slower than real time, it would be
@@ -3370,10 +2868,6 @@ def main(argv=None):
     p.add_argument("--once", action="store_true", help="process what is waiting, then exit")
     p.add_argument("-v", "--verbose", action="store_true")
     p.add_argument("--version", action="version", version=f"transcriber {VERSION}")
-    p.add_argument("--calibrate", action="store_true",
-                   help="measure this site's tuner gain and squelch now, cache them, and "
-                        "exit. The dongle must be free: stop the channel first, or let "
-                        "calibrate.sh do it.")
     args = p.parse_args(argv)
 
     logging.basicConfig(
@@ -3384,19 +2878,6 @@ def main(argv=None):
     channel = load_channel(args.config, args.channel)
     spool = args.spool or os.path.join(SPOOL, re.sub(r"[^\w.-]", "_", channel.id))
 
-    # Before whisper is looked for, before anything is swept, and before the enabled
-    # check below: calibration is a radio job and nothing else, and a device whose model
-    # is missing should still be able to measure its site.
-    #
-    # `enabled` used to be tested first, so calibrating a channel that was off exited in
-    # three seconds with "nothing to do" and the manager reported "the receiver did not
-    # run the measurement" — true, and no help at all. That is backwards: measuring the
-    # site BEFORE putting a channel on the air is the right order, and the Double Dipsea
-    # 2026 is what it costs to get it wrong. A disabled channel is one nobody is relying
-    # on, which makes it the safest thing to take off the air for a minute.
-    if args.calibrate:
-        os.makedirs(spool, exist_ok=True)
-        return run_calibration(channel, spool)
 
     # A disabled channel touches nothing — not even its spool directory. Creating one as
     # root is how a channel ends up unable to write its own outbox later, which is why
@@ -3429,19 +2910,6 @@ def main(argv=None):
     if not os.path.exists(model):
         raise SystemExit(f"model not found: {model}")
 
-    # An RTL-SDR covers roughly 24 MHz to 1.766 GHz. Anything outside that is a typo,
-    # and rtl_fm will happily accept it and tune nowhere useful — a channel that looks
-    # healthy and hears nothing, which is the failure this project keeps producing.
-    # A real one: 147.465 typed into the manager reached the device as 1474650 Hz.
-    try:
-        hz = int(channel.frequency)
-    except (TypeError, ValueError):
-        raise SystemExit(f"frequency is not a number: {channel.frequency!r}")
-    if not 24_000_000 <= hz <= 1_766_000_000:
-        raise SystemExit(
-            f"frequency {hz} Hz ({hz / 1e6:.4f} MHz) is outside what this receiver "
-            f"covers — 147.465 MHz is 147465000, not 1474650")
-
     # Prove whisper actually runs before listening to anything.
     #
     # Without this a broken whisper is invisible: transcribe() returns "", the filters
@@ -3458,21 +2926,19 @@ def main(argv=None):
         raise SystemExit(f"{whisper} is not usable: "
                          f"{(probe.stderr or probe.stdout).strip()[:200]}")
 
-    rtl = None
+    rtl = None          # the arecord process; named for what it is below
     if not args.spool_only:
-        # Before anything else, prove the dongle is producing samples. A tuner that has
-        # wedged is indistinguishable from a quiet frequency once capture is running, so
-        # this is the only cheap moment to ask.
-        if not receiver_alive(channel):
-            log.error("the receiver is not producing samples — the tuner has not locked. "
-                      "Power-cycle the dongle (unplug it, or re-bind its USB port) and "
-                      "check it is not overheating or on a long/thin extension lead.")
-            return 1
         rtl = start_capture(channel, clips, spool)
         # Version first, so `journalctl -u transcriber@… ` answers "what is this running"
         # without anyone having to go and look.
-        log.info("transcriber %s — listening on %s (%s), dongle %s, model %s",
-                 VERSION, channel.frequency, channel.label, channel.serial, channel.model)
+        #
+        # No liveness probe before opening the card. The SDR needed one because a wedged
+        # tuner is indistinguishable from a quiet frequency; a sound card either opens or
+        # it does not, and arecord says which in one line -- see capture_complaint. The
+        # equivalent check here is DEAF_CHECK_SECONDS, which catches a card that opens and
+        # then delivers nothing.
+        log.info("transcriber %s — listening on %s (%s), model %s",
+                 VERSION, channel.device or AUDIO_DEVICE, channel.label, channel.model)
 
     running = True
 
@@ -3505,6 +2971,10 @@ def main(argv=None):
     enqueue = work.put
 
     audio = bytearray()          # the transmission currently being received
+    pending = bytearray()        # bytes not yet a whole gate frame
+    tail = bytearray()           # quiet frames held back; see the gate loop
+    gate = AudioGate()
+    last_level = 0.0             # when the level was last reported to the manager
     seq = 0
     last_data = None             # when samples last arrived; None between overs
     # A whole number of samples, and therefore an even number of bytes: the buffer is cut
@@ -3519,37 +2989,59 @@ def main(argv=None):
                 ready, _, _ = select.select([rtl.stdout], [], [], 0.2)
                 now = time.time()
                 if ready:
-                    chunk = os.read(rtl.stdout.fileno(), 65536)
+                    chunk = os.read(rtl.stdout.fileno(), GATE_FRAME * 2)
                     if chunk:
-                        # Everything that arrives is part of a transmission. rtl_fm is
-                        # already gating on RF power, so there is nothing here to second-
-                        # guess and no audio level worth measuring.
-                        #
-                        # An audio-level squelch used to run on top of this, and it was
-                        # actively destructive for a reason that is obvious in hindsight:
-                        # since rtl_fm emits nothing while squelched, the only audio it
-                        # ever saw was speech. Its "noise floor" was therefore a speech
-                        # level — 98, measured — and it demanded 1.6x that to open and
-                        # dropped out below 1.2x. So the quiet opening syllables of an
-                        # over never cleared the bar and were discarded, and a pause in
-                        # the middle fell through the floor and cut the over in two. On
-                        # the air: an entry beginning "ring channel K6DRK" where the
-                        # station had said "monitoring channel", followed by a 1.2s
-                        # fragment whisper could make nothing of.
-                        audio += chunk
-                        last_data = now
                         last_any_data = now
+                        pending += chunk
+                        # Whole frames only. The gate's filter is stateful and its hang is
+                        # counted in frame-times, so feeding it a short tail would both
+                        # ring the filter and mis-time the hang.
+                        while len(pending) >= GATE_FRAME * 2:
+                            frame = bytes(pending[:GATE_FRAME * 2])
+                            del pending[:GATE_FRAME * 2]
+                            db, event = gate.feed(frame, GATE_FRAME / float(SAMPLE_RATE))
 
-                # The gap IS the end of the transmission.
-                if audio and last_data is not None and now - last_data >= GAP_SECONDS:
-                    seq += 1
-                    heard += 1
-                    # The tail of a carrier already judged stuck is more of the same.
-                    if not carrier.skipping:
-                        enqueue(write_clip(clips, bytes(audio), seq))
-                    audio.clear()
-                    last_data = None
-                    carrier.dropped()
+                            # Reported for the calibration meter on the channel manager,
+                            # so a level can be set by somebody standing at the radio.
+                            # Only while there is something to see -- above the floor,
+                            # which is exactly when the squelch is open -- plus a
+                            # keepalive, because a page has to tell a quiet channel from
+                            # a dead device and they look identical otherwise.
+                            if (db > LEVEL_REPORT_FLOOR and now - last_level >= 1.0) \
+                                    or now - last_level >= LEVEL_KEEPALIVE:
+                                last_level = now
+                                report_level(channel, db)
+
+                            if event == "start":
+                                audio.clear()
+                                tail.clear()
+                                audio += frame
+                                last_data = now
+                            elif gate.open:
+                                # Quiet frames are held back rather than appended. A pause
+                                # inside an over has to survive -- cutting one out is how
+                                # "monitoring channel" became "ring channel" -- but the
+                                # hang at the END is silence nobody said, and leaving it
+                                # in makes every clip 1.2 s longer than the transmission
+                                # it holds. So: buffer while quiet, flush it back the
+                                # moment speech returns, discard it if the gate closes.
+                                if db < CLOSE_DB:
+                                    tail += frame
+                                else:
+                                    if tail:
+                                        audio += tail
+                                        tail.clear()
+                                    audio += frame
+                                last_data = now
+                            elif event == "end":
+                                seq += 1
+                                heard += 1
+                                if not carrier.skipping:
+                                    enqueue(write_clip(clips, bytes(audio), seq))
+                                audio.clear()
+                                tail.clear()
+                                last_data = None
+                                carrier.dropped()
 
                 # A carrier that never drops would otherwise grow one clip forever.
                 #
@@ -3617,14 +3109,15 @@ def main(argv=None):
             # A dead radio must not look like a quiet frequency. systemd restarts us,
             # and a failed unit is a state somebody notices.
             if rtl is not None and rtl.poll() is not None:
-                log.error("rtl_fm exited (%s): %s", rtl.returncode, rtl_complaint(clips))
+                log.error("arecord exited (%s): %s", rtl.returncode,
+                          capture_complaint(clips))
                 return 1
             if rtl is None:
                 time.sleep(0.5)
     finally:
         # Whatever was mid-transmission when we were told to stop is still a
         # transmission. Without this it was dropped on the floor — the clip is only
-        # written when the gap arrives, and a shutdown, or rtl_fm dying, arrives first.
+        # written when the gate closes, and a shutdown, or arecord dying, arrives first.
         if audio and not carrier.skipping:
             seq += 1
             enqueue(write_clip(clips, bytes(audio), seq))

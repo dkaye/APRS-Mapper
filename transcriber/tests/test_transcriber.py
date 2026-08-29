@@ -739,8 +739,11 @@ def test_the_static_pass_takes_noise_the_channel_would_never_record():
         b.subprocess.Popen = real
 
     argv = seen.get("argv", [])
-    check("the gate is off, not merely low", argv[argv.index("-l") + 1], "0")
-    check("on the channel's own frequency", argv[argv.index("-f") + 1], "146700000")
+    # The gate is a knob on the radio now, not an argument. What this can still assert is
+    # that the bench reads the card exactly as the service does -- a pass capturing at a
+    # different rate or format would be comparing something else.
+    check("captures from the sound card", argv[0], "arecord")
+    check("at whisper's rate", argv[argv.index("-r") + 1], "16000")
     check("two clips of noise", len(lengths), 2)
     check("each the length asked for", all(0.45 <= s <= 0.65 for s in lengths), True)
 
@@ -853,10 +856,6 @@ def test_start_capture_builds_a_command_and_keeps_the_two_directories_straight()
     with tempfile.TemporaryDirectory() as d:
         clips, spool = os.path.join(d, "run"), os.path.join(d, "spool")
         os.makedirs(clips), os.makedirs(spool)
-        with open(os.path.join(spool, "calibration.json"), "w") as fh:
-            json.dump({"gain": 30, "squelch": 40, "when": __import__("time").time(),
-                       "frequency": "147465000"}, fh)
-
         seen = {}
 
         class FakePopen:
@@ -865,26 +864,28 @@ def test_start_capture_builds_a_command_and_keeps_the_two_directories_straight()
 
         real, transcriber.subprocess.Popen = transcriber.subprocess.Popen, FakePopen
         try:
-            channel = transcriber.Channel({"id": "rx1-147465", "frequency": "147465000",
-                                           "serial": "56052444", "squelch": 0})
+            channel = transcriber.Channel({"id": "rx1-147465"})
             transcriber.start_capture(channel, clips, spool)
         finally:
             transcriber.subprocess.Popen = real
 
         argv = seen["argv"]
-        check("addresses the dongle by bare serial", argv[argv.index("-d") + 1], "56052444")
-        # Fixed gain, always. Automatic gain and an RF squelch cannot both work: AGC winds
-        # the gain up on a quiet band until the noise crosses whatever threshold is set,
-        # so the same squelch level reads 0% open and 25% open ten minutes apart. Measured
-        # on a real receiver; the channel spent a day recording its own noise floor.
-        check("pins the tuner gain", argv[argv.index("-g") + 1], "30")
-        check("tunes where it was told", argv[argv.index("-f") + 1], "147465000")
-        # -s 200000 -r 16000, never -s 16000: the RTL2832U cannot sample that low and the
-        # audio comes back mangled but plausible-looking, which whisper answers by
-        # inventing something.
-        check("oversamples", argv[argv.index("-s") + 1], "200000")
-        check("uses the squelch measured for this site", argv[argv.index("-l") + 1], "40")
-        check("rtl_fm's stderr lands in RAM, not on the card",
+        check("captures from the sound card", argv[0], "arecord")
+        # plughw, not hw: ALSA converts if the card cannot do 16 kHz mono natively, and a
+        # card that silently fails to open is a channel that looks like a dead frequency.
+        check("through plughw so ALSA can convert",
+              argv[argv.index("-D") + 1].startswith("plughw:"), True)
+        check("at whisper's rate, so nothing resamples", argv[argv.index("-r") + 1], "16000")
+        check("mono", argv[argv.index("-c") + 1], "1")
+        check("16-bit little-endian", argv[argv.index("-f") + 1], "S16_LE")
+        # raw, not wav: arecord writes an unseekable header with a bogus length when its
+        # output is a pipe, and this is read as a byte stream anyway.
+        check("raw, not a wav header", argv[argv.index("-t") + 1], "raw")
+        # No gain argument anywhere. Level is set once at the radio against the meter in
+        # the channel manager and lives in the card's mixer state; the SDR's automatic
+        # gain was the single biggest source of confusion in the version this replaces.
+        check("never sets a gain", any(a in ("-g", "--gain") for a in argv), False)
+        check("arecord's stderr lands in RAM, not on the card",
               os.path.dirname(seen["stderr"].name), clips)
         seen["stderr"].close()
 
@@ -945,75 +946,6 @@ def site(floor, busy_at=None):
     return sample
 
 
-def test_calibration_finds_the_lowest_level_that_gates():
-    """Lowest, not safest. Picking a high level would gate reliably and leave the
-    receiver deaf to anything quiet — the failure nobody notices."""
-    print("calibration")
-    check("quiet site", transcriber.choose_squelch(site(floor=15)), 20)
-    check("noisier site", transcriber.choose_squelch(site(floor=95)), 100)
-    check("very quiet site", transcriber.choose_squelch(site(floor=1)), 10)
-
-
-def test_calibration_is_not_fooled_by_a_transmission():
-    """A transmission during the measurement looks exactly like a level that is too
-    low. Without the confirmation pass it would push the answer up and quietly cost
-    sensitivity for as long as the cache lasts."""
-    print("calibration — someone transmits mid-measurement")
-    chosen = transcriber.choose_squelch(site(floor=15, busy_at=20))
-    check("still picks the right level", chosen, 20)
-
-
-def test_a_wedged_tuner_is_not_mistaken_for_a_quiet_frequency():
-    """The failure that cost two evenings.
-
-    An RTL-SDR's tuner can stop locking while every command still reports success:
-    rtl_fm prints "Tuned to 146700000 Hz", allocates its buffers, announces its sample
-    rate, and then produces not one byte. rtl_test says "[R82XX] PLL not locked!" and
-    exits 0. From the web page, from systemctl, and from the channel's own log it is
-    indistinguishable from a frequency nobody is using — the journal just repeats "no
-    transmissions in the last 30 minutes" while somebody listens to the same repeater on
-    a handheld.
-
-    With the squelch off there is nothing left to gate, so a working receiver must
-    deliver. That is the one question that separates the two, and it costs two seconds.
-    """
-    print("wedged tuner")
-    ch = transcriber.Channel({"id": "rx", "frequency": "146700000", "serial": "1"})
-
-    real = transcriber._sample_rtl
-    try:
-        transcriber._sample_rtl = lambda c, level, secs: 0
-        check("a receiver producing nothing is not alive", transcriber.receiver_alive(ch), False)
-
-        # Full rate at squelch 0 is what a healthy dongle does.
-        transcriber._sample_rtl = lambda c, level, secs: int(transcriber.SAMPLE_RATE * 2 * secs)
-        check("a receiver at full rate is alive", transcriber.receiver_alive(ch), True)
-
-        # A trickle is not enough: a tuner half-working is still a tuner to power-cycle.
-        transcriber._sample_rtl = lambda c, level, secs: int(transcriber.SAMPLE_RATE * 2 * secs * 0.05)
-        check("a trickle does not count", transcriber.receiver_alive(ch), False)
-    finally:
-        transcriber._sample_rtl = real
-
-
-def test_calibration_refuses_to_measure_a_dead_input():
-    """The failure that shipped, and the shape of it is worth remembering: rtl_fm could
-    not open the dongle — a restart raced its release — so every sample came back empty,
-    empty read as "beautifully quiet", and the scan walked the answer down to the lowest
-    candidate. The channel then ran with a squelch of 0, which in rtl_fm is no gate at
-    all, recorded continuous hiss, and filed a steady stream of clips whisper had nothing
-    to say about.
-
-    With the squelch off a working receiver MUST emit at the full rate. If it does not,
-    there is nothing to measure and no answer worth caching."""
-    print("calibration — the receiver is not running")
-    check("returns None rather than a number",
-          transcriber.choose_squelch(lambda level, secs: 0), None)
-
-    # And 0 is not a candidate any more: it is the absence of a squelch, not a setting.
-    check("0 is not offered as an answer", 0 in transcriber.SQUELCH_CANDIDATES, False)
-
-
 def lull(floor, quiet_looks):
     """A site whose noise stops for the first `quiet_looks` samples and then comes back.
 
@@ -1031,32 +963,6 @@ def lull(floor, quiet_looks):
             return 0
         return int(full * seconds) if level < floor else 0
     return sample
-
-
-def test_a_lull_is_not_mistaken_for_a_quiet_channel():
-    """The failure that cost the most: squelch 10 cached on a channel that then ran
-    99.56% open, filing noise to people's phones for a day.
-
-    Nothing was wrong with the receiver and nothing was wrong with the threshold. The
-    scan simply ran while 146.700 happened to be quiet, and the walk-down — which steps
-    down for as long as the level beneath also gates — slid from wherever it started all
-    the way to the lowest candidate. A lull lasting only as long as the scan is enough.
-
-    Measuring for longer does not fix it. Over 10.8 hours of this channel a 2 s window
-    sees 2.6% of the night's idle-noise range and a 300 s window sees 138%, yet the p90
-    distance from one window's level to the night's typical level only moves 319 -> 284.
-    The floor wanders over tens of minutes, so the answer is not a longer look: it is
-    refusing to believe an answer with nothing audible underneath it.
-    """
-    print("calibration — a lull, not a quiet channel")
-    # Two looks is what the scan spends before it would have returned the floor. The
-    # re-check is a THIRD look, a good fifteen seconds later, and by then the noise is back.
-    check("returns None rather than the floor",
-          transcriber.choose_squelch(lull(floor=60, quiet_looks=2)), None)
-    # And the honest version of the same site still measures.
-    check("a real boundary still measures", transcriber.choose_squelch(site(floor=55)), 60)
-    check("a site that really is this quiet still measures",
-          transcriber.choose_squelch(site(floor=1)), 10)
 
 
 def test_the_length_guard_is_recorded_rather_than_silent():
@@ -1228,15 +1134,6 @@ def test_a_clip_nobody_said_anything_in_is_recognised():
     check("content of nothing is None", transcriber.content_seconds([], 0), None)
 
 
-def test_calibration_gives_up_rather_than_guessing():
-    """If nothing shuts it up, say so — the caller falls back to the default instead of
-    returning a made-up number."""
-    print("calibration — nothing works")
-    check("returns None", transcriber.choose_squelch(site(floor=10_000)), None)
-
-
-# ── gain calibration ─────────────────────────────────────────────────────────
-
 def band(thermal, adc=0.0, transmits_at=None, transmits_from=None):
     """A fake receiver's noise floor in dB, as a function of tuner gain.
 
@@ -1267,322 +1164,43 @@ def band(thermal, adc=0.0, transmits_at=None, transmits_from=None):
     return measure
 
 
-def test_the_gain_is_the_knee_where_the_receiver_starts_hearing_the_band():
-    """The gain is chosen by where the noise floor starts following it, and never by
-    which gain's noise the squelch still gates.
-
-    That second question is the trap this project keeps falling into. Gating and
-    sensitivity pull in opposite directions, and on a dead band only gating can be
-    measured — so optimizing for it alone walks the gain down until the receiver gates
-    beautifully and hears nothing at all.
-
-    The knee asks something a dead band CAN answer. While the receiver is limited by its
-    own converter the floor rises less than each gain increment; once it is limited by
-    thermal noise arriving from the antenna it rises 1:1. Where that changes is where the
-    receiver starts hearing the band rather than itself, and a noisier site reaches it at
-    a lower gain — which is the whole reason 30 dB measured at one site is not a number to
-    compile in for every site.
-    """
-    print("gain — the knee")
-    check("an ordinary site", transcriber.choose_gain(band(thermal=-10)), (16.6, ""))
-    check("a noisy site needs less gain", transcriber.choose_gain(band(thermal=5)),
-          (12.5, ""))
-    check("a quiet site needs more", transcriber.choose_gain(band(thermal=-20)),
-          (29.7, ""))
-
-
-def test_a_gain_sweep_with_no_knee_is_used_but_never_called_measured():
-    """A floor that never follows the gain has two causes and this sweep cannot separate
-    them: nothing reaching the tuner, or a site quieter than the ladder reaches.
-
-    It used to refuse and name the antenna, and that was the wrong cause every time it
-    was said. Refusing also did not avoid guessing, which was the real problem: the
-    caller's fallback is a gain compiled in from another site, and at the site that
-    prompted this it was 30 dB against a knee at 38.6 — so refusing to guess quietly
-    guessed lower, and left the receiver deaf. The top of the sweep comes back instead,
-    with the caveat attached, and the caller's job is to cache it without believing it."""
-    print("gain — no knee")
-    gain, why = transcriber.choose_gain(band(thermal=-200))
-    check("hands back the top of the sweep", gain, max(transcriber.GAIN_CANDIDATES))
-    check("rather than nothing at all", gain is not None, True)
-    check("still says to check the antenna", "antenna" in why, True)
-    check("but no longer claims that is the only cause", "quieter" in why, True)
-
-    # What the caller does with it: cached so the receiver stops running on another
-    # site's number, and marked so nothing downstream calls it a measurement.
-    with tempfile.TemporaryDirectory() as spool:
-        channel = transcriber.Channel({"id": "rx1-147465", "frequency": "147465000",
-                                       "serial": "1"})
-        result, why = transcriber.calibrate(channel, spool,
-                                            measure=band(thermal=-200),
-                                            sample=site(floor=25))
-        check("it is cached", result and result["gain"], max(transcriber.GAIN_CANDIDATES))
-        check("and marked as not a knee", result["knee"], False)
-        check("with the reason kept beside it", "antenna" in result.get("note", ""), True)
-        saved = json.load(open(os.path.join(spool, "calibration.json")))
-        check("the mark survives to disk", saved["knee"], False)
-
-    # And a receiver that hands back nothing at all is the wedged tuner again, not a
-    # wonderfully quiet site. That one is still a refusal.
-    gain, why = transcriber.choose_gain(lambda g: None)
-    check("a dead receiver is not a measurement", gain, None)
-    check("and says the tuner produced nothing", "no samples" in why, True)
-
-
-def test_a_transmission_during_the_sweep_is_detected_rather_than_measured():
-    """Traffic arriving mid-sweep invalidates the whole thing, exactly as it does in the
-    squelch scan — and it must be caught rather than averaged in, because what it
-    produces is not a wild answer but a plausible one: a floor that jumps at one gain
-    looks precisely like a knee, and the gain it names is wrong for as long as it is
-    cached.
-
-    Both shapes. A transmission that ends leaves the floor lower afterwards than it was
-    before, which cannot happen when the gain is going up. One that is still there at the
-    end agrees with itself everywhere, so it is caught by re-measuring the bottom of the
-    sweep at the end and finding it has moved."""
-    print("gain — someone transmits mid-measurement")
-    gain, why = transcriber.choose_gain(band(thermal=-10, transmits_at=20.7))
-    check("does not cache a wrong gain", gain, None)
-    check("and says what happened", "transmitting" in why, True)
-
-    gain, why = transcriber.choose_gain(band(thermal=-10, transmits_from=20.7))
-    check("a carrier that stays up is caught too", gain, None)
-    check("and says what happened", "transmitting" in why, True)
-
-
-def test_the_gain_sweep_stays_below_what_this_tuner_stays_linear_at():
-    """The knee is measured on an idle channel, so it cannot see the one thing that got a
-    hardcoded 40 removed: front-end overload from a strong transmitter elsewhere in the
-    band, which is not on this frequency and is not there while the sweep runs. Nothing
-    the sweep measures would object to 40 dB. So the list simply does not offer it.
-
-    40 is the number with a failure attached to it, and it is the one to assert on. An
-    earlier version of this test demanded 36 or less, which is a tighter bound than
-    anything measured ever justified, and it made the sweep stop one step short of a real
-    site's knee — see the test below."""
-    print("gain — the cap")
-    check("stays well below the tuner's 49.6 dB maximum",
-          max(transcriber.GAIN_CANDIDATES) < 40, True)
-    check("and never offers the 40 that overloaded the front end",
-          [g for g in transcriber.GAIN_CANDIDATES if g >= 40], [])
-
-
-def test_a_site_quiet_enough_to_need_the_top_of_the_sweep_still_calibrates():
-    """A quiet site's knee sits high, and the sweep has to reach it or it will blame the
-    antenna for the silence.
-
-    This is measured, not invented. On an idle 2m antenna the floor sat on the converter's
-    own quantisation noise from 8.7 dB all the way to 32.8 — the old top of the sweep —
-    and lifted off at 36.4. Every calibration there failed with "check the antenna and its
-    connector" while the antenna was connected and working, because a sweep that stops
-    below the knee cannot tell a quiet site from a disconnected one. thermal=-30 puts the
-    knee where that site's actually was."""
-    print("gain — a quiet site reaches its knee")
-    gain, why = transcriber.choose_gain(band(thermal=-30))
-    check("finds the knee above the old 32.8 ceiling", gain, 36.4)
-    check("and does not blame the antenna", why, "")
-
-    # The bug itself: the same site, swept only as far as the old ceiling went. It now
-    # degrades to an unmeasured 32.8 instead of refusing, which is the point — but 36.4
-    # measured is the answer, and only a ladder that reaches it can say so.
-    gain, why = transcriber.choose_gain(band(thermal=-30),
-                                        candidates=[8.7, 12.5, 16.6, 20.7, 25.4, 29.7, 32.8])
-    check("stopping short finds no knee at all", why != "", True)
-    check("and can only offer the top of its ladder", gain, 32.8)
-    check("naming how far it actually looked", "32.8" in why, True)
-
-
-# ── what is cached, and when it is measured ──────────────────────────────────
-
 def calibrated(spool, **fields):
     """Write a calibration cache by hand, as a device would have left it."""
     with open(os.path.join(spool, "calibration.json"), "w") as fh:
         json.dump(fields, fh)
 
 
-def test_gain_and_squelch_are_cached_together_or_not_at_all():
-    """A squelch level means nothing without the gain it was measured at — rtl_fm's -l
-    compares received power against a threshold, and the gain decides what that power is.
-    A cache holding one without the other is the bug that cost a day, so it is refused
-    outright rather than half-believed."""
-    print("calibration cache")
-    import time as _time
-    with tempfile.TemporaryDirectory() as spool:
-        channel = transcriber.Channel({"id": "rx1-147465", "frequency": "147465000",
-                                       "serial": "1"})
-        result, why = transcriber.calibrate(
-            channel, spool,
-            measure=band(thermal=-10),
-            sample=site(floor=25))
-        check("measures a gain", result and result["gain"], 16.6)
-        check("and a squelch at that gain", result and result["squelch"], 30)
-        check("with nothing to explain away", why, "")
-
-        saved = json.load(open(os.path.join(spool, "calibration.json")))
-        check("both are written down together", sorted(saved),
-              ["frequency", "gain", "knee", "squelch", "when"])
-        check("and it is recorded that this one was a real knee", saved["knee"], True)
-
-        # The gain the squelch was measured at is the gain the channel then opens with.
-        gain, squelch, _ = transcriber.calibration_for(channel, spool)
-        check("and both come back", (gain, squelch), (16.6, 30))
-
-        # Half a cache is no cache. This is the exact file the old code wrote.
-        calibrated(spool, squelch=40, when=_time.time(), frequency="147465000")
-        gain, squelch, measured = transcriber.calibration_for(channel, spool)
-        check("a squelch with no gain beside it is ignored", measured, None)
-        check("and the channel falls back to the built-in pair", (gain, squelch),
-              (transcriber.DEFAULT_GAIN, transcriber.DEFAULT_SQUELCH))
-
-
-def test_a_measurement_is_never_re_measured_behind_your_back():
-    """Calibration happens when somebody asks for it and at no other time.
-
-    A cache that expired took the channel off the air for minutes at whatever hour it
-    happened to fall due, and nobody asked for it. The measurement is only as old as the
-    site it was made at, and a site does not change on a schedule — so an old measurement
-    is used exactly as a new one is, and it is the manager's job to show how old it is."""
-    print("calibration — on demand only")
-    import time as _time
-    check("nothing expires", hasattr(transcriber, "CALIBRATION_MAX_AGE"), False)
-    with tempfile.TemporaryDirectory() as spool:
-        channel = transcriber.Channel({"id": "rx1-147465", "frequency": "147465000",
-                                       "serial": "1"})
-        calibrated(spool, gain=20.7, squelch=20, frequency="147465000",
-                   when=_time.time() - 40 * 86400)
-        gain, squelch, measured = transcriber.calibration_for(channel, spool)
-        check("a six-week-old measurement is still the answer", (gain, squelch),
-              (20.7, 20))
-        check("and is reported as a measurement", bool(measured), True)
-
-
-def test_a_channel_that_has_never_been_calibrated_runs_on_the_defaults():
-    """A new receiver listens on the compiled-in pair until somebody presses the button —
-    it does not measure at startup and it does not quietly measure later. The cost of
-    that is a device running numbers measured somewhere else, which is why the manager
-    says "never calibrated" in so many words; the cost of the alternative is a channel
-    that goes deaf for minutes at a moment nobody chose."""
-    print("calibration — never measured")
-    with tempfile.TemporaryDirectory() as d:
-        clips, spool = os.path.join(d, "run"), os.path.join(d, "spool")
-        os.makedirs(clips), os.makedirs(spool)
-
-        measured = []
-        seen = {}
-
-        class FakePopen:
-            def __init__(self, argv, stdout=None, stderr=None):
-                seen["argv"], seen["stderr"] = argv, stderr
-
-        real_popen = transcriber.subprocess.Popen
-        real_sample, real_floor = transcriber._sample_rtl, transcriber.measure_floor
-        transcriber.subprocess.Popen = FakePopen
-        transcriber._sample_rtl = lambda *a: measured.append(a)
-        transcriber.measure_floor = lambda *a: measured.append(a)
-        try:
-            channel = transcriber.Channel({"id": "rx1-147465", "frequency": "147465000",
-                                           "serial": "56052444"})
-            transcriber.start_capture(channel, clips, spool)
-        finally:
-            transcriber.subprocess.Popen = real_popen
-            transcriber._sample_rtl, transcriber.measure_floor = real_sample, real_floor
-
-        argv = seen["argv"]
-        check("opens the radio without measuring anything", measured, [])
-        check("on the built-in gain", argv[argv.index("-g") + 1],
-              str(transcriber.DEFAULT_GAIN))
-        check("and the built-in squelch", argv[argv.index("-l") + 1],
-              str(transcriber.DEFAULT_SQUELCH))
-        seen["stderr"].close()
-
-
-def calibration_output(channel, spool, measure, sample):
-    """The JSON lines run_calibration prints, in order."""
-    import contextlib
-    import io
-    real_alive, real_floor = transcriber.receiver_alive, transcriber.measure_floor
-    real_sample = transcriber._sample_rtl
-    transcriber.receiver_alive = lambda c: True
-    transcriber.measure_floor = lambda c, g, **kw: measure(g)
-    transcriber._sample_rtl = lambda c, level, secs: sample(level, secs)
-    out = io.StringIO()
-    try:
-        with contextlib.redirect_stdout(out):
-            rc = transcriber.run_calibration(channel, spool)
-    finally:
-        transcriber.receiver_alive, transcriber.measure_floor = real_alive, real_floor
-        transcriber._sample_rtl = real_sample
-    return rc, [json.loads(ln) for ln in out.getvalue().splitlines() if ln.strip()]
-
-
-def test_calibrating_says_it_has_started_before_it_says_what_it_found():
-    """Two reports, and the first one is what makes the manager's countdown honest.
-
-    Devices are polled once a minute, so counting down from the moment the button was
-    pressed is wrong by up to a minute — and wrong in the direction that makes the page
-    claim a measurement has finished while the radio is still busy. The device says when
-    it has actually started, and how long it expects to take, and the countdown runs from
-    that."""
-    print("calibration — reporting in")
-    with tempfile.TemporaryDirectory() as spool:
-        channel = transcriber.Channel({"id": "rx1-147465", "frequency": "147465000",
-                                       "serial": "1"})
-        rc, lines = calibration_output(channel, spool, band(thermal=-10), site(floor=25))
-        check("succeeds", rc, 0)
-        check("says it has started first", lines[0]["state"], "started")
-        check("with how long it expects to take", lines[0]["expected"] > 0, True)
-        check("then what it measured", lines[1],
-              {"state": "done", "gain": 16.6, "squelch": 30, "knee": True})
-
-        # A gain that is the top of the sweep rather than a knee travels as such, so the
-        # manager can show the difference instead of presenting a guess as a measurement.
-        rc, lines = calibration_output(channel, spool, band(thermal=-200), site(floor=25))
-        check("a caveated gain still succeeds", rc, 0)
-        check("but is reported as not a knee", lines[1]["knee"], False)
-        check("and carries the reason", "antenna" in lines[1].get("note", ""), True)
-
-
-def test_a_failed_calibration_says_why_and_caches_nothing():
-    """A failed calibration that says so is far better than a plausible one that is
-    wrong. Nothing is written, so the channel goes back on the air with whatever it was
-    already using, and the manager has a sentence to show rather than a spinner that
-    stops."""
-    print("calibration — failure is reported, not cached")
-    with tempfile.TemporaryDirectory() as spool:
-        channel = transcriber.Channel({"id": "rx1-147465", "frequency": "147465000",
-                                       "serial": "1"})
-        rc, lines = calibration_output(channel, spool,
-                                       band(thermal=-10, transmits_at=20.7),
-                                       site(floor=25))
-        check("fails", rc, 1)
-        check("having said it started", lines[0]["state"], "started")
-        check("and then why it stopped", lines[1]["state"], "failed")
-        check("in words", "transmitting" in lines[1]["error"], True)
-        check("nothing is cached", os.path.exists(os.path.join(spool, "calibration.json")),
-              False)
-
-
-# ── where one transmission ends and the next begins ──────────────────────────
-
 def emitter(script):
-    """A fake rtl_fm. `script` is [(seconds, emit?), ...] played in real time.
+    """A fake sound card. `script` is [(seconds, loud?, level), ...] played in real time.
 
-    "emit?" is the whole point. rtl_fm's RF squelch gates before demodulation, so while
-    it is closed the process writes NOTHING — measured on a real receiver at exactly zero
-    bytes over eight seconds of idle channel. A gap in the byte stream is therefore not a
-    quiet passage; it is the carrier dropping.
+    Always writes. That is the whole difference from the SDR this replaces: rtl_fm's RF
+    squelch gated before demodulation, so while it was closed the process wrote NOTHING
+    and a gap in the byte stream WAS the carrier dropping. A sound card has no opinion --
+    it delivers silence at the same rate it delivers speech, forever -- so the boundary
+    between overs has to be found in the LEVEL, and a test that stopped writing would be
+    testing a receiver nobody has any more.
+
+    "loud?" therefore selects between `level` and digital silence rather than between
+    writing and not writing.
     """
+    # A SQUARE WAVE, not a constant. A run of identical samples is DC, and the gate
+    # high-passes at 200 Hz precisely to throw DC and squelch thumps away -- so a constant
+    # "loud" value reads as silence after the opening transient, which is correct
+    # behaviour and makes it useless as test audio. Alternating sign puts the energy at
+    # 8 kHz, comfortably inside the band the gate measures.
     body = (
         "import sys, time\n"
         "w = sys.stdout.buffer\n"
-        "chunk = (%d).to_bytes(2, 'little', signed=True) * %d\n"
-        "for seconds, emit, level in %r:\n"
+        "def tone(v, n):\n"
+        "    return b''.join(((v if i %% 2 else -v)).to_bytes(2, 'little', signed=True)\n"
+        "                    for i in range(n))\n"
+        "for seconds, loud, level in %r:\n"
+        "    block = tone(level if loud else 0, %d)\n"
         "    end = time.time() + seconds\n"
         "    while time.time() < end:\n"
-        "        if emit:\n"
-        "            w.write((level).to_bytes(2, 'little', signed=True) * %d); w.flush()\n"
+        "        w.write(block); w.flush()\n"
         "        time.sleep(0.05)\n"
-    ) % (3000, transcriber.BLOCK_SAMPLES, script, transcriber.BLOCK_SAMPLES)
+    ) % (script, transcriber.BLOCK_SAMPLES)
     return [sys.executable, "-c", body]
 
 
@@ -1603,14 +1221,10 @@ def capture_clips(script, seconds, carrier=None):
         clips = os.path.join(tmp, "clips"); os.makedirs(clips)
         config = os.path.join(tmp, "channels.json")
         with open(config, "w") as fh:
-            json.dump({"channels": [{"id": "rx1-146520", "token": "t",
-                                     "frequency": "146520000", "serial": "1"}]}, fh)
+            json.dump({"channels": [{"id": "rx1-146520", "token": "t"}]}, fh)
 
         written = []
         real_put, real_capture = transcriber.ClipQueue.put, transcriber.start_capture
-        # The liveness probe opens the real dongle, which these tests do not have. It is
-        # covered on its own in test_a_wedged_tuner_is_not_mistaken_for_a_quiet_frequency.
-        real_alive, transcriber.receiver_alive = transcriber.receiver_alive, lambda ch: True
         real_carrier = transcriber.OpenCarrier
         if carrier is not None:
             transcriber.OpenCarrier = lambda: carrier
@@ -1634,7 +1248,6 @@ def capture_clips(script, seconds, carrier=None):
         finally:
             transcriber.ClipQueue.put = real_put
             transcriber.start_capture = real_capture
-            transcriber.receiver_alive = real_alive
             transcriber.OpenCarrier = real_carrier
         # Measured before the temporary directory goes, since the files go with it.
         return [(os.path.basename(p), transcriber.clip_seconds(p))
@@ -2649,7 +2262,6 @@ def test_a_clip_is_queued_once_not_once_per_loop():
                                                      real_settled(d, **kw))[1]
         transcriber.ClipQueue.put = lambda self, p: queued.append(p)
         real_capture, transcriber.start_capture = transcriber.start_capture, no_capture
-        real_alive, transcriber.receiver_alive = transcriber.receiver_alive, lambda ch: True
         died = []
         try:
             def run():
@@ -2685,7 +2297,6 @@ def test_a_clip_is_queued_once_not_once_per_loop():
             transcriber.settled_clips = real_settled
             transcriber.ClipQueue.put = real_put
             transcriber.start_capture = real_capture
-            transcriber.receiver_alive = real_alive
 
         check("the directory is never scanned with a radio attached", scans, [])
         check("and nothing is queued from it", queued, [])
@@ -3093,53 +2704,22 @@ def test_a_broken_whisper_is_fatal_not_silent():
             print("  ok  a missing binary is fatal too")
 
 
-def test_a_disabled_channel_can_still_be_calibrated():
-    """Measuring the site must not require the channel to be on the air first.
-
-    The enabled check used to sit above the calibrate branch, so calibrating a channel
-    that was switched off exited in three seconds with "nothing to do" and the manager
-    reported "the receiver did not run the measurement" — true, and no help. Measuring
-    BEFORE putting a channel on the air is the right order, and a disabled channel is
-    the safest one to take off the air for a minute.
-    """
-    with tempfile.TemporaryDirectory() as tmp:
-        config = os.path.join(tmp, "channels.json")
-        with open(config, "w") as fh:
-            json.dump({"channels": [{"id": "x@rx1", "label": "off", "token": "t",
-                                     "frequency": "146700000", "serial": "0001",
-                                     "enabled": False}]}, fh)
-        # Reaching run_calibration is the whole assertion — it is allowed to fail for
-        # want of a radio on the machine running the tests. What must NOT happen is the
-        # early "disabled; nothing to do" return, which never touches the tuner at all.
-        reached = {"yes": False}
-        real = transcriber.run_calibration
-        transcriber.run_calibration = lambda ch, spool: (reached.update(yes=True), 0)[1]
-        try:
-            rc = transcriber.main(["--channel", "x@rx1", "--config", config,
-                                   "--spool", tmp, "--calibrate"])
-        finally:
-            transcriber.run_calibration = real
-        check("calibration runs on a disabled channel", reached["yes"], True)
-        check("and exits cleanly", rc, 0)
-
-
 def test_a_disabled_channel_still_does_nothing_when_asked_to_listen():
-    """The enabled check still applies to everything that is not calibration."""
+    """Off means off: it does not open the card and it does not create a spool.
+
+    Creating the spool as root is how a channel ends up unable to write its own outbox
+    later, which is why the makedirs sits below the enabled check and is not hoisted for
+    tidiness."""
+    print("disabled channel is not opened")
     with tempfile.TemporaryDirectory() as tmp:
         config = os.path.join(tmp, "channels.json")
         with open(config, "w") as fh:
             json.dump({"channels": [{"id": "x@rx1", "label": "off", "token": "t",
-                                     "frequency": "146700000", "serial": "0001",
                                      "enabled": False}]}, fh)
-        called = {"yes": False}
-        real = transcriber.run_calibration
-        transcriber.run_calibration = lambda ch, spool: (called.update(yes=True), 0)[1]
-        try:
-            rc = transcriber.main(["--channel", "x@rx1", "--config", config, "--spool", tmp])
-        finally:
-            transcriber.run_calibration = real
+        spool = os.path.join(tmp, "spool")
+        rc = transcriber.main(["--channel", "x@rx1", "--config", config, "--spool", spool])
         check("listening on a disabled channel exits 0", rc, 0)
-        check("and does not calibrate", called["yes"], False)
+        check("and does not create its spool", os.path.exists(spool), False)
 
 
 def test_disabled_channel_does_nothing():
@@ -3374,30 +2954,14 @@ if __name__ == "__main__":
         test_backlog_is_bounded_by_size_not_just_count,
         test_start_capture_builds_a_command_and_keeps_the_two_directories_straight,
         test_clips_go_to_ram_but_never_at_the_cost_of_listening,
-        test_calibration_finds_the_lowest_level_that_gates,
-        test_calibration_is_not_fooled_by_a_transmission,
-        test_a_wedged_tuner_is_not_mistaken_for_a_quiet_frequency,
-        test_calibration_refuses_to_measure_a_dead_input,
-        test_calibration_gives_up_rather_than_guessing,
-        test_a_lull_is_not_mistaken_for_a_quiet_channel,
         test_the_length_guard_is_recorded_rather_than_silent,
         test_a_long_clip_nobody_spoke_in_is_recognised,
         test_a_squelch_crash_does_not_hide_the_tone_behind_it,
         test_a_capture_knows_how_many_transmissions_are_in_it,
         test_a_clip_nobody_said_anything_in_is_recognised,
-        test_the_gain_is_the_knee_where_the_receiver_starts_hearing_the_band,
-        test_a_gain_sweep_with_no_knee_is_used_but_never_called_measured,
         test_a_carrier_left_open_is_not_a_transmission,
         test_the_dead_carrier_test_is_a_ratio_so_gain_cannot_move_it,
         test_a_clip_too_short_to_have_an_envelope_is_not_judged,
-        test_a_transmission_during_the_sweep_is_detected_rather_than_measured,
-        test_the_gain_sweep_stays_below_what_this_tuner_stays_linear_at,
-        test_a_site_quiet_enough_to_need_the_top_of_the_sweep_still_calibrates,
-        test_gain_and_squelch_are_cached_together_or_not_at_all,
-        test_a_measurement_is_never_re_measured_behind_your_back,
-        test_a_channel_that_has_never_been_calibrated_runs_on_the_defaults,
-        test_calibrating_says_it_has_started_before_it_says_what_it_found,
-        test_a_failed_calibration_says_why_and_caches_nothing,
         test_a_pause_in_speech_does_not_end_the_transmission,
         test_a_long_gap_separates_two_overs,
         test_a_single_over_is_one_clip,
@@ -3436,7 +3000,6 @@ if __name__ == "__main__":
         test_an_idle_frequency_is_not_fatal,
         test_a_broken_whisper_is_fatal_not_silent,
         test_disabled_channel_does_nothing, test_unknown_channel_is_fatal,
-        test_a_disabled_channel_can_still_be_calibrated,
         test_a_disabled_channel_still_does_nothing_when_asked_to_listen,
         test_a_courtesy_tone_is_recognised_as_a_tone,
         test_a_morse_identifier_is_recognised_and_named_as_one,

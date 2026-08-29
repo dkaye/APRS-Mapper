@@ -30,23 +30,17 @@ trap 'rm -rf "$TMP"' EXIT
 echo "=== Transcriber v1.0 install ==="
 
 # ── packages ─────────────────────────────────────────────────────────────────
-# rtl-sdr gives rtl_fm and rtl_eeprom; sox does the silence splitting; the build
-# tools are for whisper.cpp, which has no usable ARM package.
+# alsa-utils gives arecord and amixer, which are the whole of the audio path now that
+# the receiver is a radio rather than an SDR; the build tools are for whisper.cpp,
+# which has no usable ARM package.
 apt-get update -qq
 # ffmpeg encodes the clip a channel sends with its log entry. AAC rather than Opus, and
 # not because Opus is worse: Apple does not decode Ogg Opus through AVFoundation, which
 # is what the phone app's player uses on iOS, so on this fleet Opus is the codec that
 # might not play at all. See AUDIO_BITRATE in transcriber.py.
 apt-get install -y --no-install-recommends \
-    rtl-sdr sox libsox-fmt-all curl git build-essential cmake python3 ffmpeg
+    alsa-utils curl git build-essential cmake python3 ffmpeg
 
-# The DVB-T driver claims the dongle on plug-in and rtl_fm then cannot open it.
-# Blacklisting is the standard fix and is what the iGates do.
-cat > /etc/modprobe.d/blacklist-rtl.conf <<'EOF'
-blacklist dvb_usb_rtl28xxu
-blacklist rtl2832
-blacklist rtl2830
-EOF
 
 # ── whisper.cpp ──────────────────────────────────────────────────────────────
 # Built here rather than shipped: it wants the host's NEON support, and a binary
@@ -144,7 +138,6 @@ curl -fsSL --retry 3 -o "$TMP/files.tar.gz" "$BASE/files.tar.gz?t=$(date +%s)"
 tar -xzf "$TMP/files.tar.gz" -C "$TMP"
 rsync -a --ignore-times "$TMP/bin/"     /opt/transcriber/bin/
 rsync -a --ignore-times "$TMP/systemd/" /etc/systemd/system/
-[ -d "$TMP/udev" ] && rsync -a --ignore-times "$TMP/udev/" /etc/udev/rules.d/ || true
 chmod +x /opt/transcriber/bin/*.py
 chmod +x /opt/transcriber/bin/*.sh          # calibrate.sh, run by transcriber-calibrate@
 
@@ -178,7 +171,6 @@ cat > /etc/logrotate.d/transcriber <<'EOF'
 EOF
 
 systemctl daemon-reload
-udevadm control --reload-rules 2>/dev/null || true
 
 # Answers the NetBird monitor's UDP poll, which is all a device has to do to appear at
 # /netbird/admin.php. Nothing site-specific, so it starts now rather than waiting for
