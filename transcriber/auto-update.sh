@@ -34,8 +34,8 @@ trap 'rm -rf "$TMP"' EXIT
 SELF=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
 
 # --channels-only is the fast path a timer runs every half minute: fetch this device's
-# channels and act on them, skipping the archive, the self-replacement and the self-noise
-# test. It exists so that a change made in the manager reaches the receiver by itself,
+# channels and act on them, skipping the archive, the self-replacement and the power
+# check. It exists so that a change made in the manager reaches the receiver by itself,
 # rather than waiting for 04:11 or for somebody to SSH in and say so.
 CHANNELS_ONLY=""
 [ "${1:-}" = "--channels-only" ] && CHANNELS_ONLY=1
@@ -109,6 +109,33 @@ chmod +x /opt/transcriber/bin/*.py
 # lost the bit would produce a worker that fails with "permission denied" on the
 # device and nowhere else.
 chmod +x /opt/transcriber/bin/*.sh
+
+# ── files this device is no longer supposed to have ──────────────────────────
+# rsync only adds and overwrites; nothing here ever deletes, so a file that stops being
+# shipped stays on the device forever. That is normally harmless clutter. sdr-selftest.sh
+# was not: this updater ran it on every nightly pass, and its first act is to stop every
+# transcriber@* unit so it can have the dongle to itself. On a Transcriber there is no
+# dongle any more — the audio comes from a sound card — so each night it stopped the
+# receiver to measure hardware that is not there. Measured on 2026-08-29, the outage was
+# about two seconds: with no dongle the sweep fails immediately and the trap puts the
+# channel back. The bound is 400 s, and that is what it would have cost had the sweep
+# ever hung. What it reliably produced was "analysis failed" in the log every night,
+# which is worse than nothing — a permanent failure line is where a real one goes to
+# hide. Deleting the script is what actually stops it, because the block that called it
+# was guarded on the file being present.
+#
+# Deliberately not a general "remove anything not in the archive": the Transcribers keep
+# hand-placed files, and a sweeping delete at 4am is a worse failure than the clutter.
+# One explicit list, each entry with a reason.
+for retired in \
+    /home/pi/sdr-selftest.sh \
+    /home/pi/sdr-selftest.py \
+    /opt/transcriber/bin/calibrate.sh \
+    /etc/systemd/system/transcriber-calibrate@.service
+do
+    [ -e "$retired" ] || continue
+    rm -f "$retired" && log "removed $retired (retired with the SDR)"
+done
 
 # ── packages the new code needs ──────────────────────────────────────────────
 # This script carries new CODE to a device that already exists, and new code can want a
@@ -321,18 +348,6 @@ done
 if [ -z "$WANT" ] && [ -f "$TOKEN_FILE" ]; then
     log "the manager lists no channels for '$(hostname)' — if this device was renamed," \
         "re-pick the Receiver on each channel row at marsaprs.org/transcriber/"
-fi
-
-# ── SDR self-noise test ──────────────────────────────────────────────────────
-# Measures the internal-birdie level near each channel's own frequency — the thing that
-# quietly deafens a receiver without ever looking like a fault. Frees each dongle for
-# about a minute and puts the channels back afterwards, so it runs last, after everything
-# that could leave the device in a worse state has already succeeded. Non-fatal and
-# time-bounded: a receiver must never be off the air because a measurement hung.
-if [ -z "$CHANNELS_ONLY" ] && [ -x /home/pi/sdr-selftest.sh ]; then
-    log "Running SDR self-noise test..."
-    timeout -k 15 400 /home/pi/sdr-selftest.sh 2>&1 | grep -aiE 'selftest:' \
-        | while read -r l; do log "$l"; done || log "self-test skipped (non-fatal)"
 fi
 
 # Power check. Costs nothing — it reads two counters and a device-tree node, frees

@@ -18,12 +18,14 @@ Restart=always
 RestartSec=10
 # /run/transcriber/%i on tmpfs, for the audio clips — see clip_dir(). systemd creates it
 # owned by User= and empties it when the unit stops, so clips cannot outlive the process
-# that recorded them the way they used to after a kill. The outbox and the measured
-# squelch stay on the card under /var/spool/transcriber: those exist to survive a reboot.
+# that recorded them the way they used to after a kill. The outbox stays on the card
+# under /var/spool/transcriber: it exists to survive a reboot.
 RuntimeDirectory=transcriber/%i
 RuntimeDirectoryMode=0750
-# ExecStart spawns rtl_fm and sox, so stopping must take down the whole cgroup or
-# they would be left holding the dongle and the next start would find it busy.
+# ExecStart spawns arecord and sox, so stopping must take down the whole cgroup or they
+# would be left holding the capture device and the next start would fail to open it:
+# only one process at a time may have the sound card, and it says so as "Device or
+# resource busy".
 KillMode=control-group
 # Below the iGate's Nice=-5: decoding APRS packets is real-time and must not be
 # starved, while a transcription arriving a second later costs nothing. On a Pi
