@@ -50,9 +50,18 @@ prev_snapshot() {
     ls -1d "$1"/20*-* 2>/dev/null | sort | tail -1
 }
 
-# backup_device <name> <sshhost> <exclude-args...> -- <path...>
+# backup_device <name> <sshhost> [--sudo] <exclude-args...> -- <path...>
+#
+# --sudo runs rsync as root on the far end. Needed for anything the `pi` account cannot
+# read, which on aprs-pi is most of /var/lib/marsaprs: messages.db is world-readable but
+# users.db is 660 and the transcriber registry is 640, both www-data:www-data. Without it
+# rsync skips them and says so only in the log -- the same silent-skip that let the old
+# FTP backup "succeed" while copying nothing. Only aprs-pi has passwordless sudo; the
+# Transcriber does not, so it must not be given this flag.
 backup_device() {
     local name="$1" host="$2"; shift 2
+    local rsh_opt=()
+    if [ "${1:-}" = "--sudo" ]; then rsh_opt=(--rsync-path="sudo -n rsync"); shift; fi
     local excludes=() paths=() seen_sep=""
     local a
     for a in "$@"; do
@@ -81,7 +90,7 @@ backup_device() {
         # -R keeps the full source path under the snapshot, so the tree mirrors
         # the Pi's layout relative to / — the same shape the old tarball had.
         $RSYNC -aR --no-specials --no-devices \
-            "${linkopt[@]}" "${excludes[@]}" \
+            "${rsh_opt[@]}" "${linkopt[@]}" "${excludes[@]}" \
             -e "$SSH $SSH_OPTS" \
             "$host:$p" "$dest/" >>"$LOG" 2>&1
         rc=$?
@@ -120,7 +129,16 @@ mkdir -p "$LOG_DIR"
 log "=== marsaprs backup start ($STAMP) ==="
 
 # --- aprs-pi: everything that changes after install and is not in the repo ---
-backup_device "aprs-pi" "aprs-pi" -- \
+# --sudo: see backup_device. /var/lib/marsaprs holds the messaging history, the auth
+# database and every transcriber token, and none of it was backed up anywhere until
+# 2026-08-29 -- not by this script and not by the FTP one it replaced.
+backup_device "aprs-pi" "aprs-pi" --sudo \
+    --exclude 'transcriber-level.json' \
+    --exclude 'transcriber-state.json' \
+    --exclude '*.lock' \
+    --exclude '*.tmp' \
+    -- \
+    /var/lib/marsaprs \
     /var/www/html/events \
     /var/www/html/config.yaml \
     /var/www/html/netbird/addresses.yaml \
