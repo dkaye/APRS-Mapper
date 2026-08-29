@@ -539,10 +539,13 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
   </div>
 
   <h2>This receiver</h2>
-  <p class="hint">The settings the Pi collects. There is one receiver on one frequency, so
-     there is nothing here to choose between &mdash; this is the current setup, not a list
-     of saved ones. Its <strong>id</strong> names the systemd unit, the spool directory and
-     the author of every log entry; it is fixed at creation and shown read-only.</p>
+  <p class="hint">The settings the Pi collects. One receiver, one frequency &mdash; this is
+     the current setup, not a list of saved ones.</p>
+  <p class="hint">The <strong>identity</strong> below looks like a hostname with a frequency
+     stuck on the end because that is exactly what it is: the id was designed when several
+     Pis each ran several dongles, and it had to say which machine and which frequency. That
+     no longer applies, but the string is still the name of the running service and the
+     author of every log entry, so it cannot be changed without renaming both.</p>
   <div id="receiver"></div>
   <div class="empty" id="receiver-empty">No receiver configured.</div>
 
@@ -1422,8 +1425,10 @@ function renderRows() {
     const i = 0;
     box.innerHTML = `
       <table class="explain">
-        <tr><th>Channel id</th><td>${ro(c.id || '')}</td></tr>
-        <tr><th>Receiver</th><td>${ro(c.device || '')}</td></tr>
+        <tr><th>Identity</th><td>${ro(c.id || '')}
+            <div class="derived">Names the systemd unit
+            (<code>transcriber@${esc(c.id || '')}</code>), the spool directory and the
+            author of every log entry. Fixed at creation.</div></td></tr>
         <tr><th>Heard as</th><td>${field('channels', i, 'label', c.label)}
             <div class="derived">The name on every entry this channel writes.</div></td></tr>
         <tr><th>Accuracy</th><td>${CAN_EDIT
