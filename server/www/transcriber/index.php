@@ -75,12 +75,6 @@ if (isset($_GET['load'])) {
     $baseline = transcriber_fingerprint();
     $data = redact(transcriber_load());
     $data['baseline'] = $baseline;
-    // The UI works in MHz throughout; Hz is storage, and nobody reads a frequency
-    // that way. Sent alongside rather than instead, so the page never has to convert.
-    foreach ($data['channels'] as &$c) {
-        $c['mhz'] = transcriber_mhz($c['frequency'] ?? 0);
-    }
-    unset($c);
     // Given an explicit shape rather than passed through. An empty PHP array encodes as
     // [] and not {}, and a JSON array that the page then hangs a property on loses it
     // silently on the way back — the sheet URL would simply never save.

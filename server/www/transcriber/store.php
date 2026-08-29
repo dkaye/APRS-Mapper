@@ -158,15 +158,16 @@ function transcriber_mhz($hz): string
     return rtrim(rtrim(number_format($hz / 1_000_000, 4, '.', ''), '0'), '.');
 }
 
-/** The systemd instance name and log identity for one channel, derived from the two
- *  things that actually define it. No '@' — that is systemd's instance separator. */
-function transcriber_channel_id(string $device, $hz): string
-{
-    $device = preg_replace('/[^A-Za-z0-9_.-]/', '-', trim($device));
-    $khz    = (int)round(((int)$hz) / 1000);
-    if ($device === '' || $khz <= 0) return '';
-    return substr("$device-$khz", 0, 64);
-}
+/* transcriber_channel_id() was removed on 2026-08-29.
+ *
+ * It derived the id from device+frequency, which was right when several Pis each ran
+ * several dongles: the id had to say which machine and which frequency. With one receiver
+ * tuned by hand at the radio, the frequency is not the server's business, and baking a
+ * location into an identifier that names the systemd unit and the author of every log
+ * entry meant the identifier went stale the moment the receiver moved.
+ *
+ * The id is now stored, not derived. Nothing recomputes it, so nothing can invalidate it.
+ */
 
 function transcriber_token(): string
 {
