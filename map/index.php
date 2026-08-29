@@ -1116,8 +1116,11 @@ body{background:#1a2a3a;min-height:100dvh;display:flex;align-items:center;justif
 .gate-logo h1{font-size:17px;font-weight:700;letter-spacing:.01em}
 .gate-logo p{font-size:13px;opacity:.75;margin-top:4px}
 label{display:block;font-size:12px;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
-input[type=password]{width:100%;padding:11px 13px;border:1.5px solid #ccc;border-radius:6px;font-size:15px;outline:none;transition:border-color .15s}
-input[type=password]:focus{border-color:#2980b9}
+/* type=text, not password: the field is deliberately unmasked (see the input). These
+   two rules still said [type=password] after that change, stopped matching anything,
+   and left the box at the browser's default size on a form styled for 15px. */
+#epw{width:100%;padding:11px 13px;border:1.5px solid #ccc;border-radius:6px;font-size:15px;outline:none;transition:border-color .15s}
+#epw:focus{border-color:#2980b9}
 .err{color:#c0392b;font-size:13px;margin-top:8px;min-height:20px}
 button{width:100%;margin-top:20px;padding:12px;background:#2980b9;color:#fff;border:none;border-radius:6px;font-size:15px;font-weight:700;cursor:pointer;letter-spacing:.02em}
 button:hover{background:#2471a3}
