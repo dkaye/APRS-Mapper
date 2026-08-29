@@ -839,11 +839,6 @@ def _frame_pitch(frame, rate):
         return 0, best
     return rate / float(best_lag), best
 
-5   # how long the level stays down for the carrier to have gone
-CARRIER_GAP_RATIO = 0.02     # ...measured against the clip's 95th percentile frame
-CARRIER_GAP_MIN_CLIP = 8.0   # shorter than this cannot hold two overs and is not scanned
-CARRIER_GAP_JOIN = 1.0       # gaps closer than this are the two halves of one boundary
-
 
 # Below this much sound in a clip, nobody said anything in it.
 #
