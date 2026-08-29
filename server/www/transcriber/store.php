@@ -287,6 +287,64 @@ function transcriber_fingerprint(?string $path = null): string
  * which here would be the report the page is waiting for.
  */
 
+/**
+ * Where the live audio level lives, for the calibration meter.
+ *
+ * A separate file from the calibration record, and deliberately: that one is a durable
+ * fact about a receiver ("this is the gain it measured, on this date"), while this is a
+ * reading that is worthless three seconds later. Mixing them would mean rewriting a
+ * record every second to carry a number nobody wants to keep.
+ */
+function transcriber_level_path(?string $path = null): string
+{
+    return dirname(transcriber_path($path)) . '/transcriber-level.json';
+}
+
+/** Latest level per channel: {channel: {db, wide_db, at}}. Stale rows are the caller's
+ *  problem to notice -- `at` is what says whether a reading still means anything. */
+function transcriber_level_load(?string $path = null): array
+{
+    $f = transcriber_level_path($path);
+    $raw = is_readable($f) ? (json_decode((string)file_get_contents($f), true) ?: []) : [];
+    $out = [];
+    foreach ($raw as $id => $row) {
+        if (!is_array($row)) continue;
+        $out[(string)$id] = [
+            'db'      => (float)($row['db']      ?? -99),
+            'wide_db' => (float)($row['wide_db'] ?? -99),
+            'at'      => (int)  ($row['at']      ?? 0),
+        ];
+    }
+    return $out;
+}
+
+/**
+ * Record one channel's current level.
+ *
+ * No lock and no read-modify-write, unlike the calibration record. This is written about
+ * once a second per channel by the only device that can speak for it, and the whole file
+ * is rewritten each time -- so two channels reporting in the same instant can lose one
+ * reading. That is the right trade here: a lost sample is invisible on a meter that
+ * refreshes a second later, and taking a lock every second for a value with a one-second
+ * shelf life would cost more than it protects.
+ */
+function transcriber_level_update(string $channel, float $db, float $wide, ?string $path = null): void
+{
+    $file = transcriber_level_path($path);
+    $dir  = dirname($file);
+    if (!is_dir($dir)) @mkdir($dir, 0775, true);
+    $all = transcriber_level_load($path);
+    // Drop anything nobody has reported in five minutes, so a retired channel does not
+    // sit here forever showing a level it last had in August.
+    $now = time();
+    foreach ($all as $id => $row) if ($now - $row['at'] > 300) unset($all[$id]);
+    $all[$channel] = ['db' => round($db, 1), 'wide_db' => round($wide, 1), 'at' => $now];
+    $tmp = $file . '.tmp';
+    file_put_contents($tmp, json_encode($all, JSON_PRETTY_PRINT) . "\n");
+    @chmod($tmp, 0640);
+    rename($tmp, $file);
+}
+
 function transcriber_calibration_path(?string $path = null): string
 {
     return dirname(transcriber_path($path)) . '/transcriber-calibration.json';

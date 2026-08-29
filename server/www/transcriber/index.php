@@ -219,6 +219,13 @@ if (isset($_GET['status'])) {
              'calibration' => transcriber_calibration_load()]);
 }
 
+// The calibration meter's feed. Polled about once a second while somebody is setting a
+// radio's level by hand, so it is the cheapest thing here: one small file, no writes.
+// `now` travels with it so the page can judge staleness against the server's clock.
+if (isset($_GET['level'])) {
+    jsonOut(['now' => time(), 'levels' => transcriber_level_load()]);
+}
+
 if (isset($_GET['update']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$canEdit) jsonOut(['error' => 'Missing permission: netbird.admin'], 403);
     jsonOut(['ok' => true, 'requested' => transcriber_request_update()]);
@@ -375,15 +382,31 @@ input:focus, select:focus { outline: 2px solid #2563eb; outline-offset: -1px; bo
    squelch never gated, and eight hours of a net produced twenty-five entries of which
    most read "the the the you." The row said so; nobody was looking at the row.
    This says it once, at the top, in the words that describe the consequence. */
-.cal-warn { background: #fffbeb; border: 1px solid #f59e0b; border-left-width: 4px;
-            border-radius: 6px; padding: 10px 13px; margin: 0 0 10px; font-size: 13px;
-            color: #7a5b00; line-height: 1.5; }
-.cal-warn strong { color: #92400e; }
-.cal-warn .chans { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
 .cal { font-size: 12px; white-space: nowrap; }
 .cal.never { color: #b45309; font-weight: 600; }
 .cal.busy { color: #2563eb; }
 .cal.bad { color: #dc2626; font-weight: 600; }
+.vu-wrap { margin: 10px 0 22px; }
+.vu-wrap select { margin-left: 8px; }
+.vu { margin-top: 12px; max-width: 640px; }
+.vu-track { position: relative; height: 26px; background: #f1f5f9; border: 1px solid #cbd5e1;
+            border-radius: 4px; overflow: hidden; }
+/* The acceptable window, drawn once: -38 to -20 dBFS on a -70..0 scale. */
+.vu-band { position: absolute; top: 0; bottom: 0; left: 45.7%; width: 25.7%;
+           background: #dcfce7; border-left: 1px solid #86efac; border-right: 1px solid #86efac; }
+.vu-bar { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: #64748b;
+          opacity: .85; transition: width .15s linear; }
+.vu-bar.vu-ok  { background: #16a34a; }
+.vu-bar.vu-mid { background: #ca8a04; }
+.vu-bar.vu-hot { background: #dc2626; }
+.vu-bar.vu-low { background: #2563eb; }
+.vu-peak { position: absolute; top: 0; bottom: 0; width: 2px; background: #0f172a; display: none; }
+.vu-read { margin-top: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+.vu-read .vu-ok  { color: #16a34a; font-weight: 600; }
+.vu-read .vu-mid { color: #ca8a04; }
+.vu-read .vu-hot { color: #dc2626; font-weight: 600; }
+.vu-read .vu-low { color: #2563eb; }
+.vu-read .vu-stale { color: #94a3b8; }
 .derived { font-size: 11px; color: #9ca3af; margin-top: 2px; font-family: ui-monospace, monospace; }
 .panel { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 14px;
          font-size: 13px; line-height: 1.55; margin-bottom: 6px; }
@@ -458,8 +481,6 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
   <h1>Transcriber Channels</h1>
   <span id="spinner" hidden></span><span id="status"></span>
   <?php if ($canEdit): ?>
-    <button class="hdr-btn" id="add-device">+ Device</button>
-    <button class="hdr-btn" id="add-channel">+ Channel</button>
     <button class="hdr-btn hdr-btn-primary" id="save-btn" onclick="save()" disabled>Save</button>
     <button class="hdr-btn" id="update-btn" onclick="requestUpdate()">Update devices</button>
   <?php endif; ?>
@@ -469,101 +490,61 @@ table.explain td { vertical-align: top; padding: 4px 0; color: #4b5563; line-hei
 
 <main>
   <div class="panel">
-    <strong>When do changes take effect?</strong>
-    <p>Nothing is written until you press <strong>Save</strong>. Each Pi then collects
-       its settings <strong>within 60 seconds</strong> — there is nothing to run and
-       nothing to log in to. A change to frequency, accuracy or squelch restarts that
-       channel when it lands; switching a channel <strong>On</strong> or off takes effect
-       at once, because the server stops accepting from it without waiting for the device
-       to notice. The page waits for each Pi to collect and tells you when it has —
-       or which one never answered.</p>
-    <p><strong>Update devices</strong> is for software rather than settings: it asks every
+    <strong>Saving, and the calibration meter</strong>
+    <p>Nothing is written until you press <strong>Save</strong>. The Pi then collects its
+       settings <strong>within 60 seconds</strong>. Switching a channel <strong>On</strong>
+       or off takes effect at once, because the server stops accepting from it without
+       waiting for the device to notice.</p>
+    <p><strong>Update devices</strong> is for software rather than settings: it asks the
        Transcriber to pull a new worker at its next check instead of waiting for the
-       nightly run at 4:11am. Settings do not need it.</p>
-    <p><strong>Recalibrate</strong>, on a channel row, is the other kind of thing again:
-       it asks that one channel to measure the tuner gain and squelch for the site it is
-       on. It is off the air for two or three minutes while it does, so it is asked for
-       rather than scheduled — nothing here recalibrates by itself, at boot or otherwise.
-       A channel that has never been calibrated says <strong>Never</strong> and is running
-       numbers measured somewhere else.</p>
-    <p>This page does <strong>not</strong> refresh by itself, so it can go stale while it
-       sits open. It no longer overwrites what it cannot see: if anything changed since
-       you loaded, Save is refused and asks you to reload rather than quietly reverting
-       somebody else's work.</p>
+       nightly run at 4:11&nbsp;am.</p>
+    <p>This page does <strong>not</strong> refresh by itself. If anything changed since you
+       loaded, Save is refused and asks you to reload rather than quietly reverting
+       somebody else&rsquo;s work.</p>
   </div>
 
-  <h2>Receivers</h2>
-  <p class="hint">One row per Transcriber Pi. <strong>Host</strong> must match what that
-     machine calls itself (<code>hostname</code>) — it is how the Pi identifies itself
-     when it collects its settings. The <strong>config token</strong> goes in
-     <code>/home/pi/.transcriber-token</code> on that Pi and lets it do so.</p>
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>Host</th><th>Config token</th><th></th></tr></thead>
-      <tbody id="devices"></tbody>
-    </table>
-    <div class="empty" id="devices-empty">No Transcribers yet.</div>
-  </div>
-
-  <h2>Channels</h2>
-  <div id="cal-warn" class="cal-warn" style="display:none"></div>
-  <p class="hint">One row per frequency being listened to. A receiver with two dongles
-     can cover two channels at once.</p>
+  <h2>Audio level</h2>
+  <p class="hint">For a receiver whose own squelch gates the audio. <strong>Open the
+     radio&rsquo;s squelch</strong>, press <strong>Start meter</strong>, and turn the
+     radio&rsquo;s volume until the bar sits in the green band. Then close the squelch.
+     Calibrate again whenever the radio moves or changes frequency &mdash; nothing here is
+     saved, because a level measured at one site says nothing about the next.</p>
   <table class="explain">
-    <tr><th>Receiver</th><td>Which Pi does the listening.</td></tr>
-    <tr><th>Frequency</th><td>In <strong>MHz</strong>, as you would read it off a radio —
-        <code>147.465</code>. For a repeater this is the <em>output</em>: the frequency it
-        transmits on, not the one you transmit to it on.</td></tr>
-    <tr><th>Heard as</th><td>The name on every entry this channel writes, so choose what you
-        want to read in the log during an event: <code>West Marin</code> says more than
-        <code>147.465</code>. Cosmetic only — changing it renames nothing else.</td></tr>
-    <tr><th>Dongle serial</th><td>The serial programmed into the SDR stick, not a slot
-        number. Slot order changes when the Pi reboots, and two channels quietly swapping
-        frequencies is a fault nobody notices until the log is already wrong. Read or set
-        one with <code>rtl_eeprom -d 0 -s 00000001</code>.</td></tr>
-    <tr><th>Squelch</th><td>How strong a signal has to be before the receiver records
-        anything. This is the one setting that decides what gets logged: too low and the
-        Pi spends its day transcribing static, too high and it is quietly deaf.
-        <br>Leave it <strong>blank</strong> and the channel uses whatever
-        <strong>Recalibrate</strong> measured for the site it is on, or a built-in default
-        if nobody has ever pressed it. Put a number in only when you have a reason: raise
-        it (30, 40) if the log fills with noise, lower it if weak stations are being
-        missed. Roughly 0–100. A number typed here overrides the measurement.</td></tr>
-    <tr><th>Calibration</th><td>The tuner gain and squelch measured at the site this
-        receiver is actually on, and when. The two go together: squelch is a threshold on
-        received signal strength, and the gain decides what that strength is, so a squelch
-        measured at the wrong gain means nothing.
-        <br><strong>Never</strong> means this channel is running the built-in pair, which
-        was measured somewhere else — worth fixing on a newly sited receiver, and harmless
-        on one that is somewhere quiet. Pressing <strong>Recalibrate</strong> takes that
-        one channel off the air for two or three minutes while it measures, and nothing
-        said on that frequency is logged until it finishes. Do it on a quiet channel:
-        traffic arriving mid-measurement is detected and the calibration is abandoned
-        rather than recorded wrong.</td></tr>
-    <tr><th>Accuracy</th><td><strong>Fast</strong> keeps up with a busy net in real time and
-        is the right default. <strong>Careful</strong> is better on callsigns and phonetics
-        but runs about three times slower, so on a busy frequency entries arrive behind the
-        traffic. Worth it only if you are reading the log for identifiers rather than for
-        the gist.</td></tr>
-    <tr><th>On</th><td>Off stops it logging at once, without losing the setup.</td></tr>
-    <tr><th>Audio</th><td>Sends the recording along with the transcription, so someone on
-        the mobile app can hear what was actually said on a line that came out garbled.
-        The clip goes only to phones that asked for it — nothing is pushed — and is kept
-        for six hours, while the transcription stays in the log for good. Costs the
-        receiver a little upload per transmission, so leave it off on a channel nobody is
-        listening to on a phone.</td></tr>
+    <tr><th>Why noise</th><td>Open-squelch noise is the reference because it is
+        <em>stationary</em> &mdash; about a decibel of spread over a minute &mdash; and
+        available on demand. Speech varies 20&nbsp;dB inside a syllable and only arrives
+        when somebody talks.</td></tr>
+    <tr><th>Why the band</th><td>The reading is the <strong>audio band, 200&ndash;4000
+        Hz</strong>, not the raw level. A squelch thump is generated after the volume
+        control, so no knob can move it &mdash; levelling against the raw peak drove a
+        radio&rsquo;s volume to zero on 2026-08-29 and left ten seconds of test speech with
+        no trace in the recording.</td></tr>
+    <tr><th>The marks</th><td><strong>&minus;27&nbsp;dBFS</strong> is the target; below
+        &minus;38 wastes resolution against the noise floor, above &minus;20 clips on loud
+        traffic. Tones are the loud case, not voice &mdash; a repeater&rsquo;s Morse ID runs
+        hotter than anybody talking.</td></tr>
   </table>
-  <div class="table-wrap">
-    <table>
-      <thead><tr>
-        <th>Receiver</th><th>Frequency (MHz)</th><th>Heard as</th><th>Dongle serial</th>
-        <th>Squelch</th><th>Calibration</th><th>Accuracy</th><th>On</th><th>Audio</th><th>Log token</th>
-        <th></th>
-      </tr></thead>
-      <tbody id="channels"></tbody>
-    </table>
-    <div class="empty" id="channels-empty">No channels yet.</div>
+  <div class="vu-wrap">
+    <button class="row-btn" id="vu-btn" onclick="toggleMeter()">Start meter</button>
+    <select id="vu-channel"></select>
+    <span id="vu-note" class="hint"></span>
+    <div class="vu">
+      <div class="vu-track">
+        <div class="vu-band"></div>
+        <div class="vu-bar" id="vu-bar"></div>
+        <div class="vu-peak" id="vu-peak"></div>
+      </div>
+      <div class="vu-read"><span id="vu-db">&mdash;</span> <span id="vu-tag"></span></div>
+    </div>
   </div>
+
+  <h2>This receiver</h2>
+  <p class="hint">The settings the Pi collects. There is one receiver on one frequency, so
+     there is nothing here to choose between &mdash; this is the current setup, not a list
+     of saved ones. Its <strong>id</strong> names the systemd unit, the spool directory and
+     the author of every log entry; it is fixed at creation and shown read-only.</p>
+  <div id="receiver"></div>
+  <div class="empty" id="receiver-empty">No receiver configured.</div>
 
   <h2>Event vocabulary</h2>
   <p class="hint">The event's <strong>radio assignment sheet</strong> in Google Docs. The
@@ -1251,38 +1232,6 @@ function renderVocabulary() {
  *
  * A failure keeps showing the last good pair beside the reason, because that pair is what
  * the receiver went back on the air with. */
-function calibrationCell(c) {
-    const cal = (data.calibration || {})[c.id] || {};
-    const btn = CAN_EDIT && c.id
-        ? ` <button class="row-btn" onclick="recalibrate('${esc(c.id)}')">Recalibrate</button>`
-        : '';
-    const pair = cal.gain
-        ? `<span class="cal">${cal.gain} dB / ${cal.squelch}</span>`
-        : '';
-
-    // No button while it is running: pressing it again would only queue a second
-    // measurement behind the one already holding the dongle.
-    if (cal.requested && (!cal.finished || cal.finished < cal.requested)) {
-        return (cal.started >= cal.requested
-                ? '<span class="cal busy">Measuring…</span>'
-                : '<span class="cal busy">Waiting for the receiver…</span>')
-             + (pair ? `<div class="derived">now: ${cal.gain} dB / ${cal.squelch}</div>` : '');
-    }
-    if (cal.error) {
-        return `<span class="cal bad" title="${esc(cal.error)}">Failed</span>${btn}`
-             + `<div class="derived">${esc(cal.error)}</div>`
-             + (pair ? `<div class="derived">still using ${cal.gain} dB / ${cal.squelch}</div>` : '');
-    }
-    if (cal.gain) {
-        return pair + btn + `<div class="derived">measured ${ago(cal.finished)}</div>`;
-    }
-    // No numbers and nothing pending. Deliberately not spelling out what the built-in pair
-    // is: it lives in the worker, and a second copy of it here would be wrong the first
-    // time somebody changed one of them.
-    return `<span class="cal never">Never</span>${btn}`
-         + '<div class="derived">built-in defaults</div>';
-}
-
 /* Say once, at the top, that a channel is about to listen using numbers measured
  * somewhere else.
  *
@@ -1294,69 +1243,10 @@ function calibrationCell(c) {
  * 2026-08-22, and is what makes somebody press the button before the event rather than
  * read past it.
  */
-function renderCalWarning() {
-    const el = $('cal-warn');
-    if (!el) return;
-    const cal = (data && data.calibration) || {};
-    const bad = (data.channels || []).filter(c => {
-        if (!c.enabled) return false;
-        const k = cal[c.id];
-        return !k || !k.gain;        // no measurement, same test the row's cell makes
-    });
-    if (!bad.length) { el.style.display = 'none'; return; }
-    const names = bad.map(c => esc(c.label || c.id)).join(', ');
-    const many  = bad.length > 1;
-    el.innerHTML =
-        `<strong>${many ? bad.length + ' channels have' : 'This channel has'} never been calibrated.</strong> ` +
-        `<span class="chans">${names}</span> ` +
-        `${many ? 'are' : 'is'} listening with the built-in gain and squelch, which were ` +
-        `measured for no particular site. On a frequency or in a location ${many ? 'they have' : 'it has'} ` +
-        `not been measured at, the squelch may not gate: the receiver records long stretches of ` +
-        `noise instead of separate transmissions, and the transcription of noise is nothing. ` +
-        `<br><strong>Press Recalibrate on ${many ? 'each row' : 'the row'} below, at the site, before the net starts.</strong>`;
-    el.style.display = '';
-}
-
 /* Measure one channel's gain and squelch, at the site it is on.
  *
  * Off the air while it runs, so it says so first — the same shape as "Update devices",
  * which also asks before doing something a receiver will notice. */
-async function recalibrate(id) {
-    if (!CAN_EDIT) return;
-    // The device measures the channel as it is SAVED. An unsaved frequency change means a
-    // different channel id, and an unsaved squelch override means the number about to be
-    // measured is one the manager is going to overrule — either way the answer would be
-    // about something other than what is on the screen.
-    if (dirty) {
-        status('Save first — the receiver measures the channel as it is saved', 'error');
-        notice('Save before calibrating',
-               'This page has changes that have not been saved, so the receiver would '
-             + 'measure the channel as it was before them. Press Save, then Recalibrate.');
-        return;
-    }
-    if (!confirm(`Measure the tuner gain and squelch for ${id}?\n\n`
-               + `That channel is off the air for two or three minutes while it measures, `
-               + `and nothing said on that frequency is logged until it finishes. Other `
-               + `channels on the same receiver keep listening.\n\n`
-               + `Do this on a quiet channel: if somebody transmits during the `
-               + `measurement it is abandoned rather than recorded wrong.`)) return;
-    try {
-        const r = await fetch('?calibrate', {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({channel: id}),
-        });
-        const d = await r.json();
-        if (d.error) { status(d.error, 'error'); return; }
-        // Show it as pending straight away rather than a second later when the first poll
-        // comes back, so the button visibly did something.
-        data.calibration = data.calibration || {};
-        data.calibration[id] = {...(data.calibration[id] || {}),
-                                requested: d.requested, started: 0, finished: 0, error: ''};
-        render();
-        waitForCalibration(id, d.requested);
-    } catch { status('Request failed', 'error'); }
-}
-
 /* Wait for one channel to measure itself, and count down honestly while it does.
  *
  * Two phases, because there are two waits and only the second one has a length. The
@@ -1372,95 +1262,6 @@ async function recalibrate(id) {
  * says it is still measuring rather than pretending to know something it does not. */
 const CALIBRATE_PICKUP = WAIT_SECONDS;      // the same 60-second poll, and the same slack
 const CALIBRATE_OVERRUN = 420;              // ...after which the receiver is not answering
-
-async function waitForCalibration(id, since) {
-    clearInterval(waitTimer);
-    let left = CALIBRATE_PICKUP;
-    let startedAt = 0;                      // when we first saw it start, by our clock
-    let checking = false;
-
-    const done = (text, cls) => {
-        clearInterval(waitTimer);
-        $('spinner').hidden = true;
-        status(text, cls);
-        render();
-    };
-
-    const show = () => {
-        if (!startedAt) {
-            status(`Calibrating ${id} — waiting for the receiver to start  :${left}`, 'saving');
-        } else if (left > 0) {
-            status(`Calibrating ${id} — measuring, about  :${left}`, 'saving');
-        } else {
-            status(`Calibrating ${id} — still measuring`, 'saving');
-        }
-    };
-
-    const check = async () => {
-        if (checking) return;
-        checking = true;
-        try {
-            const d = await (await fetch('?status')).json();
-            if (d.calibration) data.calibration = d.calibration;
-            const cal = (d.calibration || {})[id] || {};
-            if (cal.finished >= since) {
-                if (cal.error) {
-                    done('Calibration failed: ' + cal.error, 'error');
-                    notice('Calibration failed',
-                           id + ' did not finish measuring: ' + cal.error + '\n\n'
-                         + 'Nothing was changed — the channel is back on the air using '
-                         + 'what it was using before. Try again when the frequency is '
-                         + 'quiet.');
-                } else {
-                    done(`${id}: gain ${cal.gain} dB, squelch ${cal.squelch} — measured`,
-                         'saved');
-                }
-                return;
-            }
-            if (cal.started >= since) {
-                if (!startedAt) { startedAt = Date.now(); render(); }
-                // Against the server's clock, not this browser's: the start is a
-                // timestamp the device reported and the page has no idea how far out its
-                // own clock is. The fallback is only for a device too old to say.
-                left = Math.max(0, (cal.expected || 150) - (d.now - cal.started));
-            }
-        } catch (e) {
-            // A blip in the page's own connection is not the receiver failing to answer.
-        } finally { checking = false; }
-    };
-
-    $('spinner').hidden = false;
-    show();
-    await check();
-
-    let tick = 0;
-    waitTimer = setInterval(() => {
-        tick++;
-        if (!startedAt) {
-            if (--left <= 0) {
-                done('No response from the receiver for ' + id, 'error');
-                notice('Calibration not started',
-                       id + ' has not collected the request. It is saved and the receiver '
-                     + 'will act on it as soon as it checks in.\n\n'
-                     + 'A device that is switched off, off the network, or has the wrong '
-                     + 'config token will look exactly like this.');
-                return;
-            }
-        } else {
-            if (left > 0) left--;
-            if (Date.now() - startedAt > CALIBRATE_OVERRUN * 1000) {
-                done('No result from ' + id, 'error');
-                notice('Calibration did not report back',
-                       id + ' said it had started measuring but never said what it found. '
-                     + 'The channel restarts by itself either way; check the update log '
-                     + 'on that receiver.');
-                return;
-            }
-        }
-        show();
-        if (tick % 2 === 0) check();
-    }, 1000);
-}
 
 function tokenCell(row, kind, key) {
     const state = row.has_token ? '<span class="tok set">set</span>'
@@ -1531,77 +1332,122 @@ function render() {
     }
 }
 
-function renderRows() {
-    const dev = $('devices');
-    dev.innerHTML = data.devices.map((d, i) => `<tr>
-        <td>${field('devices', i, 'host', d.host)}</td>
-        <td>${tokenCell(d, 'device', d.host)}</td>
-        <td>${CAN_EDIT ? `<button class="row-btn danger" onclick="delDevice(${i})">Remove</button>` : ''}</td>
-    </tr>`).join('');
-    $('devices-empty').style.display = data.devices.length ? 'none' : '';
+/* ── Calibration meter ─────────────────────────────────────────────────────────
+ *
+ * Polls ?level about once a second while running. Not a real VU meter and not trying to
+ * be: a knob is turned by hand over seconds, and a websocket to shave 900 ms off a reading
+ * nobody follows that fast would be machinery for its own sake.
+ *
+ * The number is the AUDIO BAND (200-4000 Hz), measured on the device and sent already
+ * band-limited. Levelling against a raw peak is what drove a radio's volume to zero on
+ * 2026-08-29: the peak belonged to a squelch thump generated after the volume control,
+ * which no knob can move. Whatever this bar shows, it must never be that number.
+ *
+ * Nothing here is stored. A level measured at one site says nothing about the next, and
+ * the receiver moves.
+ */
+const VU_LO = -70, VU_HI = 0, VU_MIN = -38, VU_IDEAL = -27, VU_MAX = -20;
+let vuTimer = null, vuPeak = -99, vuPeakAt = 0;
 
-    const hosts = data.devices.map(d => d.host);
-    const ch = $('channels');
-    ch.innerHTML = data.channels.map((c, i) => `<tr>
-        <td>${CAN_EDIT
-              ? `<select onchange="data.channels[${i}].device = this.value; touch()">
-                   ${hosts.map(h => `<option${h === c.device ? ' selected' : ''}>${esc(h)}</option>`).join('')}
-                 </select>`
-              : ro(c.device)}</td>
-        <td>${field('channels', i, 'mhz', c.mhz, 'text', 'change')}<div class="derived">${esc(c.id || '')}</div></td>
-        <td>${field('channels', i, 'label', c.label)}</td>
-        <td>${field('channels', i, 'serial', c.serial)}</td>
-        <td>${CAN_EDIT
-              ? `<input type="text" value="${c.squelch ? esc(c.squelch) : ''}" placeholder="auto"
-                        data-k="channels.${i}.squelch"
-                        oninput="data.channels[${i}].squelch = this.value"
-                        onchange="touch()">`
-              : ro(c.squelch ? c.squelch : 'auto')}</td>
-        <td>${calibrationCell(c)}</td>
-        <td>${CAN_EDIT
-              ? `<select onchange="data.channels[${i}].model = this.value; touch()">
+const vuPct = db => Math.max(0, Math.min(100, (db - VU_LO) / (VU_HI - VU_LO) * 100));
+
+function renderMeterChannels() {
+    const sel = $('vu-channel');
+    if (!sel) return;
+    const want = sel.value;
+    sel.innerHTML = data.channels.map(c =>
+        `<option value="${esc(c.id)}">${esc(c.label || c.id)}</option>`).join('');
+    if (want) sel.value = want;
+    // One receiver is the whole point; a picker with a single entry is furniture.
+    sel.style.display = data.channels.length > 1 ? '' : 'none';
+}
+
+function toggleMeter() {
+    if (vuTimer) { stopMeter(); return; }
+    vuPeak = -99;
+    $('vu-btn').textContent = 'Stop meter';
+    $('vu-note').textContent = 'Open the radio\u2019s squelch, then turn its volume.';
+    vuTimer = setInterval(pollLevel, 1000);
+    pollLevel();
+}
+
+function stopMeter() {
+    clearInterval(vuTimer); vuTimer = null;
+    $('vu-btn').textContent = 'Start meter';
+    $('vu-note').textContent = '';
+}
+
+async function pollLevel() {
+    let d;
+    try { d = await (await fetch('?level')).json(); }
+    catch (e) { $('vu-note').textContent = 'No answer from the server.'; return; }
+    const id = $('vu-channel').value || (data.channels[0] || {}).id;
+    const row = (d.levels || {})[id];
+    const bar = $('vu-bar'), pk = $('vu-peak'), out = $('vu-db'), tag = $('vu-tag');
+
+    // Silence and staleness must not look alike. A device that stopped reporting is not a
+    // radio turned down, and confusing the two sends somebody to the wrong knob.
+    if (!row || (d.now - row.at) > 10) {
+        bar.style.width = '0%'; bar.className = 'vu-bar';
+        pk.style.display = 'none';
+        out.textContent = '\u2014';
+        tag.textContent = row ? 'device stopped reporting' : 'waiting for the device\u2026';
+        tag.className = 'vu-stale';
+        return;
+    }
+    const db = row.db;
+    bar.style.width = vuPct(db) + '%';
+    const now = Date.now();
+    if (db > vuPeak || now - vuPeakAt > 2000) { vuPeak = db; vuPeakAt = now; }
+    pk.style.display = ''; pk.style.left = vuPct(vuPeak) + '%';
+    out.textContent = db.toFixed(1) + ' dBFS';
+    let t, cls;
+    if      (db > VU_MAX)                                  { t = 'too hot'; cls = 'vu-hot'; }
+    else if (db >= VU_MIN && Math.abs(db - VU_IDEAL) <= 3) { t = 'ideal';   cls = 'vu-ok';  }
+    else if (db >= VU_MIN)                                 { t = 'ok';      cls = 'vu-mid'; }
+    else                                                   { t = 'too low'; cls = 'vu-low'; }
+    tag.textContent = t; tag.className = cls;
+    bar.className = 'vu-bar ' + cls;
+}
+
+function renderRows() {
+    // The Receivers and Channels TABLES are gone from the page; `data.devices` and
+    // `data.channels` are not gone from the registry. They still carry the config token,
+    // the log token and the channel id the Pi needs, and save() posts them back untouched.
+    // Dropping the UI must not drop the data.
+    const c = data.channels[0];
+    const box = $('receiver');
+    $('receiver-empty').style.display = c ? 'none' : '';
+    if (!c) { box.innerHTML = ''; renderMeterChannels(); renderVocabulary(); return; }
+    const i = 0;
+    box.innerHTML = `
+      <table class="explain">
+        <tr><th>Channel id</th><td>${ro(c.id || '')}</td></tr>
+        <tr><th>Receiver</th><td>${ro(c.device || '')}</td></tr>
+        <tr><th>Heard as</th><td>${field('channels', i, 'label', c.label)}
+            <div class="derived">The name on every entry this channel writes.</div></td></tr>
+        <tr><th>Accuracy</th><td>${CAN_EDIT
+              ? `<select onchange="data.channels[0].model = this.value; touch()">
                    ${MODELS.map(m => `<option value="${m.file}"${m.file === c.model ? ' selected' : ''}>${m.name}</option>`).join('')}
                  </select>`
-              : ro((MODELS.find(m => m.file === c.model) || {}).name || c.model)}</td>
-        <td>${CAN_EDIT
+              : ro((MODELS.find(m => m.file === c.model) || {}).name || c.model)}
+            <div class="derived">Careful is better on callsigns, about three times slower.</div></td></tr>
+        <tr><th>On</th><td>${CAN_EDIT
               ? `<input type="checkbox" ${c.enabled ? 'checked' : ''}
-                        onchange="data.channels[${i}].enabled = this.checked; touch()">`
-              : ro(c.enabled ? 'On' : 'Off')}</td>
-        <td>${CAN_EDIT
+                        onchange="data.channels[0].enabled = this.checked; touch()">`
+              : ro(c.enabled ? 'On' : 'Off')}
+            <div class="derived">Off stops it logging at once, without losing the setup.</div></td></tr>
+        <tr><th>Audio</th><td>${CAN_EDIT
               ? `<input type="checkbox" ${c.send_audio ? 'checked' : ''}
-                        onchange="data.channels[${i}].send_audio = this.checked; touch()">`
-              : ro(c.send_audio ? 'On' : 'Off')}</td>
-        <td>${tokenCell(c, 'channel', c.id)}</td>
-        <td>${CAN_EDIT ? `<button class="row-btn danger" onclick="delChannel(${i})">Remove</button>` : ''}</td>
-    </tr>`).join('');
-    $('channels-empty').style.display = data.channels.length ? 'none' : '';
-    renderCalWarning();
-
+                        onchange="data.channels[0].send_audio = this.checked; touch()">`
+              : ro(c.send_audio ? 'On' : 'Off')}
+            <div class="derived">Sends the recording with the transcription, kept six hours.</div></td></tr>
+        <tr><th>Log token</th><td>${tokenCell(c, 'channel', c.id)}</td></tr>
+      </table>`;
+    renderMeterChannels();
     renderVocabulary();
 }
 
-function delDevice(i) {
-    const host = data.devices[i].host;
-    const using = data.channels.filter(c => c.device === host).length;
-    if (using && !confirm(`${host} still has ${using} channel(s). Remove it anyway?`)) return;
-    data.devices.splice(i, 1); render(); touch();
-}
-function delChannel(i) {
-    if (!confirm(`Remove ${data.channels[i].id}?\n\nIt stops logging at that device's next update.`)) return;
-    data.channels.splice(i, 1); render(); touch();
-}
-
-if (CAN_EDIT) {
-    $('add-device').onclick = () => {
-        data.devices.push({host: '', has_token: false}); render(); touch();
-    };
-    $('add-channel').onclick = () => {
-        data.channels.push({id: '', device: data.devices[0]?.host || '', label: '',
-                            mhz: '', serial: '', model: MODELS[0].file,
-                            enabled: true, send_audio: false, has_token: false});
-        render(); touch();
-    };
-}
 
 load();
 loadIds();

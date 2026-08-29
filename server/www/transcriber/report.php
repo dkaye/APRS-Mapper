@@ -12,6 +12,11 @@
  *   {"device":"rx1","token":"…","channel":"rx1-146520","state":"started","expected":90}
  *   {"device":"rx1","token":"…","channel":"rx1-146520","state":"done","gain":16.6,"squelch":30}
  *   {"device":"rx1","token":"…","channel":"rx1-146520","state":"failed","error":"…"}
+ *   {"device":"rx1","token":"…","channel":"rx1-146520","state":"level","level_db":-27.4}
+ *
+ * The last is the calibration meter's feed: a band-limited (200-4000 Hz) audio level,
+ * sent about once a second while a channel is being levelled by hand. It is kept apart
+ * from the calibration record because it is worthless three seconds later.
  *
  * The DEVICE token, and the channel is checked against the device that owns it. The two
  * kinds of token do not blur: a device token fetches this device's configuration and now
@@ -56,6 +61,24 @@ if (!transcriber_device_ok($device, $token)) {
 if (transcriber_channel_device($channel) !== $device) {
     http_response_code(403);
     exit(json_encode(['error' => 'Forbidden']));
+}
+
+// A level reading is not a calibration state, so it does not go through
+// record_calibration's state machine at all: it has no started/finished, it does not
+// belong in the durable record, and it arrives about once a second while somebody is
+// setting a knob. Same authentication, different store, and it answers immediately so a
+// device streaming these is never waiting on a lock.
+//
+// The level is band-limited (200-4000 Hz) by the DEVICE before it is sent. That is not
+// an implementation detail to move here later: judging a radio's level by its raw peak is
+// what set the volume to zero on 2026-08-29, because the peak belonged to a squelch thump
+// generated after the volume control. The number crossing this wire is the audio band or
+// it is useless.
+if (($body['state'] ?? '') === 'level') {
+    transcriber_level_update($channel,
+        (float)($body['level_db'] ?? -99),
+        (float)($body['wide_db']  ?? -99));
+    exit(json_encode(['ok' => true]));
 }
 
 $row = transcriber_record_calibration($channel, $body);
