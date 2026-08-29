@@ -4663,8 +4663,8 @@ is <code>require-dev</code> only, so nothing at runtime needs <code>vendor/</cod
 <pre><code class="language-bash">python3 igate/tests/test_isproxy.py          # direwolf gets an upstream on reconnect
 python3 transcriber/tests/test_transcriber.py
 </code></pre>
-<p>The Transcriber suite runs the whole channel pipeline without an SDR and without
-whisper: <code>rtl_fm</code> and <code>sox</code> are skipped via <code>--spool-only</code>, and whisper is a stub script
+<p>The Transcriber suite runs the whole channel pipeline without a radio and without
+whisper: <code>arecord</code> and <code>sox</code> are skipped via <code>--spool-only</code>, and whisper is a stub script
 whose output the test chooses, so the filters can be driven deliberately. The two that
 earn their keep are the ones guarding what reaches the log — squelch noise transcribed
 as "Thank you." must produce nothing, and a genuine transmission through the same path

@@ -3588,8 +3588,8 @@ python3 igate/tests/test_isproxy.py          # direwolf gets an upstream on reco
 python3 transcriber/tests/test_transcriber.py
 ```
 
-The Transcriber suite runs the whole channel pipeline without an SDR and without
-whisper: `rtl_fm` and `sox` are skipped via `--spool-only`, and whisper is a stub script
+The Transcriber suite runs the whole channel pipeline without a radio and without
+whisper: `arecord` and `sox` are skipped via `--spool-only`, and whisper is a stub script
 whose output the test chooses, so the filters can be driven deliberately. The two that
 earn their keep are the ones guarding what reaches the log — squelch noise transcribed
 as "Thank you." must produce nothing, and a genuine transmission through the same path
