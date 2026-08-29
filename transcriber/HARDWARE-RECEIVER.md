@@ -3,8 +3,11 @@
 Replacing the RTL-SDR with a conventional receiver whose own squelch gates the audio,
 fed into the Pi through a USB sound card.
 
-**Status:** validated end to end 2026-08-29. Not yet the production path — the SDR
-version is preserved at git tag `pre-hardware-receiver`.
+**Status: this IS the production path**, as of 2026-08-29. `transcriber.py` reads a sound
+card; `rtl_fm`, the software squelch, the gain calibration, `calibrate.sh` and the
+calibrate service are gone. The SDR version is preserved at git tag
+`pre-hardware-receiver`, and **the iGates are still SDR-based** — none of this touched
+them.
 
 ---
 
@@ -25,6 +28,10 @@ built on top of it and **none reached production**:
 | `quiet` (empty-clip) | 26 fires, 25 correct, 1 real transmission lost. Shippable, but only just |
 
 A hardware squelch answers the question in hardware and makes all three unnecessary.
+
+**Confirmed in production:** a complete two-station QSO captured, segmented and
+transcribed automatically on 2026-08-29, including a 31-second conversational over, plus
+the repeater's Morse IDs at 1094, 1500 and 2000 Hz.
 
 **What it does not solve: Morse identifiers.** A repeater keys a full carrier to send its
 ID, so any squelch opens. That detector is the one piece of SDR work that carries over —

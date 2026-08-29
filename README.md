@@ -1459,43 +1459,43 @@ The three numbers that decide whether an edit survives: at x=250 the crop circle
 
 ## Transcribers
 
-A Transcriber is a Raspberry Pi (4 or 5) with an RTL-SDR that listens on a voice frequency,
-transcribes each transmission with `whisper.cpp`, and appends it to the event log by
-itself. Net control hears everything on the radio and writes down almost none of it;
-this is the part that writes it down.
+A Transcriber is a Raspberry Pi (4 or 5) listening to a **conventional receiver** on a
+voice frequency, transcribing each transmission with `whisper.cpp` and appending it to
+the event log by itself. Net control hears everything on the radio and writes down almost
+none of it; this is the part that writes it down.
 
-> **Hardware receiver trial.** An alternative front end — a conventional receiver whose own
-> squelch gates the audio, into a USB sound card — was validated end to end on 2026-08-29.
-> It removes the need for the software squelch and the three filters built on top of it,
-> at the cost of frequency agility. See
-> [transcriber/HARDWARE-RECEIVER.md](../transcriber/HARDWARE-RECEIVER.md). The SDR version
-> below remains the production path and is preserved at git tag `pre-hardware-receiver`.
+> **This was an RTL-SDR until 2026-08-29.** The radio's own squelch now gates the audio
+> and a USB sound card carries it to the Pi, which removed the software squelch, the gain
+> calibration and the three filters built on top of them — about 680 lines that existed to
+> answer, badly, a question a squelch answers in hardware. The cost is frequency agility:
+> one receiver, one frequency, tuned by hand. See
+> [transcriber/HARDWARE-RECEIVER.md](../transcriber/HARDWARE-RECEIVER.md) for the
+> measurements and the traps. The SDR version is preserved at git tag
+> `pre-hardware-receiver`, and **the iGates are still SDR-based** — none of this touches
+> them.
 
 ```
-146.520 MHz RF                       rtl_fm -d serial=… -f … -M fm -l <squelch>
+146.700 MHz RF                       arecord -D plughw:2,0 -f S16_LE -r 16000 -c 1
       │                                    │  raw S16LE
       ▼                                    ▼
-  RTL-SDR ──── Pi 4 ──── transcriber@rx1-146520.service
-                              │  sox … silence … : newfile : restart
+  Receiver ─── Pi 5 ──── transcriber@Transcriber.service
+                              │  AudioGate: 200 Hz high-pass, rms,
+                              │  -55/-60 dBFS hysteresis, 1.2 s hang
                               ▼  one wav per transmission
                          whisper.cpp (tiny.en / base.en)
                               ▼
-                POST index.php?messaging=log   →   "146.520 → Log"
+                POST index.php?messaging=log   →   "Radio → Log"
 ```
 
-**Several channels per Pi**, not one Pi per frequency: `transcriber@.service` is a
-systemd template, so a second frequency costs one unit instance rather than one more
-device to power and maintain. Each channel is bound to its dongle **by USB serial**
-(`rtl_eeprom -d 0 -s 00000001`), never by index — index order is not stable across
-reboots or re-plugs, and two channels silently swapping frequencies is the kind of fault
-nobody notices until the log is already wrong.
+**One receiver, one frequency.** `transcriber@.service` is still a systemd template and
+the plumbing still allows several instances, each on its own capture device — but the
+frequency is set by hand at the radio, so a second one means a second radio and a second
+sound card rather than a second dongle in the same Pi.
 
-**Two dongles per Pi 4 is comfortable.** The Pi supplies 1.2 A across all USB ports and
-an RTL-SDR draws roughly 300 mA, so two use about half of it. The real load is
-continuous transcription on four cores, which is a sustained near-peak draw of the kind
-that browned out BigTV — use the official 5.1 V/3 A supply, put the dongles on the
-**USB 2.0** ports (USB 3.0 radiates broadband noise that desenses an RTL-SDR, and
-presents as a deaf receiver rather than a power fault), and cool it actively.
+**The channel id no longer carries the frequency.** It was `Transcriber-146700`, derived
+from the device and what it was tuned to, which went stale the moment the receiver moved
+— and the id names the systemd unit, the spool directory and the author of every log
+entry. It is now just the device name, stored rather than derived.
 
 **A channel is a participant.** It is registered as `kind = 'transcriber'` and identified
 exactly the way a mobile is — a token matching no participant row is looked up in the
@@ -1622,21 +1622,30 @@ the prompt and with it, over real traffic **and** over static captured unsquelch
 purpose. Zero loggable lines from the noise on both arms clears it; one entry naming the
 roster is the veto. See Transcriber Diagnostics.
 
-**A gap in the byte stream is the boundary between transmissions — but only when the
-channel goes properly idle.** `rtl_fm`'s squelch gates on RF power *before* demodulation,
-so on an idle channel the process emits nothing at all: measured on a real receiver at
-exactly zero bytes over eight seconds. Samples arriving means a carrier is up; samples
-stopping for `GAP_SECONDS` means it dropped.
+**The LEVEL is the boundary between transmissions.** The SDR this replaced emitted
+nothing at all while squelched, so a gap in the byte stream *was* the carrier dropping. A
+sound card has no opinion: it delivers silence at the same rate it delivers speech,
+forever, so that gap never comes and every over would run into the next.
 
-**Between overs of a live conversation it does not stop, and that is why several
-transmissions arrive as one.** `rtl_fm` keeps emitting near-silent samples through its
-squelch hang, so the capture loop sees data and holds the capture open. Measured on three
-real captures, every over ends the same way: about 0.95 s of near-silence, the repeater's
-0.30 s courtesy beep, then another second of near-silence — each of them comfortably
-longer than the 0.8 s `GAP_SECONDS` waits for, and none of them a gap in the byte stream.
-So a brisk exchange becomes one clip, and because audio is uploaded when a capture
-*closes*, it reaches a phone as a single block after the fact. An 88-second capture held
-six separate transmissions.
+`AudioGate` therefore opens above **−55 dBFS** and closes below **−60** after a **1.2 s**
+hang. It measures the audio band only — two cascaded one-pole high-passes at 200 Hz, then
+rms — because a squelch thump is loud and sub-audible: one measured clip carried 97.6% of
+its energy below 100 Hz against 0.1% in the band the repeater's Morse ID lives in, so a
+broadband level reads it as signal and opens on nothing.
+
+Not an FFT, and not decimated. This runs ten times a second on a Pi with stdlib only, and
+decimating enough to make a pure-Python DFT affordable puts Nyquist below the 1500 Hz ID
+tone — the gate would sit deaf through every identification.
+
+**The thresholds are not guesses.** Measured on 146.700 on 2026-08-29: squelch closed
+sits at **−91 dBFS**, flat within 2 dB, and speech peaks at **−30**. Any threshold in that
+60 dB gap is unambiguous, which is the whole reason for moving the squelch into hardware.
+
+**1.2 s of hang, and the hang is not kept.** A Morse word gap at ~11 wpm is about 770 ms,
+so a shorter hang cuts an identification into fragments; two overs on a busy net are about
+1.5 s apart, so a longer one merges them. Quiet frames are buffered and flushed back if
+speech returns — a pause inside an over must survive — but discarded when the gate closes,
+or every clip would be 1.2 s longer than the transmission in it.
 
 The gap is in the audio even though it is not in the byte stream, and `carrier_gaps()`
 measures it: frame level against the clip's own 95th percentile, so gain cannot move it.
@@ -1651,7 +1660,7 @@ would chop somebody mid-sentence.
 
 A software audio-level squelch ran on top of that for a while, meant to find the edges of
 each over. It could not work, for a reason the measurement above makes obvious in
-hindsight: because `rtl_fm` emits nothing while closed, the only audio it ever saw was
+hindsight: because the SDR's squelch emitted nothing while closed, the only audio it saw was
 speech, so the "noise floor" it computed was a *speech* level — 98, in the field. It then
 discarded anything quieter, which meant the opening syllables of every over, and cut the
 over in two at the first pause. A station saying "monitoring channel, K6DRK" was logged
@@ -1662,7 +1671,7 @@ is gone; the gap needs no help.
 separate reasons, both about what a Pi in a box somewhere can afford to lose:
 
 - *The thread.* whisper is blocking, and while it ran inline nothing was draining
-  `rtl_fm`'s pipe — 64 KB, about two seconds of audio, after which `rtl_fm` blocks on
+  the capture pipe — 64 KB, about two seconds of audio, after which `arecord` blocks on
   write, stops reading the SDR, and those samples are gone. Choosing the careful model
   would have lost transmissions rather than merely running behind. Separated, a slow
   model or a slow server costs latency and nothing else.
@@ -1670,8 +1679,8 @@ separate reasons, both about what a Pi in a box somewhere can afford to lose:
   32 KB per second of audio written to a card with a finite number of erase cycles, and
   none of it is worth keeping. Clips live on tmpfs under `/run/transcriber/<channel>`,
   which systemd creates (`RuntimeDirectory=`) and empties when the unit stops — so they
-  also stopped leaking on every kill. `rtl_fm`'s stderr goes there too, and is read back
-  only when it dies: "No supported devices found." is the whole diagnosis when a dongle
+  also stopped leaking on every kill. `arecord`'s stderr goes there too, and is read back
+  only when it dies: "Device or resource busy" is the whole diagnosis when something
   has fallen off the USB bus, and it used to go to `/dev/null`.
 
 **The spool can live on a USB SSD; the boot disk cannot.** `/var/spool/transcriber` moves
@@ -1699,428 +1708,37 @@ hundred of them.
 
 ### Calibration
 
-**The gain and the squelch are measured together, at the site the receiver is on, when
-somebody presses Recalibrate.** They have to be together: squelch is a threshold on
-received power and the gain decides what that power is, so a squelch cached beside no gain
-is a number measured against something nobody wrote down. That is a bug this project has
-already had.
+**There is nothing to calibrate on the device any more.** Gain and squelch belonged to a
+tuner. A radio's squelch is a knob on its front panel, and its audio level is set once, by
+hand, against the meter on the channel manager — then stored in the sound card's own mixer
+state, not by this software.
 
-**The gain is found by the noise-floor knee, and never by which gain's noise the squelch
-still gates.** That second question is the obvious one and it is a trap: gating and
-sensitivity pull in opposite directions, and on a dead band only gating can be measured —
-so optimizing for it alone walks the gain down until the receiver gates beautifully and
-hears nothing. Instead the sweep raises the gain a step at a time and measures the noise
-floor at each. While the receiver is limited by its own converter the floor rises *less*
-than each gain increment; once it is limited by thermal noise arriving from the antenna it
-rises 1:1. Where the slope reaches 0.7 dB per dB is where it starts hearing the band
-rather than itself, and no signal has to be present for any of it. The floor is measured
-from raw I/Q (`rtl_sdr`) rather than through `rtl_fm`, because FM demodulation throws the
-amplitude away — on a dead band its output is full-scale hiss at any gain, so the knee
-would never appear.
+Two settings must hold on the Pi, and both are stored with `alsactl store`:
 
-The sweep stops at 32.8 dB rather than at the tuner's 49.6, and that cap is doing real
-work: the knee cannot see front-end overload from a strong transmitter elsewhere in the
-band, which is not on this frequency and need not be transmitting while the sweep runs.
-Nothing measurable here would object to 40 dB, which is exactly the value that had to be
-removed. So the sweep is allowed to find the knee and not to chase it past where this
-tuner stays linear.
-
-**Traffic mid-measurement invalidates it, and is detected rather than averaged in.** What
-a transmission produces is not a wild answer but a plausible one — a floor that jumps at
-one gain looks precisely like a knee. Three things catch it: a floor that *falls* as the
-gain rises cannot happen; the bottom of the sweep is measured again at the end, which
-catches a carrier that came up mid-sweep and stayed; and the knee itself is confirmed by
-measuring its two points a second time, the same way `choose_squelch()` confirms a quiet
-level. Any of them and the calibration is abandoned and says why. A failed calibration
-that says so is worth far more than a plausible one that is wrong.
-
-**The squelch answer has to be a boundary, and refusing is a valid answer.** A level that
-gates with nothing audible beneath it has not been measured, it has been guessed. Squelch
-10 — the floor — was once cached on a channel that then ran 99.56% open, filing noise to
-people's phones for a day, and neither the receiver nor the threshold was at fault: the
-scan simply ran while the channel happened to be quiet, and the walk-down that steps
-downwards for as long as the level beneath also gates slid from wherever it started to the
-lowest candidate. A lull lasting only as long as the scan is enough. So the level below
-the answer is measured again, a dozen seconds later, and has to be **open**; at the floor,
-where there is nothing below, the floor has to gate twice. Either way `choose_squelch()`
-returns nothing and the caller falls back rather than caching a receiver that will not
-gate for a day.
-
-Measuring for *longer* does not fix that, which was the first theory and is worth writing
-down. Over 10.8 hours of one channel a 2-second window sees 2.6% of the night's
-idle-noise range and a 300-second window sees 138% — yet the p90 distance between one
-window's level and the night's typical level only moves from 319 to 284. The floor wanders
-over tens of minutes, so no window anybody will wait for averages it out, and 150x the
-airtime buys 11%.
-
-**On demand only, and therefore "never calibrated" is a state the manager shows.** There
-is no expiry and nothing measures at startup: it takes the channel off the air for two or
-three minutes, and a channel going deaf at an hour nobody chose — during a net — is worse
-than one running numbers measured a month ago. The consequence is that a freshly deployed
-receiver runs the compiled-in pair, measured on a different hill, until somebody presses
-the button. Nobody presses a button they have no reason to know about, so the Calibration
-column says **Never** in amber, distinctly from a channel that has been measured.
-
-**How the countdown stays honest.** Devices poll once a minute, so counting down from the
-button press would be wrong by up to a minute — in the direction that tells somebody the
-channel is back on the air while the radio is still busy. So the device reports in, which
-is the one thing Transcribers never did before: a small POST to `report.php`, authenticated
-with the **device** token and checked against the device that owns that channel. The worker
-prints a line of JSON when it starts (with how long it expects to take) and another when it
-finishes (with what it measured, or why it stopped); `calibrate.sh` forwards each as it
-appears. The manager counts down to the device's own start against the server's clock, and
-when the estimate runs out it says *still measuring* rather than inventing an answer.
-
-The pieces, and why each is separate:
-
-| Piece | Runs as | Why |
-|---|---|---|
-| `?calibrate` in the manager | the operator | Per channel: the other dongle on that Pi has no reason to stop listening |
-| `calibrate_requested` in `get.php` | — | A stamp per channel; the device remembers the last it acted on, so nothing is written back and a switched-off device does not wake up and run last week's request |
-| `transcriber-calibrate@<id>.service` | root | A unit of its own: the 60-second poll's service is killed at 120 seconds, and this takes minutes |
-| `calibrate.sh` | root | Holds the *device* token, stops and starts the channel, forwards each report |
-| `transcriber.py --calibrate` | pi | Holds the *channel* token and the radio, and does neither of the other two jobs |
-
-Calibration state lives in `transcriber-calibration.json`, beside the registry and not in
-it. The manager carries a fingerprint of the registry so a stale write is refused, and
-these records are written by receivers at moments nobody chose — put them together and a
-device reporting in would make an open page start refusing its own Save. Same reasoning as
-the vocabulary's own file, and the same conclusion. It is not in `transcriber-state.json`
-either: that one is rewritten by every device on every poll, and a read-modify-write from
-two directions loses whichever landed first, which here would be the report the page is
-waiting for.
-
-**Two kinds of token, deliberately.** A *device* token fetches that device's configuration
-(`/transcriber/get.php?token=…&device=<hostname>`, and only its own channels) and reports
-on its own channels' calibration (`report.php`, checked against the device that owns the
-channel); a *channel* token only writes log entries. Neither can do the other's job, so a
-Transcriber left in a shed cannot be used to read the net's traffic, and cannot speak for
-a receiver on another hill. The registry lives at
-`/var/lib/marsaprs/transcriber.json`, beside `messages.db` and **outside the web root** —
-a token registry under `/var/www/html` is how `mobile_trackers.json` came to be
-downloadable by anyone.
-
-**Each channel measures its own receiver nightly.** `sdr-selftest.sh` frees the dongle,
-runs five `rtl_power` sweeps around the channel's frequency, and grades the worst internal
-birdie in the guard band beside it — the fault that quietly deafens a receiver without
-ever looking like a fault. Results go to the same fleet dashboard as the iGates', at
-`/igate/selftest/`, and a history line is appended locally so a slow degradation is
-visible rather than inferred.
-
-It is one report per **channel**, not per device: each channel has its own dongle on its
-own frequency, so they are separate receivers that happen to share a Pi, and a spur that
-deafens one says nothing about the other.
-
-This is the iGates' old `igate-selftest.sh`, renamed and generalized. Only four constants were
-ever APRS-specific; the watched frequency is now a parameter, so an iGate asks about
-144.390 and a Transcriber about whatever voice channel it is on. It lives in `sdr/` rather
-than in either device's tree and is copied into both archives at deploy time — one source
-file, two fleets, no drift. The old `aprs_guard_*` output keys are still emitted alongside
-the new generic ones, because every gate's `selftest-history.csv` and the dashboard were
-written against them, and a nightly update cycle means "every deployed device" for a day.
-
-**Settings reach the receiver by themselves, within a minute.** `transcriber-config.timer`
-runs `auto-update.sh --channels-only` every 60 seconds: fetch this device's channels, and
-if they differ from what is installed, apply them and restart the affected channel. No
-archive download, no self-replacement, no self-noise test — those belong to the nightly
-run, and the last of them would take the receiver off the air for a minute every minute.
-
-Two things that sound like details and are not. The poll **never restarts a channel that
-has not changed**: doing so on a schedule would take it off the air and lose whatever was
-being said, sixty times an hour, forever. And the `update_requested` stamp the manager
-sets is kept *out* of the file the device compares against, or pressing "Update devices"
-would look like a changed channel list and restart every receiver for nothing. The
-per-channel `calibrate_requested` stamps are kept out of it for the same reason.
-
-That file — `/etc/transcriber/channels.json` — is written with sorted keys and holds
-exactly two things, because it is both what the worker reads and what `cmp -s` compares to
-decide whether a receiver restarts:
-
-```json
-{"channels": [ … ],
- "vocabulary": {"callsigns":   [ … ],
-                "tactical":    [ … ],
-                "terms":       ["Windy Gap", "Cardiac", … ],
-                "corrections": {"cardiac hill": "Cardiac", … }}}
+```bash
+amixer -c 2 sset "Auto Gain Control" off   # AGC destroys the silence the squelch provides
+amixer -c 2 sset Mic 15                    # +3 dB, not the 35 (+23 dB) maximum
 ```
 
-Every one of those four keys is written whether or not the server sent it, defaulting to
-empty. That is what makes a mixed-version day ordinary: the archive lands on the nightly
-run and the server is deployed separately, so a device runs new code against an old server
-for a while — and a config file that changed *shape* run to run would stop `cmp -s` being a
-change detector. In the other direction a device fetches `terms` and `corrections` before
-its worker knows what they are, and ignores them. Neither direction needs a version number;
-extra keys are ignored and absent ones read as empty, at both ends.
+AGC off is not optional: it raises gain during silence, pulling the noise floor up into
+the 60 dB gap the whole approach depends on. Capture gain 15 rather than 35 because at
+maximum the radio's output overwhelms the card — half the volume knob's travel does
+nothing and all the useful adjustment is crammed into the bottom 20%.
 
-**The words that will be said on the air are already written down, on the assignment
-sheet.** Every event has one, in Google Docs: who is where, on what frequency, under what
-tactical call. Those are also exactly the words transcription is worst at — a callsign is
-letters and digits with no language behind it, and `K6DRK` comes back as *K6 dark* or
-*case six DRK* often enough to make a log tedious to read. Handed the list as a whisper
-prompt at channel start, it gets them.
+**Calibrate on open-squelch noise, and judge it on the audio band.** Noise is the right
+reference because it is stationary — about a decibel of spread over a minute — and
+available on demand, where speech varies 20 dB inside a syllable and only arrives when
+somebody talks. Open the squelch, press **Start meter**, turn the volume until the bar
+reaches the target line at **−27 dBFS**, close the squelch again.
 
-Paste the ordinary `/edit` link (or a bare document ID) into **Event vocabulary** in the
-channel manager and the server reads the document's plain-text export — no authentication
-needed for a link-shared document, which every one of these already is because the team
-reads it. On the real Dipsea sheet a plain regex finds **35 callsigns** and 12 tactical
-calls. There is no AI anywhere in this and there does not need to be; what actually
-matters is *normalizing* what comes back, because the export is a flattened table and the
-same call arrives as `Net control\t`, `net control\n` and `netcontrol`.
+**Never judge the level by the raw peak.** The peak belongs to a squelch thump generated
+*after* the volume control, so no knob can move it. Levelling against it on 2026-08-29 set
+a target below the volume-off leakage floor, which meant the only way to reach it was to
+turn the audio off entirely — and ten seconds of test speech left no trace in the
+recording while several hours went into hunting a cable fault that did not exist.
 
-**Only what a prompt can act on is taken, and the document is never stored.** Callsigns
-matched on US amateur shape (`\b[A-Z]{1,2}[0-9][A-Z]{1,3}\b`, which is narrow enough to sit
-beside `440.1375MHz`, `PL 192.8Hz`, `CC3` and `Ch21R` without eating any of them, and drops
-the SSID off `KM6BON-7`), and tactical calls from a fixed vocabulary of roles — Sweep, SAG,
-Aid, Biker, Hiker, Net Control, Start, Finish — normalized to their spoken form. Nothing
-else, and nothing that merely looks like a proper noun. The same sheet carries operators'
-full names, their shift times and somebody's mobile number; a fleet of receivers in sheds
-has no business holding any of it, so it is not read and no copy of the document is kept.
-
-**Place names have to be stated, because no pattern can find them.** Aid stations answer to
-their own tactical calls — *Windy Gap*, *Cardiac*, *Bootjack*, *Pantoll*, *Stinson Beach* —
-and those are ordinary words in an ordinary order. Any regex wide enough to catch them
-would catch half the document, including the names the paragraph above exists to keep out.
-So the sheet says them outright: a line with **Vocabulary** in it, then one term per line,
-ending at the first blank line.
-
-```
-Transcriber Vocabulary
-Windy Gap
-Cardiac
-Bootjack
-Cardiac Hill = Cardiac
-```
-
-The heading is a heading and not any line with the word in it — reduced to its words it
-must be five or fewer, so `Transcriber Vocabulary`, `Vocabulary:` and `Vocabulary (place
-names)` are headings and a sentence about vocabulary is not. A tab in front of a term (the
-export flattens tables) and a `*` or `1.` in front of it (the author will use a list, because
-it is a list) are decoration and come off. A line with `=` is a **correction**: what the
-transcription produced on the left, what it should have said on the right, keyed by the
-normalized heard form so the worker looks it up rather than scanning. Its right-hand side
-is a term too — somebody who reports that "Cardiac" comes out as "Cardiff" has told us
-Cardiac is a phrase this event says.
-
-**Whether the section was found is reported separately from what it held, and that is not
-decoration.** Rename the heading, or lose the section in an edit, and the terms silently
-become none: the callsign and tactical counts are unchanged, everything looks like it
-worked, and the first anybody knows is a log full of *Windy Cap* halfway through an event.
-So the manager says **vocabulary section: found, 12 terms** or **not found**, distinctly
-from the two counts beside it. Silent degradation is the failure mode this system keeps
-producing and this is the cheapest place to stop one.
-
-**The manager also has a box for the same syntax**, merged with whatever the sheet gave. It
-is not the main mechanism — a term belongs on the sheet, where the whole team can see it —
-it is for the middle of an event, when *Cardiac* is coming out as *Cardiff* in the log and
-the shared document is not yours to edit right then. It lives in the registry beside the
-sheet URL and is merged in at read time rather than baked into the stored vocabulary, so it
-takes effect on Save with no fetch at all, and it survives a failed refresh — which matters,
-because a document that cannot be reached is exactly when somebody is typing into that box.
-On the same key, the box wins: it was typed later, by somebody watching the log get it wrong.
-
-**And one standing list, shared by every event.** Much of the vocabulary does not change
-event to event: the procedural words, the amateur-radio terms, and the place names of the
-region all of these events happen in. Retyped into each new sheet, that either does not
-happen or happens imperfectly — so it is typed once, in **Standing vocabulary** in the
-manager, behind a button that opens an editor with room for the whole list. Same syntax as
-the other two.
-
-**Precedence on a clash is standing < sheet < box**, and it is worth stating because it is
-the kind of thing that gets silently reversed. More specific beats more general: the sheet
-is about *this* event and the standing list is about all of them, and the box was typed most
-recently by somebody watching the log get that exact phrase wrong. The same order decides
-which spelling of a repeated term survives, which terms fill the worker's prompt budget
-first, and which are given up if the ceiling below is ever reached.
-
-It ships with a starting list rather than empty, because an empty box teaches nobody what
-belongs in it — and the choice of what is in it *is* the guidance. **Every term is a match
-target, so a distinctive or multi-word phrase is close to free and a common English word is
-expensive on every event forever.** `Runner` and `Bib` in a real list capitalized every
-mention of a runner and a bib; `Cardiac` turns "cardiac arrest" into "Cardiac arrest". So
-`Sequoia Valley Road`, `Panoramic Highway` and `Pantoll` are seeded and `Cardiac` is not —
-an event that wants it puts it on its own sheet, where the cost is one day's. The seed is
-used only while the file does not exist: once it has been saved, whatever it says is what it
-says, including nothing, or "delete everything" would be the one edit that cannot be made.
-Nothing is seeded as a correction, since a correction is an instruction from somebody who
-has watched a specific mishearing happen.
-
-**The ceiling is on matching, and it is 1000 rather than the 200 it was.** 200 was the
-*prompt's* number applied to the wrong list. The prompt has a hard ~224-token limit, and the
-worker already trims to it in `Vocabulary.prompt()`, dropping whole terms in priority order
-— only the worker knows what whisper's tokenizer will do with `K6DRK`, so the server owes it
-a list rather than a short one. Matching has no such limit: every term is an exact target and
-one that never comes up costs a comparison. What bounds it at all is `resolve()` on the
-receiver, which scores every candidate span against every phrase of the same word count for
-every clip, on a Pi that has to keep up with a net.
-
-**And whatever is discarded is counted and named.** 270 lines were pasted into the supplement
-box, 200 were kept, 70 were dropped, and nothing anywhere said so — it was noticed only
-because the list on the page looked shorter than the one in the clipboard. The manager now
-says *over the limit: 90 lines from Standing vocabulary were dropped and the receivers never
-saw them*, by source and with the ceiling it was measured against, for the same reason the
-vocabulary section reports "found" rather than leaving an empty list to be interpreted.
-
-**Where it is refreshed from is the interesting part.** The sheet is edited up to the
-morning of the event, and the person editing it will not be sitting in the channel
-manager. So the refresh runs from the one thing that runs on its own — the devices' own
-60-second configuration fetch — with three guards: at most one fetch per quarter hour
-across the whole fleet, a non-blocking lock so eight devices polling in the same second
-produce one request and not eight, and an 8-second timeout inside the 30 seconds the
-device already allows. A failed fetch keeps the vocabulary that was already in force,
-because losing a good list to one timed-out request on a marginal link would be strictly
-worse than holding yesterday's. Under Apache's mod_php there is no `fastcgi_finish_request`
-to hide the fetch behind, so this is a real cost on a real request, and that is why it is
-bounded rather than convenient.
-
-**Read sheet now** in the manager bypasses the cache and shows what it found — the actual
-lists, not just counts, and whether the vocabulary section was there. The question somebody
-is asking after editing a document is not "how many" but "did it read *my* sheet", and their
-own callsign in the list is the only thing that answers it.
-
-A vocabulary change **does** restart the channels, unlike an `update_requested` stamp: the
-worker builds its prompt once, at startup, so a vocabulary it never reloads is a vocabulary
-it never uses.
-
-The extracted lists live in `transcriber-vocabulary.json` *beside* the registry rather than
-inside it, for the same reason the per-device state does — and one more: a refresh that
-moved the registry's fingerprint would make an open manager page refuse its own Save as a
-stale write.
-
-The two typed fields — the sheet URL and the supplement box (`settings.sheet_url` and
-`settings.vocabulary_extra`) — are stored fleet-wide in the registry rather than per device,
-because the vocabulary is per *event* and there is one live event at a time. It
-arguably belongs on the event in the map admin instead, beside the event name and date —
-that is where an operator sets an event up, and where it would survive one event ending and
-the next beginning. That is the right long-term home and this is deliberately not it yet:
-moving it means a schema change to `event.yaml` and a second admin page, for a field that
-is typed once a month.
-
-The standing list is *not* one of them. It lives in `transcriber-standing.json` beside the
-registry, written and read through `?standing` on the manager, and both halves of that are
-decided by the same two facts. It is not in the registry, because the manager refuses a Save
-made against a stale registry fingerprint and a write from the standing editor would move
-that fingerprint — the page that just made the edit would then be refused its own next Save,
-for a reason nobody could see. And it is not in `transcriber-vocabulary.json`, which is the
-file that looks like the obvious home: that one is overwritten whole by every sheet refresh,
-so a standing list kept in it would be erased by a poll nobody triggered, silently, fifteen
-minutes later, with nothing to connect the two. Its editor carries a fingerprint of its own
-file for the same reason the registry does, and more so — this is the long list, and it is
-edited slowly enough for two people to be in it at once.
-
-The manager saves on an explicit **Save**, not as you type, and carries a fingerprint of
-what the page was loaded from so the server refuses a write made against a stale copy
-rather than silently reverting somebody else's change. **Update devices** is separate and
-is about software: it asks every Transcriber to pull a new worker at its next check
-instead of waiting for 4:11am. Neither can be instant — there is no way into a Pi behind NAT
-and no wish to open one — so instead of promising a number, the page waits for the
-devices to come and collect. Each Transcriber's fetch is recorded along with a fingerprint
-of what it was given, and the page spins on "Update pending" until every device's
-fingerprint matches what it should now hold, or gives up after 75 seconds and names the
-ones that never answered. A device the edit did not affect is already current, so it does
-not sit pending on somebody else's change.
-
-**Recalibrate**, on a channel row, is the third kind of thing: it asks that one channel to
-measure the gain and squelch for the site it is on, and the page counts down to what the
-device itself reports rather than to a clock — see [Calibration](#calibration). It refuses
-while there are unsaved changes, for the same reason **Read sheet now** does: the receiver
-would measure the channel as it was saved, not as it looks on the screen.
-
-**The Pi 5 is the machine this wants to be.** The Transcriber moved from a Pi 4 to a Pi 5
-and got roughly **6× the transcription throughput**, which is what makes the *Careful*
-model viable at all: about **2.1 s per clip** against a busy net that produces one every
-few seconds. On the Pi 4, Careful fell behind and stayed behind — the 10am roll-call net
-was three minutes in arrears within the hour.
-
-> **`install.sh` must rebuild `whisper.cpp` when the CPU changes.** It skipped the build
-> as "already installed and working", which on a card moved from a Pi 4 to a Pi 5 would
-> have benchmarked an A72 binary on an A76 and quietly reported the Pi 5 as barely faster.
-> A CPU build stamp now forces the rebuild.
-
-Concurrency was measured and **deliberately declined**: running clips in parallel bought
-about 12%, and it would scramble the order entries appear in the log. A net log that is
-fast and out of order is worse than one that is correct and 12% slower. Four whisper
-threads is also *slower* than three on this hardware — the ceiling is memory bandwidth,
-not cores.
-
-**Two scripts, and the split between them matters.** `install.sh` builds the *machine* —
-packages, `whisper.cpp` compiled for this CPU, the models, the nightly cron — and knows
-nothing about which receiver it is. `configure.sh` makes it a *particular* receiver:
-hostname, NetBird, device token, dongle serials. Everything in the second is site-specific
-and everything in the first is not, so a Transcriber can be re-sited by re-running
-`configure.sh` alone, and re-running either is safe.
-
-The hostname is the part worth care. It *is* the device's identity: `auto-update.sh`
-fetches with `?device=$(hostname)` and the server matches that against the Host column.
-Get it wrong and nothing reports an error — the device asks for its channels, is told it
-has none, and sits there healthy and deaf.
-
-**Renaming a device takes three steps in the manager, not one**, and skipping the second
-produces exactly that silent failure:
-
-1. Change the device's **Host**. This issues a **new config token**, because tokens are
-   keyed by host name — the one on the Pi stops working, so rotate and copy the new one.
-2. **Re-pick the Receiver on every channel that device owns.** Channels store the device
-   name as a string and do not follow a rename, so they are left pointing at a host that
-   no longer exists. The channel ID is derived from device and frequency, so this also
-   renames the unit (`transcriber@<host>-<kHz>`); `auto-update.sh` stops the old one.
-3. Run `configure.sh` (or just `auto-update.sh`) on the Pi with the new hostname and token.
-
-When a fetch succeeds but returns no channels, `auto-update.sh` now says so and names step
-2 as the likely cause, because "update complete: no channels configured" is accurate and
-tells you nothing about why a receiver reporting success is deaf.
-
-**NetBird is installed by `configure.sh` and stays up permanently.** The iGates and
-displays toggle theirs from the server every five minutes (`check-netbird.sh`), because
-they go to sites on metered or marginal links where a VPN is worth switching off. A
-Transcriber is remote-managed by definition — its entire configuration arrives over the
-network — so there is no toggle, no `netbird-up.sh`, and no cron entry; just
-`systemctl enable netbird` so it is back after a reboot without anything having to
-notice.
-
-Answering the monitor's health poll is all a device does to appear in `/netbird/admin.php`
-— there is no registration step. `stats-listener.py` is the iGate's `stats-listener.php`
-field for field, in Python because a Transcriber has no PHP on it and adding `php-cli`
-plus `ext-sockets` to run one script on a Pi whose whole worker is stdlib Python is a
-poor trade. The format is what the poller prints verbatim, so the two must change together.
-
-| Path | Purpose |
-|------|---------|
-| `transcriber/bin/transcriber.py` | The per-channel worker (stdlib only, like `isproxy.py`) |
-| `transcriber/bin/stats-listener.py` | Answers the NetBird monitor's UDP:1235 health poll |
-| `transcriber/bin/compare-models.py` | Bench tool: two models, or prompt off vs on, over identical audio |
-| `transcriber/bin/calibrate.sh` | Stops one channel, measures its gain and squelch, reports both, starts it again |
-| `transcriber/systemd/transcriber@.service` | Template unit — one instance per channel |
-| `transcriber/systemd/transcriber-calibrate@.service` | Runs `calibrate.sh` off the 60-second poll, which would kill it at 120 seconds |
-| `transcriber/install.sh` | One-time build: SDR tools, `whisper.cpp` compiled for this CPU, models |
-| `transcriber/home/configure.sh` | Site setup: hostname, NetBird, device token, dongle serials |
-| `transcriber/auto-update.sh` | Nightly: pulls the archive, fetches this device's channels, starts/stops units to match |
-| `server/www/transcriber/` | The channel manager and the device download |
-| `map/tests/php/TranscriberStoreTest.php` | Registry and token checks |
-| `transcriber/tests/test_transcriber.py` | The worker, with no SDR and no whisper |
-| `transcriber/tests/test_auto_update.sh` | The updater's self-replacement, against a fake server |
-| `sdr/sdr-selftest.sh` | SDR self-noise test — shared with the iGates |
-| `sdr/sdr-selftest.py` | The spur analyzer behind it |
-
-`auto-update.sh` ships inside the archive as well as standing alone, so it can replace
-itself. It could not before: `install.sh` fetched it once and the device ran that copy
-forever, which meant no change to the updater could ever reach a deployed Transcriber.
-
-**It hands over on the same run rather than the next one.** Immediately after extracting
-the archive — before anything else is touched — it compares the published copy with
-itself, and if they differ it installs the new one and `exec`s it, guarded by an
-environment variable so exactly one hand-over can occur. Without that, a change to the
-updater took effect only on the *following* run, which is invisible and reads as a deploy
-that silently did nothing.
-
-This is deliberately not the two-stage loader pattern — a thin stub that downloads and
-runs its own logic every time. That buys the same immediacy, but it makes every nightly
-run depend on the network for its *code* and not just its content: a device on a marginal
-link must degrade to "keep running what is installed", and a stub that cannot fetch stage
-two cannot do anything at all. It would also mean `cat /home/pi/auto-update.sh` no longer
-tells you what runs tonight, which is exactly the question worth answering when
-reconstructing what a device did last night. `transcriber/tests/test_auto_update.sh`
-covers the hand-over, the loop guard, and the unreachable server, and `deploy.sh` will
-not ship past it.
+Recalibrate whenever the radio moves or changes frequency. Nothing is stored: a level
+measured at one site says nothing about the next.
 
 ### Transcriber Diagnostics
 
@@ -2164,76 +1782,53 @@ gain 16.6 dB, squelch 20 — measured for this site 40.2 hours ago
 gain 30 dB, squelch 25 — the built-in defaults. This channel has never been calibrated…
 ```
 
-An override carried over from a different frequency is a common cause of a deaf channel:
-clear the Squelch box in the manager and press **Recalibrate** for the site it is actually
-on.
+**Why the SDR was abandoned, kept because the failure is instructive.** Automatic gain and
+an RF squelch cannot both work: the squelch compared received power against a threshold,
+and AGC changed what that power meant, winding the gain up on a quiet band until noise
+crossed whatever level was set. Measured on an idle frequency with nothing on the air —
+squelch 40 open 92% of the time, 50 open 25%, 60 open 22%, and that same 50 reading 0% ten
+minutes earlier. Not a threshold slightly wrong: a threshold that meant something
+different every few minutes.
 
-**The tuner gain is fixed, never automatic.** Automatic gain and an RF squelch cannot both
-work: `rtl_fm`'s `-l` compares received power against a threshold, and AGC changes what
-that power means, winding the gain up on a quiet band until the noise crosses whatever
-level is set. Measured on an idle frequency with nothing on the air — squelch 40 open 92%
-of the time, 50 open 25%, 60 open 22%, and that same 50 reading 0% ten minutes earlier.
-With the gain pinned, the same frequency is silent at every level from 10 to 40.
-
-The symptom is a channel that records its own noise floor: hours of long clips, nearly all
+The symptom was a channel recording its own noise floor: hours of long clips, nearly all
 transcribing to nothing, on a frequency whose real duty cycle is a fraction of a percent.
-Six hours of it here produced 154 minutes of "audio" from a band that was almost entirely
-idle. 40 was the original hardcoded value and is near this tuner's 49.6 dB maximum, which
-overloads the front end — that is why it became automatic, and why the answer is a
-moderate fixed value rather than either extreme.
+Six hours of it produced 154 minutes of "audio" from a band that was almost entirely
+silent, and whisper was run twice over every second of it.
+
+A radio's squelch has none of that problem. It gates on the carrier, in hardware, and the
+gap between closed and open is 60 dB.
 
 **Which value is a question about the site, so it is measured there — see Calibration
 below.** 30 dB is what a channel uses until somebody measures it, and 30 dB was measured
 at one location.
 
-**4. Has the tuner wedged?** An RTL-SDR can stop locking while every command still
-reports success: `rtl_fm` prints "Tuned to 146700000 Hz", allocates its buffers,
-announces its sample rate, and produces not one byte. `rtl_test` says
-`[R82XX] PLL not locked!` and exits 0. From the web page, from `systemctl` and from the
-channel's own log it is identical to a frequency nobody is using.
-
-The channel now probes for this at every start — with the squelch off a working receiver
-must deliver, so nothing means the tuner is not — and says so:
+**4. Is something else holding the sound card?** Only one process can open a capture
+device, and the failure is silent from the other side: `arecord` simply gets nothing.
+This is the single most common way the new path breaks, because the calibration meter,
+the bench tool and the channel itself all want the same card.
 
 ```
-the receiver is not producing samples — the tuner has not locked.
+arecord exited (1): audio open error: Device or resource busy
 ```
 
-It also restarts itself after an hour of total silence, so a wedge that happens *while*
-running becomes visible within the hour rather than whenever somebody asks why the log is
-empty. To recover, power-cycle the dongle: unplug it, or re-bind its USB port —
+`fuser -v /dev/snd/pcmC2D0c` names the holder. Stop that, not this.
 
-```
-echo 1-1.4 | sudo tee /sys/bus/usb/drivers/usb/unbind
-sleep 4
-echo 1-1.4 | sudo tee /sys/bus/usb/drivers/usb/bind
-```
+The channel also restarts itself after an hour of total silence, so a card that opens and
+then stops delivering becomes visible within the hour rather than whenever somebody asks
+why the log is empty.
 
-If it recurs, suspect heat or supply: these run hot continuously, and a long or thin USB
-extension drops enough voltage to make the R820T's PLL unstable.
+**5. Is audio reaching the Pi at all?** Record fifteen seconds and look at the level,
+which distinguishes the three things that look alike from the log: a quiet channel, a
+radio turned down, and a dead cable.
 
-**5. Is a signal reaching the SDR at all?** Two tests, in this order.
-
-*Use broadcast FM as the reference, never a repeater.* A repeater is only strong while
-somebody is transmitting, so comparing a sweep taken during traffic with one taken during
-silence looks exactly like a disconnected antenna. This mistake was made here, confidently,
-and reported as hardware failure. Broadcast stations are always on:
-
-```
-rtl_power -d <serial> -f 88M:108M:20000 -g 40 -i 8 -1 /tmp/fm.csv
+```bash
+arecord -D plughw:2,0 -f S16_LE -r 16000 -c 1 -d 15 /tmp/t.wav
 ```
 
-Anything above roughly +15 dB over the floor means the antenna and dongle are fine.
-
-*Then listen to the frequency with no gate at all* and look at how much the level moves:
-
-```
-timeout 20 rtl_fm -d <serial> -f <hz> -M fm -s 200000 -r 16000 -E deemp -l 0 - > /tmp/c.raw
-```
-
-A ratio of loudest to quietest half-second near **1** is steady hiss — nothing is being
-received. Speech gives a ratio of **5 or more**. whisper describing the file as
-`(machine whirring)` or `(buzzing)` is it telling you the same thing.
+With the squelch **closed** this should sit near **−90 dBFS**. With it **open** it should
+read about **−27**. A flat trace within a decibel or two at any level is a dead path —
+real audio swings 20 dB or more, and that one test separates "working" from "broken"
+faster than anything else here.
 
 **Comparing two configurations over the same audio.** `compare-models.py` captures each
 transmission once and runs two arms over that same file. The arms differ by the model, or
@@ -2244,7 +1839,7 @@ sudo /opt/transcriber/bin/compare-models.py --channel <id> --clips 10 --minutes 
 sudo /opt/transcriber/bin/compare-models.py --channel <id> --compare prompt
 ```
 
-One capture, not two channels. Two channels on two dongles hear slightly different
+One capture, not two channels. Two receivers hear slightly different
 things, so any difference in the text would be confounded with a difference in what
 arrived — which is the one thing the comparison is supposed to hold constant. It borrows
 the worker's own capture path (same squelch, same gap segmentation, same filters), posts
@@ -2278,11 +1873,11 @@ mangled callsign: it is plausible, it names a real person and a real place, and 
 has any reason to doubt it.
 
 `--static-clips 0` skips the static pass, `--clips 0` skips the traffic pass. It stops the
-channel while it runs, because there is one dongle per channel, and starts it again
+channel while it runs, because there is one capture device per channel, and starts it again
 however it exits, including on Ctrl-C — the first Ctrl-C ends the wait for traffic and
 goes on to the static pass, the second ends the run.
 
-**A diagnostic that owns the dongle says so.** There is one SDR per channel, and several
+**A diagnostic that owns the sound card says so.** There is one capture device per channel, and several
 things want it: the nightly self-noise sweep, `compare-models.py`, `sdr-usb-test` on the
 gates. Meanwhile each fleet has something that puts a stopped receiver back within a
 minute — the iGate's watchdog from cron, the Transcriber's 60-second config poll. Left to
@@ -2299,7 +1894,7 @@ down when they see one:
 
 Both are ignored once stale — eight hours for the Transcriber's, and the iGates clear
 `/tmp` on their nightly reboot — so a tool that dies without cleaning up cannot keep a
-receiver off the air indefinitely. Anything new that takes the dongle should set the one
+receiver off the air indefinitely. Anything new that takes the card should set the one
 its fleet already watches rather than inventing a third.
 
 **Key files on a Transcriber Pi:**
@@ -2311,7 +1906,7 @@ its fleet already watches rather than inventing a third.
 | `/var/spool/transcriber/<channel>/outbox/` | Entries the server has not accepted yet |
 | `/var/spool/transcriber/<channel>/calibration.json` | The gain and squelch measured for this site, kept until it is measured again |
 | `/etc/transcriber/calibrate/<channel>` | The last calibration request this device acted on |
-| `/run/transcriber/<channel>/` | Clips in flight, on tmpfs — and `rtl_fm.err`, which is where "No supported devices found." goes |
+| `/run/transcriber/<channel>/` | Clips in flight, on tmpfs — and `arecord.err`, which is where "Device or resource busy" goes |
 | `/var/log/transcriber/update.log` | What the nightly and 60-second updates did |
 
 **SSH:** `ssh pi@<ip>` · Password: `guacamole`
@@ -2329,7 +1924,7 @@ Pi, accessible at `https://marsaprs.org/<path>`.
 | **NetBird Monitor** | `/netbird/` | User account | Real-time health status of all Pi devices |
 | **NetBird Admin** | `/netbird/admin.php` | User account | Add/remove devices, enable/disable, SSH terminal |
 | **WiFi Manager** | `/wifi/` | User account | Edit the shared WiFi credential list distributed to all Pis |
-| **Transcriber Channels** | `/transcriber/` | User account | Which Pi listens on which frequency, and with which dongle |
+| **Transcriber** | `/transcriber/` | User account | The receiver's per-event settings, and the calibration meter |
 | **Tickets** | `/tickets/admin.php` | User account | Bug report and suggestion ticket management |
 
 **Map** — Shows tracker positions updated every 5 seconds. Sidebar lists trackers (with
