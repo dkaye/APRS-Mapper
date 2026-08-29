@@ -104,11 +104,17 @@ fi
 # silently skipped. This has bitten this project before.
 rsync -a --ignore-times "$TMP/bin/"     /opt/transcriber/bin/
 rsync -a --ignore-times "$TMP/systemd/" /etc/systemd/system/
-chmod +x /opt/transcriber/bin/*.py
-# rsync carries the mode across, but a repository checkout that
-# lost the bit would produce a worker that fails with "permission denied" on the
-# device and nowhere else.
-chmod +x /opt/transcriber/bin/*.sh
+# rsync carries the mode across, but a repository checkout that lost the bit would
+# produce a worker that fails with "permission denied" on the device and nowhere else.
+#
+# find rather than a glob. This was `chmod +x /opt/transcriber/bin/*.sh`, and when the
+# SDR removal deleted calibrate.sh that directory stopped containing any shell script at
+# all. An unmatched glob stays literal, chmod fails on a path that does not exist, and
+# under `set -e` that ends the update right here — before the packages, before the
+# channel configuration, before the restart. The whole nightly pass would have died on
+# a directory whose contents were merely correct. -r so an empty result runs nothing.
+find /opt/transcriber/bin -maxdepth 1 -type f \( -name '*.py' -o -name '*.sh' \) -print0 \
+    | xargs -0 -r chmod +x
 
 # ── files this device is no longer supposed to have ──────────────────────────
 # rsync only adds and overwrites; nothing here ever deletes, so a file that stops being
