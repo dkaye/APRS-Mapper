@@ -1745,6 +1745,29 @@ measured at one site says nothing about the next.
 **"Nothing is appearing in the log" has four different causes and they look identical
 from the web page.** Ask these in order; an evening was lost to asking them out of order.
 
+**0. Is the channel running at all?** Look at **Status** on `/transcriber/` before
+anything else. The channel posts a heartbeat every 60 seconds for as long as it is alive,
+so the page can tell "listening, nobody is talking" from "not running" — which no amount
+of staring at the log will do, because both write nothing.
+
+| Status says | Means |
+|-------------|-------|
+| `Listening (last transmission 4 minutes ago, worker 1.3)` | Healthy. Carry on to step 1. |
+| `Listening (nothing heard yet, …)` | The worker is fine. The band is quiet, the radio is off, or the level is wrong — step 5. |
+| `Not heard from for 12 minutes — the channel is not running.` | The unit is dead or crash-looping. `journalctl -u transcriber@<id>` and read the first line after each restart. |
+| `No heartbeat yet` | Either the same thing, or a worker older than 2026-08-29 that has no heartbeat to send. Check the version before assuming a fault. |
+
+This step exists because it was missing. On 2026-08-29 the channel crash-looped for 83
+minutes across 162 restarts — the deployed worker was an older build that demanded a
+frequency the settings no longer carried, and it exited within a second every time. Every
+screen showed what it shows on a quiet band: nothing. What eventually noticed was somebody
+hearing traffic on a handheld and seeing it not appear.
+
+Note what the heartbeat does **not** cover: the config poll runs from a timer that is
+alive whether or not the channel is, so a device answering `?status` proves the Pi is up,
+not that it is listening. Those are different questions and only this one answers the
+second.
+
 **1. Is it capturing, or hearing nothing?** The journal is the only place that
 distinguishes them, and it says so plainly:
 

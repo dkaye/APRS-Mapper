@@ -2118,6 +2118,45 @@ measured at one site says nothing about the next.</p>
 <h3 id="transcriber-diagnostics">Transcriber Diagnostics</h3>
 <p><strong>"Nothing is appearing in the log" has four different causes and they look identical
 from the web page.</strong> Ask these in order; an evening was lost to asking them out of order.</p>
+<p><strong>0. Is the channel running at all?</strong> Look at <strong>Status</strong> on <code>/transcriber/</code> before
+anything else. The channel posts a heartbeat every 60 seconds for as long as it is alive,
+so the page can tell "listening, nobody is talking" from "not running" — which no amount
+of staring at the log will do, because both write nothing.</p>
+<table>
+<thead>
+<tr>
+<th>Status says</th>
+<th>Means</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Listening (last transmission 4 minutes ago, worker 1.3)</code></td>
+<td>Healthy. Carry on to step 1.</td>
+</tr>
+<tr>
+<td><code>Listening (nothing heard yet, …)</code></td>
+<td>The worker is fine. The band is quiet, the radio is off, or the level is wrong — step 5.</td>
+</tr>
+<tr>
+<td><code>Not heard from for 12 minutes — the channel is not running.</code></td>
+<td>The unit is dead or crash-looping. <code>journalctl -u transcriber@&lt;id&gt;</code> and read the first line after each restart.</td>
+</tr>
+<tr>
+<td><code>No heartbeat yet</code></td>
+<td>Either the same thing, or a worker older than 2026-08-29 that has no heartbeat to send. Check the version before assuming a fault.</td>
+</tr>
+</tbody>
+</table>
+<p>This step exists because it was missing. On 2026-08-29 the channel crash-looped for 83
+minutes across 162 restarts — the deployed worker was an older build that demanded a
+frequency the settings no longer carried, and it exited within a second every time. Every
+screen showed what it shows on a quiet band: nothing. What eventually noticed was somebody
+hearing traffic on a handheld and seeing it not appear.</p>
+<p>Note what the heartbeat does <strong>not</strong> cover: the config poll runs from a timer that is
+alive whether or not the channel is, so a device answering <code>?status</code> proves the Pi is up,
+not that it is listening. Those are different questions and only this one answers the
+second.</p>
 <p><strong>1. Is it capturing, or hearing nothing?</strong> The journal is the only place that
 distinguishes them, and it says so plainly:</p>
 <pre><code>journalctl -u 'transcriber@&lt;channel&gt;' -f
