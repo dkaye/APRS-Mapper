@@ -84,9 +84,22 @@ if (isset($_GET['load'])) {
     // Given an explicit shape rather than passed through. An empty PHP array encodes as
     // [] and not {}, and a JSON array that the page then hangs a property on loses it
     // silently on the way back — the sheet URL would simply never save.
+    // Settings come from the ACTIVE EVENT's own file, not the registry. The registry's
+    // `settings` block is left where it is as the pre-2026-08-29 copy; nothing reads it
+    // any more, and deleting it is a separate cleanup from changing where writes go.
+    //
+    // Given an explicit shape rather than passed through. An empty PHP array encodes as
+    // [] and not {}, and a JSON array that the page then hangs a property on loses it
+    // silently on the way back -- the sheet URL would simply never save.
+    $data['event']    = transcriber_event_name();
+    $ev               = transcriber_event_load($data['event']);
     $data['settings'] = [
-        'sheet_url'        => (string)($data['settings']['sheet_url'] ?? ''),
-        'vocabulary_extra' => (string)($data['settings']['vocabulary_extra'] ?? ''),
+        'label'            => $ev['label'],
+        'model'            => $ev['model'],
+        'enabled'          => $ev['enabled'],
+        'send_audio'       => $ev['send_audio'],
+        'sheet_url'        => $ev['sheet_url'],
+        'vocabulary_extra' => $ev['vocabulary_extra'],
     ];
     // The lists as they stand, with when and whether the last read worked, and what is
     // actually in force once the supplement box is folded in. Not refetched here — opening
@@ -105,104 +118,28 @@ if (isset($_GET['load'])) {
 if (isset($_GET['save']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$canEdit) jsonOut(['error' => 'Missing permission: netbird.admin'], 403);
     $body = json_decode(file_get_contents('php://input'), true);
-    if (!is_array($body['devices'] ?? null) || !is_array($body['channels'] ?? null)) {
+    if (!is_array($body['settings'] ?? null)) {
         jsonOut(['error' => 'Invalid request body'], 400);
     }
 
-    // Refuse rather than overwrite. Blank baseline means a page from before this check
-    // existed; those are let through, because refusing every open tab once on upgrade is
-    // its own kind of broken.
-    $sent = (string)($body['baseline'] ?? '');
-    if ($sent !== '' && $sent !== transcriber_fingerprint()) {
-        jsonOut(['error' => 'Someone else changed this since you loaded the page — reload and redo your edit'], 409);
-    }
-
-    // The browser never sees tokens, so it cannot send them back. Carry the existing
-    // ones across by key; anything new gets one issued here.
-    $old = transcriber_load();
-    $devTokens = [];
-    foreach ($old['devices'] as $d) if (!empty($d['host'])) $devTokens[$d['host']] = $d['token'] ?? '';
-    $chTokens = [];
-    foreach ($old['channels'] as $c) if (!empty($c['id'])) $chTokens[$c['id']] = $c['token'] ?? '';
-    // The whole previous channel, by id. The page posts back only the fields it draws,
-    // so anything the registry holds that this UI does not offer a control for was
-    // being erased by an unrelated save — silently, because nothing on the page ever
-    // mentioned it.
-    //
-    // That cost a real event: `tone_filter` was set to "drop" on 2026-08-20, then wiped
-    // when a channel was added for the Double Dipsea on 2026-08-22, and the beep filter
-    // spent the day in observe mode. `record_until` and a hand-set `gain` have exactly
-    // the same exposure.
-    //
-    // Carrying the old row forward and overwriting the managed keys is the general fix:
-    // a key this page does not know about survives a save through it, which is the only
-    // behaviour that stays correct as fields are added to the registry and not here.
-    $chPrev = [];
-    foreach ($old['channels'] as $c) if (!empty($c['id'])) $chPrev[$c['id']] = $c;
-
-    $devices = [];
-    foreach ($body['devices'] as $d) {
-        $host = substr(trim($d['host'] ?? ''), 0, 64);
-        if ($host === '') continue;
-        $devices[] = [
-            'host'  => $host,
-            'token' => $devTokens[$host] ?? transcriber_token(),
-        ];
-    }
-
-    $channels = [];
-    $seen = [];
-    foreach ($body['channels'] as $c) {
-        $device = substr(trim($c['device'] ?? ''), 0, 64);
-        $hz     = transcriber_hz($c['frequency'] ?? '');
-        // Derived, not typed. The id names the systemd unit and identifies the author
-        // of every entry, but it is fully determined by which receiver is on which
-        // frequency — so asking for it was asking the operator to invent a value whose
-        // rules ("must be unique", "no @, it is systemd's instance separator") only
-        // make sense if you know how the device is built.
-        $id = transcriber_channel_id($device, $hz);
-        if ($id === '' || isset($seen[$id])) continue;
-        $seen[$id] = true;
-        // Stored row first, managed keys second: array_merge lets the later array win,
-        // so every field this page draws is taken from the form and everything else is
-        // carried across untouched.
-        $channels[] = array_merge($chPrev[$id] ?? [], [
-            'id'        => $id,
-            'device'    => $device,
-            'label'     => substr(trim($c['label'] ?? ''), 0, 40) ?: $id,
-            'frequency' => $hz,
-            'serial'    => substr(preg_replace('/[^A-Za-z0-9]/', '', (string)($c['serial'] ?? '')), 0, 32),
-            'squelch'   => max(0, min(1000, (int)($c['squelch'] ?? 0))),
-            'model'     => in_array($c['model'] ?? '', ['ggml-tiny.en.bin', 'ggml-base.en.bin'], true)
-                           ? $c['model'] : 'ggml-tiny.en.bin',
-            'enabled'   => !empty($c['enabled']),
-            'send_audio' => !empty($c['send_audio']),
-            'token'     => $chTokens[$id] ?? transcriber_token(),
-        ]);
-    }
-
-    // Stored as typed, not as derived. The export URL is reconstructed on every use, so
-    // the field can be shown back exactly as it was pasted — an operator checking that
-    // the manager has the right document wants to recognize their own link, not a
-    // rewritten one they have never seen.
-    $sheet = substr(trim((string)($body['settings']['sheet_url'] ?? '')), 0, 300);
-    // The supplement box, stored as typed. It is read by the same parser as the sheet's
-    // own section and merged with it on the way out, so a term typed here is in force at
-    // the devices' next poll without anything being fetched from Google — which is the
-    // entire point of it, because the case it exists for is a document that is either
-    // unreachable or not yours to edit while the event is running.
-    // 20000 rather than the 4000 it was. A byte cap here truncates silently — there is no
-    // sensible place on the page to say "your last line was cut in half" — so it must never
-    // be the limit anybody actually reaches. The limit that binds is the term ceiling, which
-    // is counted and reported; at 20000 bytes this holds well over that many lines.
-    $extra = substr((string)($body['settings']['vocabulary_extra'] ?? ''), 0, 20000);
-    $settings = ['sheet_url' => $sheet, 'vocabulary_extra' => $extra];
-    $changed  = $sheet !== (string)($old['settings']['sheet_url'] ?? '')
-             || $extra !== (string)($old['settings']['vocabulary_extra'] ?? '');
-
-    transcriber_save(['devices' => $devices, 'channels' => $channels, 'settings' => $settings]);
-    jsonOut(['ok' => true, 'devices' => count($devices), 'channels' => count($channels),
-             'vocabulary_changed' => $changed]);
+    // Everything the page edits now belongs to the event. The registry is written only
+    // when the page still carries devices/channels -- which it does not, since the tables
+    // were removed -- so identity and tokens are simply left alone.
+    $evName = transcriber_event_name();
+    if ($evName === '') jsonOut(['error' => 'No active event'], 409);
+    $ok = transcriber_event_save($evName, [
+        'label'            => substr(trim((string)($body['settings']['label'] ?? '')), 0, 40),
+        'model'            => (string)($body['settings']['model'] ?? 'ggml-base.en.bin'),
+        'enabled'          => !empty($body['settings']['enabled']),
+        'send_audio'       => !empty($body['settings']['send_audio']),
+        'sheet_url'        => substr(trim((string)($body['settings']['sheet_url'] ?? '')), 0, 300),
+        'vocabulary_extra' => substr((string)($body['settings']['vocabulary_extra'] ?? ''), 0, 20000),
+    ]);
+    if (!$ok) jsonOut(['error' => "Could not write settings for \"$evName\""], 500);
+    // The vocabulary is rebuilt from this event's sheet and box, so a save takes effect
+    // at the devices' next poll without anything being fetched from Google.
+    transcriber_vocabulary_refresh();
+    jsonOut(['ok' => true, 'event' => $evName]);
 }
 
 // Polled by the page while it waits for the fleet to check in, or for one channel to
@@ -741,8 +678,13 @@ CAR = Cardiac</pre>
 const CAN_EDIT = <?= $canEdit ? 'true' : 'false' ?>;
 const MODELS = [{file: 'ggml-tiny.en.bin', name: 'Fast'},
                 {file: 'ggml-base.en.bin', name: 'Careful'}];
-let data = {devices: [], channels: [], settings: {sheet_url: '', vocabulary_extra: ''},
-            vocabulary: {}, calibration: {}};
+// `settings` is now the ACTIVE EVENT's settings, not the fleet's. `channels` is still
+// carried because the identity line reads the id from it and rotate() needs it, but
+// nothing on this page writes it any more.
+let data = {devices: [], channels: [], event: '',
+            settings: {label: '', model: 'ggml-base.en.bin', enabled: true,
+                       send_audio: false, sheet_url: '', vocabulary_extra: ''},
+            vocabulary: {}};
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
@@ -868,12 +810,10 @@ async function save() {
     try {
         const r = await fetch('?save', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            // The page works in MHz; the server accepts either and stores Hz.
-            // `baseline` is what this page was loaded from: the server refuses the write
-            // if the registry has moved on, rather than silently overwriting somebody
-            // else's change — or, as happened here, a change made outside the page.
-            body: JSON.stringify({...data, baseline: baseline, channels: data.channels.map(
-                c => ({...c, frequency: c.mhz}))}),
+            // Only settings travel: they are all this page edits, and they belong to the
+            // event rather than to the receiver. `baseline` is what this page was loaded
+            // from, so the server refuses the write if anything moved while it sat open.
+            body: JSON.stringify({settings: data.settings, baseline: baseline}),
         });
         const d = await r.json();
         if (d.error) { status(d.error, 'error'); return; }
@@ -1414,40 +1354,44 @@ async function pollLevel() {
 }
 
 function renderRows() {
-    // The Receivers and Channels TABLES are gone from the page; `data.devices` and
-    // `data.channels` are not gone from the registry. They still carry the config token,
-    // the log token and the channel id the Pi needs, and save() posts them back untouched.
-    // Dropping the UI must not drop the data.
-    const c = data.channels[0];
+    // Identity comes from the registry (it is a fact about the machine); everything
+    // else comes from the active event's settings.
+    const c = data.channels[0] || {};
+    const t = data.settings;
     const box = $('receiver');
-    $('receiver-empty').style.display = c ? 'none' : '';
-    if (!c) { box.innerHTML = ''; renderMeterChannels(); renderVocabulary(); return; }
-    const i = 0;
+    $('receiver-empty').style.display = data.channels.length ? 'none' : '';
     box.innerHTML = `
       <table class="explain">
+        <tr><th>Event</th><td>${ro(data.event || '(none)')}
+            <div class="derived">These settings belong to this event. Switching events
+            switches all of them.</div></td></tr>
         <tr><th>Identity</th><td>${ro(c.id || '')}
             <div class="derived">Names the systemd unit
             (<code>transcriber@${esc(c.id || '')}</code>), the spool directory and the
-            author of every log entry. Fixed at creation.</div></td></tr>
-        <tr><th>Heard as</th><td>${field('channels', i, 'label', c.label)}
-            <div class="derived">The name on every entry this channel writes.</div></td></tr>
+            author of every log entry. Fixed at creation, and the same at every event.</div></td></tr>
+        <tr><th>Heard as</th><td>${CAN_EDIT
+              ? `<input type="text" value="${esc(t.label || '')}" data-k="settings.label"
+                        oninput="data.settings.label = this.value" onchange="touch()">`
+              : ro(t.label)}
+            <div class="derived">The name on every entry this receiver writes.</div></td></tr>
         <tr><th>Accuracy</th><td>${CAN_EDIT
-              ? `<select onchange="data.channels[0].model = this.value; touch()">
-                   ${MODELS.map(m => `<option value="${m.file}"${m.file === c.model ? ' selected' : ''}>${m.name}</option>`).join('')}
+              ? `<select onchange="data.settings.model = this.value; touch()">
+                   ${MODELS.map(m => `<option value="${m.file}"${m.file === t.model ? ' selected' : ''}>${m.name}</option>`).join('')}
                  </select>`
-              : ro((MODELS.find(m => m.file === c.model) || {}).name || c.model)}
+              : ro((MODELS.find(m => m.file === t.model) || {}).name || t.model)}
             <div class="derived">Careful is better on callsigns, about three times slower.</div></td></tr>
         <tr><th>On</th><td>${CAN_EDIT
-              ? `<input type="checkbox" ${c.enabled ? 'checked' : ''}
-                        onchange="data.channels[0].enabled = this.checked; touch()">`
-              : ro(c.enabled ? 'On' : 'Off')}
+              ? `<input type="checkbox" ${t.enabled ? 'checked' : ''}
+                        onchange="data.settings.enabled = this.checked; touch()">`
+              : ro(t.enabled ? 'On' : 'Off')}
             <div class="derived">Off stops it logging at once, without losing the setup.</div></td></tr>
         <tr><th>Audio</th><td>${CAN_EDIT
-              ? `<input type="checkbox" ${c.send_audio ? 'checked' : ''}
-                        onchange="data.channels[0].send_audio = this.checked; touch()">`
-              : ro(c.send_audio ? 'On' : 'Off')}
+              ? `<input type="checkbox" ${t.send_audio ? 'checked' : ''}
+                        onchange="data.settings.send_audio = this.checked; touch()">`
+              : ro(t.send_audio ? 'On' : 'Off')}
             <div class="derived">Sends the recording with the transcription, kept six hours.</div></td></tr>
-        <tr><th>Log token</th><td>${tokenCell(c, 'channel', c.id)}</td></tr>
+        <tr><th>Log token</th><td>${tokenCell(c, 'channel', c.id)}
+            <div class="derived">Belongs to the receiver, not the event.</div></td></tr>
       </table>`;
     renderMeterChannels();
     renderVocabulary();
