@@ -99,17 +99,24 @@ class _Item {
   /// missing because a second feed got there first.
   void Function()? onSpoken;
 
+  /// Who this was addressed to, when the listener is not that person. See
+  /// Speaker.speakNow — null for broadcasts and for anything addressed here.
+  final String? toLabel;
+
   _Item.speech(this.ts, this.senderLabel, this.text,
-      {this.msgId = 0, this.chime = false, this.onSpoken})
+      {this.msgId = 0, this.chime = false, this.onSpoken, this.toLabel})
       : kind = _Kind.speech, url = '', seconds = 0, force = false;
   _Item.clip(this.ts, this.url, this.seconds,
       {this.msgId = 0, this.force = false})
-      : kind = _Kind.clip, senderLabel = '', text = '', chime = false, onSpoken = null;
+      : kind = _Kind.clip, senderLabel = '', text = '', chime = false, onSpoken = null,
+        toLabel = null;
 
   /// Best estimate of how long this will occupy the speaker.
   double get estSeconds =>
       (chime ? 1.0 : 0.0) +
-      (kind == _Kind.clip ? seconds : (senderLabel.length + text.length) / _kCharsPerSecond + 0.5);
+      (kind == _Kind.clip
+          ? seconds
+          : (senderLabel.length + (toLabel?.length ?? 0) + text.length) / _kCharsPerSecond + 0.5);
 }
 
 class AudioQueue {
@@ -196,6 +203,7 @@ class AudioQueue {
     int msgId = 0,
     bool chime = false,
     void Function()? onSpoken,
+    String? toLabel,
   }) {
     if (text.trim().isEmpty && senderLabel.trim().isEmpty) return;
 
@@ -228,7 +236,7 @@ class AudioQueue {
     }
 
     _q.add(_Item.speech(ts, senderLabel, text,
-        msgId: msgId, chime: chime, onSpoken: onSpoken));
+        msgId: msgId, chime: chime, onSpoken: onSpoken, toLabel: toLabel));
     _publish();
     unawaited(_drain());
   }
@@ -408,7 +416,8 @@ class AudioQueue {
             // every item after it.
             final budget = Duration(seconds: item.estSeconds.ceil() + 15);
             await Speaker.instance
-                .speakNow(senderLabel: item.senderLabel, text: item.text)
+                .speakNow(senderLabel: item.senderLabel, text: item.text,
+                          toLabel: item.toLabel)
                 .timeout(budget, onTimeout: () => Speaker.instance.stop());
             // Only here, on the path that actually said it out loud. Marking a message
             // read when it merely ARRIVED claimed the operator had heard something the

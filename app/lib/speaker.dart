@@ -113,8 +113,19 @@ class Speaker {
   /// AudioQueue owns both now, because it also holds radio clips and the two have to
   /// take turns through one gate. Speaking straight from here would put a synthesised
   /// voice on top of a real one.
-  Future<void> speakNow({required String senderLabel, required String text}) async {
+  /// `toLabel` names who it was addressed to, and is spoken only when the listener is
+  /// not that person — monitored traffic between two other stations. "From Hiker One
+  /// Germain" is the whole story when a message is yours; when you are overhearing it,
+  /// who it was FOR is half of what makes it make sense, and a net where every
+  /// announcement sounds addressed to you is one you stop trusting. Null for broadcasts
+  /// (everyone is the recipient, so saying so adds nothing) and for your own mail.
+  Future<void> speakNow({
+    required String senderLabel,
+    required String text,
+    String? toLabel,
+  }) async {
     final who = senderLabel.trim();
+    final to  = (toLabel ?? '').trim();
     final body = text.trim();
     if (who.isEmpty && body.isEmpty) return;
     // Best effort. A refused category is a reason to try speaking anyway — the session
@@ -123,7 +134,10 @@ class Speaker {
       await _ensureReady();
     } catch (_) {}
     if (who.isNotEmpty) {
-      await _speak('From $who.');
+      // One utterance, not two: "From X." then "To Y." reads as two separate
+      // announcements and the pause between them invites the listener to think the
+      // message has started.
+      await _speak(to.isEmpty ? 'From $who.' : 'From $who, to $to.');
       await Future.delayed(_kSpeakGap);
     }
     // One utterance per sentence, so the gap between them is a real silence rather

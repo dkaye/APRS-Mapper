@@ -220,16 +220,23 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     if (Platform.isAndroid) {
       final android = _notifPlugin
           .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-      // Old channel had the default sound; a channel's sound is immutable once
-      // created, so move to a new channel id to deliver the custom alert sound
-      // to existing installs.
+      // A channel's sound is immutable once created, so each change of mind about it
+      // costs a new channel id. `aprs_msg` had the system default; `aprs_msg_2` carried
+      // the custom alert sound; `aprs_msg_3` is SILENT.
+      //
+      // Silent because the tone now comes from AudioQueue as the first half of the
+      // spoken item, which is what guarantees it lands immediately before the words
+      // instead of racing them and what stops it landing in the middle of a radio clip.
+      // Leaving the channel audible would simply play both — and per-notification
+      // `playSound: false` cannot override a channel that was created with sound, which
+      // is the trap this comment exists to mark.
       await android?.deleteNotificationChannel(channelId: 'aprs_msg');
+      await android?.deleteNotificationChannel(channelId: 'aprs_msg_2');
       await android?.createNotificationChannel(const AndroidNotificationChannel(
-        'aprs_msg_2',
+        'aprs_msg_3',
         'APRS Messages',
         importance: Importance.max,
-        playSound: true,
-        sound: RawResourceAndroidNotificationSound('message'),
+        playSound: false,
       ));
       await android?.requestFullScreenIntentPermission();
       WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -502,27 +509,35 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     final me = await _msgClient.myParticipantId();
     if (!mounted) return;
 
-    // Nor anything addressed to this operator.
+    // Messages addressed to this operator are NO LONGER excluded here, and that
+    // reversal is the point.
     //
-    // `_handleInboundMessage` owns those: it decides between the wrist and this phone,
-    // raises the notification, marks the message read once spoken. This feed carries
-    // them too, and announcing them here bypassed all of that — the same message read
-    // aloud twice, and read aloud by the phone even while the watch was announcing it,
-    // because this is the one speech path that never asked the wrist.
+    // They used to be, on the grounds that `_handleInboundMessage` owns them — it
+    // decides between the wrist and this phone, raises the notification, marks the
+    // message read once spoken. But that handler does not always speak: backgrounded
+    // on Android it only sounded the notification, it returns early while the chat
+    // screen is open, and it defers to a wrist that may be installed but inaudible.
+    // Every one of those left the addressee hearing nothing while everyone monitoring
+    // the net heard their message read out. That is the failure watchWillAnnounce's
+    // comment calls the worst in the system, reached by a different route.
     //
-    // Two tests, and the first is the real one. The server tags each message with
-    // whether we have a delivery row for it, which is definitive. `addressedHere` is
-    // the fallback for a server that has not been updated yet: it is right whenever
-    // the addressed path got there first, which is usual but not guaranteed.
+    // Offering them here is safe because AudioQueue dedupes by msgId and was built for
+    // exactly this: a queued duplicate takes on the `chime` of the copy that lost the
+    // race and chains its `onSpoken`, and a message already spoken still runs the new
+    // copy's `onSpoken` so it is marked read either way. Whichever path arrives first
+    // speaks; the other folds into it.
     //
-    // Still shown in the log either way — only the second voice is the problem.
+    // Two exclusions remain. `addressedHere` is the phone's own "already alerted"
+    // marker — the fallback for a server that does not tag the feed. And a wrist that
+    // really will announce still wins, which is the check this path never used to make
+    // and the reason it had to be kept out altogether.
     final spoken = batch
         .where((m) =>
             !m.isRadio &&
             !played.contains(m.id) &&
             m.fromId != me &&
-            !m.addressedToMe &&
-            !WatchBridge.instance.addressedHere(m.id))
+            !WatchBridge.instance.addressedHere(m.id) &&
+            !(m.addressedToMe && WatchBridge.instance.watchWillAnnounce))
         .toList();
     if (spoken.isEmpty) return;
     final p = await SharedPreferences.getInstance();
@@ -534,9 +549,27 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     // forms — whatever survives that rule is recent enough to be worth hearing in
     // full, however many of it there is. Counting the batch was a proxy for age and a
     // poor one: three stale messages were read out and four fresh ones were not.
+    // Everything reaching here is monitored traffic between two OTHER stations: the
+    // filters above already dropped this operator's own messages and anything addressed
+    // here. So who it was for is worth saying — "From Hiker One Germain" alone sounds
+    // addressed to the listener, and on a busy net that is how an operator learns to
+    // stop trusting the announcements.
+    //
+    // Not for broadcasts. Their to_label is "All Trackers", and announcing the
+    // recipient of a message sent to everybody is noise on every single one of them.
     for (final m in spoken) {
+      // Addressed to this operator: carry the tone and the mark-read callback, so that
+      // when this path is the one that gets there first it is a full substitute for
+      // the addressed path rather than a quieter version of it.
+      final mine = m.addressedToMe;
+      // No "to <you>" on your own mail — you are the recipient, saying so is noise.
+      // None on a broadcast either; its to_label is "All Trackers".
+      final to = (mine || m.broadcast) ? null : (m.toLabel ?? '').trim();
       AudioQueue.instance.addSpeech(
-          ts: m.ts, senderLabel: m.spokenLabel, text: m.text, msgId: m.id);
+          ts: m.ts, senderLabel: m.spokenLabel, text: m.text, msgId: m.id,
+          toLabel: (to == null || to.isEmpty) ? null : to,
+          chime: mine,
+          onSpoken: mine ? () => unawaited(_msgClient.read([m.id])) : null);
     }
   }
 
@@ -554,19 +587,42 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         if (await FlutterForegroundTask.canDrawOverlays) {
           FlutterForegroundTask.launchApp();
         }
+        // Read it out, exactly as the iOS branch below does. This branch used to raise
+        // a notification and nothing else, so a backgrounded Android phone sounded a
+        // tone for a message addressed to it and never said what the message was —
+        // while every phone monitoring the net read it aloud in full. The foreground
+        // service is what makes speech off-screen possible here, and it is the same
+        // reason iOS needs its `audio` background mode.
+        //
+        // The wrist still wins if it will genuinely announce, matching the foreground
+        // path below. The notification itself is raised either way: it is for somebody
+        // looking at the phone.
+        if (!WatchBridge.instance.watchWillAnnounce) {
+          AudioQueue.instance.addSpeech(
+            ts: msg.ts,
+            senderLabel: msg.spokenLabel,
+            text: msg.text,
+            msgId: msg.id,
+            chime: true,
+            onSpoken: () => unawaited(_msgClient.read([msg.id])),
+          );
+        }
         unawaited(_notifPlugin.show(
           id: msg.id & 0x7FFFFFFF,
           title: '📨 ${msg.fromLabel}',
           body: msg.text,
           notificationDetails: NotificationDetails(
             android: AndroidNotificationDetails(
-              'aprs_msg_2',
+              'aprs_msg_3',
               'APRS Messages',
               importance: Importance.max,
               priority: Priority.max,
               fullScreenIntent: true,
-              playSound: true,
-              sound: const RawResourceAndroidNotificationSound('message'),
+              // Silent, for the same reason iOS sets presentSound: false. The tone is
+              // now the first half of the queued speech item above, which guarantees it
+              // lands before the words instead of racing them — and two sounds for one
+              // message was the bug that ordering was introduced to fix.
+              playSound: false,
               enableVibration: true,
               vibrationPattern: Int64List.fromList([0, 400, 200, 400, 200, 400]),
               autoCancel: true,

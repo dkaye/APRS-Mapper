@@ -628,16 +628,25 @@ class _MessagingScreenState extends State<MessagingScreen> {
     return ListTile(
       dense: true,
       title: Row(children: [
+        // Sender and recipient as ONE phrase, not two ends of a Row. They were an
+        // Expanded and a trailing Text, which pushed them to opposite edges and left
+        // "M002 Rob" and "→ M003 BobS" reading as unrelated columns with the clock
+        // between them. Overhearing traffic is the case this window exists for, and
+        // who it was for is half of what makes an overheard message make sense.
+        //
+        // The recipient is dropped for radio, where it is always "Log" and the 📻
+        // already says so.
         Expanded(
           child: Text(
-            m.isRadio ? '📻 ${m.senderLabel}' : m.senderLabel,
+            m.isRadio
+                ? '📻 ${m.senderLabel}'
+                : ((m.toLabel ?? '').isEmpty
+                    ? m.senderLabel
+                    : '${m.senderLabel} → ${m.toLabel}'),
             style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: _kDark),
             overflow: TextOverflow.ellipsis,
           ),
         ),
-        if ((m.toLabel ?? '').isNotEmpty)
-          Text('→ ${m.toLabel}',
-              style: const TextStyle(fontSize: 11, color: Colors.grey)),
         const SizedBox(width: 8),
         Text(_clockTime(m.ts), style: const TextStyle(fontSize: 11, color: Colors.grey)),
       ]),
