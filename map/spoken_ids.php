@@ -26,10 +26,39 @@ if (!defined('MARSAPRS_SPOKEN_IDS')) {
 // vocabulary has one — a paste accident should not fill the disk.
 if (!defined('SPOKEN_IDS_MAX_BYTES')) define('SPOKEN_IDS_MAX_BYTES', 20000);
 
-/** Every function takes an optional path so tests can point at a temp file. */
+/**
+ * Every function takes an optional path so tests can point at a temp file.
+ *
+ * The list belongs to the EVENT, not to the server: these are the tactical calls of
+ * whoever is out today, and carrying one global list meant last month's names were still
+ * being spoken at this month's event. Resolved per call from the config.yaml symlink the
+ * rest of the server keys off, so switching the active event switches the names with it.
+ *
+ * MARSAPRS_SPOKEN_IDS remains the fallback for an event that has no list of its own and
+ * for anything running outside a web root -- the CLI tools and the tests.
+ */
 function spoken_ids_path(?string $path = null): string
 {
-    return $path ?: MARSAPRS_SPOKEN_IDS;
+    if ($path) return $path;
+    $ev = spoken_ids_event_dir();
+    return $ev !== '' ? $ev . '/spoken-ids.json' : MARSAPRS_SPOKEN_IDS;
+}
+
+/** The active event's directory, or '' if there is not one to be found. */
+function spoken_ids_event_dir(): string
+{
+    $root = defined('MARSAPRS_WEB_ROOT') ? MARSAPRS_WEB_ROOT : '/var/www/html';
+    $cfg  = $root . '/config.yaml';
+    if (!is_readable($cfg)) return '';
+    foreach (file($cfg, FILE_IGNORE_NEW_LINES) as $line) {
+        if (preg_match('/^\s*event\s*:\s*(.+?)\s*$/', $line, $m)) {
+            $name = trim($m[1], " \"'");
+            if ($name === '' || strpos($name, '/') !== false) return '';
+            $dir = $root . '/events/' . $name;
+            return is_dir($dir) ? $dir : '';
+        }
+    }
+    return '';
 }
 
 /**

@@ -196,6 +196,29 @@ function transcriber_token(): string
  */
 
 /** The active event's name, from the config.yaml symlink the whole server keys off. */
+/**
+ * The event-scoped settings a vocabulary reader needs, honouring the $path contract.
+ *
+ * Every function in this file takes an optional $path so tests can point at a temp
+ * registry. That contract has to survive the move to per-event storage: an explicit path
+ * means "this registry, not the live server", and a test has no config.yaml and no events
+ * directory to resolve. So an explicit path reads the registry's own settings block; the
+ * live server, which passes nothing, reads the active event.
+ */
+function transcriber_event_settings_for(?string $path): array
+{
+    if ($path !== null) {
+        $set = transcriber_load($path)['settings'] ?? [];
+        // is_string, not a cast. A registry hand-edited into nonsense -- an array where a
+        // string belongs -- casts to the literal "Array", which then parses as a
+        // vocabulary term. Anything that is not a string means nothing extra.
+        return ['sheet_url'        => is_string($set['sheet_url'] ?? null) ? $set['sheet_url'] : '',
+                'vocabulary_extra' => is_string($set['vocabulary_extra'] ?? null) ? $set['vocabulary_extra'] : ''];
+    }
+    $ev = transcriber_event_load(transcriber_event_name());
+    return ['sheet_url' => $ev['sheet_url'], 'vocabulary_extra' => $ev['vocabulary_extra']];
+}
+
 function transcriber_event_name(): string
 {
     $cfg = MARSAPRS_WEB_ROOT . '/config.yaml';
@@ -224,8 +247,7 @@ function transcriber_event_path(string $event): string
 function transcriber_event_load(string $event): array
 {
     $blank = ['label' => '', 'model' => 'ggml-base.en.bin', 'enabled' => true,
-              'send_audio' => false, 'sheet_url' => '', 'vocabulary_extra' => '',
-              'spoken_ids' => []];
+              'send_audio' => false, 'sheet_url' => '', 'vocabulary_extra' => ''];
     $f = transcriber_event_path($event);
     if ($f === '' || !is_readable($f)) return $blank;
     $raw = json_decode((string)file_get_contents($f), true);
@@ -238,7 +260,6 @@ function transcriber_event_load(string $event): array
         'send_audio'       => !empty($raw['send_audio']),
         'sheet_url'        => substr(trim((string)($raw['sheet_url'] ?? '')), 0, 300),
         'vocabulary_extra' => substr((string)($raw['vocabulary_extra'] ?? ''), 0, 20000),
-        'spoken_ids'       => is_array($raw['spoken_ids'] ?? null) ? $raw['spoken_ids'] : [],
     ];
 }
 
@@ -1082,7 +1103,8 @@ function transcriber_vocabulary_merge(?string $path = null): array
     // is_string rather than a cast: the registry can be hand-edited, and casting an array
     // to a string here would put the word "Array" in the fleet's vocabulary — from inside
     // a device poll, where a warning is a receiver that did not get its channels.
-    $raw      = transcriber_load($path)['settings']['vocabulary_extra'] ?? '';
+    // The supplement box belongs to the event, same as the sheet it supplements.
+    $raw      = transcriber_event_settings_for($path)['vocabulary_extra'];
     $extra    = transcriber_vocabulary_lines(is_string($raw) ? $raw : '');
     $standing = transcriber_vocabulary_lines(transcriber_standing_load($path)['text']);
 
@@ -1153,7 +1175,8 @@ function transcriber_vocabulary_words(?string $path = null): array
  *  words themselves and names the source of every dropped term. */
 function transcriber_vocabulary_report(?string $path = null): array
 {
-    $raw      = transcriber_load($path)['settings']['vocabulary_extra'] ?? '';
+    // The supplement box belongs to the event, same as the sheet it supplements.
+    $raw      = transcriber_event_settings_for($path)['vocabulary_extra'];
     $standing = transcriber_standing_load($path);
     $merged   = transcriber_vocabulary_merge($path);
     return transcriber_vocabulary_load($path) + [
@@ -1214,7 +1237,9 @@ function transcriber_sheet_fetch(string $url): array
  *  never outlive the document it came from with nothing to point at. */
 function transcriber_vocabulary_refresh(?string $path = null, ?callable $fetch = null): array
 {
-    $url  = transcriber_sheet_export_url((string)(transcriber_load($path)['settings']['sheet_url'] ?? ''));
+    // The sheet belongs to the EVENT. An event with no sheet simply has no vocabulary to
+    // fetch, which is a working receiver transcribing without hints -- not a failure.
+    $url  = transcriber_sheet_export_url(transcriber_event_settings_for($path)['sheet_url']);
     $prev = transcriber_vocabulary_load($path);
     $now  = time();
 
