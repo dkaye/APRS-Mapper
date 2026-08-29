@@ -156,21 +156,38 @@ function _msg_ensure_all_mobiles(MessagingDb $db, array $ctx): void
  * How recently a device or operator must have been seen to appear in the mobile app's
  * recipient picker.
  *
- * Six hours, not the twenty-four this began with. The picker answers "who can I message
- * right now", and on a net anyone worth addressing has been heard from within the last
- * hour or two. At a day the list filled with identities nobody could message usefully —
- * on 2026-08-20 it offered four test operators and a Display Pi, all last seen ~22 hours
- * earlier, alongside phones that had been off since the morning. A picker whose entries
- * are mostly wrong is one an operator stops reading.
+ * Twenty-four hours. This has now been both values, so the reasoning for each is kept:
  *
- * The cost is that somebody who has had their phone off for most of a day drops out of
- * the list until they rejoin, which they do on their next beacon. That is the right way
- * round: a missing name is visible and recoverable, a wrong one is neither.
+ * It began at a day, was cut to six hours on 2026-08-20 because the list filled with
+ * identities nobody could message usefully — four test operators and a Display Pi, all
+ * last seen ~22 hours earlier — and a picker whose entries are mostly wrong is one an
+ * operator stops reading.
+ *
+ * Raised back on 2026-08-27, because six hours charged that clutter to the wrong people.
+ * M002 and M003 were 12.5 h since their last beacon — phones asleep overnight, not
+ * retired identities — and could not be selected at all, while messages to an offline
+ * recipient queue and deliver perfectly well on their next poll. A name you cannot pick
+ * is worse than a name you can pick and see is stale, because `online` (90 s) is
+ * reported separately and already says which is which.
+ *
+ * What actually went stale in the 08-20 case was OPERATORS, not mobiles: `test2`
+ * through `test6`, `BigTV` and `NetControl` still sit in the participants table. So
+ * this is now the MOBILE window only — operators are gated on MSG_ONLINE_SECONDS
+ * instead, which is the two-window split that one number could never get right for
+ * both. This value still governs broadcast delivery for both kinds.
  *
  * Note the web operator panel does NOT use this — it builds its list from the live
  * tracker feed, which is why the two have always differed.
  */
-if (!defined('MSG_ADDRESSABLE_SECONDS')) define('MSG_ADDRESSABLE_SECONDS', 6 * 3600);
+if (!defined('MSG_ADDRESSABLE_SECONDS')) define('MSG_ADDRESSABLE_SECONDS', 24 * 3600);
+
+/**
+ * How recently something must have been heard from to count as ONLINE, as opposed to
+ * merely addressable. Reported to the app as `online` on every row, and — for operators
+ * only — used as the gate for appearing in the picker at all. See the operator loop in
+ * the `participants` case for why the two kinds are judged differently.
+ */
+if (!defined('MSG_ONLINE_SECONDS')) define('MSG_ONLINE_SECONDS', 90);
 
 /** Who a broadcast is actually delivered to.
  *
@@ -397,16 +414,26 @@ function messaging_handle(string $action, array $body, array $ctx): void
         $trackers = _msg_load_trackers($ctx['mobileFile']);
         $out      = [];
 
-        // Operators: addressable if seen within MSG_ADDRESSABLE_SECONDS. Drops the
-        // retired identities that would otherwise sit in the list forever — including
-        // the ones renameParticipant signs out when it takes their name back.
+        // Operators: ONLINE only, which is a stricter test than the one mobiles get and
+        // deliberately so. An operator is a staffed web panel — it polls continuously,
+        // so last_seen is seconds old while somebody is sitting at it and stops the
+        // instant they close the tab. There is no equivalent of a sleeping phone to be
+        // generous towards, and it is operator rows that go stale and fill the picker:
+        // `test2` through `test6`, `BigTV` and `NetControl` are all still in the
+        // participants table. Measured 2026-08-27, this test kept 1 of 23 operators and
+        // dropped 22, while the live Net Control had been seen 2 seconds earlier.
+        //
+        // Note this is STRICTER than the broadcast recipient test above, which still
+        // uses MSG_ADDRESSABLE_SECONDS. That asymmetry is the safe direction: you may
+        // only pick an operator who is there now, but a broadcast still reaches one who
+        // has just stepped away rather than silently dropping their copy.
         foreach ($db->listParticipants($event) as $p) {
             if ($p['kind'] !== 'operator') continue;
-            if (empty($p['last_seen']) || ($now - (int)$p['last_seen']) > MSG_ADDRESSABLE_SECONDS) continue;
+            if (empty($p['last_seen']) || ($now - (int)$p['last_seen']) >= MSG_ONLINE_SECONDS) continue;
             $out[] = [
                 'id'=>(int)$p['id'], 'kind'=>'operator', 'key'=>$p['key'],
                 'name'=>$p['display_name'], 'short_id'=>$p['short_id'],
-                'online'=> ($now - (int)$p['last_seen']) < 90,
+                'online'=> true,                       // guaranteed by the test above
                 'self'=> (int)$p['id'] === (int)$me['id'],
             ];
         }
@@ -437,7 +464,7 @@ function messaging_handle(string $action, array $body, array $ctx): void
                 'key'     => 'ent:' . $disp . '|' . $name,
                 'name'    => $name,
                 'short_id'=> $disp,
-                'online'  => ($now - $newest) < 90,
+                'online'  => ($now - $newest) < MSG_ONLINE_SECONDS,
                 // Hide the caller's own entity from their picker.
                 'self'    => in_array((int)$me['id'], array_map('intval', $ids), true),
                 'devices' => count($list),
