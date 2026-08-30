@@ -2846,6 +2846,54 @@ def test_speech_is_not_mistaken_for_a_tone():
         check("a moving pitch is not a tone", transcriber.tone_reason(transcriber.tone_scan(wav)), "")
 
 
+def test_a_crash_that_swamps_the_tone_does_not_silence_the_scan():
+    """The 2026-08-29 finding, pinned.
+
+    A squelch crash is far louder than a repeater's Morse identifier. The audibility
+    floor is a fraction of the reference frame, so one crash lifts it over the tone and
+    leaves too few frames above it to judge -- the scan returns None, "no opinion", the
+    caller correctly transcribes it, and the identifier plays on somebody's phone. On the
+    retained corpus that was 54 clips, every one a Morse ID or a steady tone.
+
+    The clip here is the shape that does it: a long keyed tone with one very short,
+    very loud transient at the front.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        wav = os.path.join(tmp, "crash_then_morse.wav")
+        _tone_wav(wav, 3.0, hz=1454, keyed=0.12, amplitude=1200)
+        w = wave.open(wav); frames = w.readframes(w.getnframes()); w.close()
+        crash = b"".join(struct.pack("<h", 26000 if i % 2 else -26000)
+                         for i in range(int(16000 * 0.05)))
+        with wave.open(wav, "w") as out:
+            out.setnchannels(1); out.setsampwidth(2); out.setframerate(16000)
+            out.writeframes(crash + frames)
+
+        scan = transcriber.tone_scan(wav)
+        check("the scan has an opinion despite the crash", scan is not None, True)
+        check("and names it", transcriber.tone_reason(scan) != "", True)
+
+
+def test_the_louder_reference_is_still_tried_first():
+    """The fallback must not become the rule.
+
+    Referencing the 95th percentile outright admits quieter frames, which dilutes the
+    pitched-frames ratio -- on the corpus that LOST 16 identifiers the scan catches
+    today. So the loudest frame is asked first and the fallback only runs when it had no
+    opinion at all. An ordinary tone, with no crash in it, must still be judged on the
+    first pass.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        wav = os.path.join(tmp, "plain.wav")
+        _tone_wav(wav, 2.0, hz=1454, keyed=0.12)
+        frames, rate, seconds = transcriber._tone_frames(wav)
+        de = [[x - (sum(f) / len(f)) for x in f] for f in frames]
+        powers = [sum(x * x for x in f) / len(f) for f in de]
+        first = transcriber._tone_judge(de, powers, rate, seconds, max(powers))
+        check("the loudest-frame pass answers on its own", first is not None, True)
+        check("and that is what the scan returns",
+              transcriber.tone_scan(wav)["tonal"], first["tonal"])
+
+
 def test_an_unreadable_or_tiny_clip_is_no_opinion_not_a_drop():
     with tempfile.TemporaryDirectory() as tmp:
         missing = os.path.join(tmp, "gone.wav")
@@ -3088,6 +3136,8 @@ if __name__ == "__main__":
         test_speech_is_not_mistaken_for_a_tone,
         test_a_long_clip_is_never_judged_a_tone,
         test_a_beep_with_few_audible_frames_is_still_caught,
+        test_a_crash_that_swamps_the_tone_does_not_silence_the_scan,
+        test_the_louder_reference_is_still_tried_first,
         test_an_unreadable_or_tiny_clip_is_no_opinion_not_a_drop,
         test_the_filter_defaults_to_observing_and_rejects_a_typo,
         test_a_standalone_tone_costs_the_log_neither_a_line_nor_a_second_of_audio,

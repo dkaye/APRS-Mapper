@@ -1095,10 +1095,41 @@ def _tone_scan(wav_path):
     # and inverts a band-power ratio. Anything measuring a level here removes the mean first.
     frames = [[x - (sum(f) / len(f)) for x in f] for f in frames]
     powers = [sum(x * x for x in f) / len(f) for f in frames]
-    loudest = max(powers)
-    if loudest <= 0:
+    if max(powers) <= 0:
         return None
-    floor = loudest * (TONE_FLOOR_RATIO ** 2)      # ratio is on amplitude, power is its square
+    # The loudest frame first, because that is the reference the thresholds were measured
+    # against and it is the one that keeps the audible set tight.
+    #
+    # If it yields no opinion, ask again against the 95th-percentile frame. A squelch
+    # crash is enormously louder than a Morse identifier -- the floor is a fraction of the
+    # reference, so one crash can lift it clear over the tone and leave two frames of
+    # forty-eight above it, under the six this needs. The scan then says "not enough clip
+    # to judge", the caller correctly transcribes it, and a repeater identifier plays on
+    # somebody's phone. Measured 2026-08-29 on 378 retained clips: 54 of them, every one a
+    # Morse ID or a steady tone, and not one that had ever produced a logged word.
+    #
+    # A fallback rather than simply switching to p95, and the corpus is why. A lower floor
+    # admits quieter frames, which dilutes `tonal` -- pitched frames over audible frames --
+    # and p95 alone therefore LOST 16 identifiers it catches today, tonal falling from 0.86
+    # to 0.55 as noise joined the population being measured. Trying it only where there is
+    # no opinion to lose takes the fix without the dilution: 0 clips stop being caught, 54
+    # start, and real traffic is condemned exactly as often as before, which is never.
+    scan = _tone_judge(frames, powers, rate, seconds, max(powers))
+    if scan is not None:
+        return scan
+    ranked = sorted(powers)
+    return _tone_judge(frames, powers, rate, seconds, ranked[int(0.95 * (len(ranked) - 1))])
+
+
+def _tone_judge(frames, powers, rate, seconds, reference):
+    """One pass at the scan, with `reference` setting the audibility floor.
+
+    None means "not enough of this clip is audible against that reference to judge it",
+    which is a real answer -- it is what lets the caller try a lower one.
+    """
+    if reference <= 0:
+        return None
+    floor = reference * (TONE_FLOOR_RATIO ** 2)    # ratio is on amplitude, power is its square
     audible = [i for i, p in enumerate(powers) if p >= floor]
     if len(audible) < TONE_MIN_FRAMES:
         return None
