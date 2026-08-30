@@ -2254,6 +2254,14 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
 #msg-settings-menu hr { border: none; border-top: 1px solid #eee; margin: 6px 4px; }
 #msg-settings-menu .msg-vol-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; }
 #msg-settings-menu label.mi-lbl { font-size: 12px; color: #666; padding: 4px 8px 2px; display: block; }
+/* The three switches, in the settings menu rather than as icons in the bar. The speaker
+   was the only one with an icon, which said it was the important one -- it is not, it is
+   one of three, and the other two had nowhere to live at all. */
+#msg-settings-menu label.mi-sw { display: flex; align-items: flex-start; gap: 8px;
+    padding: 7px 8px; font-size: 13px; color: #333; cursor: pointer; border-radius: 5px; }
+#msg-settings-menu label.mi-sw:hover { background: #f2f6f9; }
+#msg-settings-menu label.mi-sw input { margin: 2px 0 0; flex: none; }
+#msg-settings-menu label.mi-sw small { display: block; color: #777; font-size: 11px; }
 #msg-rename-wrap { padding: 4px 8px 8px; display: none; }
 #msg-rename-input { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid #ccc; border-radius: 5px; font-size: 13px; font-family: inherit; }
 #msg-rename-error { color: #c0392b; font-size: 11px; min-height: 13px; }
@@ -2655,7 +2663,6 @@ body.msg-window #msg-panel-grip { display: none; }
 		<button id="msg-allsearch-btn" class="msg-icon-btn" title="Search messages" style="display:none">
 			<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
 		</button>
-		<button id="msg-speaker-btn" class="msg-icon-btn" title="Read arriving messages aloud"></button>
 		<button id="msg-settings-btn" class="msg-icon-btn" title="Settings">&#9881;</button>
 		<button id="msg-panel-close" title="Close messages">Close</button>
 		<div id="msg-settings-menu">
@@ -2669,6 +2676,11 @@ body.msg-window #msg-panel-grip { display: none; }
 					<button class="mi" id="msg-rename-cancel" style="background:#eee;text-align:center">Cancel</button>
 				</div>
 			</div>
+			<hr>
+			<label class="mi-lbl">What you see and hear</label>
+			<label class="mi-sw"><input type="checkbox" id="msg-sw-speak"><span>Speak text messages</span></label>
+			<label class="mi-sw"><input type="checkbox" id="msg-sw-radio"><span>Hear radio traffic</span></label>
+			<label class="mi-sw"><input type="checkbox" id="msg-sw-all"><span>Receive all messages<small>Not just yours.</small></span></label>
 			<hr>
 			<label class="mi-lbl">🔔 Incoming message sound</label>
 			<div class="msg-vol-row">
@@ -5785,7 +5797,19 @@ let _msgUiInitialized = false;
 // map, not the message panel. A stored value always wins, so an explicit mute sticks.
 let _msgSpeak = true;
 try { const _sv = localStorage.getItem('aprs_msg_speak'); if (_sv !== null) _msgSpeak = (_sv === '1'); } catch {}
-// Browsers only let speech start from a user gesture. _toggleSpeak does a silent
+// The other two switches, matching the phone's settings sheet. Both default OFF: they
+// subscribe this window to traffic it is not part of, and a console that starts talking
+// about other people's messages without being asked is a surprise, where the speaker
+// reading YOUR mail is what the panel is for.
+//
+// `all` is everyone's typed traffic; `radio` is what the receivers heard, and it plays
+// the recording rather than reading the transcription. Both are served by one poll --
+// see _pollMonitor.
+let _msgAll = false, _msgRadio = false;
+try { _msgAll   = localStorage.getItem('aprs_msg_all')   === '1'; } catch {}
+try { _msgRadio = localStorage.getItem('aprs_msg_radio') === '1'; } catch {}
+
+// Browsers only let speech start from a user gesture. _setSpeak does a silent
 // warm-up inside its click, but with the speaker on by default there may be no such
 // click to piggyback on — so unlock on the first interaction with the page instead,
 // or the first arriving message would fail silently and look like a broken feature.
@@ -5821,6 +5845,26 @@ let _logTextTs = 0;
 // the queue, the function that drained it, its two call sites and the two places that
 // cleared it all went on 2026-08-29.
 const _msgReceipts = new Map();   // message id -> {total, delivered, read} for MY sent messages
+/* Monitored traffic: the event's messages and radio, none of it addressed here.
+ *
+ * Its own store, never merged into _convs. A monitored message has no thread to reply
+ * into -- the server writes no delivery rows for this feed on purpose, so answering one
+ * would be answering a question asked of somebody else. Keeping it out of the
+ * conversation map is what makes that impossible rather than merely discouraged.
+ *
+ * _monCursor null means "start from now": the next poll asks the server where the end
+ * is and follows from there, so switching a subscription on mid-net does not deliver a
+ * backlog. _monSeen recognises a row coming back with its late transcription (see
+ * since_text_ts) so it updates in place instead of arriving twice. */
+let _monRecent = [];
+const _monSeen = new Map();       // id -> index into _monRecent
+let _monCursor = null;
+let _monTextCursor = 0;
+let _monSkipped = 0;
+let _monInFlight = false;
+let _monView = null;              // null | 'all' | 'radio' -- which monitor list is open
+const MON_CAP = 400;              // rows kept; a full net day would grow without bound
+
 let _msgViewAll = false;          // "View All" mode: every message, chronological
 let _allViewSearchOn = false;     // search box shown within View All
 let _allViewRows = [];            // all event messages (from history), sorted by time
@@ -6052,7 +6096,7 @@ function _togglePanel() {
 // "active" (matters only on a phone, where CSS collapses to one pane) and set
 // the right pane to either a thread or the placeholder.
 function _showListView() {
-	_openConvId = null; _pendingConv = null;
+	_openConvId = null; _pendingConv = null; _monView = null;
 	document.getElementById('msg-panel').classList.remove('thread-active');
 	document.getElementById('msg-panel-title').textContent = 'Messages';
 	document.getElementById('msg-panel-sub').textContent = _msgName ? ('as ' + _msgName) : '';
@@ -6076,6 +6120,9 @@ function _showThreadView(titleHtml, subText) {
 	document.getElementById('msg-panel').classList.add('thread-active');
 	const head = document.getElementById('msg-thread-head');
 	head.classList.add('on');
+	// Opening anything else leaves the monitor, so a later poll does not redraw this
+	// pane out from under a conversation. _openMonitor sets it again after calling here.
+	_monView = null;
 	head.querySelector('.tn').innerHTML = titleHtml;
 	head.querySelector('.ts').textContent = subText || '';
 	document.getElementById('msg-composer').classList.remove('hidden');
@@ -6280,8 +6327,21 @@ function _renderConvList() {
 	// shut, which a row inside the panel cannot. Everything still contains the log's
 	// entries, which is what its subtitle says.
 	const bc = [..._convs.values()].find(c => c.kind === 'broadcast');
+	// The monitored feeds, one row per switch, worded and shown exactly as on the phone:
+	// Receive all messages -> "Everyone's traffic", Hear radio traffic -> "Radio audio &
+	// text", both -> both, neither -> neither. "Speak text messages" decides whether any
+	// of it is read aloud, not what is followed, so it appears here not at all.
+	const monRow = (kind, name) => {
+		const list = kind === 'radio' ? _monRecent.filter(_isRadioMsg) : _monRecent;
+		const sub = list.length
+			? list.length + ' recent' + (kind === 'all' && _monSkipped ? ' · ' + _monSkipped + ' skipped' : '')
+			: 'Listening — nothing yet';
+		return row(null, name, sub, null, 'mon-' + kind, _monView === kind);
+	};
 	const head = '<div class="msg-conv-head">Monitor</div>'
 		+ row(null, 'Everything', 'Trackers and Event Log', null, 'all', _msgViewAll)
+		+ (_msgAll   ? monRow('all',   'Everyone’s traffic')  : '')
+		+ (_msgRadio ? monRow('radio', 'Radio audio & text') : '')
 		+ row(bc, 'All Trackers', 'Broadcast to everyone', bc ? bc.id : null, 'broadcast')
 		+ '<div class="msg-conv-head next">Trackers</div>';
 
@@ -6295,6 +6355,8 @@ function _renderConvList() {
 			// All Messages is a view of the panel rather than a thread in it, so it is
 			// answered before anything looks for a conversation to open.
 			if (el.dataset.pin === 'all') { if (!_msgViewAll) _toggleViewAll(); return; }
+			if (el.dataset.pin === 'mon-all')   { _openMonitor('all');   return; }
+			if (el.dataset.pin === 'mon-radio') { _openMonitor('radio'); return; }
 			// A pinned row has no thread behind it until something has been put in it, so
 			// an empty id is not a missing conversation. All Trackers is the only such row
 			// left: Everything was answered above, and the Event Log is no longer listed.
@@ -6381,6 +6443,46 @@ function _openMsgPhoto(url) {
 	document.addEventListener('keydown', function esc(e) { if (e.key === 'Escape') { ov.remove(); document.removeEventListener('keydown', esc); } });
 	document.body.appendChild(ov);
 }
+/** True for a Transcriber entry: it carries a recording, or it went to the log. */
+function _isRadioMsg(m) { return !!(m.audio_url || m.to_label === 'Log'); }
+
+/** Show monitored traffic in the thread pane.
+ *
+ *  The thread pane rather than a view of its own, because these ARE messages and the
+ *  pane already draws them -- sender, time, and the play button on a recording, all for
+ *  free. What it must not do is offer a reply: the server writes no delivery rows for
+ *  this feed, so answering here would be answering a question asked of somebody else.
+ *  The composer stays hidden and _openConvId stays null, which is what keeps Send
+ *  pointed at nothing. */
+function _openMonitor(kind) {
+	_monView = kind;
+	_openConvId = null;
+	_pendingConv = null;
+	_showThreadView(_esc(kind === 'radio' ? 'Radio audio & text' : 'Everyone’s traffic'),
+	                'Not addressed to you — nothing here alerts');
+	document.getElementById('msg-composer').classList.add('hidden');
+	_renderMonitor();
+	_renderConvList();
+}
+
+function _renderMonitor() {
+	if (!_monView) return;
+	const scroll = document.getElementById('msg-thread-scroll');
+	const list = _monView === 'radio' ? _monRecent.filter(_isRadioMsg) : _monRecent;
+	if (!list.length) {
+		scroll.innerHTML = '<div id="msg-thread-empty">Nothing yet.<br><br>'
+			+ (_monView === 'radio'
+				? 'This fills as transmissions are received and transcribed.'
+				: 'This fills as traffic arrives between other stations.')
+			+ '</div>';
+		return;
+	}
+	const atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 60;
+	scroll.innerHTML = list.map(m => _bubbleHtml(m, null)).join('');
+	_wireLocButtons(scroll);
+	if (atBottom) setTimeout(() => { scroll.scrollTop = scroll.scrollHeight; }, 0);
+}
+
 function _renderThread(c) {
 	const scroll = document.getElementById('msg-thread-scroll');
 	const msgs = c.messages || [];
@@ -6518,8 +6620,79 @@ async function _poll() {
 			if (c) _renderThread(c);
 		}
 		await _pollLogThread();
+		await _pollMonitor();
 	} catch {}
 	finally { _msgPriming = false; }
+}
+
+/** The opt-in feed of traffic this operator is not part of.
+ *
+ *  One request serves both switches -- `all` asks for everyone's typed messages, `log`
+ *  for what the receivers heard -- so following both costs the same as following one.
+ *  The server writes no delivery rows for any of it: monitoring a message must leave no
+ *  trace on it, or the sender's receipts start counting strangers.
+ *
+ *  since_text_ts rides along for the same reason the log poll carries it: a Transcriber
+ *  posts the recording the moment the over ends and the words a few seconds later, on
+ *  the same row, so an id cursor alone would take the audio and never be offered the
+ *  transcription. */
+async function _pollMonitor() {
+	if (!_msgAll && !_msgRadio) return;
+	if (_monInFlight) return;
+	_monInFlight = true;
+	try {
+		// null cursor = "start from now". Asked for with since_id 0 and everything
+		// discarded, which is what the phone's _startFromNow does: the answer's last_id
+		// is where the event is up to, and following begins there.
+		const priming = _monCursor === null;
+		const d = await _msgApi('monitor', {body: {
+			since_id: priming ? 0 : _monCursor,
+			all: _msgAll, log: _msgRadio,
+			since_text_ts: _monTextCursor,
+		}});
+		if (!d) return;
+		if (typeof d.last_id === 'number') _monCursor = d.last_id;
+		if (d.text_ts) _monTextCursor = d.text_ts;
+		if (priming) return;                       // the backlog is not news
+		if (typeof d.skipped === 'number') _monSkipped += d.skipped;
+		const fresh = [];
+		for (const m of (d.messages || [])) {
+			const at = _monSeen.get(m.id);
+			if (at !== undefined) { _monRecent[at] = m; continue; }   // late transcription
+			_monSeen.set(m.id, _monRecent.length);
+			_monRecent.push(m);
+			fresh.push(m);
+		}
+		if (_monRecent.length > MON_CAP) {
+			_monRecent = _monRecent.slice(-MON_CAP);
+			_monSeen.clear();
+			_monRecent.forEach((m, i) => _monSeen.set(m.id, i));
+		}
+		if (fresh.length) _onMonitored(fresh);
+		_renderConvList();
+		if (_monView) _renderMonitor();
+	} catch {}
+	finally { _monInFlight = false; }
+}
+
+/** What to do about traffic that just arrived and is addressed to somebody else.
+ *
+ *  Radio plays; typed messages are read aloud only if the operator asked for both the
+ *  speaking and the following. Never both for one message: a recording of somebody
+ *  talking and a synthesised voice saying approximately the same words is the mess that
+ *  made a busy net unlistenable on the phone, and the rule there is the rule here. */
+function _onMonitored(fresh) {
+	for (const m of fresh) {
+		const isRadio = !!(m.audio_url || m.to_label === 'Log');
+		if (isRadio) {
+			if (_msgRadio && m.audio_url) _queueClip(m);
+			continue;
+		}
+		// Excluded: this operator's own words. The monitor feed is the one inbound path
+		// not built from delivery rows, so it is the only one that hands back what this
+		// window just sent.
+		if (_msgSpeak && _msgAll && m.from_id !== _msgMeId) _speakMessage(m);
+	}
 }
 /** Keep the open Event Log thread current.
  *
@@ -7133,8 +7306,10 @@ function _wireMsgUI() {
 		try { window.open('?messages', 'aprsMessages', 'width=900,height=1100').focus(); } catch {}
 	});
 	document.getElementById('msg-panel-back').addEventListener('click', _showListView);
-	document.getElementById('msg-speaker-btn').addEventListener('click', _toggleSpeak);
-	_updateSpeakerBtn();
+	document.getElementById('msg-sw-speak').addEventListener('change', e => _setSpeak(e.target.checked));
+	document.getElementById('msg-sw-radio').addEventListener('change', e => _setMonitor('radio', e.target.checked));
+	document.getElementById('msg-sw-all').addEventListener('change', e => _setMonitor('all', e.target.checked));
+	_syncSwitches();
 	document.getElementById('msg-settings-btn').addEventListener('click', e => { e.stopPropagation(); _toggleSettings(); });
 	document.getElementById('msg-panel').addEventListener('click', e => {
 		const menu = document.getElementById('msg-settings-menu');
@@ -7338,7 +7513,7 @@ function _msgAudio() {
 	if (!_msgAudioEl) {
 		_msgAudioEl = new Audio();
 		_msgAudioEl.preload = 'none';   // a log full of clips must not fetch them all
-		_msgAudioEl.addEventListener('ended', () => _setAudioBtn(null));
+		_msgAudioEl.addEventListener('ended', () => { _setAudioBtn(null); _drainClips(); });
 		// Says so rather than sitting silent. A clip that will not load is
 		// indistinguishable from a muted machine, and that ambiguity cost an afternoon
 		// on the phone side -- see the comment on clipFailed().
@@ -7346,6 +7521,7 @@ function _msgAudio() {
 			const b = _audioBtn(_msgAudioMid);
 			if (b) b.querySelector('span').textContent = 'unavailable';
 			_setAudioBtn(null);
+			_drainClips();     // one bad clip must not stall the rest of the net
 		});
 	}
 	return _msgAudioEl;
@@ -7368,6 +7544,38 @@ function _setAudioBtn(mid) {
 		b.classList.add('playing');
 		b.innerHTML = MSG_STOP_SVG + '<span>Playing</span>';
 	}
+}
+
+/* Arriving radio, played one clip at a time in the order it was heard.
+ *
+ * A queue and not "play it now": on a busy net two overs land inside one poll, and
+ * starting the second would cut off the first. That is worse than a delay -- the
+ * operator hears half of each and can act on neither.
+ *
+ * Nothing older than five minutes. A window left open through a reconnect would
+ * otherwise work through a backlog of a net that has already moved on, saying stale
+ * things in the present tense. Same bound as the phone's AudioQueue. */
+const CLIP_MAX_AGE_S = 300;
+let _clipQ = [];
+
+function _queueClip(m) {
+	if (!m.audio_url) return;
+	if (m.ts && (Date.now() / 1000 - m.ts) > CLIP_MAX_AGE_S) return;
+	_clipQ.push(m);
+	_drainClips();
+}
+
+function _drainClips() {
+	if (!_msgRadio) { _clipQ = []; return; }
+	const a = _msgAudio();
+	if (_msgAudioMid !== null && !a.paused) return;    // something is playing; wait
+	const m = _clipQ.shift();
+	if (!m) return;
+	a.pause();
+	a.src = m.audio_url;
+	_setAudioBtn(String(m.id));
+	try { speechSynthesis.cancel(); } catch {}
+	a.play().catch(() => { _setAudioBtn(null); _drainClips(); });
 }
 
 function _toggleClip(btn) {
@@ -7504,26 +7712,50 @@ function _playMsgTone() {
 	} catch {}
 }
 
-// ── Read messages aloud (speaker toggle, Web Speech synthesis) ───────────────
-// Speaker icons: plain (on) vs. slashed/muted (off, the default).
-const _SPK_ON  = '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>';
-const _SPK_OFF = '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 15.91 21 14 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>';
-function _updateSpeakerBtn() {
-	const b = document.getElementById('msg-speaker-btn');
-	if (!b) return;
-	b.innerHTML = _msgSpeak ? _SPK_ON : _SPK_OFF;
-	b.title = _msgSpeak ? 'Reading messages aloud — tap to turn off' : 'Read arriving messages aloud';
+// ── The three switches ───────────────────────────────────────────────────────
+//
+// They live in the settings menu, together, because they are three answers to one
+// question -- what this window should say out loud and what traffic it should follow.
+// The speaker used to be an icon in the bar, which made it look like the important one
+// and left the other two with nowhere to be.
+
+function _syncSwitches() {
+	const set = (id, v) => { const e = document.getElementById(id); if (e) e.checked = v; };
+	set('msg-sw-speak', _msgSpeak);
+	set('msg-sw-radio', _msgRadio);
+	set('msg-sw-all',   _msgAll);
 }
-function _toggleSpeak() {
-	_msgSpeak = !_msgSpeak;
-	try { localStorage.setItem('aprs_msg_speak', _msgSpeak ? '1' : '0'); } catch {}
-	_updateSpeakerBtn();
+
+function _setSpeak(v) {
+	_msgSpeak = v;
+	try { localStorage.setItem('aprs_msg_speak', v ? '1' : '0'); } catch {}
 	try {
 		speechSynthesis.cancel();
 		// Silent warm-up so speech is unlocked within this user gesture (required on
 		// some browsers) — without saying anything audible.
-		if (_msgSpeak) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); }
+		if (v) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); }
 	} catch {}
+	_syncSwitches();
+}
+
+/** Turning a subscription ON starts from now, never from wherever this window last
+ *  looked. Otherwise switching it on mid-net delivers a backlog nobody asked for, which
+ *  is the first thing the operator would see and the last thing they wanted. Same rule
+ *  as MonitorService._setFlag on the phone. */
+function _setMonitor(which, v) {
+	if (which === 'all') { _msgAll = v; try { localStorage.setItem('aprs_msg_all', v ? '1' : '0'); } catch {} }
+	else { _msgRadio = v; try { localStorage.setItem('aprs_msg_radio', v ? '1' : '0'); } catch {} }
+	if (v) {
+		_monCursor = null;         // null = "ask the server where now is"
+	} else if (!_msgAll && !_msgRadio) {
+		// Nothing followed any more, so the list behind the rows is history nobody asked
+		// to keep, and leaving it would look live.
+		_monRecent = [];
+		_monSeen.clear();
+		if (_monView) { _monView = null; _showListView(); }
+	}
+	_syncSwitches();
+	_renderConvList();
 }
 // Panel width and the inbox/thread split are both drag-resizable and remembered.
 // Net control runs this panel all day beside the map, and the right balance depends
