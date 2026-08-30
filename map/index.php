@@ -2065,6 +2065,10 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
 .msg-all-item .who .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msg-all-item .who .to { color: #888; font-weight: 400; }
 .msg-all-item .who .tm { color: #aaa; font-weight: 400; font-size: 10px; margin-left: auto; padding-left: 6px; font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+/* After the stamp, not before it: the stamp takes margin-left:auto and so owns the right
+   edge, and every row has one where only your own messages have a receipt. Putting the
+   receipt first would make the stamp's position depend on who sent the message. */
+.msg-all-item .who .msg-all-ack { color: #7f8c8d; font-weight: 400; font-size: 10px; padding-left: 6px; flex: 0 0 auto; white-space: nowrap; }
 /* Smaller here than in a bubble: this row is one line of a scannable list, and the
    control has to sit beside a timestamp without setting the row's height. */
 .msg-all-item .msg-all-audio { flex: 0 0 auto; margin: 0 0 0 6px; padding: 1px 7px 1px 5px;
@@ -6477,7 +6481,7 @@ async function _openConversation(cid) {
  *
  * `q` highlights a search match, and is empty everywhere except Everything.
  */
-function _compactRowHtml(m, q, clickable) {
+function _compactRowHtml(m, q, clickable, showAck) {
 	const to = m.broadcast ? 'Send to Everyone' : (m.to_label || '');
 	const loc = (typeof m.lat === 'number' && typeof m.lon === 'number')
 		? '<button class="msg-all-loc2" data-mid="' + m.id + '" title="Show where this message was sent from">' + MSG_PIN_SVG + '</button>' : '';
@@ -6502,59 +6506,28 @@ function _compactRowHtml(m, q, clickable) {
 	// is nowhere to go -- the log is already open, and monitored traffic has no thread to
 	// reply into by design -- so those rows carry neither the hint nor the pointer, which
 	// would promise a click that does nothing.
+	// The delivery receipt, on your own messages, in a thread. It lived only in the
+	// bubble, and dropping the bubble without bringing it across would have quietly cost
+	// the one thing a sender looks for -- whether the other end has seen it.
+	//
+	// Threads only: _ackLabel answers "Sent" for anything with no receipt, so in
+	// Everything it would print beside every message this operator ever sent and say
+	// nothing by saying it everywhere.
+	const ack = (showAck && m.from_id === _msgMeId)
+		? '<span class="msg-all-ack">' + _ackLabel(_msgReceipts.get(m.id), _ackSingle(m.conversation_id)) + '</span>'
+		: '';
 	return '<div class="msg-all-item' + (clickable ? '' : ' static') + '" data-mid="' + m.id + '"'
 		+ (clickable ? ' title="Open this conversation to reply"' : '')
 		+ '><div class="who"><span class="nm">' + _esc(_msgSenderName(m)) +
-		' <span class="to">→ ' + _esc(to) + '</span></span><span class="tm">' + _esc(_msgFmtStamp(m.ts)) + '</span>' + loc + copy + aud + '</div>' +
+		' <span class="to">→ ' + _esc(to) + '</span></span><span class="tm">' + _esc(_msgFmtStamp(m.ts)) + '</span>' + ack + loc + copy + aud + '</div>' +
 		'<div class="tx">' + (m.photo ? '📷 ' : '') + _hlText(_esc(m.text || (m.photo ? 'Photo' : '')), q) + '</div></div>';
 }
 
-function _bubbleHtml(m, c) {
-	const me = (m.from_id === _msgMeId);
-	// On a received message show who it went TO as well as who it came from: that is
-	// what distinguishes a note addressed to you alone from one that also reached a
-	// whole station or every tracker.
-	// A log entry always names who wrote it, your own included. The log is shared and
-	// outlives the shift that made it, so an unattributed entry is worth less than an
-	// attributed one -- which is the opposite of the rule for ordinary traffic, where
-	// your own name on your own message is just noise.
-	const isLog = !!(c && c.kind === 'log') || m.to_label === 'Log';
-	const toTxt = isLog ? 'Log' : (me ? '' : (m.to_label || ''));
-	const sender = (me && !isLog) ? '' : '<div class="msg-bubble-sender">' + _senderLabelHtml(m) +
-		(toTxt ? '<span class="msg-bubble-to"> → ' + _esc(toTxt) + '</span>' : '') + '</div>';
-	const photo = m.photo
-		? '<img class="msg-bubble-img" data-mid="' + m.id + '" src="index.php?messaging=photo&id=' + m.id + '&token=' + encodeURIComponent(_msgToken || '') + '" alt="Attached photo" loading="lazy">'
-		: '';
-	const textHtml = m.text ? '<div class="msg-bubble-text">' + _esc(m.text) + '</div>' : '';
-	// The recording, when a Transcriber attached one. The server has always sent
-	// has_audio and audio_url on every message and the phone has always rendered a play
-	// control from them; this window simply ignored both, so radio traffic arrived here
-	// as text with no way to hear what was actually said. Added 2026-08-29.
-	//
-	// No <audio controls>: a browser's own player is a full-width slab with a seek bar
-	// and a volume slider, and a log of forty overs would be forty of them. One button
-	// that says how long the clip is, which is what an operator deciding whether to
-	// listen actually wants to know.
-	//
-	// audio_url is absolute and unauthenticated by design -- radio traffic is public and
-	// the clips are served straight off disk so Cloudflare can cache them, see the note
-	// on audioUrl() in messaging_db.php -- so it needs no token here.
-	const audio = m.audio_url
-		? '<button class="msg-bubble-audio" data-mid="' + m.id + '" data-src="' + _esc(m.audio_url) + '">'
-		  + MSG_PLAY_SVG + '<span>' + (m.audio_secs ? m.audio_secs.toFixed(1) + 's' : 'Play') + '</span></button>'
-		: '';
-	const loc = (typeof m.lat === 'number' && typeof m.lon === 'number')
-		? '<button class="msg-bubble-locbtn" data-mid="' + m.id + '" title="Show where this was sent from">' + MSG_PIN_SVG + '</button>' : '';
-	// Carries the id, not the text: the message is looked up at click time, so nothing
-	// has to be escaped into an attribute. A photo with no caption has nothing to copy.
-	const copy = m.text
-		? '<button class="msg-bubble-copybtn" data-mid="' + m.id + '" title="Copy message text">' + MSG_COPY_SVG + '</button>' : '';
-	const ack = me ? '<span class="msg-bubble-ack">' + _ackLabel(_msgReceipts.get(m.id), _ackSingle(m.conversation_id)) + '</span>' : '';
-	return '<div class="msg-bubble-row ' + (me ? 'me' : 'them') + '">' +
-		'<div class="msg-bubble">' + sender + photo + textHtml + audio +
-		'<div class="msg-bubble-foot">' + loc + copy + '<span class="msg-bubble-time">' + _esc(_msgFmtStamp(m.ts)) + '</span>' + ack + '</div>' +
-		'</div></div>';
-}
+/* _bubbleHtml lived here. It drew a chat bubble aligned by sender, and every display
+ * uses _compactRowHtml now -- see the note above _renderThread. Its one piece of
+ * information the row did not have, the delivery receipt, moved with it.
+ */
+
 // Full-size photo lightbox (tap the thumbnail; tap anywhere to close).
 function _openMsgPhoto(url) {
 	const ov = document.createElement('div');
@@ -6609,13 +6582,15 @@ function _renderMonitor() {
 	if (atBottom) setTimeout(() => { scroll.scrollTop = scroll.scrollHeight; }, 0);
 }
 
-/** True where a thread is a STREAM rather than a conversation.
+/* Every display is the compact row now -- Everything, the Event Log, To/From Everyone,
+ * Radio audio & text and a tracker thread. Bubbles are gone.
  *
- *  The Event Log has one author per line and no sides to take, so bubble alignment
- *  conveys nothing there and costs about twice the vertical space -- on a busy net that
- *  is half as much of it on screen. A tracker thread has two ends and keeps its bubbles,
- *  where which side a message sits on is the fastest way to see who said it. */
-function _isStreamConv(c) { return !!(c && c.kind === 'log'); }
+ * They were kept for two-party threads on the argument that which side a message sits on
+ * is the fastest way to see who sent it. True in isolation, and not worth it: an
+ * operator moves between these five displays constantly during a net, and one layout
+ * read the same way everywhere beats one display being marginally better alone. The row
+ * names both ends anyway -- "Doug -> M002 Rob" -- so nothing goes but the alignment, and
+ * about half the vertical space is gained. */
 
 /** The pane's padding belongs to bubbles; compact rows bring their own. */
 function _setThreadStream(on) {
@@ -6626,20 +6601,17 @@ function _renderThread(c) {
 	const scroll = document.getElementById('msg-thread-scroll');
 	const msgs = c.messages || [];
 	if (!msgs.length) { _setThreadStream(false); scroll.innerHTML = '<div id="msg-thread-empty">No messages yet. Say hello 👋</div>'; return; }
-	const stream = _isStreamConv(c);
-	_setThreadStream(stream);
-	scroll.innerHTML = msgs.map(m => stream ? _compactRowHtml(m, '', false) : _bubbleHtml(m, c)).join('');
-	if (stream) _wireCompactRows(scroll); else _wireLocButtons(scroll);
+	_setThreadStream(true);
+	scroll.innerHTML = msgs.map(m => _compactRowHtml(m, '', false, true)).join('');
+	_wireCompactRows(scroll);
 	setTimeout(() => { scroll.scrollTop = scroll.scrollHeight; }, 0);
 }
 function _appendBubble(c, m) {
 	const scroll = document.getElementById('msg-thread-scroll');
 	if (document.getElementById('msg-thread-empty')) scroll.innerHTML = '';
 	const atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 60;
-	const stream = _isStreamConv(c);
-	scroll.insertAdjacentHTML('beforeend', stream ? _compactRowHtml(m, '', false) : _bubbleHtml(m, c));
-	if (stream) _wireCompactRows(scroll.lastElementChild);
-	else _wireLocButtons(scroll.lastElementChild);
+	scroll.insertAdjacentHTML('beforeend', _compactRowHtml(m, '', false, true));
+	_wireCompactRows(scroll.lastElementChild);
 	if (atBottom) scroll.scrollTop = scroll.scrollHeight;
 }
 /** Wire the controls on compact rows: copy, map-pin, play.
@@ -6674,35 +6646,10 @@ function _wireCompactRows(root) {
 	});
 }
 
-function _wireLocButtons(root) {
-	root.querySelectorAll('.msg-bubble-locbtn').forEach(b => {
-		if (b._wired) return; b._wired = true;
-		b.addEventListener('click', e => {
-			e.stopPropagation();
-			const m = _msgFindById(+b.dataset.mid);
-			// In the messages window there is no map to draw on, so the pin drives the
-			// map on the other screen — which is the point of running two.
-			if (MSG_WINDOW) { if (m) _chanPost({type:'showLocation', msg:m}); return; }
-			_showMsgLocation(m);
-		});
-	});
-	root.querySelectorAll('.msg-bubble-audio').forEach(b => {
-		if (b._wired) return; b._wired = true;
-		b.addEventListener('click', e => { e.stopPropagation(); _toggleClip(b); });
-	});
-	root.querySelectorAll('.msg-bubble-copybtn').forEach(b => {
-		if (b._wired) return; b._wired = true;
-		b.addEventListener('click', e => {
-			e.stopPropagation();
-			const m = _msgFindById(+b.dataset.mid);
-			if (m && m.text) _copyMsgText(m.text, b);
-		});
-	});
-	root.querySelectorAll('.msg-bubble-img').forEach(img => {
-		if (img._wired) return; img._wired = true;
-		img.addEventListener('click', e => { e.stopPropagation(); _openMsgPhoto(img.src); });
-	});
-}
+/* _wireLocButtons wired the bubble's pin and copy controls. _wireCompactRows does
+ * that job for the row, and there are no bubbles left to wire.
+ */
+
 /** A message by id, from anywhere it may be on screen.
  *
  *  Threads first, then Everything's rows, then the monitor feed. The last two are not
