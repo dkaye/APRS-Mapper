@@ -2048,7 +2048,11 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
    with it, so choosing All Messages cost you the inbox — and with the inbox gone there
    was no way back into a conversation without leaving the view first. */
 #msg-panel.allview #msg-thread-view { display: none; }
-#msg-panel.allview #msg-allview { display: flex; flex: 1; min-width: 0; }
+/* flex-direction and min-height restated rather than inherited from .msg-view. This
+   rule overrides that one's `display`, and the column now carries a fourth child -- the
+   composer moves in here -- so the constraint that keeps the scroller giving up its
+   space has to be stated where the display is. */
+#msg-panel.allview #msg-allview { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
 #msg-allview-search { flex: 0 0 auto; padding: 8px; border-bottom: 1px solid #eee; display: none; }
 #msg-allview-search.on { display: block; }
 #msg-allview-searchbox { width: 100%; box-sizing: border-box; padding: 7px 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; font-family: inherit; }
@@ -6161,13 +6165,27 @@ function _moveComposer(toAllView) {
 	const err  = document.getElementById('msg-compose-error');
 	if (!comp) return;
 	if (!_composerHome) _composerHome = {parent: comp.parentNode, next: comp.nextSibling};
-	if (toAllView) {
-		document.getElementById('msg-allview').appendChild(err);
-		document.getElementById('msg-allview').appendChild(comp);
-	} else {
-		_composerHome.parent.insertBefore(err, comp);
-		_composerHome.parent.insertBefore(comp, _composerHome.next);
-	}
+	// The composer moves FIRST, then the error line is placed against it.
+	//
+	// It used to be the other way round, and insertBefore(err, comp) with comp still
+	// inside the all-view throws NotFoundError -- comp is not a child of the node being
+	// asked to insert before it. That exception did not just skip the move: it unwound
+	// _toggleViewAll and _showThreadView with it, after the `allview` class had already
+	// been taken off. The composer was left inside a container that was now display:none,
+	// so opening a thread showed no input field at all.
+	//
+	// try/catch as well, because this is a view switch: whatever the DOM does here, the
+	// operator must still end up in the view they clicked.
+	try {
+		if (toAllView) {
+			const av = document.getElementById('msg-allview');
+			av.appendChild(comp);
+			av.insertBefore(err, comp);
+		} else {
+			_composerHome.parent.insertBefore(comp, _composerHome.next);
+			_composerHome.parent.insertBefore(err, comp);
+		}
+	} catch (e) { /* leave it wherever it is; the view switch still has to finish */ }
 	comp.classList.remove('hidden');
 }
 
