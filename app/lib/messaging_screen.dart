@@ -56,8 +56,8 @@ class _MessagingScreenState extends State<MessagingScreen> {
   /// Monitor mode: the event's whole traffic, as a running log. A third place this
   /// screen can be, alongside the inbox and an open thread.
   /// Which monitor view is open: null for none, `false` for the whole feed, `true` for
-  /// radio only. Two rows can lead here now -- "All radio and text" and "Radio audio" --
-  /// and they differ only in what they filter to, so one flag would not say which.
+  /// radio only. Two rows can lead here -- "Everyone's traffic" and "Radio audio & text"
+  /// -- and they differ only in what they filter to, so one flag would not say which.
   bool? _monitorRadioOnly;
 
   /// The view actually on screen, which is not always the one that was opened: a switch
@@ -611,28 +611,29 @@ class _MessagingScreenState extends State<MessagingScreen> {
   /// traffic has no thread to reply into, and presenting it as one would invite exactly
   /// the mistake the rest of this feature avoids: answering a question that was asked
   /// of somebody else.
-  /// What a monitor view is called, given what the switches actually let into it.
+  /// Fixed titles, one per switch, from the truth table Doug specified on 2026-08-29.
   ///
-  /// The title has to describe the CONTENTS, not the button that opened it. "Receive all
-  /// messages" on by itself carries no radio, so calling that view "All radio and text"
-  /// would promise something the feed cannot contain.
-  String _monitorTitle({required bool radioOnly}) {
-    if (radioOnly) return 'Radio audio';
-    return MonitorService.instance.playingRadioAudio
-        ? 'All radio and text'
-        : 'All text messages';
-  }
+  /// Deliberately NOT varied by what the feed happens to contain. An earlier version
+  /// renamed the first row to "All text messages" when radio was off, on the reasoning
+  /// that a title should describe its contents -- but the row names the SUBSCRIPTION,
+  /// not today's contents, and a heading that renames itself when an unrelated switch
+  /// moves is harder to learn than one that stays put. Everyone's traffic is everyone's
+  /// traffic whether or not a receiver is feeding it.
+  String _monitorTitle({required bool radioOnly}) =>
+      radioOnly ? 'Radio audio & text' : 'Everyone’s traffic';
 
   /// The rows that lead into the monitor, in the order they appear at the top of the
   /// inbox. One per thing being followed:
   ///
-  ///   both switches  -> "All radio and text" (everything) and "Radio audio" (the radio
-  ///                     subset of the same feed -- a transmission is in both, which is
-  ///                     the point: one row is the net, the other is only what came off
-  ///                     the air)
-  ///   radio only     -> "Radio audio"
-  ///   all only       -> "All text messages"
-  ///   neither        -> nothing, and the inbox looks as it always did
+  ///   Receive all messages -> "Everyone's traffic"  (the whole feed)
+  ///   Hear radio traffic   -> "Radio audio & text"  (its radio subset -- a transmission
+  ///                           is in both rows when both are on, which is the point: one
+  ///                           row is the net, the other is only what came off the air,
+  ///                           with the clip and the transcription that goes with it)
+  ///   neither              -> nothing, and the inbox looks as it always did
+  ///
+  /// "Speak text messages" does not appear here. It governs whether arriving text is
+  /// read aloud, not what this device follows, so it changes neither row.
   List<Widget> _monitorEntries() {
     final mon = MonitorService.instance;
     final rows = <Widget>[];
