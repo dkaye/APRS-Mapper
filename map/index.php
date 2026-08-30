@@ -6142,6 +6142,32 @@ function _showThreadView(titleHtml, subText) {
 }
 
 // ── View All: every message across every thread, chronological + searchable ──
+/* The composer is one element, moved rather than duplicated.
+ *
+ * .allview hides #msg-thread-view outright and the composer lives inside it, so
+ * Everything had no way to type. A second composer would mean a second textarea, a
+ * second Send, a second mic button and two copies of every piece of state they share --
+ * and the two would drift. Moving the one node keeps a single wiring and a single
+ * draft: text half-typed in a thread is still there when you come back to it.
+ *
+ * Its home is remembered on the first move rather than hardcoded, so re-ordering the
+ * markup cannot silently put it back in the wrong place. */
+let _composerHome = null;
+function _moveComposer(toAllView) {
+	const comp = document.getElementById('msg-composer');
+	const err  = document.getElementById('msg-compose-error');
+	if (!comp) return;
+	if (!_composerHome) _composerHome = {parent: comp.parentNode, next: comp.nextSibling};
+	if (toAllView) {
+		document.getElementById('msg-allview').appendChild(err);
+		document.getElementById('msg-allview').appendChild(comp);
+	} else {
+		_composerHome.parent.insertBefore(err, comp);
+		_composerHome.parent.insertBefore(comp, _composerHome.next);
+	}
+	comp.classList.remove('hidden');
+}
+
 function _toggleViewAll() {
 	_msgViewAll = !_msgViewAll;
 	const panel = document.getElementById('msg-panel');
@@ -6150,10 +6176,20 @@ function _toggleViewAll() {
 	document.getElementById('msg-allsearch-btn').style.display = _msgViewAll ? '' : 'none';
 	document.getElementById('msg-panel-title').textContent = _msgViewAll ? 'Everything' : 'Messages';
 	document.getElementById('msg-panel-sub').textContent = _msgViewAll ? 'every message, chronological' : (_msgName ? 'as ' + _msgName : '');
+	_moveComposer(_msgViewAll);
 	if (_msgViewAll) {
+		// Everything is where an operator watches the whole net, and the note they want
+		// to write is almost always about what they are watching. Without this, making
+		// one meant leaving the view, writing, and coming back -- so it did not get
+		// written. _pendingLog is the same flag the 📋 Log button sets, so Send goes to
+		// the `log` endpoint here exactly as it does there: written, addressed to no one.
+		_pendingLog = true;
+		_openConvId = null;
+		_pendingConv = null;
+		_syncComposerMode();
 		_loadAllView();
 	}
-	else { _allViewSearchOn = false; _syncAllSearch(); }
+	else { _allViewSearchOn = false; _syncAllSearch(); _pendingLog = false; }
 	// The All Messages row is selected while the view is, and this is the only place
 	// that changes — leaving the list alone would strand the highlight on or off.
 	_renderConvList();
@@ -6308,9 +6344,9 @@ function _renderConvList() {
 	// monitor list, where it read as one more thing to look at. It is the only
 	// destination that always exists, and an operator needing to reach the whole net
 	// should not have to compose their way to it — nor scroll for it once ordinary
-	// traffic has pushed it down. Named for what pressing it DOES, and carrying no
-	// subtitle: "Broadcast to everyone" restated the title in other words, and the
-	// heading above it now says that much anyway.
+	// traffic has pushed it down. "To/From Everyone" under an ALL TRACKERS heading,
+	// because it is not a send-only button: it is the broadcast thread, so what everyone
+	// else broadcast is read there too. No subtitle; the heading says the rest.
 	// The Event Log is pinned beside it for the same reason: it always exists, it is
 	// reached constantly during a net, and it must not drift down the list.
 	// Everything leads, because it is the widest view of the same traffic and the one an
@@ -6324,23 +6360,26 @@ function _renderConvList() {
 	// shut, which a row inside the panel cannot. Everything still contains the log's
 	// entries, which is what its subtitle says.
 	const bc = [..._convs.values()].find(c => c.kind === 'broadcast');
-	// The monitored feeds, one row per switch, worded and shown exactly as on the phone:
-	// Receive all messages -> "Everyone's traffic", Hear radio traffic -> "Radio audio &
-	// text", both -> both, neither -> neither. "Speak text messages" decides whether any
-	// of it is read aloud, not what is followed, so it appears here not at all.
+	// Only the radio feed gets a row. "Everyone's Text" was here and is gone: it listed
+	// the same messages Everything already lists, over a shorter window, which is why the
+	// two looked alike and neither read as the answer. Everything is where everyone's
+	// traffic is READ; "Receive all messages" now only decides whether it is also read
+	// ALOUD, which is a different question and belongs on a switch rather than in the
+	// column.
+	//
+	// Radio keeps its row because Everything cannot show it whole: history() drops rows
+	// with no text, so an over whose transcription came back empty or was thrown out as a
+	// hallucination exists nowhere else -- and that is precisely the one worth hearing.
 	const monRow = (kind, name) => {
-		const list = kind === 'radio' ? _monRecent.filter(_isRadioMsg) : _monRecent;
-		const sub = list.length
-			? list.length + ' recent' + (kind === 'all' && _monSkipped ? ' · ' + _monSkipped + ' skipped' : '')
-			: 'Listening — nothing yet';
+		const list = _monRecent.filter(_isRadioMsg);
+		const sub = list.length ? list.length + ' recent' : 'Listening — nothing yet';
 		return row(null, name, sub, null, 'mon-' + kind, _monView === kind);
 	};
 	const head = '<div class="msg-conv-head">Monitor</div>'
-		+ row(null, 'Everything', 'Trackers and Event Log', null, 'all', _msgViewAll)
-		+ (_msgAll   ? monRow('all',   'Everyone’s Text')  : '')
+		+ row(null, 'Everything', 'Trackers, Log & Radio', null, 'all', _msgViewAll)
 		+ (_msgRadio ? monRow('radio', 'Radio audio & text') : '')
-		+ '<div class="msg-conv-head next">Broadcast</div>'
-		+ row(bc, 'Send to Everyone', '', bc ? bc.id : null, 'broadcast')
+		+ '<div class="msg-conv-head next">All Trackers</div>'
+		+ row(bc, 'To/From Everyone', '', bc ? bc.id : null, 'broadcast')
 		+ '<div class="msg-conv-head next">Individual Trackers</div>';
 
 	scroll.innerHTML = head + (items.length
@@ -6353,7 +6392,6 @@ function _renderConvList() {
 			// All Messages is a view of the panel rather than a thread in it, so it is
 			// answered before anything looks for a conversation to open.
 			if (el.dataset.pin === 'all') { if (!_msgViewAll) _toggleViewAll(); return; }
-			if (el.dataset.pin === 'mon-all')   { _openMonitor('all');   return; }
 			if (el.dataset.pin === 'mon-radio') { _openMonitor('radio'); return; }
 			// A pinned row has no thread behind it until something has been put in it, so
 			// an empty id is not a missing conversation. Send to Everyone is the only such row
@@ -6503,8 +6541,7 @@ function _openMonitor(kind) {
 	// null again by the time _renderMonitor ran, which then returned immediately and left
 	// whatever the pane already held. Opening the Log and then Everyone's Text showed the
 	// Log's entries under the monitor's title.
-	_showThreadView(_esc(kind === 'radio' ? 'Radio audio & text' : 'Everyone’s Text'),
-	                'Not addressed to you — nothing here alerts');
+	_showThreadView('Radio audio & text', 'What the receivers heard');
 	_monView = kind;
 	document.getElementById('msg-composer').classList.add('hidden');
 	_renderMonitor();
@@ -6515,13 +6552,10 @@ function _renderMonitor() {
 	if (!_monView) return;
 	const scroll = document.getElementById('msg-thread-scroll');
 	_setThreadStream(true);
-	const list = _monView === 'radio' ? _monRecent.filter(_isRadioMsg) : _monRecent;
+	const list = _monRecent.filter(_isRadioMsg);
 	if (!list.length) {
 		scroll.innerHTML = '<div id="msg-thread-empty">Nothing yet.<br><br>'
-			+ (_monView === 'radio'
-				? 'This fills as transmissions are received and transcribed.'
-				: 'This fills as traffic arrives between other stations.')
-			+ '</div>';
+			+ 'This fills as transmissions are received and transcribed.</div>';
 		return;
 	}
 	const atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 60;
@@ -6668,6 +6702,17 @@ async function _sendCurrent() {
 		_stopMic();                 // mic goes off on send; also clears the dictation buffer
 		ta.value = ''; _autoGrow(ta);
 		const cid = d.conversation_id;
+		// Written from Everything: stay in Everything. The entry lands in the feed the
+		// operator was already reading, which is what they wrote it about; opening the
+		// log thread instead would take them out of the view to show them the line they
+		// had just watched appear. _pendingLog stays set, so the next note goes to the
+		// log too without pressing anything.
+		if (_msgViewAll) {
+			_pendingConv = null;
+			await _refreshConversations();
+			await _loadAllView();
+			return;
+		}
 		_pendingConv = null; _pendingLog = false; _openConvId = cid;
 		await _refreshConversations();
 		const d2 = await _msgApi('thread', {body:{conversation_id: cid}});
