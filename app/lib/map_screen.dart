@@ -12,6 +12,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'dart:math' as math;
 import 'package:flutter/gestures.dart' show PointerPanZoomUpdateEvent;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';   // HapticFeedback for the map anchor
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
@@ -62,6 +63,23 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   _LocationState _locationState = _LocationState.notRequested;
   bool _sharingConsentShown = false; // true once user has seen the sharing consent screen
   final _mapController = MapController();
+
+  /// A point the map is tethered to, set by long-pressing it.
+  ///
+  /// EXPERIMENT, 2026-08-30. Borrowed from the web's ctrl-click origin but doing a
+  /// different job: that one is a reference for measuring distance and bearing, this one
+  /// keeps a place on screen. Pin the aid station or the incident, then pan and zoom
+  /// freely -- the map will not let that point leave the view, so an operator scanning
+  /// for a tracker cannot lose the thing they are scanning around.
+  ///
+  /// No coordinates are shown. The point of it is the constraint, and lat/lon on screen
+  /// is what the web overlay is for.
+  LatLng? _anchor;
+
+  /// True while the anchor is pulling the camera back. Any OTHER programmatic move
+  /// clears the anchor, and this correction is itself a programmatic move -- without
+  /// this flag the first correction would erase the thing doing the correcting.
+  bool _anchorCorrecting = false;
   LatLng? _lastUserLatLng;
   StreamSubscription<Position>? _positionSub;
   Stream<LocationMarkerPosition?>? _locationMarkerStream;
@@ -1627,6 +1645,73 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
   // Clear transient map highlights (a revealed eyeball-off iGate/aid, and a
   // forced full "ID Name" tracker label) — the "return to normal view" reset.
+  // ── Anchor: a place the map will not let you lose ──────────────────────────
+
+  /// How far inside the edge the anchor is held, as a fraction of the view.
+  ///
+  /// Not zero. Pinning it exactly at the boundary means it sits under the frame, half
+  /// off, and the pan that put it there feels like it failed rather than like it was
+  /// caught. An eighth of the view in from each side leaves it visibly on screen.
+  static const double _kAnchorInset = 0.12;
+
+  void _setAnchor(LatLng at) {
+    HapticFeedback.mediumImpact();
+    setState(() => _anchor = at);
+    // Pull it into view straight away. Long-pressing near the edge otherwise sets an
+    // anchor that is already out of bounds and nothing moves until the next gesture.
+    _anchorCorrect();
+  }
+
+  /// Drop the anchor and let the map go where it likes again.
+  void _clearAnchor() {
+    if (_anchor == null) return;
+    setState(() => _anchor = null);
+  }
+
+  void _anchorOnMapEvent(MapEvent event) {
+    if (_anchor == null) return;
+    // A programmatic move is the app deciding where to look -- centring on a tracker,
+    // going to my location, restoring the saved view. Every one of those is a request
+    // to be somewhere specific, and honouring it while still dragging the camera back
+    // would fight the operator. So they release the anchor, which is what "anything
+    // that resets the map or zooms to a location frees it" means.
+    if (event.source == MapEventSource.mapController) {
+      if (!_anchorCorrecting) _clearAnchor();
+      return;
+    }
+    if (event.source == MapEventSource.nonRotatedSizeChange) return;
+    _anchorCorrect();
+  }
+
+  /// If the anchor has left the view, move the camera the shortest way that brings it
+  /// back just inside.
+  void _anchorCorrect() {
+    final a = _anchor;
+    if (a == null) return;
+    final cam = _mapController.camera;
+    final b = cam.visibleBounds;
+    final latSpan = b.north - b.south;
+    final lonSpan = b.east - b.west;
+    if (latSpan <= 0 || lonSpan <= 0) return;
+    final padLat = latSpan * _kAnchorInset;
+    final padLon = lonSpan * _kAnchorInset;
+
+    // Shift by the overshoot rather than recentring on the anchor: the operator was
+    // panning somewhere for a reason, and this should take away only as much of that
+    // pan as it has to.
+    double dLat = 0, dLon = 0;
+    if (a.latitude > b.north - padLat) dLat = a.latitude - (b.north - padLat);
+    if (a.latitude < b.south + padLat) dLat = a.latitude - (b.south + padLat);
+    if (a.longitude > b.east - padLon) dLon = a.longitude - (b.east - padLon);
+    if (a.longitude < b.west + padLon) dLon = a.longitude - (b.west + padLon);
+    if (dLat == 0 && dLon == 0) return;
+
+    _anchorCorrecting = true;
+    _mapController.move(
+      LatLng(cam.center.latitude + dLat, cam.center.longitude + dLon), cam.zoom);
+    _anchorCorrecting = false;
+  }
+
   void _clearTransientMapHighlights() {
     if (_revealedFixed != null || _fullLabelTrackerId != null) {
       setState(() { _revealedFixed = null; _fullLabelTrackerId = null; });
@@ -2248,6 +2333,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 // Tapping the empty map returns to normal view: hide a revealed
                 // (eyeball-off) iGate/aid marker and drop a forced tracker label.
                 onTap: (_, __) => _clearTransientMapHighlights(),
+                onLongPress: (_, latlng) => _setAnchor(latlng),
                 onMapEvent: (event) {
                   final z = _mapController.camera.zoom;
                   if ((z - _scaleZoom).abs() > 0.05) {
@@ -2262,6 +2348,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                       event.source != MapEventSource.nonRotatedSizeChange) {
                     _clearTransientMapHighlights();
                   }
+                  _anchorOnMapEvent(event);
                 },
               ),
               children: [
@@ -2274,6 +2361,25 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 CourseLayer(courses: _visibleCourses),
                 ..._buildTrailLayers(_cellTrailPts,  const Color(0xFF27AE60)),
                 ..._buildTrailLayers(_radioTrailPts, const Color(0xFFE74C3C)),
+                // The anchor. Drawn before the trackers so it never covers one -- it is
+                // a reference point, not traffic, and the traffic is what is being
+                // looked for. Tapping it lets go without needing a reset.
+                if (_anchor != null)
+                  MarkerLayer(markers: [
+                    Marker(
+                      point: _anchor!,
+                      width: 44,
+                      height: 44,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _clearAnchor,
+                        child: const Center(
+                          child: Icon(Icons.push_pin, size: 26, color: Color(0xFF8E44AD),
+                                      shadows: [Shadow(blurRadius: 3, color: Colors.black54)]),
+                        ),
+                      ),
+                    ),
+                  ]),
                 if (_trailEntries.isNotEmpty)
                   MarkerLayer(markers: _trailEntries.map((e) {
                     final pt = LatLng((e['lat'] as num).toDouble(), (e['lon'] as num).toDouble());
