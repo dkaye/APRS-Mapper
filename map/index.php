@@ -2147,6 +2147,11 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
 
 /* Thread view */
 #msg-thread-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; background: #f4f6f8; }
+/* Compact rows carry their own 7px/12px and run edge to edge, exactly as they do in
+   Everything, whose container has no padding at all. The pane's 12px is for bubbles,
+   which need room to sit in from the sides; on a row it was added to the row's own and
+   made the text measurably narrower than the same row in Everything. */
+#msg-thread-scroll.stream { padding: 0; }
 .msg-bubble-row { display: flex; margin-bottom: 8px; }
 .msg-bubble-row.me { justify-content: flex-end; }
 .msg-bubble {
@@ -6107,6 +6112,7 @@ function _showListView() {
 	document.getElementById('msg-panel-title').textContent = 'Messages';
 	document.getElementById('msg-panel-sub').textContent = _msgName ? ('as ' + _msgName) : '';
 	document.getElementById('msg-thread-head').classList.remove('on');
+	_setThreadStream(false);
 	document.getElementById('msg-thread-scroll').innerHTML =
 		'<div id="msg-thread-placeholder">Select a conversation, or start a new message.</div>';
 	document.getElementById('msg-composer').classList.add('hidden');
@@ -6490,11 +6496,16 @@ function _isRadioMsg(m) { return !!(m.audio_url || m.to_label === 'Log'); }
  *  The composer stays hidden and _openConvId stays null, which is what keeps Send
  *  pointed at nothing. */
 function _openMonitor(kind) {
-	_monView = kind;
 	_openConvId = null;
 	_pendingConv = null;
+	// AFTER _showThreadView, not before. That function clears _monView so a poll cannot
+	// redraw this pane out from under a conversation -- so setting it first meant it was
+	// null again by the time _renderMonitor ran, which then returned immediately and left
+	// whatever the pane already held. Opening the Log and then Everyone's Text showed the
+	// Log's entries under the monitor's title.
 	_showThreadView(_esc(kind === 'radio' ? 'Radio audio & text' : 'Everyone’s Text'),
 	                'Not addressed to you — nothing here alerts');
+	_monView = kind;
 	document.getElementById('msg-composer').classList.add('hidden');
 	_renderMonitor();
 	_renderConvList();
@@ -6503,6 +6514,7 @@ function _openMonitor(kind) {
 function _renderMonitor() {
 	if (!_monView) return;
 	const scroll = document.getElementById('msg-thread-scroll');
+	_setThreadStream(true);
 	const list = _monView === 'radio' ? _monRecent.filter(_isRadioMsg) : _monRecent;
 	if (!list.length) {
 		scroll.innerHTML = '<div id="msg-thread-empty">Nothing yet.<br><br>'
@@ -6526,11 +6538,17 @@ function _renderMonitor() {
  *  where which side a message sits on is the fastest way to see who said it. */
 function _isStreamConv(c) { return !!(c && c.kind === 'log'); }
 
+/** The pane's padding belongs to bubbles; compact rows bring their own. */
+function _setThreadStream(on) {
+	document.getElementById('msg-thread-scroll').classList.toggle('stream', !!on);
+}
+
 function _renderThread(c) {
 	const scroll = document.getElementById('msg-thread-scroll');
 	const msgs = c.messages || [];
-	if (!msgs.length) { scroll.innerHTML = '<div id="msg-thread-empty">No messages yet. Say hello 👋</div>'; return; }
+	if (!msgs.length) { _setThreadStream(false); scroll.innerHTML = '<div id="msg-thread-empty">No messages yet. Say hello 👋</div>'; return; }
 	const stream = _isStreamConv(c);
+	_setThreadStream(stream);
 	scroll.innerHTML = msgs.map(m => stream ? _compactRowHtml(m, '', false) : _bubbleHtml(m, c)).join('');
 	if (stream) _wireCompactRows(scroll); else _wireLocButtons(scroll);
 	setTimeout(() => { scroll.scrollTop = scroll.scrollHeight; }, 0);
