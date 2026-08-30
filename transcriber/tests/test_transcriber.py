@@ -2054,6 +2054,53 @@ def test_clips_are_levelled_to_one_volume():
               "alimiter" in f_loud and "alimiter" in f_quiet, True)
 
 
+def test_every_clip_sent_is_faded_in():
+    """The squelch crash is faded out of what people hear.
+
+    A capture opens ON the crash -- it is the loudest thing on the channel and so the
+    thing that crosses the gate -- which puts a thump at the head of every recording.
+
+    Applied even when the leveller declines to touch the clip: normalize_filter answers
+    None for anything too quiet to level, and a quiet clip still opens with a crash.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        loud = os.path.join(tmp, "loud.wav")
+        _speechlike_wav(loud, 3.0)
+        chain = ",".join(x for x in (transcriber.normalize_filter(loud),
+                                     transcriber.AUDIO_FADE_IN) if x)
+        check("a levelled clip is faded", "afade=t=in:d=0.12" in chain, True)
+        check("and the fade comes after the limiter",
+              chain.index("alimiter") < chain.index("afade"), True)
+
+        quiet = os.path.join(tmp, "quiet.wav")
+        write_wav(quiet, 2.0)                       # silence: nothing to level
+        check("the leveller declines it", transcriber.normalize_filter(quiet), None)
+        chain2 = ",".join(x for x in (transcriber.normalize_filter(quiet),
+                                      transcriber.AUDIO_FADE_IN) if x)
+        check("but it is still faded", chain2, "afade=t=in:d=0.12")
+
+
+def test_the_fade_never_reaches_the_transcriber():
+    """Encode only. The fade must not move any threshold.
+
+    whisper, the tone scan, the empty-clip rule and the retained corpus all read the
+    wav. If the fade ever touched that, every measurement calibrated against the corpus
+    -- CONTENT_MIN_SECONDS, TONE_AGREE_RATIO, the level gate -- would be reading audio
+    that no longer matches what set them.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        wav = os.path.join(tmp, "clip.wav")
+        _speechlike_wav(wav, 2.0)
+        before = os.path.getsize(wav)
+        peaks, rate = transcriber._frame_peaks(wav)
+        content = transcriber.content_seconds(peaks, rate)
+        transcriber.normalize_filter(wav)           # the leveller only MEASURES the wav
+        peaks2, rate2 = transcriber._frame_peaks(wav)
+        check("the wav is untouched on disk", os.path.getsize(wav), before)
+        check("and measures the same afterwards",
+              transcriber.content_seconds(peaks2, rate2), content)
+
+
 def test_silence_is_never_amplified():
     """The mistake the first attempt made.
 
@@ -3143,6 +3190,8 @@ if __name__ == "__main__":
         test_evicting_an_old_entry_deletes_its_clip_too,
         test_an_outbox_written_by_an_older_build_still_flushes,
         test_clips_are_levelled_to_one_volume,
+        test_every_clip_sent_is_faded_in,
+        test_the_fade_never_reaches_the_transcriber,
         test_silence_is_never_amplified,
         test_the_boost_is_bounded,
         test_a_missing_encoder_costs_the_audio_and_nothing_else,

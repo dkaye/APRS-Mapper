@@ -361,6 +361,28 @@ AUDIO_SILENCE_DBFS = -65.0    # below this it is not quiet speech, it is nothing
 # consonant is worse than a quiet clip.
 AUDIO_LIMITER = "alimiter=limit=0.89"
 
+# The squelch crash, faded out of the recording that gets SENT.
+#
+# Every capture begins with a thump, and it has to: the crash is the loudest thing on
+# the channel, so it is what crosses the gate's threshold and opens it. Every clip
+# therefore starts with the event that started it. Measured over 12 net captures on
+# 2026-08-30, the peak in the first 100 ms ran 0.8x to 13x the clip's own p95, median
+# 7.5x -- the same transient that drove a radio's volume to zero during calibration and
+# blinded the tone scan until the p95 fallback.
+#
+# alimiter already caps its amplitude, which is why it is a thump rather than a bang.
+# A ceiling cannot remove a transient, only flatten it.
+#
+# 120 ms because the crash is short but not punctual: sampled at 10 ms it appeared
+# anywhere from 0 to 90 ms in, so a fade has to cover the whole window rather than just
+# the first instant. The cost is attenuating any speech inside that window, which is
+# nearly none: the capture opens ON the crash, so the voice has not started yet.
+#
+# ENCODE ONLY. This never touches the wav. whisper, the tone scan, the empty-clip rule
+# and the retained corpus all go on seeing the original audio, thresholds included --
+# the fade changes what a person hears, not what anything measures.
+AUDIO_FADE_IN = "afade=t=in:d=0.12"
+
 
 def clip_level_dbfs(wav_path, stride=16):
     """Rough RMS of a clip in dBFS, or None if it cannot be read.
@@ -418,7 +440,10 @@ def encode_audio(wav_path, directory, when):
         dest = os.path.join(directory, "%.6f.m4a" % when)
         argv = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
                 "-i", wav_path, "-ac", "1"]
-        af = normalize_filter(wav_path)
+        # The fade goes last and applies whatever the leveller decided, including when
+        # it declined to level at all -- normalize_filter returns None for a clip too
+        # quiet to touch, and that clip still opens with a crash.
+        af = ",".join(x for x in (normalize_filter(wav_path), AUDIO_FADE_IN) if x)
         if af:
             argv += ["-af", af]
         argv += ["-c:a", "aac", "-b:a", AUDIO_BITRATE, dest]
