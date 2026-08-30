@@ -518,9 +518,10 @@ function transcriber_channel_device(string $channel, ?string $path = null): stri
  * tuner gain to set and no software squelch to measure -- it has a volume knob, and the
  * meter on the manager page is how that gets set. The whole path went out with rtl_fm.
  *
- * transcriber-calibration.json is left on disk rather than deleted here. Nothing reads
- * it, and a store function that exists only to remove a file is a worse thing to keep
- * than the file.
+ * transcriber-calibration.json held the last SDR-era readings and was deleted by hand on
+ * 2026-08-30, once nothing had referred to it for a day. No code removes it: a store
+ * function whose only job is deleting a file it no longer writes is a worse thing to
+ * keep than the file was. A fresh install never creates it.
  */
 
 /* ── Assignment-sheet vocabulary ───────────────────────────────────────────────
