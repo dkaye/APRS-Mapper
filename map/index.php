@@ -5873,7 +5873,8 @@ let _monCursor = null;
 let _monTextCursor = 0;
 let _monSkipped = 0;
 let _monInFlight = false;
-let _monView = null;              // null | 'all' | 'radio' -- which monitor list is open
+let _monView = null;              // null | 'radio' -- which monitor list is open
+let _bcView = false;              // To/From Everyone is showing
 const MON_CAP = 400;              // rows kept; a full net day would grow without bound
 
 let _msgViewAll = false;          // "View All" mode: every message, chronological
@@ -6107,7 +6108,7 @@ function _togglePanel() {
 // "active" (matters only on a phone, where CSS collapses to one pane) and set
 // the right pane to either a thread or the placeholder.
 function _showListView() {
-	_openConvId = null; _pendingConv = null; _monView = null;
+	_openConvId = null; _pendingConv = null; _monView = null; _bcView = false;
 	document.getElementById('msg-panel').classList.remove('thread-active');
 	document.getElementById('msg-panel-title').textContent = 'Messages';
 	document.getElementById('msg-panel-sub').textContent = _msgName ? ('as ' + _msgName) : '';
@@ -6132,9 +6133,11 @@ function _showThreadView(titleHtml, subText) {
 	document.getElementById('msg-panel').classList.add('thread-active');
 	const head = document.getElementById('msg-thread-head');
 	head.classList.add('on');
-	// Opening anything else leaves the monitor, so a later poll does not redraw this
-	// pane out from under a conversation. _openMonitor sets it again after calling here.
+	// Opening anything else leaves the monitor and the broadcast view, so a later poll
+	// does not redraw this pane out from under a conversation. _openMonitor and
+	// _openBroadcast set theirs again after calling here.
 	_monView = null;
+	_bcView = false;
 	head.querySelector('.tn').innerHTML = titleHtml;
 	head.querySelector('.ts').textContent = subText || '';
 	document.getElementById('msg-composer').classList.remove('hidden');
@@ -6379,7 +6382,10 @@ function _renderConvList() {
 		+ row(null, 'Everything', 'Trackers, Log & Radio', null, 'all', _msgViewAll)
 		+ (_msgRadio ? monRow('radio', 'Radio audio & text') : '')
 		+ '<div class="msg-conv-head next">All Trackers</div>'
-		+ row(bc, 'To/From Everyone', '', bc ? bc.id : null, 'broadcast')
+		// No conversation id, even when a broadcast thread exists. This row is an
+		// aggregate of every tracker's traffic, not one thread -- handing it an id would
+		// send the click to _openConversation and show only the broadcasts again.
+		+ row(null, 'To/From Everyone', '', null, 'broadcast', _bcView)
 		+ '<div class="msg-conv-head next">Individual Trackers</div>';
 
 	scroll.innerHTML = head + (items.length
@@ -6393,9 +6399,7 @@ function _renderConvList() {
 			// answered before anything looks for a conversation to open.
 			if (el.dataset.pin === 'all') { if (!_msgViewAll) _toggleViewAll(); return; }
 			if (el.dataset.pin === 'mon-radio') { _openMonitor('radio'); return; }
-			// A pinned row has no thread behind it until something has been put in it, so
-			// an empty id is not a missing conversation. Send to Everyone is the only such row
-			// left: Everything was answered above, and the Event Log is no longer listed.
+			if (el.dataset.pin === 'broadcast') { _openBroadcast(); return; }
 			if (cid === '') _openBroadcast();
 			else _openConversation(+cid);
 		}));
@@ -6713,6 +6717,18 @@ async function _sendCurrent() {
 			await _loadAllView();
 			return;
 		}
+		// Broadcast sent from To/From Everyone: stay there. It is a view of every
+		// tracker's traffic, and the message just sent is part of that traffic -- opening
+		// the broadcast thread would narrow the operator to the one conversation they
+		// were deliberately looking past. _pendingConv is put back so the next message
+		// broadcasts too.
+		if (_bcView) {
+			await _refreshConversations();
+			await _loadAllView();
+			_pendingConv = {recipients: 'all'};
+			_renderBroadcast();
+			return;
+		}
 		_pendingConv = null; _pendingLog = false; _openConvId = cid;
 		await _refreshConversations();
 		const d2 = await _msgApi('thread', {body:{conversation_id: cid}});
@@ -6760,7 +6776,8 @@ async function _poll() {
 			for (const m of d.messages) _ingestIncoming(m);
 			if (_msgPanelOpen) _renderConvList();
 			_updateTotalUnread();
-			if (_msgViewAll) _loadAllView();   // keep the chronological feed live
+			// Both views read _allViewRows, so both are kept live from the same fetch.
+			if (_msgViewAll || _bcView) unawaitedLoadAll();
 		} else if (acksChanged && _openConvId != null) {
 			// A recipient just fetched/read one of my messages — refresh the open
 			// thread so the delivered/read acknowledgement updates.
@@ -6920,7 +6937,7 @@ async function _pollLogThread() {
 	} else {
 		for (const m of fresh) { _msgSeen.add(m.id); if (open) _appendBubble(c, m); }
 	}
-	if (_msgViewAll) _loadAllView();
+	if (_msgViewAll || _bcView) unawaitedLoadAll();
 	if (_msgPanelOpen) _renderConvList();
 }
 
@@ -7243,13 +7260,67 @@ async function _openLog() {
 	setTimeout(() => document.getElementById('msg-compose-text').focus(), 60);
 }
 
+/** True where a message is tracker traffic rather than the log or the radio.
+ *
+ *  Two ways in, because a log entry can be written by either an operator or a
+ *  Transcriber and only one of them is recognisable from the sender. The conversation id
+ *  is the reliable test and is used when the log thread is known; to_label carries it
+ *  otherwise, which is what the bubble renderer has always leaned on. */
+function _isTrackerMsg(m) {
+	const lg = [..._convs.values()].find(c => c.kind === 'log');
+	if (lg && m.conversation_id === lg.id) return false;
+	return m.to_label !== 'Log' && m.from_kind !== 'transcriber';
+}
+
+/** To/From Everyone: every message to or from a tracker, and a composer that reaches
+ *  all of them.
+ *
+ *  It used to be the broadcast THREAD, which showed only messages sent with
+ *  recipients:'all'. On a real event that is almost nothing -- this one has no broadcast
+ *  conversation at all -- so the row sat empty while the traffic it claimed to cover sat
+ *  in the individual threads. Now it aggregates them, which is what the heading says and
+ *  what makes it the counterpart to Everything: Everything is trackers, log and radio;
+ *  this is the trackers alone, without 143 transcriptions burying 13 human messages.
+ *
+ *  Sending still broadcasts. _pendingConv carries recipients:'all' exactly as the old
+ *  path did, so one message reaches every tracker. */
 function _openBroadcast() {
-	const bc = [..._convs.values()].find(c => c.kind === 'broadcast');
-	if (bc) { _openConversation(bc.id); return; }
-	_pendingConv = {recipients:'all'}; _openConvId = null;
-	_showThreadView('Send to Everyone', 'Everyone on the map');
-	document.getElementById('msg-thread-scroll').innerHTML = '<div id="msg-thread-empty">Broadcast to every tracker — type a message below.</div>';
+	_openConvId = null;
+	_pendingLog = false;
+	_showThreadView('To/From Everyone', 'Every tracker — send reaches all of them');
+	// _allViewRows is loaded by Everything, and this view can be the first thing an
+	// operator opens. Fetching is idempotent and cheap enough at an event's size.
+	if (!_allViewRows.length) unawaitedLoadAll();
+	_pendingConv = {recipients: 'all'};
+	_monView = null;
+	_bcView = true;
+	document.getElementById('msg-composer').classList.remove('hidden');
+	_syncComposerMode();
+	_renderBroadcast();
+	_renderConvList();
 	setTimeout(() => document.getElementById('msg-compose-text').focus(), 60);
+}
+
+/** _loadAllView without making every caller async. It renders into the all-view's own
+ *  scroll, which is hidden here, and _renderBroadcast picks the rows up afterwards. */
+function unawaitedLoadAll() {
+	_loadAllView().then(() => _renderBroadcast()).catch(() => {});
+}
+
+function _renderBroadcast() {
+	if (!_bcView) return;
+	const scroll = document.getElementById('msg-thread-scroll');
+	const list = _allViewRows.filter(_isTrackerMsg);
+	_setThreadStream(true);
+	if (!list.length) {
+		scroll.innerHTML = '<div id="msg-thread-empty">No tracker messages yet.<br><br>'
+			+ 'Anything typed below goes to every tracker.</div>';
+		return;
+	}
+	const atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 60;
+	scroll.innerHTML = list.map(m => _compactRowHtml(m, '', false)).join('');
+	_wireCompactRows(scroll);
+	if (atBottom) setTimeout(() => { scroll.scrollTop = scroll.scrollHeight; }, 0);
 }
 
 // Right-click / Ctrl+click a sidebar tracker → message that tracker.
