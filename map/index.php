@@ -5945,9 +5945,37 @@ async function _renderOperators() {
 		return '<div style="display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid #f2f2f2">'
 			+ '<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:14px">' + _esc(o.display_name) + (isMe ? ' <span style="color:#999;font-weight:400">(you)</span>' : '') + '</div>'
 			+ '<div style="font-size:11px">' + status + '</div></div>'
+			+ '<button data-id="' + o.id + '" class="msg-ops-edit" style="border:1px solid #2980b9;color:#2980b9;background:#fff;border-radius:6px;padding:5px 11px;font-size:12px;cursor:pointer">Rename</button>'
 			+ '<button data-id="' + o.id + '" class="msg-ops-disc" style="border:1px solid #c0392b;color:#c0392b;background:#fff;border-radius:6px;padding:5px 11px;font-size:12px;cursor:pointer">Disconnect</button>'
 			+ '</div>';
 	}).join('');
+	// Renaming a console mid-net is disruptive but recoverable, so it asks rather than
+	// warns: the name is prefilled and the operator can see what they are changing from.
+	// The server holds the rules -- allowed characters, length, and the clash test that
+	// refuses a name another live console is using -- so this does not restate any of
+	// them and cannot drift from them.
+	list.querySelectorAll('.msg-ops-edit').forEach(b => b.addEventListener('click', async () => {
+		const id = +b.dataset.id, op = ops.find(o => o.id === id);
+		const was = op ? op.display_name : '';
+		const name = prompt('Rename this operator' + (was ? ' (currently “' + was + '”)' : '') + ':', was);
+		if (name === null) return;
+		if (!name.trim() || name.trim() === was) return;
+		b.disabled = true; b.textContent = '…';
+		let d = null;
+		try { d = await _msgApi('rename', {body:{id, name: name.trim()}}); } catch {}
+		if (!d || d.error) {
+			alert((d && d.error) || 'Could not rename that operator.');
+		} else if (d.self) {
+			// Renaming YOURSELF from this list has to relabel this console too, or the
+			// panel goes on showing a name the server no longer knows.
+			_msgName = d.name;
+			_persistSession();
+			document.getElementById('msg-panel-sub').textContent = 'as ' + _msgName;
+			const me = document.getElementById('msg-me-name');
+			if (me) me.textContent = _msgName;
+		}
+		await _renderOperators();
+	}));
 	list.querySelectorAll('.msg-ops-disc').forEach(b => b.addEventListener('click', async () => {
 		const id = +b.dataset.id, op = ops.find(o => o.id === id);
 		if (!confirm('Disconnect “' + (op ? op.display_name : 'this operator') + '”? This frees the name and signs out that session.')) return;

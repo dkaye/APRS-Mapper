@@ -835,12 +835,25 @@ function messaging_handle(string $action, array $body, array $ctx): void
 
     case 'rename': {
         if (($me['kind'] ?? '') !== 'operator') _msg_fail(403, 'Only operators can rename');
+        // Whose name. Absent means your own, which is what the Change my name box sends
+        // and what this case did exclusively until 2026-08-30. An id means somebody
+        // else's, from Manage operators, and that needs the same permission disconnect
+        // needs -- renaming a station mid-net is as disruptive as signing it out, and
+        // both are things only an administrator should be able to do to another console.
+        $target = (int)($body['id'] ?? 0);
+        if ($target > 0 && $target !== (int)$me['id']) {
+            if (!$ctx['authPerm']('messages.manage')) _msg_fail(403, 'Missing permission: messages.manage');
+            $row = $db->participantById($target);
+            if (!$row || ($row['kind'] ?? '') !== 'operator') _msg_fail(404, 'No such operator');
+        } else {
+            $target = (int)$me['id'];
+        }
         $newName = substr(trim(preg_replace('/[^A-Za-z0-9 \-]/', '', $body['name'] ?? '')), 0, 30);
         if ($newName === '') _msg_fail(400, 'Name required');
         // Only a name held by ANOTHER live operator session blocks the rename — same
         // 90s-stale + token test as `subscribe`, so a departed operator's name auto-frees.
         $clash = $db->participantByKey($event, $newName);
-        if ($clash && (int)$clash['id'] !== (int)$me['id']
+        if ($clash && (int)$clash['id'] !== $target
             && ($clash['kind'] ?? '') === 'operator'
             && !empty($clash['last_seen']) && (time() - (int)$clash['last_seen']) < 90
             && !empty($clash['token'])) {
@@ -849,12 +862,15 @@ function messaging_handle(string $action, array $body, array $ctx): void
         // run() throws now, and the web client relabels itself from this response — so a
         // rename that did not happen has to come back as an error rather than an ok.
         try {
-            $db->renameParticipant((int)$me['id'], $newName);
+            $db->renameParticipant($target, $newName);
         } catch (Throwable $e) {
-            error_log('rename failed for participant ' . (int)$me['id'] . ': ' . $e->getMessage());
+            error_log('rename failed for participant ' . $target . ': ' . $e->getMessage());
             _msg_fail(500, 'Could not save that name.');
         }
-        echo json_encode(['ok'=>true, 'name'=>$newName]);
+        // `self` so the web client knows whether to relabel ITSELF from this answer. It
+        // does that on its own rename and must not on somebody else's, or renaming
+        // another console would change the name shown on this one.
+        echo json_encode(['ok'=>true, 'name'=>$newName, 'self'=>$target === (int)$me['id']]);
         exit;
     }
 

@@ -131,4 +131,37 @@ class MessagingRenameTest extends TestCase
         $this->assertNotEmpty($this->row($me)['token'], 'still signed in');
         $this->assertGreaterThan(0, (int)$this->row($me)['last_seen'], 'still addressable');
     }
+
+    // ── renaming somebody else ────────────────────────────────────────────────
+    //
+    // Manage operators grew a Rename button on 2026-08-30. The endpoint it calls is the
+    // one an operator already used on themselves, now taking an optional id -- so the
+    // property worth pinning is that renaming another row leaves the caller's own name
+    // alone, which is what a shared code path most easily gets wrong.
+
+    public function testRenamingAnotherOperatorLeavesTheCallerUntouched(): void
+    {
+        $me    = $this->db->upsertParticipant($this->ev, 'operator', 'Net Control', 'Net Control', null, null);
+        $other = $this->db->upsertParticipant($this->ev, 'operator', 'Shadow', 'Shadow', null, null);
+
+        $this->db->renameParticipant($other, 'North Gate');
+
+        $this->assertSame('North Gate', $this->row($other)['display_name']);
+        $this->assertSame('North Gate', $this->row($other)['key'], 'key moves with the name');
+        $this->assertSame('Net Control', $this->row($me)['display_name'], 'the caller is not renamed');
+    }
+
+    /** The id has to select the row, not the position: a rename aimed at one operator
+     *  must not land on another with a similar name. */
+    public function testARenameLandsOnTheOperatorItNames(): void
+    {
+        $a = $this->db->upsertParticipant($this->ev, 'operator', 'Net Control', 'Net Control', null, null);
+        $b = $this->db->upsertParticipant($this->ev, 'operator', 'Net Control 2', 'Net Control 2', null, null);
+
+        $this->db->renameParticipant($b, 'Relay');
+
+        $this->assertSame('Net Control', $this->row($a)['display_name']);
+        $this->assertSame('Relay', $this->row($b)['display_name']);
+    }
+
 }
