@@ -2511,7 +2511,7 @@ body.msg-window #msg-panel-grip { display: none; }
 				<div class="qs-sec-title">Messaging</div>
 				<div class="qs-tip">While you are sharing your location, net control can send you text messages. An incoming message plays a tone and shows a pop-up with the sender's name and text.</div>
 				<div class="qs-tip">Click <strong>Reply</strong> to respond, or use the <strong>Messaging</strong> button to start a new message.</div>
-				<div class="qs-tip">Operators: the panel lists your conversations on the left and the selected one on the right. <strong>Everything</strong> and <strong>All Trackers</strong> stay pinned at the top under <strong>Monitor</strong>; under <strong>Trackers</strong> below them, stations not heard from in a day drop off the list. The <strong>&#128203; Log</strong> button above the list opens the event log, as does Ctrl+L. Click <strong>New message</strong> to start one, or right-click a tracker in the sidebar to message it directly.</div>
+				<div class="qs-tip">Operators: the panel lists your conversations on the left and the selected one on the right. <strong>Everything</strong> and <strong>Send to Everyone</strong> stay pinned at the top under <strong>Monitor</strong>; under <strong>Individual Trackers</strong> below them, stations not heard from in a day drop off the list. The <strong>&#128203; Log</strong> button above the list opens the event log, as does Ctrl+L. Click <strong>New message</strong> to start one, or right-click a tracker in the sidebar to message it directly.</div>
 				<div class="qs-tip">Each message has a small <strong>copy</strong> icon that copies just the text &mdash; no sender or timestamp &mdash; ready to paste into a log or an email.</div>
 				<div class="qs-tip">To record something without sending it to anyone, click <strong>&#128203; Log</strong> or press <strong>Ctrl+L</strong>. Entries go into the event's log and reach no one &mdash; times, arrivals, decisions.</div>
 				<div class="qs-tip">Two monitors? The panel menu has <strong>Open messages in a separate window</strong>. Drag it to the second screen: the map keeps the first, only one window reads messages aloud, and clicking a message's location pin moves the map on the other screen.</div>
@@ -6022,7 +6022,7 @@ function _senderLabelHtml(m) {
 	return _esc(name);
 }
 function _convLabel(c) {
-	if (c.kind === 'broadcast') return 'All Trackers';
+	if (c.kind === 'broadcast') return 'Send to Everyone';
 	if (c.title) return c.title;
 	const o = c.members || [];
 	if (!o.length) return 'Conversation';
@@ -6178,7 +6178,7 @@ function _renderAllView() {
 	const atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 60
 	                 || !scroll.querySelector('.msg-all-item');
 	scroll.innerHTML = rows.map(m => {
-		const to = m.broadcast ? 'All Trackers' : (m.to_label || '');
+		const to = m.broadcast ? 'Send to Everyone' : (m.to_label || '');
 		const loc = (typeof m.lat === 'number' && typeof m.lon === 'number')
 			? '<button class="msg-all-loc2" data-mid="' + m.id + '" title="Show where this message was sent from">' + MSG_PIN_SVG + '</button>' : '';
 		// Same copy the thread bubbles offer, for the same reason: this is the view an
@@ -6310,10 +6310,12 @@ function _renderConvList() {
 			'<div class="msg-conv-meta"><span class="msg-conv-time">' + (pv ? _msgShortTime(pv.ts) : '') + '</span>' + badge + '</div></div>';
 	};
 
-	// All Trackers is pinned at the top and always present, worded as it is in the
-	// New message picker. It is the one destination that always exists, and an
-	// operator needing to reach the whole net should not have to compose their way to
-	// it — nor scroll for it once ordinary traffic has pushed it down.
+	// Send to Everyone is pinned at the top and always present. It is the one
+	// destination that always exists, and an operator needing to reach the whole net
+	// should not have to compose their way to it — nor scroll for it once ordinary
+	// traffic has pushed it down. Named for what pressing it DOES, because that is what
+	// the column is: a list of places to send. It carries no subtitle for the same
+	// reason — "Broadcast to everyone" restated the title in other words.
 	// The Event Log is pinned beside it for the same reason: it always exists, it is
 	// reached constantly during a net, and it must not drift down the list.
 	// Everything leads, because it is the widest view of the same traffic and the one an
@@ -6340,10 +6342,10 @@ function _renderConvList() {
 	};
 	const head = '<div class="msg-conv-head">Monitor</div>'
 		+ row(null, 'Everything', 'Trackers and Event Log', null, 'all', _msgViewAll)
-		+ (_msgAll   ? monRow('all',   'Everyone’s traffic')  : '')
+		+ (_msgAll   ? monRow('all',   'Everyone’s Text')  : '')
 		+ (_msgRadio ? monRow('radio', 'Radio audio & text') : '')
-		+ row(bc, 'All Trackers', 'Broadcast to everyone', bc ? bc.id : null, 'broadcast')
-		+ '<div class="msg-conv-head next">Trackers</div>';
+		+ row(bc, 'Send to Everyone', '', bc ? bc.id : null, 'broadcast')
+		+ '<div class="msg-conv-head next">Individual Trackers</div>';
 
 	scroll.innerHTML = head + (items.length
 		? items.map(c => row(c, _convLabel(c), '', c.id)).join('')
@@ -6358,7 +6360,7 @@ function _renderConvList() {
 			if (el.dataset.pin === 'mon-all')   { _openMonitor('all');   return; }
 			if (el.dataset.pin === 'mon-radio') { _openMonitor('radio'); return; }
 			// A pinned row has no thread behind it until something has been put in it, so
-			// an empty id is not a missing conversation. All Trackers is the only such row
+			// an empty id is not a missing conversation. Send to Everyone is the only such row
 			// left: Everything was answered above, and the Event Log is no longer listed.
 			if (cid === '') _openBroadcast();
 			else _openConversation(+cid);
@@ -6458,7 +6460,7 @@ function _openMonitor(kind) {
 	_monView = kind;
 	_openConvId = null;
 	_pendingConv = null;
-	_showThreadView(_esc(kind === 'radio' ? 'Radio audio & text' : 'Everyone’s traffic'),
+	_showThreadView(_esc(kind === 'radio' ? 'Radio audio & text' : 'Everyone’s Text'),
 	                'Not addressed to you — nothing here alerts');
 	document.getElementById('msg-composer').classList.add('hidden');
 	_renderMonitor();
@@ -6963,7 +6965,7 @@ function _collapseSelection(keys) {
 	return [...out];
 }
 function _pickerOptions() {
-	const opts = [{key:'all', kind:'all', name:'All Trackers', sub:'Broadcast to everyone'}];
+	const opts = [{key:'all', kind:'all', name:'Send to Everyone', sub:''}];
 	const byEntity = new Map();     // ent:ID|Name -> [trackers]
 	const namesById = new Map();    // display_id  -> Set(names)
 	for (const t of _mobileTrackers) {
@@ -7016,7 +7018,7 @@ function _renderPicker() {
 		const cls = (sel ? ' sel' : '') + (newGroup ? ' grp-start' : '') + (o._child ? ' grp-child' : '');
 		const sub = o.sub ? '<div style="font-size:11px;color:#888">' + _esc(o.sub) + '</div>' : '';
 		// Presence as a word, not a colour-only dot: readable regardless of colour
-		// vision. Omitted on "(multiple)" and All Trackers, where one state would be
+		// vision. Omitted on "(multiple)" and Send to Everyone, where one state would be
 		// misleading for the several people the row stands for.
 		const pres = o.presence
 			? '<span class="msg-pick-presence ' + (o.online ? 'on' : 'off') + '">' +
@@ -7050,7 +7052,7 @@ function _startFromPicker() {
 	const sendKeys  = keys.includes('all') ? keys : _collapseSelection(keys);
 	const recipients = keys.includes('all') ? 'all' : sendKeys;
 	_pendingConv = {recipients}; _openConvId = null;
-	const label = keys.includes('all') ? 'All Trackers' : sendKeys.map(_pickerNameFor).join(', ');
+	const label = keys.includes('all') ? 'Send to Everyone' : sendKeys.map(_pickerNameFor).join(', ');
 	_showThreadView(_esc(label), keys.length > 1 ? keys.length + ' people' : '');
 	document.getElementById('msg-thread-scroll').innerHTML = '<div id="msg-thread-empty">New conversation — type a message below.</div>';
 	document.getElementById('msg-compose-text').value = ''; _autoGrow(document.getElementById('msg-compose-text'));
@@ -7099,7 +7101,7 @@ function _openBroadcast() {
 	const bc = [..._convs.values()].find(c => c.kind === 'broadcast');
 	if (bc) { _openConversation(bc.id); return; }
 	_pendingConv = {recipients:'all'}; _openConvId = null;
-	_showThreadView('All Trackers', 'Everyone on the map');
+	_showThreadView('Send to Everyone', 'Everyone on the map');
 	document.getElementById('msg-thread-scroll').innerHTML = '<div id="msg-thread-empty">Broadcast to every tracker — type a message below.</div>';
 	setTimeout(() => document.getElementById('msg-compose-text').focus(), 60);
 }

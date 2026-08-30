@@ -615,7 +615,7 @@ class _MessagingScreenState extends State<MessagingScreen> {
   /// moves is harder to learn than one that stays put. Everyone's traffic is everyone's
   /// traffic whether or not a receiver is feeding it.
   String _monitorTitle({required bool radioOnly}) =>
-      radioOnly ? 'Radio audio & text' : 'Everyone’s traffic';
+      radioOnly ? 'Radio audio & text' : 'Everyone’s Text';
 
   /// The rows that lead into the monitor, in the order they appear at the top of the
   /// inbox. One per thing being followed:
