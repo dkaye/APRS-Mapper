@@ -132,6 +132,18 @@ log "=== marsaprs backup start ($STAMP) ==="
 # --sudo: see backup_device. /var/lib/marsaprs holds the messaging history, the auth
 # database and every transcriber token, and none of it was backed up anywhere until
 # 2026-08-29 -- not by this script and not by the FTP one it replaced.
+#
+# /var/www/html/android holds the PUBLISHED APKs, which exist in exactly one place:
+# they are not in git (deliberately -- a 67 MB binary per release), they are not
+# rebuilt by any deploy, and they are uploaded to the Pi by hand. On 2026-08-29
+# download.php -- the permanent URL in emails, QR codes and the user guide -- was
+# answering 503 because the directory held no APK at all, and whatever had been
+# published before it was gone with no copy anywhere. A release that is still
+# installed on somebody's phone cannot be reproduced byte-for-byte from source, so
+# losing it means losing the ability to hand out the exact build a user is running.
+#
+# Cheap despite the size: --link-dest hardlinks a release that has not changed, so
+# each build costs its 67 MB once and nothing on every night after.
 backup_device "aprs-pi" "aprs-pi" --sudo \
     --exclude 'transcriber-level.json' \
     --exclude 'transcriber-state.json' \
@@ -147,6 +159,7 @@ backup_device "aprs-pi" "aprs-pi" --sudo \
     /var/www/html/admin/password.txt \
     /var/www/html/tickets/tickets.json \
     /var/www/html/tickets/uploads \
+    /var/www/html/android \
     /home/pi/.wifi-token
 
 # --- Transcriber: channel config, calibration, logs ---
