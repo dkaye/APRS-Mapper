@@ -478,7 +478,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       for (final m in batch.where((m) => m.isRadio)) {
         final url = MessagingClient.audioUrl(m);
         if (url == null) continue;
-        AudioQueue.instance.addClip(ts: m.ts, url: url, seconds: m.audioSecs ?? 0);
+        // msgId so the queue can attribute a failed or playing clip to its row -- see
+        // clipFailed()/isClipActive(), which the bubble's Play control reads. Omitting
+        // it left every monitor-played clip anonymous to that bookkeeping.
+        AudioQueue.instance.addClip(
+            ts: m.ts, url: url, seconds: m.audioSecs ?? 0, msgId: m.id);
         played.add(m.id);
       }
     }

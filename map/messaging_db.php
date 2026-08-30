@@ -141,6 +141,21 @@ class MessagingDb
             $this->db->exec('ALTER TABLE messages ADD COLUMN audio TEXT');
         if (!isset($cols['audio_secs']))
             $this->db->exec('ALTER TABLE messages ADD COLUMN audio_secs REAL');
+        // When a transcription was filled in on a row that already existed.
+        //
+        // A Transcriber posts the audio the moment the over ends, which CREATES the
+        // entry, and comes back with the words a few seconds later once whisper has
+        // them. Clients poll on an id cursor, so one that fetched the entry inside that
+        // window took the audio, moved its cursor past that id, and never saw the text:
+        // on 2026-08-29 four consecutive overs reached the phones as recordings with no
+        // transcription, while the server held both halves correctly.
+        //
+        // An id cursor cannot express "this row changed", so this gives clients a second
+        // thing to ask about. NULL on every row written before today and on every row
+        // whose text arrived with it, which is why it is additive and safe: a client that
+        // does not ask sees exactly what it saw yesterday.
+        if (!isset($cols['text_ts']))
+            $this->db->exec('ALTER TABLE messages ADD COLUMN text_ts INTEGER');
     }
 
     // ── Photo attachments ──────────────────────────────────────────────────────
@@ -187,8 +202,12 @@ class MessagingDb
      *  something — a retry after a timeout must not be able to overwrite the log. */
     public function setMessageText(int $mid, string $text): bool
     {
-        $this->run("UPDATE messages SET text=:t WHERE id=:id AND (text IS NULL OR text='')",
-                   [':t'=>$text, ':id'=>$mid]);
+        // text_ts is stamped here and nowhere else. It marks the rows an id cursor
+        // cannot reach -- ones that existed, were delivered, and only then got their
+        // words. See the migration for why that happens at all.
+        $this->run("UPDATE messages SET text=:t, text_ts=:now
+                     WHERE id=:id AND (text IS NULL OR text='')",
+                   [':t'=>$text, ':id'=>$mid, ':now'=>time()]);
         return $this->db->changes() > 0;
     }
     // ── Radio audio ────────────────────────────────────────────────────────────
@@ -794,11 +813,22 @@ class MessagingDb
     }
 
     /** All messages in a conversation (thread view). */
-    public function thread(int $conversationId, int $sinceId = 0): array
+    /** `$sinceTextTs` is the same opt-in as monitor()'s: pass it and the answer also
+     *  carries already-seen rows whose transcription landed after the id cursor moved
+     *  past them. Omit it -- as every client before 2026-08-29 does -- and this behaves
+     *  exactly as it always has. The web's log poll is the caller that needs it: it asks
+     *  `thread` every five seconds with since_id taken from the last entry it holds, so
+     *  a Transcriber entry fetched before whisper finished stayed wordless on screen. */
+    public function thread(int $conversationId, int $sinceId = 0, int $sinceTextTs = 0): array
     {
         $msgs = $this->hydrate($this->all(
-            'SELECT * FROM messages WHERE conversation_id=:c AND id > :s ORDER BY id',
-            [':c'=>$conversationId, ':s'=>$sinceId]));
+            $sinceTextTs > 0
+                ? 'SELECT * FROM messages WHERE conversation_id=:c
+                     AND (id > :s OR (text_ts IS NOT NULL AND text_ts > :st)) ORDER BY id'
+                : 'SELECT * FROM messages WHERE conversation_id=:c AND id > :s ORDER BY id',
+            $sinceTextTs > 0
+                ? [':c'=>$conversationId, ':s'=>$sinceId, ':st'=>$sinceTextTs]
+                : [':c'=>$conversationId, ':s'=>$sinceId]));
         if (!$msgs) return $msgs;
         // Tag each message with who it went TO, the same way history() does, so a
         // reader can tell a note addressed to them alone from one that also went to
@@ -952,10 +982,21 @@ class MessagingDb
      * at different intervals, so a monitor batch can arrive first and it would announce
      * before the addressed path had claimed anything.
      */
+    /**
+     * `$sinceTextTs` is opt-in and defaults to off, which is the whole point of it.
+     *
+     * When a client passes it, the answer also carries rows it has ALREADY seen whose
+     * transcription was filled in since that stamp -- the late text an id cursor can
+     * never reach. A client that does not pass it gets byte-identical results to before
+     * this existed, so an older app is not handed repeats it would mishandle: v1.25.4's
+     * MonitorService appends to `recent` without deduping and queues clips with no
+     * msgId, so a re-sent radio entry would play the recording a second time. New
+     * behaviour therefore has to be asked for, not assumed.
+     */
     public function monitor(string $event, int $sinceId, bool $includeMessages, bool $includeLog,
-                            int $viewerId = 0): array
+                            int $viewerId = 0, int $sinceTextTs = 0): array
     {
-        $empty = ['messages'=>[], 'skipped'=>0, 'last_id'=>$sinceId];
+        $empty = ['messages'=>[], 'skipped'=>0, 'last_id'=>$sinceId, 'text_ts'=>$sinceTextTs];
         if (!$includeMessages && !$includeLog) return $empty;
 
         // Which conversations are the log. Usually one; not assumed to be.
@@ -963,7 +1004,12 @@ class MessagingDb
         foreach ($this->all("SELECT id FROM conversations WHERE event=:e AND kind='log'", [':e'=>$event]) as $c) {
             $logIds[] = (int)$c['id'];
         }
-        $where = 'event = :e AND id > :since';
+        // Two ways in: new to this cursor, or old but newly worded. The second half is
+        // added only for a client that asked, and it is bounded by text_ts rather than
+        // by id so it cannot drag in the whole history.
+        $fresh = 'id > :since';
+        if ($sinceTextTs > 0) $fresh = '(id > :since OR (text_ts IS NOT NULL AND text_ts > :stext))';
+        $where = "event = :e AND $fresh";
         if (!$includeMessages) {
             if (!$logIds) return $empty;                       // radio only, no log thread yet
             $where .= ' AND conversation_id IN (' . implode(',', $logIds) . ')';
@@ -971,15 +1017,23 @@ class MessagingDb
             $where .= ' AND conversation_id NOT IN (' . implode(',', $logIds) . ')';
         }
         $params = [':e'=>$event, ':since'=>$sinceId];
+        if ($sinceTextTs > 0) $params[':stext'] = $sinceTextTs;
 
         // Everything the cursor has not seen, before bounding. Both numbers come from
         // the same predicate so `skipped` cannot disagree with what was returned, and
         // last_id is the high-water mark of the WHOLE set — not of the rows sent — or a
         // client that was bounded would re-request the same skipped range forever.
-        $agg     = $this->one("SELECT COUNT(*) AS n, MAX(id) AS hi FROM messages WHERE $where", $params);
+        // MAX(text_ts) alongside MAX(id) so the client can advance BOTH cursors from one
+        // answer. Taken over the whole matching set for the same reason last_id is: a
+        // bounded client that advanced only what it was sent would ask for the same
+        // skipped range forever.
+        $agg     = $this->one(
+            "SELECT COUNT(*) AS n, MAX(id) AS hi, MAX(text_ts) AS htext FROM messages WHERE $where",
+            $params);
         $total   = (int)($agg['n'] ?? 0);
         if ($total === 0) return $empty;
         $lastId  = (int)($agg['hi'] ?? $sinceId);
+        $lastText = max($sinceTextTs, (int)($agg['htext'] ?? 0));
 
         // Newest first, then reversed: after a long outage the recent minutes are what
         // is worth hearing, not the start of a backlog the event has already moved past.
@@ -995,6 +1049,9 @@ class MessagingDb
             // gap is visible rather than looking like nothing happened.
             'skipped'  => max(0, $total - count($rows)),
             'last_id'  => $lastId,
+            // Only meaningful to a client that sent since_text_ts; harmless to one that
+            // did not, which ignores the key.
+            'text_ts'  => $lastText,
         ];
     }
 

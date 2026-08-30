@@ -626,6 +626,10 @@ function messaging_handle(string $action, array $body, array $ctx): void
     case 'thread': {
         $conv    = (int)($_GET['conversation_id'] ?? $body['conversation_id'] ?? 0);
         $sinceId = (int)($_GET['since_id'] ?? $body['since_id'] ?? 0);
+        // Opt-in: ask for it and already-seen rows whose transcription arrived late come
+        // back too. A client that omits it gets what it has always got -- which is the
+        // point, because an older one would mishandle a repeat. See MessagingDb::thread.
+        $sinceText = (int)($_GET['since_text_ts'] ?? $body['since_text_ts'] ?? 0);
         if (!$conv) _msg_fail(400, 'conversation_id required');
         // Only a member (or an operator) may read a thread — otherwise a mobile
         // could pull any conversation by guessing its id. Broadcasts are readable
@@ -633,7 +637,11 @@ function messaging_handle(string $action, array $body, array $ctx): void
         // the thread would ring the alert tone for something they cannot open.
         if (($me['kind'] ?? '') !== 'operator' && !$db->canAccessConversation($event, $conv, (int)$me['id']))
             _msg_fail(403, 'Not a member of this conversation');
-        echo json_encode(['messages'=>$db->thread($conv, $sinceId), 'conversation_id'=>$conv]);
+        // A stamp the caller can hand back next time. `time()` rather than the newest
+        // row's, so a transcription written between this query and the next answer is
+        // still ahead of the cursor and cannot fall through the gap.
+        echo json_encode(['messages'=>$db->thread($conv, $sinceId, $sinceText),
+                          'conversation_id'=>$conv, 'text_ts'=>time()]);
         exit;
     }
 
@@ -790,11 +798,19 @@ function messaging_handle(string $action, array $body, array $ctx): void
         // phone announces addressed and monitored traffic on two separate paths and this
         // feed carries both; without the tag a message sent to this operator is read
         // aloud twice. See MessagingDb::monitor().
-        $res     = $db->monitor($event, $sinceId, $all, $log, (int)$me['id']);
+        // Same opt-in as ?thread. Absent for every client built before 2026-08-29, which
+        // is deliberate: v1.25.4's MonitorService appends without deduping and queues
+        // clips with no msgId, so handing it a row it already has would replay the
+        // recording. New behaviour is asked for, never assumed.
+        $sinceText = (int)($_GET['since_text_ts'] ?? $body['since_text_ts'] ?? 0);
+        $res     = $db->monitor($event, $sinceId, $all, $log, (int)$me['id'], $sinceText);
         echo json_encode([
             'messages' => $res['messages'],
             'skipped'  => $res['skipped'],
             'last_id'  => $res['last_id'],
+            // See ?thread: the server's clock, not the newest row's, so nothing written
+            // while this request was in flight lands behind the cursor.
+            'text_ts'  => time(),
             'max_age'  => MessagingDb::MONITOR_MAX_AGE,
         ]);
         exit;

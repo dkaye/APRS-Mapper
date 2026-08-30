@@ -480,4 +480,95 @@ class MessagingMonitorTest extends TestCase
 
         $this->assertSame([$a, $b], array_column($this->monitorAll()['messages'], 'id'));
     }
+
+    // ── late transcriptions, and the promise made to older clients ────────────
+    //
+    // A Transcriber posts the audio the instant the over ends -- that POST creates the
+    // entry -- and comes back with the words once whisper has them. A client polling on
+    // an id cursor can fetch the entry inside that window, take the audio, advance past
+    // the id, and never be offered the text again. That is what happened on 2026-08-29:
+    // four consecutive overs arrived on the phones as recordings with no transcription
+    // while the server held both halves correctly.
+
+    /** The bug, stated as a test: an id cursor cannot reach a row that changed. */
+    public function testAnIdCursorNeverSeesATranscriptionThatArrivedLate(): void
+    {
+        $id = $this->logEntry('');                 // audio posted; whisper still running
+        $first = $this->monitorAll(0);
+        $this->assertSame([''], array_column($first['messages'], 'text'));
+        $cursor = $first['last_id'];
+
+        $this->db->setMessageText($id, 'Aid three we have a rider down.');
+
+        $this->assertSame([], $this->monitorAll($cursor)['messages'],
+            'an id cursor is blind to a row it has already passed');
+    }
+
+    /** The fix, and it must be asked for. */
+    public function testAskingForLateTextGetsTheCompletedRowBack(): void
+    {
+        $id = $this->logEntry('');
+        $first = $this->db->monitor($this->ev, 0, true, true, 0, 1);
+        $cursor = $first['last_id'];
+        $textCursor = $first['text_ts'];
+
+        $this->db->setMessageText($id, 'Aid three we have a rider down.');
+
+        $again = $this->db->monitor($this->ev, $cursor, true, true, 0, $textCursor);
+        $this->assertSame(['Aid three we have a rider down.'],
+                          array_column($again['messages'], 'text'));
+        $this->assertSame($id, (int)$again['messages'][0]['id'],
+                          'the same row, not a second one');
+    }
+
+    /** The promise to v1.25.4, which is the whole reason this is opt-in. That client
+     *  appends monitor results without deduping and queues clips with no msgId, so a
+     *  row it already holds would replay the recording. It must never be sent one. */
+    public function testAClientThatDoesNotAskIsNeverSentARowTwice(): void
+    {
+        $id = $this->logEntry('');
+        $cursor = $this->monitorAll(0)['last_id'];
+        $this->db->setMessageText($id, 'Aid three we have a rider down.');
+
+        $this->assertSame([], $this->monitorAll($cursor)['messages'],
+            'no since_text_ts means no repeats, exactly as before this existed');
+    }
+
+    /** Having been given the completed row once, do not give it again. */
+    public function testACompletedRowIsNotResentOnceItsStampIsPassed(): void
+    {
+        $id = $this->logEntry('');
+        $first = $this->db->monitor($this->ev, 0, true, true, 0, 1);
+        $this->db->setMessageText($id, 'Aid three we have a rider down.');
+        $second = $this->db->monitor($this->ev, $first['last_id'], true, true, 0, $first['text_ts']);
+        $this->assertCount(1, $second['messages']);
+
+        $third = $this->db->monitor($this->ev, $second['last_id'], true, true, 0, $second['text_ts']);
+        $this->assertSame([], $third['messages'], 'the text cursor has to advance too');
+    }
+
+    /** An ordinary message carries its text from the start, so nothing stamps it and
+     *  it cannot come back a second time to a client that asked for late text. */
+    public function testAMessageThatWasNeverEmptyIsNotTreatedAsUpdated(): void
+    {
+        $this->logEntry('Net control, all stations, radio check.');
+        $first = $this->db->monitor($this->ev, 0, true, true, 0, 1);
+        $second = $this->db->monitor($this->ev, $first['last_id'], true, true, 0, $first['text_ts']);
+        $this->assertSame([], $second['messages']);
+    }
+
+    /** setMessageText refuses to overwrite, and must not restamp either -- an outbox
+     *  retry landing after the words are in would otherwise re-send a finished row to
+     *  every monitoring phone. */
+    public function testADuplicateFillInDoesNotRestampTheRow(): void
+    {
+        $id = $this->logEntry('');
+        $this->db->setMessageText($id, 'Aid three we have a rider down.');
+        $after = $this->db->monitor($this->ev, 0, true, true, 0, 1);
+
+        $this->assertFalse($this->db->setMessageText($id, 'something else entirely'));
+        $again = $this->db->monitor($this->ev, $after['last_id'], true, true, 0, $after['text_ts']);
+        $this->assertSame([], $again['messages']);
+    }
+
 }

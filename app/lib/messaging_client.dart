@@ -271,7 +271,17 @@ class MonitorResult {
   /// skipped. Advancing past the gap is what stops the same backlog being reported
   /// on every poll for the rest of the event.
   final int lastId;
-  const MonitorResult({required this.messages, required this.skipped, required this.lastId});
+
+  /// The server's clock at the moment it answered, to hand back as `since_text_ts`.
+  ///
+  /// An id cursor cannot express "this row changed", and Transcriber entries do change:
+  /// the audio is posted the instant the over ends -- creating the entry -- and the
+  /// transcription is written to the same row once whisper has it. A poll landing in
+  /// that window took the recording and moved past the id, so the words could never be
+  /// delivered. Carrying this second cursor is what asks for them.
+  final int textTs;
+  const MonitorResult({required this.messages, required this.skipped, required this.lastId,
+                       this.textTs = 0});
 }
 
 class SendResult {
@@ -400,9 +410,14 @@ class MessagingClient {
   /// Deliberately not part of poll(): this must never mark anything delivered or
   /// read. Monitoring somebody else's message has to leave no trace on it, or their
   /// sender's receipts start counting us as a recipient.
-  Future<MonitorResult> monitor(int sinceId, {required bool all, required bool radio}) async {
+  /// `sinceTextTs` is opt-in on the wire and older servers ignore it, so sending it
+  /// costs nothing against a server that has not been updated -- it simply answers as
+  /// it always did, and `text_ts` comes back absent.
+  Future<MonitorResult> monitor(int sinceId, {required bool all, required bool radio,
+                                              int sinceTextTs = 0}) async {
     if (!all && !radio) return MonitorResult(messages: const [], skipped: 0, lastId: sinceId);
-    final d = await _post('monitor', {'since_id': sinceId, 'all': all, 'log': radio});
+    final d = await _post('monitor', {'since_id': sinceId, 'all': all, 'log': radio,
+                                      'since_text_ts': sinceTextTs});
     if (d == null) return MonitorResult(messages: const [], skipped: 0, lastId: sinceId);
     return MonitorResult(
       messages: ((d['messages'] as List?) ?? [])
@@ -410,6 +425,9 @@ class MessagingClient {
           .toList(),
       skipped: (d['skipped'] as num?)?.toInt() ?? 0,
       lastId: (d['last_id'] as num?)?.toInt() ?? sinceId,
+      // Absent from a server that predates this, which leaves the cursor at 0 and the
+      // request meaningless to it -- exactly the old behaviour, not an error.
+      textTs: (d['text_ts'] as num?)?.toInt() ?? 0,
     );
   }
 

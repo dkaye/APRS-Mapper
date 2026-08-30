@@ -5797,6 +5797,11 @@ const _convs   = new Map();   // id -> {id,kind,title,members,unread,last_id,pre
 let _openConvId = null;       // conversation shown in the thread view
 let _pendingConv = null;      // {recipients} for a not-yet-created conversation
 const _msgSeen = new Set();   // message ids already placed in a thread (dedupe)
+// How far the log poll has been told about late-arriving transcriptions. Sent back as
+// since_text_ts; the server answers with its own clock so nothing written while a request
+// was in flight lands behind the cursor. 0 until the first answer, which means the first
+// poll of a session asks only by id -- correct, since it is holding nothing yet.
+let _logTextTs = 0;
 // Messages used to be queued for later reading when they arrived on a thread that was
 // not the one being viewed, and read out only when somebody opened it. Every message
 // reaching _ingestIncoming is addressed to this operator, so that meant a call could
@@ -6516,18 +6521,51 @@ async function _pollLogThread() {
 	// history down on its first poll.
 	const msgs = c.messages || [];
 	const since = msgs.length ? msgs[msgs.length - 1].id : (c.last_id || 0);
-	const d = await _msgApi('thread', {body:{conversation_id: c.id, since_id: since}});
+	// since_text_ts asks for one more thing on top of "newer than this id": rows already
+	// held whose transcription was filled in since that stamp. A Transcriber posts the
+	// recording the moment the over ends -- that POST creates the entry -- and returns
+	// with the words a few seconds later, so an id cursor that swept past in between took
+	// the audio and could never be offered the text. Four consecutive overs were lost
+	// that way on 2026-08-29.
+	const d = await _msgApi('thread', {body:{conversation_id: c.id, since_id: since,
+	                                          since_text_ts: _logTextTs}});
 	const fresh = (d && d.messages) || [];
+	if (d && d.text_ts) _logTextTs = d.text_ts;
 	if (!fresh.length) return;
 
-	if (msgs.length || open) c.messages = msgs.concat(fresh);
+	// Merged by id, not appended. Everything here used to be strictly newer than what we
+	// held; now some of it is a row we already have, wearing its words at last, and
+	// concat would put the same entry on screen twice.
+	let updated = false;
+	if (msgs.length || open) {
+		const at = new Map(msgs.map((m, i) => [m.id, i]));
+		for (const m of fresh) {
+			const i = at.get(m.id);
+			if (i === undefined) msgs.push(m);
+			else { msgs[i] = m; updated = true; }
+		}
+		msgs.sort((a, b) => a.id - b.id);
+		c.messages = msgs;
+	}
 	c.last_id = Math.max(c.last_id || 0, fresh[fresh.length - 1].id);
-	const last = fresh[fresh.length - 1];
-	c.preview = {text: last.text, ts: last.ts, from_id: last.from_id,
-	             from_name: last.from_name, from_short: last.from_short,
-	             self: last.from_id === _msgMeId};
+	// Only from something genuinely new. A batch that is nothing but late text would
+	// otherwise roll the conversation list back to an older line than it already shows.
+	const last = fresh.filter(m => m.id > since).pop();
+	if (last) {
+		c.preview = {text: last.text, ts: last.ts, from_id: last.from_id,
+		             from_name: last.from_name, from_short: last.from_short,
+		             self: last.from_id === _msgMeId};
+	}
 	_convs.set(c.id, c);
-	for (const m of fresh) { _msgSeen.add(m.id); if (open) _appendBubble(c, m); }
+	// A bubble already on screen cannot be appended to, so a batch carrying an update
+	// redraws the thread. Appending stays the path for the ordinary case, which is every
+	// poll that brought only new entries.
+	if (updated && open) {
+		_renderThread(c);
+		for (const m of fresh) _msgSeen.add(m.id);
+	} else {
+		for (const m of fresh) { _msgSeen.add(m.id); if (open) _appendBubble(c, m); }
+	}
 	if (_msgViewAll) _loadAllView();
 	if (_msgPanelOpen) _renderConvList();
 }

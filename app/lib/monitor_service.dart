@@ -54,6 +54,20 @@ class MonitorService {
   bool _radioAudio = false;
   bool _speakAll = false;
   int _cursor = 0;
+  /// Second cursor, for rows that CHANGED rather than rows that are new. Not persisted:
+  /// it is the server's clock, so a stale one across a restart would ask for a window
+  /// that has nothing to do with this session. Starting at 0 asks by id alone on the
+  /// first poll, which is right -- nothing is held yet to be updated.
+  int _textCursor = 0;
+  /// Ids this device has already been given, so a row coming back with its late
+  /// transcription is recognised as an update.
+  ///
+  /// Separate from `recent`, which is capped and drops its oldest: a row evicted by that
+  /// cap and then updated would look new again, and "new" is what queues radio audio --
+  /// so the recording would play a second time. Bounded well above the cap for the same
+  /// reason it exists at all.
+  final _seenIds = <int>{};
+  static const _kSeenCap = 2000;
   bool _loaded = false;
   bool _inFlight = false;
 
@@ -155,12 +169,14 @@ class MonitorService {
     if (!_loaded || !enabled || _inFlight) return;
     _inFlight = true;
     try {
-      final res = await client.monitor(_cursor, all: _all, radio: wantsLog);
+      final res = await client.monitor(_cursor, all: _all, radio: wantsLog,
+                                       sinceTextTs: _textCursor);
       if (res.lastId != _cursor) {
         _cursor = res.lastId;
         final p = await SharedPreferences.getInstance();
         await p.setInt(_kPrefCursor, _cursor);
       }
+      if (res.textTs > _textCursor) _textCursor = res.textTs;
       if (_skipFirstBatch) {
         _skipFirstBatch = false;
         return;
@@ -170,11 +186,36 @@ class MonitorService {
         _skipped.add(res.skipped);
       }
       if (res.messages.isNotEmpty) {
-        recent.addAll(res.messages);
+        // Merged by id, not appended. Everything used to be strictly newer than the
+        // cursor; now a batch can carry a row already held, back with the transcription
+        // that was not ready the first time. Appending it would show the same
+        // transmission twice in the monitor view.
+        //
+        // `fresh` is what the rest of the app is told about, and it deliberately
+        // excludes updates: downstream, radio audio is queued from these, and replaying
+        // a recording because its words caught up is worse than the missing text this
+        // whole mechanism exists to fix.
+        final fresh = <MsgMessage>[];
+        for (final m in res.messages) {
+          final at = recent.indexWhere((r) => r.id == m.id);
+          if (at >= 0) {
+            recent[at] = m;
+          } else if (_seenIds.contains(m.id)) {
+            // Seen before but no longer in `recent` -- the cap dropped it. Still an
+            // update, and must not be announced or played again.
+          } else {
+            recent.add(m);
+            fresh.add(m);
+          }
+          _seenIds.add(m.id);
+        }
+        while (_seenIds.length > _kSeenCap) {
+          _seenIds.remove(_seenIds.first);
+        }
         if (recent.length > _kRecentCap) {
           recent.removeRange(0, recent.length - _kRecentCap);
         }
-        _messages.add(res.messages);
+        if (fresh.isNotEmpty) _messages.add(fresh);
       }
     } finally {
       _inFlight = false;
@@ -187,6 +228,8 @@ class MonitorService {
     recent.clear();
     skippedTotal = 0;
     _cursor = 0;
+    _textCursor = 0;
+    _seenIds.clear();
     _skipFirstBatch = true;
     final p = await SharedPreferences.getInstance();
     await p.remove(_kPrefCursor);
