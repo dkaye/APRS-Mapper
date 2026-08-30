@@ -2169,7 +2169,9 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
 .msg-bubble-to { font-weight: 400; color: #7b8a95; }
 .msg-bubble-sender .sid { color: #888; font-weight: 600; }
 .msg-bubble-foot { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
-.msg-bubble-time { font-size: 10px; color: #aaa; font-variant-numeric: tabular-nums; }
+/* nowrap now that this carries a date as well as a time: the footer is a flex row and a
+   wrapped stamp would push the delivery receipt onto a second line. */
+.msg-bubble-time { font-size: 10px; color: #aaa; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .msg-bubble-row.me .msg-bubble-time { color: #d6e6f2; }
 /* Your own bubbles are solid blue, and the sender line only appears on them for log
    entries — its default near-black blue would be unreadable there. */
@@ -5884,6 +5886,9 @@ const MON_CAP = 400;              // rows kept; a full net day would grow withou
 let _msgViewAll = false;          // "View All" mode: every message, chronological
 let _allViewSearchOn = false;     // search box shown within View All
 let _allViewRows = [];            // all event messages (from history), sorted by time
+// Set when the view is opened, cleared by the render that honours it: jump to the
+// newest message this once, whatever the scroll position was left at last time.
+let _allViewJump = false;
 
 // Restore a saved subscription.
 try {
@@ -6198,6 +6203,7 @@ function _toggleViewAll() {
 	document.getElementById('msg-panel-title').textContent = _msgViewAll ? 'Everything' : 'Messages';
 	document.getElementById('msg-panel-sub').textContent = _msgViewAll ? 'every message, chronological' : (_msgName ? 'as ' + _msgName : '');
 	_moveComposer(_msgViewAll);
+	if (_msgViewAll) _allViewJump = true;
 	if (_msgViewAll) {
 		// Everything is where an operator watches the whole net, and the note they want
 		// to write is almost always about what they are watching. Without this, making
@@ -6248,7 +6254,13 @@ function _renderAllView() {
 	// Stick to the bottom only if that is where they already were. Now that entries
 	// arrive on their own, always scrolling would yank somebody reading back through the
 	// morning down to the newest line every time the radio was keyed.
-	const atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 60
+	// Opening the view always lands on the newest message; a redraw while it is open
+	// only does so if the operator was already there. Those are different questions and
+	// the old test answered only the second, so coming back to Everything after scrolling
+	// up left the view wherever it had been -- in the middle of the morning, with the
+	// last hour of the net below the fold.
+	const atBottom = _allViewJump
+	                 || scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 60
 	                 || !scroll.querySelector('.msg-all-item');
 	scroll.innerHTML = rows.map(m => _compactRowHtml(m, q, true)).join('');
 	// Clicking a message opens its conversation so the operator can reply.
@@ -6258,7 +6270,13 @@ function _renderAllView() {
 	}));
 	_wireCompactRows(scroll);
 	document.getElementById('msg-allview-count').textContent = rows.length + (rows.length === 1 ? ' message' : ' messages') + (q ? ' matching' : '');
-	if (atBottom) scroll.scrollTop = scroll.scrollHeight;   // newest at the bottom
+	// After a frame, not inline. The rows have just been written and the composer moves
+	// in and out of this column, so the height this reads synchronously is the height
+	// before that settles -- which lands it near the bottom rather than at it.
+	if (atBottom) {
+		requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight; });
+	}
+	_allViewJump = false;
 }
 // Open the conversation a View-All message belongs to, then leave View All so the
 // operator lands in the thread and can reply. If they aren't a member of that
@@ -6534,7 +6552,7 @@ function _bubbleHtml(m, c) {
 	const ack = me ? '<span class="msg-bubble-ack">' + _ackLabel(_msgReceipts.get(m.id), _ackSingle(m.conversation_id)) + '</span>' : '';
 	return '<div class="msg-bubble-row ' + (me ? 'me' : 'them') + '">' +
 		'<div class="msg-bubble">' + sender + photo + textHtml + audio +
-		'<div class="msg-bubble-foot">' + loc + copy + '<span class="msg-bubble-time">' + _msgClockTime(m.ts) + '</span>' + ack + '</div>' +
+		'<div class="msg-bubble-foot">' + loc + copy + '<span class="msg-bubble-time">' + _esc(_msgFmtStamp(m.ts)) + '</span>' + ack + '</div>' +
 		'</div></div>';
 }
 // Full-size photo lightbox (tap the thumbnail; tap anywhere to close).
@@ -6571,6 +6589,7 @@ function _openMonitor(kind) {
 	_monView = kind;
 	document.getElementById('msg-composer').classList.add('hidden');
 	_renderMonitor();
+	_jumpThreadBottom();
 	_renderConvList();
 }
 
@@ -7344,6 +7363,7 @@ function _openBroadcast() {
 	document.getElementById('msg-composer').classList.remove('hidden');
 	_syncComposerMode();
 	_renderBroadcast();
+	_jumpThreadBottom();
 	_renderConvList();
 	setTimeout(() => document.getElementById('msg-compose-text').focus(), 60);
 }
@@ -7352,6 +7372,16 @@ function _openBroadcast() {
  *  scroll, which is hidden here, and _renderBroadcast picks the rows up afterwards. */
 function unawaitedLoadAll() {
 	_loadAllView().then(() => _renderBroadcast()).catch(() => {});
+}
+
+/** Land on the newest entry. The thread pane keeps whatever scroll position the last
+ *  view left in it, so opening one of these lands mid-morning unless it is told
+ *  otherwise. After a frame, so the rows just written have been laid out. */
+function _jumpThreadBottom() {
+	requestAnimationFrame(() => {
+		const sc = document.getElementById('msg-thread-scroll');
+		if (sc) sc.scrollTop = sc.scrollHeight;
+	});
 }
 
 function _renderBroadcast() {
