@@ -382,6 +382,22 @@ The same tap / long-press behavior applies to **Aid Stations** and **iGates** in
 
 **Native app:** tapping a tracker in the sidebar also forces its full **ID and name** to show as a label on the map — even if that label is normally hidden — reverting to your configured label settings on the next action.
 
+#### Pinning a place on the map (native app)
+
+**Long-press anywhere on the map** to pin that spot. A purple pin drops, and from then on
+the map will not let it leave the view: pan and zoom freely and it stays on screen,
+sliding to the edge rather than off it.
+
+It is for scanning **around** something without losing it — an aid station, an incident,
+the finish. On a phone at a net's zoom levels, panning two screens away from the thing you
+are working around is easy to do and easy not to notice.
+
+To let go: **tap the pin**, or do anything that moves the map somewhere specific — center
+on a tracker, go to your own location, or restore the saved view. Each of those is a
+request to be somewhere, and the pin releases rather than fighting it.
+
+No coordinates are shown. The pin is a constraint, not a measurement.
+
 To open **Google Maps** centered on any tracker, igate, or aid station, **long-press its marker on the map** (not in the drawer).
 
 Tapping a different tracker switches focus to that tracker.
@@ -391,6 +407,13 @@ Tapping a different tracker switches focus to that tracker.
 ### Courses (L,S)
 
 Each course entry in the sidebar is a named route overlay (GPX, KML, or GeoJSON file).
+
+**A course does not have to be a route.** A GeoJSON file of Points — mile markers, aid
+stops, gates — is a perfectly ordinary course, and is drawn as labelled dots rather than
+as a line. The label comes from the file (`title` or `name`), which matters: an operator
+hearing *"at marker four"* has to be able to find marker four. Points are never joined
+into a line, because a polyline threaded through mile markers would look like a route and
+would not be one.
 
 - **Click the ✓** next to the course name to toggle the overlay on or off.
 
@@ -496,16 +519,22 @@ Messaging opens as a **chat panel docked to the right of the map**, in two parts
 
 - **Conversations list** — every conversation you are part of, each with the other party's ID and name and an unread badge. Click one to open its thread.
 
-  The list is in two labelled sections. Under **Monitor**, two entries are **pinned at the top** and always present: **Everything**, the whole event in one chronological feed, and **All Trackers**, for broadcasting to everyone. Neither has to be composed or scrolled to once ordinary traffic builds up. Under **Trackers** below them come the conversations themselves.
+  The list is in **three labelled sections**, because the column answers three different questions. Under **Monitor** are the views you watch rather than send to: **Everything**, the whole event in one chronological feed, and — if you have switched them on — **Radio audio & text**, what the receivers heard. Under **All Trackers** sits **To/From Everyone**: every message to or from a tracker, and a composer that reaches all of them at once. Under **Individual Trackers** below that come the conversations themselves.
+
+  The split that matters is the second one: broadcast versus individual is how many people hear what you type, and it has a heading rather than being inferred from a row's position.
 
   In that lower section, conversations whose other end has not been seen for a day are **hidden**, on the same 24-hour rule the New message list uses — you are looking for someone to talk to, and a station that left the event yesterday is not that. Anything unread, and whatever thread you have open, stays regardless, so the list cannot empty out under you mid-read.
 - **Resizing** — drag the **left edge** of the message window to make it wider or narrower, and drag the **divider** between the conversation list and the messages to rebalance them. Both are remembered for next time.
 
-**Thread + composer** — the selected conversation's messages, newest at the bottom, with an **always-visible message box** that is never covered by an incoming message. New messages appear live as they arrive — nothing to reload. Only your own conversations are shown; traffic between other operators and trackers is not.
+**Thread + composer** — the selected conversation's messages, newest at the bottom, with an **always-visible message box** that is never covered by an incoming message. New messages appear live as they arrive — nothing to reload.
+
+**The message box says where what you type is going.** It reads *Message to M001 Doug* in a conversation, *Broadcast to everyone* under All Trackers, and *Write a log entry…* while Everything is open — because a line meant for one operator reaching the whole net is not a typo you can take back.
+
+**Every list is drawn the same way**: one compact row per message, sender and recipient on the left, a date and 12-hour time on the right, and the text beneath. A recording carries a **play button** showing its length. Opening any list lands you on the newest message.
 
 **Starting a conversation or group:**
 
-Click **New message** to see the list of **mobile trackers**. Pick one recipient for a direct chat, several for a **group**, or choose **All Trackers** to broadcast to every mobile participant. You can also click a tracker in the sidebar to open a conversation already addressed to that participant. Radio-only trackers are not listed — they cannot receive messages.
+Click **New message** to see the list of **mobile trackers**. Pick one recipient for a direct chat, several for a **group**, or choose **Send to Everyone** to broadcast to every mobile participant. You can also click a tracker in the sidebar to open a conversation already addressed to that participant. Radio-only trackers are not listed — they cannot receive messages.
 
 The list shows only participants you can actually reach: anyone whose app has checked in within the last 24 hours. Someone temporarily out of coverage still appears and can still be messaged — their phone receives everything the moment it reconnects — but people from a previous event drop off and no longer clutter the list.
 
@@ -555,9 +584,21 @@ Type up to 1,000 characters and press **Send**. (The box also accepts far more t
 
 **Copying a message:** Each message carries a small **copy** icon beside its timestamp. It copies **the message text only** — no sender, no timestamp, no receipt — which is what belongs in a log entry, an email, or an incident report. The icon turns into a green tick to confirm.
 
-**Read aloud:** Arriving messages are **spoken aloud by default** — you are usually watching the map rather than the message panel. Toggle the **Read aloud** (speaker) button to mute; your choice is remembered. Each is announced as *“From CRD Stanton”*, then a short pause, then the message itself — so you know who is calling without looking at the screen, and the name does not run into the first words — handy for a hands-free net control station. When it is off, a short alert **tone** plays instead; a volume slider sets its level (0 mutes).
+**Read aloud:** Arriving messages are **spoken aloud by default** — you are usually watching the map rather than the message panel. Each is announced as *“From CRD Stanton”*, then a short pause, then the message itself — so you know who is calling without looking at the screen, and the name does not run into the first words. When speech is off, a short alert **tone** plays instead; a volume slider sets its level (0 mutes).
 
-**Settings** (in the panel): **Change my name**, adjust the alert volume, open **View all** messages, or **Sign out** of messaging.
+A message addressed to you is spoken **whatever you are looking at** — reading another conversation, or with the panel closed entirely. It used to be read only while its own thread was on screen, which meant the person a message was *for* could be the only one who did not hear it.
+
+**Three switches, one place.** The speaker icon is gone; all three live behind the **⚙ gear** in the message bar:
+
+| Switch | What it does |
+|---|---|
+| **Speak text messages** | Reads arriving messages aloud. On by default |
+| **Hear radio traffic** | Plays the recordings as transmissions arrive, and adds the **Radio audio & text** row |
+| **Receive all messages** | Follows typed traffic between other stations, so it can be read aloud too |
+
+The last two are **off** by default: they subscribe this window to traffic you are not part of, and a console that starts talking about other people's messages unasked is a surprise. Turning one on starts from *now*, so it never dumps a backlog mid-net. Arriving recordings play one at a time — two overs talking over each other are unintelligible and sound like a receiver fault.
+
+**Settings** (in the panel): the three switches above, **Change my name**, the alert volume, **View all** messages, **Manage operators** (rename or disconnect another console, if you have permission), or **Sign out** of messaging.
 
 **View all messages:**
 
@@ -626,7 +667,16 @@ Nothing ever interrupts anything else: a new message waits for the current one t
 
 **Speak text messages** covers everything the phone shows you. Turn **Receive all messages** on as well and the rest of the net is read aloud too — there is no second switch to find.
 
-Followed traffic appears in a separate **Monitor** view and **never raises a notification** — on a busy net that is a message every few seconds, and a phone that buzzed for each would be unusable within a minute. If you were offline for a while, it tells you how many it skipped rather than leaving a silent gap.
+Followed traffic appears at the top of the message list as **one row per switch**, and **never raises a notification** — on a busy net that is a message every few seconds, and a phone that buzzed for each would be unusable within a minute. If you were offline for a while, it tells you how many it skipped rather than leaving a silent gap.
+
+| Switch on | Row you get |
+|---|---|
+| Receive all messages | **Everyone's Text** — typed traffic between other stations |
+| Hear radio traffic | **Radio audio & text** — what the receivers heard, clip and transcription together |
+
+A message is in one row or the other, never both, so the two are worth opening separately. **Speak text messages** decides whether any of it is read aloud rather than what is followed, so it adds no row of its own.
+
+**A message addressed to you is always spoken** when **Speak text messages** is on — whatever screen you are on, and with the app in your pocket and the screen locked. It used to be read only while its own conversation was open, which meant the person a message was *for* could be the only one who did not hear it.
 
 There used to be a second **🔊 speaker** icon beside the gear holding the sound switches, on the grounds that what *reaches* your phone is not a sound setting. All three live in the one sheet now, so there is nothing to hunt between.
 
@@ -1223,20 +1273,19 @@ You do not have to do anything for this to happen. The page at **marsaprs.org/tr
 
 ### Setting up a channel
 
-**Receivers** are the machines themselves — one row per box. The **Host** must match that computer's name exactly, because that is how it identifies itself when it asks for its settings. Get it wrong and nothing reports an error: the receiver asks for its frequencies, is told it has none, and sits there healthy and deaf.
-
-**Channels** are the frequencies. One row per frequency, and a single receiver can cover several at once — one radio stick each.
+**One receiver, one frequency.** The radio is a conventional receiver tuned by hand, and its own squelch decides what gets recorded — so there is no frequency to type, no dongle serial to match and no squelch to set. The page shows the current setup rather than a list of saved ones.
 
 | Field | What it is |
 |-------|-----------|
-| **Receiver** | Which machine listens on this frequency. |
-| **Frequency (MHz)** | As you would read it off a radio: `146.7`, `147.465`. The grey line underneath shows the name this channel is known by, which is worked out from the receiver and the frequency — you never type it. |
+| **Status** | Whether the receiver is actually running. Green means it reported in within the last five minutes. **Red means it is not running**, which is a different thing from a quiet band and used to be indistinguishable from one — a channel that cannot start writes exactly as many entries as a silent frequency. |
+| **Event** | These settings belong to the active event. Switching events switches all of them. |
+| **Identity** | The name of the running service and the author of every log entry. Fixed when the channel is created; it looks like a hostname with a frequency on the end because that is what it once was. |
 | **Heard as** | What the log shows as the author. Make it something you will recognize mid-event. Changing it renames the channel's earlier entries too: it is the same radio, and a log showing one receiver under two names is worse than one that catches up. |
-| **Dongle serial** | The USB serial of that channel's radio stick. Not a slot number — the sticks change order when the machine restarts, and two channels swapping frequencies is not something you would notice until the log was already wrong. |
-| **Squelch** | How strong a signal must be before anything is recorded. Leave it **blank** and the channel measures its own site the first time it starts and remembers the answer — right almost everywhere. Put a number in only when you have a reason: raise it (30, 40) if the log fills with noise, lower it if weak stations are being missed. |
-| **Accuracy** | **Fast** keeps up with a busy net in real time. **Careful** is more accurate and slower. On the current receiver hardware Careful keeps up with a busy net; on older hardware the log falls further behind the radio as the net goes on. |
+| **Accuracy** | **Fast** keeps up with a busy net in real time. **Careful** is more accurate and about three times slower. |
 | **Audio** | Send the actual recording with each entry, so anyone following on a phone can tap **Play** and hear what was really said. Off by default — it costs the receiver a little upload per transmission, and is only worth turning on for a channel somebody is actually listening to on a phone. Recordings are kept for a few hours, then removed. |
 | **On** | Turn a channel off to stop it logging immediately, without deleting its setup. |
+
+Setting the radio's **volume** is the one thing still done by hand — see **Audio level** on the same page, and the Admin Guide for how to read the meter.
 
 **Nothing is written until you press Save.** After that the page waits, counting down, while each receiver comes and collects — they check once a minute, so it usually lands in well under that. When every receiver has it you get *Update applied*; if one never answers you are told which, and the change stays saved until it comes back.
 

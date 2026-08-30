@@ -402,21 +402,56 @@ then, because it is not displayed again.
 
 One row per frequency being monitored:
 
-| Column | Meaning |
+| Row | Meaning |
 |---|---|
-| **Receiver** | Which Pi does the listening |
-| **Frequency** | In MHz, as you would read it off a radio |
+| **Status** | Whether the channel is running. Green means it reported in within the last five minutes; red means it is not running, which is not the same as a quiet band |
+| **Event** | These settings belong to the active event. Switching events switches all of them |
+| **Identity** | Names the systemd unit, the spool directory and the author of every log entry. Fixed at creation |
 | **Heard as** | The name written on every log entry from this channel |
-| **Dongle serial** | The serial programmed into the SDR stick — not a USB slot number |
-| **Squelch** | How strong a signal must be before the receiver records it |
-| **Calibration** | Tuner gain and squelch measured at the site; there is a button to ask a channel to measure itself now |
-| **Accuracy** | **Fast** keeps up with a busy net in real time; the slower setting is more accurate |
+| **Accuracy** | **Fast** keeps up with a busy net in real time; **Careful** is better on callsigns and about three times slower |
 | **On** | Off stops it logging immediately without losing the setup |
 | **Audio** | Send the recording along with the transcription |
 | **Log token** | Authenticates entries this channel posts |
 
+**Status is the first thing to look at when nothing is appearing in the log.** A channel
+that cannot start writes exactly as many entries as a channel on a silent band — none —
+and before this row existed the only way to tell them apart was to stand next to the
+radio. The receiver posts a heartbeat every sixty seconds whatever the band is doing.
+
+Frequency, dongle serial and squelch are gone from this page. The receiver is a
+conventional radio now: it is tuned by hand, its own squelch gates the audio, and there
+is no software setting for either. See **Audio level** below.
+
 **Update devices** in the header tells the Pis to re-fetch now instead of waiting for their
 next scheduled check.
+
+### Audio level
+
+The receiver's volume is the one thing that has to be set by hand, and this is how. It
+replaced the SDR's automatic gain calibration entirely: a conventional radio has a knob,
+and nothing on the server can turn it.
+
+1. **Open the radio's squelch** so it hisses.
+2. Press **Start meter**. The bar follows the audio live.
+3. Turn the radio's volume until the bar sits in the green band, on the target line.
+4. **Close the squelch** again.
+
+Open-squelch noise is the reference because it is *stationary* — about a decibel of
+spread over a minute — and available whenever you want it. Speech varies 20 dB inside a
+syllable and only arrives when somebody talks, so it cannot be levelled against.
+
+**The reading is the audio band, 200–4000 Hz, not the raw level, and that distinction
+once cost an afternoon.** A squelch thump is generated *after* the volume control, so no
+knob can move it. Levelling against the raw peak therefore drives the volume down chasing
+a thump the knob cannot reach — on 2026-08-29 it drove a radio to zero, and ten seconds
+of test speech left no trace in the recording at all.
+
+**−27 dBFS** is the target. Below −38 wastes resolution against the noise floor; above
+−20 clips on loud traffic. Tones are the loud case rather than voice: a repeater's Morse
+identifier runs hotter than anybody talking.
+
+Nothing is stored. A level measured at one site says nothing about the next, so
+recalibrate whenever the radio moves or changes frequency.
 
 ### Tracker ID names
 
@@ -468,15 +503,29 @@ A repeater sends a courtesy tone after every over and a Morse identifier every f
 minutes. Both used to reach the log — the tone as an entry reading "Beep", the Morse as
 whatever the transcription made of ten seconds of keyed carrier.
 
-Each channel now measures the audio before transcribing it, and can tell both apart from
-speech on one property: a beep and a CW identifier sit on **one frequency** for their whole
-length, and speech never does — its pitch moves constantly. There is nothing to tune per
-site and nothing to type; it is a property of the sound.
+Each channel now measures the audio before transcribing it, on **two** properties.
+
+A beep and a CW identifier sit on **one frequency** for their whole length, and speech
+never does — its pitch moves constantly. That catches most of them. The second property
+catches the rest: some transmissions have nobody *saying* anything in them at all, and
+that can be measured as how much of the clip carries sound. Courtesy beeps carry 0.38 to
+0.61 seconds of it; real traffic carries 0.90 to 3.17. Both live behind the one setting,
+because to somebody holding a radio they are the same event.
+
+There is nothing to tune per site and nothing to type; both are properties of the sound.
 
 Every channel starts in **observe** mode, which changes nothing about what is logged. It
 records what it *would* have dropped, in the channel's journal and in the recording
 manifest if that channel is keeping audio. Read an event back, satisfy yourself that the
 only things it flagged were tones, and then switch it to **drop**.
+
+**A squelch crash used to blind it.** The audibility floor is a fraction of the loudest
+part of the clip, and the crash that opens a transmission is far louder than a Morse
+identifier — so on some clips too little cleared the floor to judge at all, the scan said
+"no opinion", and the identifier was transcribed and its recording sent. Since
+2026-08-30 the scan asks a second time against a quieter reference when the first pass
+has no opinion, which caught 54 more clips across a day's recordings — every one a Morse
+identifier or a steady tone, and not one that had ever produced a logged word.
 
 | Mode | Behaviour |
 |---|---|
@@ -498,6 +547,13 @@ discards transmissions rather than rewriting them.
 
 Dropping is also the cheaper setting: a clip judged a tone never reaches transcription,
 which on a roll call with a tone after every over is most of the clips.
+
+**Recordings are faded in.** Every capture opens with the squelch crash — it is the
+loudest thing on the channel and therefore the thing that trips the recorder — so each
+clip began with a thump measured at up to 13 times the level of the speech behind it. The
+first 120 ms of what gets *sent* is now faded. Nothing that the filters or the
+transcription read is touched: the fade is applied when the recording is encoded, not to
+the audio anything measures.
 
 Anything it cannot judge — a clip too short, too quiet, or unreadable — is *no opinion*,
 and is transcribed exactly as before. The detector can never be the reason a transmission
@@ -557,16 +613,13 @@ top. A receiver that hears the band climbs with the gain, around **11–15 dB** 
 reading means either nothing is reaching the tuner or the site is unusually quiet, and the
 page does not guess which — it shows you the number and leaves the judgement to you.
 
-**Calibration** applies to Transcriber channels:
+**Calibration columns applied to Transcriber channels and are gone.** Tuner gain and a
+software squelch were things an SDR had; a conventional receiver has neither. There is
+nothing on a Transcriber to measure and no Calibrate button to press. What replaced it is
+the **Audio level** meter on the [Transcriber](#transcriber-transcriber) page, which is
+set by hand against the radio's volume knob — see below.
 
-| Shown | What it means |
-|---|---|
-| <span>measured</span> | The gain was found from this site's own noise floor. This is the one you want. |
-| <span>unmeasured</span> | The measurement ran but never found the point where the receiver starts hearing the band, so the channel is running the top of its sweep. Usable, but nothing confirmed it. |
-| <span>NEVER</span> | Never calibrated. The channel is running a gain compiled into the software, measured at somebody else's site. |
-
-A **NEVER** row is worth clearing before an event — use **Calibrate** on the
-[Transcriber](#transcriber-transcriber) page, with the radio quiet.
+The self-noise columns above still apply to the **iGates**, which are still SDR-based.
 
 Each row has a **Delete** button that clears that host's stored report. It is for tidying
 stale or renamed entries — the row reappears on that device's next nightly upload, so it is

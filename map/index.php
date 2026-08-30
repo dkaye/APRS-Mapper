@@ -2511,7 +2511,7 @@ body.msg-window #msg-panel-grip { display: none; }
 			<div class="qs-sec">
 				<div class="qs-sec-title">On the Phone App</div>
 				<div class="qs-tip">The app can <strong>follow the whole event</strong>, not just messages addressed to you &mdash; the &#9881; gear in the Messages bar switches on <strong>All messages</strong> and <strong>Radio traffic</strong>, which appear in a separate Monitor view.</div>
-				<div class="qs-tip">The &#128266; speaker in the same bar holds everything about sound: mute, reading messages aloud, and playing radio recordings. Filled means this phone will make a sound for an arriving message; crossed out means it will not.</div>
+				<div class="qs-tip">The &#9881; gear in the same bar holds all three sound and traffic switches together: <strong>Speak text messages</strong>, <strong>Hear radio traffic</strong> and <strong>Receive all messages</strong>. The speaker icon that used to sit beside it is gone &mdash; it was one of the three, not the important one.</div>
 				<div class="qs-tip">Whenever something is being spoken or played, a <strong>Stop</strong> button appears showing how much is left. Nothing interrupts anything else, and nothing older than five minutes is read aloud &mdash; so coming back into signal does not start a recital of a net that has moved on.</div>
 			</div>
 

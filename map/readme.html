@@ -2040,9 +2040,24 @@ boundaries to 5 beeps, 4 to 4 and 5 to 5, and correctly rejected a spurious beep
 a tone-only split would have cut on. It counts <strong>levels, not beeps</strong>, because a courtesy
 tone exists only on a repeater and these receivers are also pointed at simplex, where a
 carrier drops just the same. It is measured and recorded per clip and <strong>acts on nothing</strong>:
-<code>GAP_SECONDS</code> still decides where a capture ends. Splitting the audio, and closing a
-capture at a seam so a phone tracks a conversation live, are larger changes — a false seam
-would chop somebody mid-sentence.</p>
+<code>GAP_SECONDS</code> still decides where a capture ends.</p>
+<p><strong>A whole net says it should stay that way, and says why.</strong> 223 captures on 2026-08-30,
+110 of them holding two or more overs, up to eight in one clip — merging is not an edge
+case, it is most of the long captures. Cutting the audio at every detected boundary
+produces 347 pieces, and <strong>44 of them mid-capture carry too little sound to survive the
+empty-clip rule</strong>: about a second each with 0.44 s of speech in it, against the 0.80 s
+threshold. Those fragments ride safely inside a longer capture today and their words reach
+the log; split out and judged alone, they would be discarded. Splitting would trade 110
+correct-but-merged entries for 194 correctly-attributed ones <strong>plus 44 holes</strong>.</p>
+<p><strong>And it cannot be done with beeps.</strong> Across those 110 captures an independent detector
+found <strong>five</strong> isolated courtesy beeps. The 1:1 agreement recorded above held on three
+captures where every over ended in silence-beep-silence; on a busy net the next station
+keys up inside the gap and there is no isolated tone left to find.</p>
+<p>The version worth building splits the <strong>text</strong>, not the audio: whisper already reports
+when each phrase was said, <code>--no-timestamps</code> currently throws that away, and the boundary
+times are already known. One capture transcribed whole, then written out as one log entry
+per over. Whisper keeps full context, no fragment is ever judged alone, and nothing can be
+dropped — the words already exist.</p>
 <p>A software audio-level squelch ran on top of that for a while, meant to find the edges of
 each over. It could not work, for a reason the measurement above makes obvious in
 hindsight: because the SDR's squelch emitted nothing while closed, the only audio it saw was
@@ -2306,7 +2321,7 @@ down when they see one:</p>
 </tr>
 <tr>
 <td><code>/tmp/transcriber-bench.pause</code></td>
-<td><code>compare-models.py</code>, <code>sdr-selftest.sh</code> (Transcriber), <code>calibrate.sh</code></td>
+<td><code>compare-models.py</code></td>
 <td><code>auto-update.sh</code></td>
 </tr>
 </tbody>
@@ -2337,12 +2352,8 @@ its fleet already watches rather than inventing a third.</p>
 <td>Entries the server has not accepted yet</td>
 </tr>
 <tr>
-<td><code>/var/spool/transcriber/&lt;channel&gt;/calibration.json</code></td>
-<td>The gain and squelch measured for this site, kept until it is measured again</td>
-</tr>
-<tr>
-<td><code>/etc/transcriber/calibrate/&lt;channel&gt;</code></td>
-<td>The last calibration request this device acted on</td>
+<td><code>/var/spool/transcriber/&lt;channel&gt;/recordings/</code></td>
+<td>Retained clips and <code>manifest.jsonl</code>, while a recording window is open</td>
 </tr>
 <tr>
 <td><code>/run/transcriber/&lt;channel&gt;/</code></td>
@@ -2408,7 +2419,7 @@ Pi, accessible at <code>https://marsaprs.org/&lt;path&gt;</code>.</p>
 <td><strong>Transcriber</strong></td>
 <td><code>/transcriber/</code></td>
 <td>User account</td>
-<td>The receiver's per-event settings, and the calibration meter</td>
+<td>The receiver's per-event settings, its Status, and the level meter</td>
 </tr>
 <tr>
 <td><strong>Tickets</strong></td>
@@ -2624,7 +2635,7 @@ admin actions are gated by the user-account permission system.</p>
 </tr>
 <tr>
 <td><code>messages</code></td>
-<td>The messages: monotonic <code>id</code> (the wire id for <code>since_id</code> polling), <code>event</code>, <code>conversation_id</code>, <code>sender_id</code>, <code>ts</code>, <code>text</code>, sender <code>lat</code>/<code>lon</code>/<code>pos_ts</code>, <code>broadcast</code>, photo columns (<code>attachment</code>, <code>attach_w</code>, <code>attach_h</code>), and radio-audio columns (<code>audio</code>, <code>audio_secs</code>).</td>
+<td>The messages: monotonic <code>id</code> (the wire id for <code>since_id</code> polling), <code>event</code>, <code>conversation_id</code>, <code>sender_id</code>, <code>ts</code>, <code>text</code>, <code>text_ts</code> (when a transcription was filled in on a row that already existed — see below), sender <code>lat</code>/<code>lon</code>/<code>pos_ts</code>, <code>broadcast</code>, photo columns (<code>attachment</code>, <code>attach_w</code>, <code>attach_h</code>), and radio-audio columns (<code>audio</code>, <code>audio_secs</code>).</td>
 </tr>
 <tr>
 <td><code>deliveries</code></td>
@@ -2633,6 +2644,20 @@ admin actions are gated by the user-account permission system.</p>
 </tbody>
 </table>
 <p><strong>Message IDs are monotonic.</strong> Each client polls with a <code>since_id</code> watermark, so ids must never go backwards; the DB assigns them from an always-increasing sequence and <strong>Delete All Messages</strong> does not reset it.</p>
+<p><strong>An id cursor cannot say "this row changed", and one kind of row does.</strong> A Transcriber
+posts the recording the instant an over ends — that POST <em>creates</em> the entry — and returns
+with the words a few seconds later, onto the same row. A client polling on ids can fetch
+that entry inside the window, take the audio, advance past the id and never be offered the
+transcription: on 2026-08-29 four consecutive overs reached the phones as recordings with
+no words while the server held both halves correctly.</p>
+<p>So there is a second cursor. <code>text_ts</code> is stamped by <code>setMessageText</code> and nowhere else,
+and <code>?monitor</code> and <code>?thread</code> accept <strong><code>since_text_ts</code></strong>: pass it and the answer also
+carries already-seen rows whose words landed after the id cursor swept by.</p>
+<p><strong>Opt-in, and that is the design rather than caution.</strong> v1.25.4's <code>MonitorService</code> appends
+to its list without deduping and queues clips with no message id, so handing it a row it
+already holds would replay the recording — worse than the missing text. A client that does
+not send <code>since_text_ts</code> gets byte-identical answers to before it existed, which is what
+let the server ship days ahead of the phones.</p>
 <p><strong>One person, several phones: entities.</strong> A volunteer may carry two devices (a phone and a spare, iPhone and Android). Each is a separate mobile session with its own callsign, so without help they appear as two recipients and two threads. Everyone sharing <strong>both <code>display_id</code> and name</strong> is treated as one <strong>entity</strong>:</p>
 <table>
 <thead>
@@ -2688,7 +2713,7 @@ admin actions are gated by the user-account permission system.</p>
 </tr>
 <tr>
 <td><code>participants</code></td>
-<td>Addressable list for the event (mobiles + operators, with <code>short_id</code>, <code>display_name</code>, online state) — powers the any-to-any recipient pickers.</td>
+<td>Addressable list for the event (mobiles + operators, with <code>short_id</code>, <code>display_name</code>, online state) — powers the any-to-any recipient pickers. Mobiles are offered for 24 h; <strong>operators only while actually present</strong> (<code>MSG_ONLINE_SECONDS</code>), because a stale operator row is a name nobody is behind.</td>
 </tr>
 <tr>
 <td><code>send</code></td>
@@ -2732,6 +2757,17 @@ admin actions are gated by the user-account permission system.</p>
 </tr>
 </tbody>
 </table>
+<p><strong>Operator presence is measured from poll traffic, which the BROWSER controls.</strong> That
+window was 90 seconds and it flapped. The console polls every 5 s, but a browser throttles
+timers in a hidden tab — Chrome clamps <code>setInterval</code> to roughly once a minute — and net
+control's console is a background tab most of the time. Sampled against a live idle
+console on 2026-08-30, <code>last_seen</code> ran 38 s, 47 s, 56 s, 4 s, 13 s: refreshed about once a
+minute against a 90-second window, so thirty seconds of margin, and anything slower spent
+it. An operator sitting right there vanished from every phone's New Message picker with
+nothing on either device to say why. It is <strong>180 s</strong> now, which still separates a live
+console from rows whose <code>last_seen</code> is <code>never</code> — the thing the gate exists for. Being
+generous costs little and in one direction only: a message to an operator who stepped away
+queues and is delivered when they return.</p>
 <h3 id="the-monitor-feed-read-only-by-construction">The monitor feed — read-only by construction</h3>
 <p>A phone following the whole event cannot use <code>poll</code>: that is an inner join on
 <code>deliveries</code>, and a message not addressed to you has no row there. The obvious

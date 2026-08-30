@@ -1654,9 +1654,27 @@ boundaries to 5 beeps, 4 to 4 and 5 to 5, and correctly rejected a spurious beep
 a tone-only split would have cut on. It counts **levels, not beeps**, because a courtesy
 tone exists only on a repeater and these receivers are also pointed at simplex, where a
 carrier drops just the same. It is measured and recorded per clip and **acts on nothing**:
-`GAP_SECONDS` still decides where a capture ends. Splitting the audio, and closing a
-capture at a seam so a phone tracks a conversation live, are larger changes — a false seam
-would chop somebody mid-sentence.
+`GAP_SECONDS` still decides where a capture ends.
+
+**A whole net says it should stay that way, and says why.** 223 captures on 2026-08-30,
+110 of them holding two or more overs, up to eight in one clip — merging is not an edge
+case, it is most of the long captures. Cutting the audio at every detected boundary
+produces 347 pieces, and **44 of them mid-capture carry too little sound to survive the
+empty-clip rule**: about a second each with 0.44 s of speech in it, against the 0.80 s
+threshold. Those fragments ride safely inside a longer capture today and their words reach
+the log; split out and judged alone, they would be discarded. Splitting would trade 110
+correct-but-merged entries for 194 correctly-attributed ones **plus 44 holes**.
+
+**And it cannot be done with beeps.** Across those 110 captures an independent detector
+found **five** isolated courtesy beeps. The 1:1 agreement recorded above held on three
+captures where every over ended in silence-beep-silence; on a busy net the next station
+keys up inside the gap and there is no isolated tone left to find.
+
+The version worth building splits the **text**, not the audio: whisper already reports
+when each phrase was said, `--no-timestamps` currently throws that away, and the boundary
+times are already known. One capture transcribed whole, then written out as one log entry
+per over. Whisper keeps full context, no fragment is ever judged alone, and nothing can be
+dropped — the words already exist.
 
 A software audio-level squelch ran on top of that for a while, meant to find the edges of
 each over. It could not work, for a reason the measurement above makes obvious in
@@ -1913,7 +1931,7 @@ down when they see one:
 | Flag | Set by | Honoured by |
 |------|--------|-------------|
 | `/tmp/sdr-usb-test.pause` | `sdr-usb-test`, `sdr-selftest.sh` (iGate) | `igate-watchdog.sh` |
-| `/tmp/transcriber-bench.pause` | `compare-models.py`, `sdr-selftest.sh` (Transcriber), `calibrate.sh` | `auto-update.sh` |
+| `/tmp/transcriber-bench.pause` | `compare-models.py` | `auto-update.sh` |
 
 Both are ignored once stale — eight hours for the Transcriber's, and the iGates clear
 `/tmp` on their nightly reboot — so a tool that dies without cleaning up cannot keep a
@@ -1927,8 +1945,7 @@ its fleet already watches rather than inventing a third.
 | `/etc/transcriber/channels.json` | This device's channels, collected from the manager |
 | `/home/pi/.transcriber-token` | Its config token — how it identifies itself |
 | `/var/spool/transcriber/<channel>/outbox/` | Entries the server has not accepted yet |
-| `/var/spool/transcriber/<channel>/calibration.json` | The gain and squelch measured for this site, kept until it is measured again |
-| `/etc/transcriber/calibrate/<channel>` | The last calibration request this device acted on |
+| `/var/spool/transcriber/<channel>/recordings/` | Retained clips and `manifest.jsonl`, while a recording window is open |
 | `/run/transcriber/<channel>/` | Clips in flight, on tmpfs — and `arecord.err`, which is where "Device or resource busy" goes |
 | `/var/log/transcriber/update.log` | What the nightly and 60-second updates did |
 
@@ -1947,7 +1964,7 @@ Pi, accessible at `https://marsaprs.org/<path>`.
 | **NetBird Monitor** | `/netbird/` | User account | Real-time health status of all Pi devices |
 | **NetBird Admin** | `/netbird/admin.php` | User account | Add/remove devices, enable/disable, SSH terminal |
 | **WiFi Manager** | `/wifi/` | User account | Edit the shared WiFi credential list distributed to all Pis |
-| **Transcriber** | `/transcriber/` | User account | The receiver's per-event settings, and the calibration meter |
+| **Transcriber** | `/transcriber/` | User account | The receiver's per-event settings, its Status, and the level meter |
 | **Tickets** | `/tickets/admin.php` | User account | Bug report and suggestion ticket management |
 
 **Map** — Shows tracker positions updated every 5 seconds. Sidebar lists trackers (with
@@ -2087,10 +2104,27 @@ All messaging state lives in one SQLite database, `/var/lib/marsaprs/messages.db
 | `participants` | One row per addressable party per event — mobiles (keyed by callsign) and operators (keyed by unique name). Holds `display_name`, `short_id`, `token`, `last_seen`, and last-known `lat`/`lon`/`pos_ts`. |
 | `conversations` | A `direct`, `group`, `broadcast`, `entity`, `entity_multi`, or `log` thread, with a `member_hash` so a given set of participants maps to exactly one conversation. |
 | `conversation_members` | Membership join between conversations and participants. **Empty for broadcast conversations** — see below. |
-| `messages` | The messages: monotonic `id` (the wire id for `since_id` polling), `event`, `conversation_id`, `sender_id`, `ts`, `text`, sender `lat`/`lon`/`pos_ts`, `broadcast`, photo columns (`attachment`, `attach_w`, `attach_h`), and radio-audio columns (`audio`, `audio_secs`). |
+| `messages` | The messages: monotonic `id` (the wire id for `since_id` polling), `event`, `conversation_id`, `sender_id`, `ts`, `text`, `text_ts` (when a transcription was filled in on a row that already existed — see below), sender `lat`/`lon`/`pos_ts`, `broadcast`, photo columns (`attachment`, `attach_w`, `attach_h`), and radio-audio columns (`audio`, `audio_secs`). |
 | `deliveries` | Per-recipient row for each message with `delivered_ts` / `read_ts` — this is the inbox, the unread count, and the delivery/read receipts. Replaces the old `pending_msgs` queue. |
 
 **Message IDs are monotonic.** Each client polls with a `since_id` watermark, so ids must never go backwards; the DB assigns them from an always-increasing sequence and **Delete All Messages** does not reset it.
+
+**An id cursor cannot say "this row changed", and one kind of row does.** A Transcriber
+posts the recording the instant an over ends — that POST *creates* the entry — and returns
+with the words a few seconds later, onto the same row. A client polling on ids can fetch
+that entry inside the window, take the audio, advance past the id and never be offered the
+transcription: on 2026-08-29 four consecutive overs reached the phones as recordings with
+no words while the server held both halves correctly.
+
+So there is a second cursor. `text_ts` is stamped by `setMessageText` and nowhere else,
+and `?monitor` and `?thread` accept **`since_text_ts`**: pass it and the answer also
+carries already-seen rows whose words landed after the id cursor swept by.
+
+**Opt-in, and that is the design rather than caution.** v1.25.4's `MonitorService` appends
+to its list without deduping and queues clips with no message id, so handing it a row it
+already holds would replay the recording — worse than the missing text. A client that does
+not send `since_text_ts` gets byte-identical answers to before it existed, which is what
+let the server ship days ahead of the phones.
 
 **One person, several phones: entities.** A volunteer may carry two devices (a phone and a spare, iPhone and Android). Each is a separate mobile session with its own callsign, so without help they appear as two recipients and two threads. Everyone sharing **both `display_id` and name** is treated as one **entity**:
 
@@ -2131,7 +2165,7 @@ The mobile app needs no change for any of this: `?messaging=participants` return
 | Action | Purpose |
 |--------|---------|
 | `subscribe` / `identify` | Operator (name + password → token) / mobile (token → participant). Operators must choose a unique, non-empty name — there is no `Operator` default. |
-| `participants` | Addressable list for the event (mobiles + operators, with `short_id`, `display_name`, online state) — powers the any-to-any recipient pickers. |
+| `participants` | Addressable list for the event (mobiles + operators, with `short_id`, `display_name`, online state) — powers the any-to-any recipient pickers. Mobiles are offered for 24 h; **operators only while actually present** (`MSG_ONLINE_SECONDS`), because a stale operator row is a name nobody is behind. |
 | `send` | `{token, recipients:[keys] | 'all', text, conversation_id?}`, optionally multipart with a photo. Resolves/creates the conversation and writes the message + `deliveries`. |
 | `poll` | `{token, since_id}` — new messages addressed to me plus delivery/read updates; incremental. |
 | `thread` | The running exchange for one conversation (members only). |
@@ -2142,6 +2176,18 @@ The mobile app needs no change for any of this: `?messaging=participants` return
 | `read` | Mark delivered messages read (read receipts). |
 | `photo` | Stream an attachment (conversation members or operators only). |
 | `flush` | Per-event wipe, gated by `messages.manage`. |
+
+**Operator presence is measured from poll traffic, which the BROWSER controls.** That
+window was 90 seconds and it flapped. The console polls every 5 s, but a browser throttles
+timers in a hidden tab — Chrome clamps `setInterval` to roughly once a minute — and net
+control's console is a background tab most of the time. Sampled against a live idle
+console on 2026-08-30, `last_seen` ran 38 s, 47 s, 56 s, 4 s, 13 s: refreshed about once a
+minute against a 90-second window, so thirty seconds of margin, and anything slower spent
+it. An operator sitting right there vanished from every phone's New Message picker with
+nothing on either device to say why. It is **180 s** now, which still separates a live
+console from rows whose `last_seen` is `never` — the thing the gate exists for. Being
+generous costs little and in one direction only: a message to an operator who stepped away
+queues and is delivered when they return.
 
 ### The monitor feed — read-only by construction
 
