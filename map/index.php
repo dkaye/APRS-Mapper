@@ -6189,6 +6189,10 @@ function _toggleViewAll() {
 		_pendingLog = true;
 		_openConvId = null;
 		_pendingConv = null;
+		// Leaving To/From Everyone. _showThreadView is what normally clears this, and
+		// Everything does not go through it -- left set, a poll would keep redrawing the
+		// hidden thread pane behind this view.
+		_bcView = false;
 		_syncComposerMode();
 		_loadAllView();
 	}
@@ -7227,11 +7231,36 @@ let _pendingLog = false;
 
 // The composer writes to the log instead of sending when the log thread is open, so
 // it says so. Nothing else about the thread view differs.
+/** The composer says where what you type is going.
+ *
+ *  One field serves the log, a broadcast to every tracker, and a thread with one
+ *  station, and the three have very different consequences -- a line meant for one
+ *  operator going to the whole net is not a typo you can take back. "Type a message…"
+ *  said none of that, so the placeholder now names the destination and the Send tooltip
+ *  agrees with it. */
 function _syncComposerMode() {
 	const c = _openConvId != null ? _convs.get(_openConvId) : null;
-	const isLog = _pendingLog || (c && c.kind === 'log');
-	document.getElementById('msg-compose-text').placeholder = isLog ? 'Write a log entry…' : 'Type a message…';
-	document.getElementById('msg-send-btn').title = isLog ? 'Save log entry' : 'Send';
+	const isLog  = _pendingLog || (c && c.kind === 'log');
+	// Both ways of being aimed at everyone: the aggregate view, and a pending or open
+	// broadcast conversation.
+	const isBcast = _bcView || (_pendingConv && _pendingConv.recipients === 'all')
+	                || (c && c.kind === 'broadcast');
+	let ph = 'Type a message…', tip = 'Send';
+	if (isLog) {
+		ph = 'Write a log entry…'; tip = 'Save log entry';
+	} else if (isBcast) {
+		ph = 'Broadcast to everyone'; tip = 'Broadcast to everyone';
+	} else if (c) {
+		// The same label the row and the thread header carry, so the three cannot
+		// disagree about who this is.
+		ph = 'Message to ' + _convLabel(c); tip = ph;
+	} else if (_pendingConv && Array.isArray(_pendingConv.recipients)) {
+		// A conversation being composed from the picker, which has no thread yet.
+		const names = _pendingConv.recipients.map(_pickerNameFor).filter(Boolean);
+		if (names.length) { ph = 'Message to ' + names.join(', '); tip = ph; }
+	}
+	document.getElementById('msg-compose-text').placeholder = ph;
+	document.getElementById('msg-send-btn').title = tip;
 }
 
 /** Open the event's running log. Entries go in the archive and nowhere else: no
