@@ -186,8 +186,25 @@ if (!defined('MSG_ADDRESSABLE_SECONDS')) define('MSG_ADDRESSABLE_SECONDS', 24 * 
  * merely addressable. Reported to the app as `online` on every row, and — for operators
  * only — used as the gate for appearing in the picker at all. See the operator loop in
  * the `participants` case for why the two kinds are judged differently.
+ *
+ * 90 seconds until 2026-08-30, and it was flapping. The console polls every 5 s, but a
+ * BROWSER THROTTLES TIMERS IN A HIDDEN TAB -- Chrome clamps setInterval to roughly once
+ * a minute -- and net control's console is a background tab most of the time, sitting
+ * beside whatever they are actually working in. Sampled while one was open and idle,
+ * last_seen ran 38 s, 47 s, 56 s, 4 s, 13 s: refreshed about once a minute against a
+ * 90-second window, so roughly 30 seconds of margin. Anything slower -- a laggy request,
+ * a moment of deeper throttling -- put it over, and an operator who was sitting right
+ * there disappeared from every phone's New Message picker with no way to tell why.
+ *
+ * 180 s restores the margin without weakening what the gate is for. Its job is dropping
+ * operator rows that are stale by hours or have never been seen at all -- of the 23 in
+ * this event, the ones it exists to hide have last_seen of `never` -- and three minutes
+ * separates those from a live console just as cleanly as ninety seconds did. The cost of
+ * being generous is small and one-directional: an operator who closed their tab stays
+ * offerable a little longer, and a message sent to them queues and is delivered when
+ * they come back rather than being refused.
  */
-if (!defined('MSG_ONLINE_SECONDS')) define('MSG_ONLINE_SECONDS', 90);
+if (!defined('MSG_ONLINE_SECONDS')) define('MSG_ONLINE_SECONDS', 180);
 
 /** Who a broadcast is actually delivered to.
  *
