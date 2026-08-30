@@ -110,11 +110,6 @@ class _MessagingScreenState extends State<MessagingScreen> {
         _speak = p.getBool(MobileSession.kPrefSpeakMessages) ?? true;
         _lastRecipients = p.getStringList(_kLastRecipients) ?? const [];
       });
-      // One switch drives both now. An install coming from the two-switch version can
-      // have them disagreeing — speech on for your own messages, off for everyone
-      // else's — and the sheet would then promise speech it does not deliver. Done here
-      // rather than when the sheet opens, so it holds for somebody who never opens it.
-      await MonitorService.instance.setSpeakAll(_speak);
     }
   }
 
@@ -398,14 +393,14 @@ class _MessagingScreenState extends State<MessagingScreen> {
   /// phone at all, so speech has nothing left to qualify: if a text message is here, it
   /// is spoken.
   ///
-  /// Both flags are still written. map_screen gates monitored speech on
-  /// `speakingAll && monitoringAll`, and the second half of that is still a real
-  /// question — this only removes the first as a separate thing to decide.
+  /// One switch, read in one place. map_screen gates monitored speech on "Everyone's
+  /// traffic" and on this pref directly — there is no longer a second copy of it to
+  /// fall out of step, which is what used to leave a fresh install silent on other
+  /// people's traffic while the sheet showed speech as on.
   Future<void> _setSpeakText(bool v) async {
     setState(() => _speak = v);
     final p = await SharedPreferences.getInstance();
     await p.setBool(MobileSession.kPrefSpeakMessages, v);
-    await MonitorService.instance.setSpeakAll(v);
     WatchBridge.instance.pushSpeak(v);
     if (!v) {
       _deferredSpeak.clear();

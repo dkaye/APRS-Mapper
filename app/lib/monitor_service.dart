@@ -44,7 +44,6 @@ class MonitorService {
   /// in the UI — this is about typed traffic, which is short and arrives rarely enough
   /// to be worth hearing. It is deliberately NOT offered for the radio, where the
   /// recording itself is available and strictly better.
-  static const kPrefSpeakAll = 'monitor_speak_all';
 
   /// Where the monitor feed has read up to. Separate from the delivered feed's
   /// cursor, and persisted: an app restart mid-net must not replay the event.
@@ -52,7 +51,6 @@ class MonitorService {
 
   bool _all = false;
   bool _radioAudio = false;
-  bool _speakAll = false;
   int _cursor = 0;
   /// Second cursor, for rows that CHANGED rather than rows that are new. Not persisted:
   /// it is the server's clock, so a stale one across a restart would ask for a window
@@ -73,7 +71,6 @@ class MonitorService {
 
   bool get playingRadioAudio => _radioAudio;
   bool get monitoringAll => _all;
-  bool get speakingAll => _speakAll;
   bool get enabled => _all || _radioAudio;
 
   /// Log entries are requested whenever radio audio is wanted, because the clip URL
@@ -116,20 +113,16 @@ class MonitorService {
     final p = await SharedPreferences.getInstance();
     _all = p.getBool(kPrefAll) ?? false;
     _radioAudio = p.getBool(kPrefRadioAudio) ?? false;
-    _speakAll = p.getBool(kPrefSpeakAll) ?? false;
     _cursor = p.getInt(_kPrefCursor) ?? 0;
     _loaded = true;
   }
 
   Future<void> setRadioAudio(bool v) => _setFlag(kPrefRadioAudio, v, (x) => _radioAudio = x);
   Future<void> setAll(bool v) => _setFlag(kPrefAll, v, (x) => _all = x);
-  // Speech changes nothing about what is fetched, so it does not reset the cursor the
-  // way a subscription does — turning it on mid-net should not replay anything.
-  Future<void> setSpeakAll(bool v) async {
-    _speakAll = v;
-    final p = await SharedPreferences.getInstance();
-    await p.setBool(kPrefSpeakAll, v);
-  }
+  // Speech used to have a flag here -- a copy of the Speak text messages switch, with
+  // its own pref and the opposite default, synced only when the Messages screen opened.
+  // Nothing reads a copy that can disagree with the original: map_screen gates monitored
+  // speech on monitoringAll and reads the Speak pref itself. Removed 2026-08-29.
 
   Future<void> _setFlag(String key, bool v, void Function(bool) assign) async {
     assign(v);

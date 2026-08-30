@@ -495,7 +495,17 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     // clip never arrived, or a channel with send_audio off. Falling back to reading it
     // aloud there would quietly reintroduce exactly the behaviour that made a busy net
     // unlistenable, and it would do so only sometimes, which is worse than never.
-    if (!mon.monitoringAll || !mon.speakingAll) return;
+    // "Everyone's traffic" is the only question here. Whether to speak at all is the
+    // Speak switch, and it is read straight from prefs further down as the global mute
+    // -- one source of truth, checked once.
+    //
+    // There was a second flag, MonitorService.speakingAll, a mirror of the Speak switch
+    // kept in its own pref. It defaulted to FALSE where the switch it mirrored defaults
+    // to true, and it was only brought into line when the Messages screen was opened.
+    // So a fresh install with both switches on stayed silent on everyone else's traffic
+    // until somebody happened to open Messages -- speech that the settings sheet said
+    // was on, and was not.
+    if (!mon.monitoringAll) return;
 
     // Never this operator's own words.
     //
