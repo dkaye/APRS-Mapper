@@ -2168,6 +2168,18 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
 .msg-bubble-locbtn { background: none; border: none; padding: 0; cursor: pointer; color: #b0b6bb; line-height: 0; }
 .msg-bubble-locbtn:hover { color: #c0392b; }
 .msg-bubble-row.me .msg-bubble-locbtn { color: #cfe0ec; }
+/* The recording, when a Transcriber attached one. A button rather than <audio controls>:
+   a browser's own player is a full-width slab, and a log of forty overs would be forty
+   of them. This says how long the clip is, which is what decides whether to listen. */
+.msg-bubble-audio { display: inline-flex; align-items: center; gap: 5px; margin-top: 5px;
+    background: rgba(41,128,185,0.10); border: 1px solid rgba(41,128,185,0.28);
+    border-radius: 12px; padding: 3px 9px 3px 7px; cursor: pointer;
+    font: inherit; font-size: 12px; color: #2471a3; line-height: 1.4; }
+.msg-bubble-audio:hover { background: rgba(41,128,185,0.18); }
+.msg-bubble-audio.playing { background: #2980b9; border-color: #2980b9; color: #fff; }
+.msg-bubble-row.me .msg-bubble-audio { background: rgba(255,255,255,0.16);
+    border-color: rgba(255,255,255,0.35); color: #eaf4fb; }
+.msg-bubble-row.me .msg-bubble-audio.playing { background: #fff; color: #2471a3; }
 .msg-bubble-copybtn { background: none; border: none; padding: 0; cursor: pointer; color: #b0b6bb; line-height: 0; }
 .msg-bubble-copybtn:hover { color: #2980b9; }
 .msg-bubble-row.me .msg-bubble-copybtn { color: #cfe0ec; }
@@ -6329,6 +6341,23 @@ function _bubbleHtml(m, c) {
 		? '<img class="msg-bubble-img" data-mid="' + m.id + '" src="index.php?messaging=photo&id=' + m.id + '&token=' + encodeURIComponent(_msgToken || '') + '" alt="Attached photo" loading="lazy">'
 		: '';
 	const textHtml = m.text ? '<div class="msg-bubble-text">' + _esc(m.text) + '</div>' : '';
+	// The recording, when a Transcriber attached one. The server has always sent
+	// has_audio and audio_url on every message and the phone has always rendered a play
+	// control from them; this window simply ignored both, so radio traffic arrived here
+	// as text with no way to hear what was actually said. Added 2026-08-29.
+	//
+	// No <audio controls>: a browser's own player is a full-width slab with a seek bar
+	// and a volume slider, and a log of forty overs would be forty of them. One button
+	// that says how long the clip is, which is what an operator deciding whether to
+	// listen actually wants to know.
+	//
+	// audio_url is absolute and unauthenticated by design -- radio traffic is public and
+	// the clips are served straight off disk so Cloudflare can cache them, see the note
+	// on audioUrl() in messaging_db.php -- so it needs no token here.
+	const audio = m.audio_url
+		? '<button class="msg-bubble-audio" data-mid="' + m.id + '" data-src="' + _esc(m.audio_url) + '">'
+		  + MSG_PLAY_SVG + '<span>' + (m.audio_secs ? m.audio_secs.toFixed(1) + 's' : 'Play') + '</span></button>'
+		: '';
 	const loc = (typeof m.lat === 'number' && typeof m.lon === 'number')
 		? '<button class="msg-bubble-locbtn" data-mid="' + m.id + '" title="Show where this was sent from">' + MSG_PIN_SVG + '</button>' : '';
 	// Carries the id, not the text: the message is looked up at click time, so nothing
@@ -6337,7 +6366,7 @@ function _bubbleHtml(m, c) {
 		? '<button class="msg-bubble-copybtn" data-mid="' + m.id + '" title="Copy message text">' + MSG_COPY_SVG + '</button>' : '';
 	const ack = me ? '<span class="msg-bubble-ack">' + _ackLabel(_msgReceipts.get(m.id), _ackSingle(m.conversation_id)) + '</span>' : '';
 	return '<div class="msg-bubble-row ' + (me ? 'me' : 'them') + '">' +
-		'<div class="msg-bubble">' + sender + photo + textHtml +
+		'<div class="msg-bubble">' + sender + photo + textHtml + audio +
 		'<div class="msg-bubble-foot">' + loc + copy + '<span class="msg-bubble-time">' + _msgClockTime(m.ts) + '</span>' + ack + '</div>' +
 		'</div></div>';
 }
@@ -6379,6 +6408,10 @@ function _wireLocButtons(root) {
 			if (MSG_WINDOW) { if (m) _chanPost({type:'showLocation', msg:m}); return; }
 			_showMsgLocation(m);
 		});
+	});
+	root.querySelectorAll('.msg-bubble-audio').forEach(b => {
+		if (b._wired) return; b._wired = true;
+		b.addEventListener('click', e => { e.stopPropagation(); _toggleClip(b); });
 	});
 	root.querySelectorAll('.msg-bubble-copybtn').forEach(b => {
 		if (b._wired) return; b._wired = true;
@@ -7282,6 +7315,78 @@ const MSG_COPY_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidde
 	'<path fill="currentColor" d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/></svg>';
 const MSG_TICK_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">' +
 	'<path fill="currentColor" d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>';
+const MSG_PLAY_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">' +
+	'<path fill="currentColor" d="M8 5v14l11-7z"/></svg>';
+const MSG_STOP_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">' +
+	'<path fill="currentColor" d="M6 6h12v12H6z"/></svg>';
+
+/* Radio clip playback.
+ *
+ * One <audio> for the whole window, not one per bubble. A log of forty overs would
+ * otherwise hold forty media elements, each with its own buffer and its own claim on
+ * the browser's decoder -- and two of them could play at once, which on a net is the
+ * one thing that must not happen: overlapping traffic is unintelligible, and worse,
+ * sounds like a receiver fault rather than a UI mistake.
+ *
+ * Starting a second clip therefore stops the first rather than mixing with it, which is
+ * also what the phone's AudioQueue does.
+ */
+let _msgAudioEl = null;
+let _msgAudioMid = null;
+
+function _msgAudio() {
+	if (!_msgAudioEl) {
+		_msgAudioEl = new Audio();
+		_msgAudioEl.preload = 'none';   // a log full of clips must not fetch them all
+		_msgAudioEl.addEventListener('ended', () => _setAudioBtn(null));
+		// Says so rather than sitting silent. A clip that will not load is
+		// indistinguishable from a muted machine, and that ambiguity cost an afternoon
+		// on the phone side -- see the comment on clipFailed().
+		_msgAudioEl.addEventListener('error', () => {
+			const b = _audioBtn(_msgAudioMid);
+			if (b) b.querySelector('span').textContent = 'unavailable';
+			_setAudioBtn(null);
+		});
+	}
+	return _msgAudioEl;
+}
+
+function _audioBtn(mid) {
+	return mid == null ? null
+		: document.querySelector('.msg-bubble-audio[data-mid="' + mid + '"]');
+}
+
+/** Put every button back to Play, then mark `mid` as the one playing. */
+function _setAudioBtn(mid) {
+	document.querySelectorAll('.msg-bubble-audio.playing').forEach(b => {
+		b.classList.remove('playing');
+		b.innerHTML = MSG_PLAY_SVG + '<span>' + (b.dataset.secs || 'Play') + '</span>';
+	});
+	_msgAudioMid = mid;
+	const b = _audioBtn(mid);
+	if (b) {
+		b.classList.add('playing');
+		b.innerHTML = MSG_STOP_SVG + '<span>Playing</span>';
+	}
+}
+
+function _toggleClip(btn) {
+	const mid = btn.dataset.mid;
+	const a = _msgAudio();
+	if (_msgAudioMid === mid && !a.paused) { a.pause(); _setAudioBtn(null); return; }
+	if (!btn.dataset.secs) btn.dataset.secs = btn.querySelector('span').textContent;
+	a.pause();
+	a.src = btn.dataset.src;
+	_setAudioBtn(mid);
+	// Speech and a recording of the same net talking over each other is the same
+	// unintelligible mess as two clips at once, so the spoken queue yields to the radio.
+	try { speechSynthesis.cancel(); } catch {}
+	a.play().catch(() => {
+		const b2 = _audioBtn(mid);
+		if (b2) b2.querySelector('span').textContent = 'unavailable';
+		_setAudioBtn(null);
+	});
+}
 
 /** Copy a message's text and nothing else -- no sender, no timestamp, no receipt.
  *  What gets pasted into a log or an email is the words that were sent.
