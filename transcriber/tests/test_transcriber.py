@@ -2839,6 +2839,40 @@ def test_a_beep_with_few_audible_frames_is_still_caught():
                   transcriber.tone_reason(scan) != "", True)
 
 
+def test_a_noisy_identifier_is_still_an_identifier():
+    """The 2026-08-30 misses.
+
+    The agreement threshold was set from a corpus where every real tone measured 1.00,
+    and over a full net day the same repeater identifier ran 0.80 to 1.00 depending on
+    the noise riding with it. Two came in at 0.870 and 0.864, fell a hundredth under
+    the line and were transcribed -- which for CW means an empty string and a recording
+    on somebody's phone with no words against it.
+
+    A scan at that agreement has to be named. Real traffic tonal enough to reach this
+    test at all measured 0.400 and 0.500, so there is a wide gap and this sits in it.
+    """
+    for agree in (0.864, 0.870, 0.90):
+        scan = {"hz": 1454.5, "tonal": 0.88, "agree": agree,
+                "keying": 18, "frames": 22, "seconds": 3.7}
+        check("agree %.3f is named" % agree,
+              transcriber.tone_reason(scan) != "", True)
+
+
+def test_speech_that_wanders_is_still_not_a_tone():
+    """The other side of the same threshold, so lowering it cannot pass unnoticed.
+
+    Voiced speech drifts in pitch; it is the ONLY thing separating a person from a
+    carrier once the frame ratio has passed. The two real transmissions in the corpus
+    that got this far agreed at 0.400 and 0.500, so anything in that range must still
+    be treated as somebody talking.
+    """
+    for agree in (0.40, 0.50, 0.60, 0.75):
+        scan = {"hz": 220.0, "tonal": 0.7, "agree": agree,
+                "keying": 12, "frames": 30, "seconds": 4.0}
+        check("agree %.2f is left alone" % agree,
+              transcriber.tone_reason(scan), "")
+
+
 def test_speech_is_not_mistaken_for_a_tone():
     with tempfile.TemporaryDirectory() as tmp:
         wav = os.path.join(tmp, "voice.wav")
@@ -3133,6 +3167,8 @@ if __name__ == "__main__":
         test_a_disabled_channel_still_does_nothing_when_asked_to_listen,
         test_a_courtesy_tone_is_recognised_as_a_tone,
         test_a_morse_identifier_is_recognised_and_named_as_one,
+        test_a_noisy_identifier_is_still_an_identifier,
+        test_speech_that_wanders_is_still_not_a_tone,
         test_speech_is_not_mistaken_for_a_tone,
         test_a_long_clip_is_never_judged_a_tone,
         test_a_beep_with_few_audible_frames_is_still_caught,

@@ -764,8 +764,30 @@ TONE_PERIODICITY = 0.85
 # with no new false positives.
 TONE_FRAME_RATIO = 0.60
 # How close two frames must be to count as the same frequency, and how many must agree.
+#
+# 0.90 until 2026-08-30. It was set from a corpus where every real tone agreed at 1.00,
+# and that turned out to be the corpus talking rather than the signal: over a full net
+# day the repeater's own identifier came in between 0.80 and 1.00 depending on how much
+# noise rode with it, so two of the day's Morse IDs measured 0.870 and 0.864, fell a
+# hundredth under the line, and were transcribed -- which for CW means an empty string,
+# an audio row with no words, and a recording on somebody's phone.
+#
+# Measured over 242 clips the scan judged, where `agree` is the only thing left deciding
+# because `tonal` has already passed:
+#
+#             threshold   real traffic condemned   junk caught
+#               0.90            0 of 2               167 of 240
+#               0.85            0 of 2               188 of 240
+#               0.80            0 of 2               212 of 240
+#
+# The reason for 0.85 rather than 0.80 is not the count. Only TWO real transmissions all
+# day were tonal enough to reach this test at all -- `tonal` does nearly all the work --
+# and they measured 0.400 and 0.500. So the confidence comes from the MARGIN, not from
+# the sample: 0.85 sits well clear of the loudest real reading, fixes the two failures
+# actually observed, and does not spend the rest of that gap chasing clips nothing has
+# complained about.
 TONE_AGREE_TOL = 0.06
-TONE_AGREE_RATIO = 0.90
+TONE_AGREE_RATIO = 0.85
 # A standalone tone is SHORT. This is the guard that protects real transmissions, and it
 # was added because two of them were not protected: the repeater's own spoken identifier —
 # "From 3,800 feet above the Santa Clara Valley, this is the WR6ABD repeater" — measured
