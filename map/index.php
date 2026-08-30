@@ -5797,7 +5797,12 @@ const _convs   = new Map();   // id -> {id,kind,title,members,unread,last_id,pre
 let _openConvId = null;       // conversation shown in the thread view
 let _pendingConv = null;      // {recipients} for a not-yet-created conversation
 const _msgSeen = new Set();   // message ids already placed in a thread (dedupe)
-const _deferredSpeak = new Set(); // ids to read aloud once their thread becomes active
+// Messages used to be queued for later reading when they arrived on a thread that was
+// not the one being viewed, and read out only when somebody opened it. Every message
+// reaching _ingestIncoming is addressed to this operator, so that meant a call could
+// wait indefinitely to be heard. They are spoken on arrival now and nothing defers, so
+// the queue, the function that drained it, its two call sites and the two places that
+// cleared it all went on 2026-08-29.
 const _msgReceipts = new Map();   // message id -> {total, delivered, read} for MY sent messages
 let _msgViewAll = false;          // "View All" mode: every message, chronological
 let _allViewSearchOn = false;     // search box shown within View All
@@ -6070,11 +6075,6 @@ function _toggleViewAll() {
 	document.getElementById('msg-panel-title').textContent = _msgViewAll ? 'Everything' : 'Messages';
 	document.getElementById('msg-panel-sub').textContent = _msgViewAll ? 'every message, chronological' : (_msgName ? 'as ' + _msgName : '');
 	if (_msgViewAll) {
-		// Anything queued for reading when a thread is next opened is history the moment
-		// this view is showing — it is all on screen, and from here on arrivals are read
-		// as they land. Without this, opening All Messages and then stepping into a
-		// thread would recite a backlog the operator has already seen scroll past.
-		_deferredSpeak.clear();
 		_loadAllView();
 	}
 	else { _allViewSearchOn = false; _syncAllSearch(); }
@@ -6304,7 +6304,6 @@ async function _openConversation(cid) {
 		}
 	} catch {}
 	_markConvRead(cid);
-	if (_openConvId === cid) _speakDeferred(cid);   // read anything that arrived while this wasn't active
 	_syncComposerMode();
 	setTimeout(() => document.getElementById('msg-compose-text').focus(), 60);
 }
@@ -6434,7 +6433,7 @@ async function _sendCurrent() {
 		c.loaded = true;
 		for (const m of c.messages) _msgSeen.add(m.id);
 		_convs.set(cid, c);
-		if (_openConvId === cid) { _showThreadView(_esc(_convLabel(c)), _threadSub(c)); _renderThread(c); _speakDeferred(cid); }
+		if (_openConvId === cid) { _showThreadView(_esc(_convLabel(c)), _threadSub(c)); _renderThread(c); }
 	} catch (e) {
 		if (e.message !== 'auth') { errEl.textContent = 'Send failed. Please try again.'; errEl.style.display = 'block'; }
 	} finally { btn.disabled = false; ta.focus(); }
@@ -6590,26 +6589,29 @@ function _ingestIncoming(m) {
 		// does not queue deferred speech either, or opening a thread on it later would
 		// suddenly read out a backlog the operator already heard on the other screen.
 		if (_mayAnnounce()) {
-			if (_msgSpeak && onScreen) {
-				_speakMessage(m);
+			if (_msgSpeak) {
+				// Spoken whether or not its thread is the one on screen. Everything
+				// reaching here came from the `poll` endpoint, which is pollFor() --
+				// only what was DELIVERED to this operator -- so every one of these is
+				// addressed to them, and an addressed message is the thing they must
+				// hear without looking. Until 2026-08-29 anything off-screen was given
+				// a tone and put in _deferredSpeak, so reading one thread while a call
+				// arrived on another meant a beep and no words, and the message waited
+				// for somebody to open that thread. Monitored traffic is a different
+				// feed and is unaffected.
+				//
+				// The tone still marks the off-screen case, because that is the one
+				// where nobody is looking -- chained ahead of the words rather than
+				// fired alongside them, for the reason the mobile queue exists: two
+				// sounds racing for the same message is how this went wrong before.
+				_speakMessage(m, !onScreen);
 			} else {
-				if (_msgSpeak) _deferredSpeak.add(m.id);
 				_playMsgTone();
 			}
 		}
 		// The toast stays on both: on the map window it is how the operator sees that
 		// traffic arrived on the other screen. It is visual only, so it cannot double up.
 		if (!isOpen) _notifyArrival(m, c);
-	}
-}
-// Read aloud any messages in $cid that were deferred while it wasn't the active
-// thread (they're now visible in the window). Spoken in id order.
-function _speakDeferred(cid) {
-	if (!_mayAnnounce() || !_msgSpeak || !_deferredSpeak.size) return;
-	const c = _convs.get(cid);
-	if (!c) return;
-	for (const m of (c.messages || [])) {
-		if (_deferredSpeak.has(m.id)) { _deferredSpeak.delete(m.id); _speakMessage(m); }
 	}
 }
 async function _markConvRead(cid) {
@@ -7373,7 +7375,6 @@ function _toggleSpeak() {
 	_msgSpeak = !_msgSpeak;
 	try { localStorage.setItem('aprs_msg_speak', _msgSpeak ? '1' : '0'); } catch {}
 	_updateSpeakerBtn();
-	if (!_msgSpeak) _deferredSpeak.clear();
 	try {
 		speechSynthesis.cancel();
 		// Silent warm-up so speech is unlocked within this user gesture (required on
@@ -7455,6 +7456,10 @@ function _initMsgResize() {
 		if (panel.getBoundingClientRect().width > window.innerWidth) panel.style.width = window.innerWidth + 'px';
 	});
 }
+// The alert tone's own length, so the words wait for it rather than talking over it.
+// _playMsgTone schedules four WebAudio beeps ending at 0.75 s; the rest is the margin
+// that keeps the last one from being clipped by the first syllable.
+const MSG_TONE_MS = 850;
 // Pause between the spoken sender announcement and the message text.
 const MSG_SPEAK_GAP_MS = 500;
 // Pause between one sentence of a message and the next. Half the gap above, and
@@ -7478,8 +7483,16 @@ function _speakPhrase(text) {
 		speechSynthesis.speak(u);
 	});
 }
-function _speakMessage(m) {
-	if (!_msgSpeak || !window.speechSynthesis || !(m.text || '').trim()) return;
+// `chime` sounds the alert tone first, inside the same chain as the words so it lands
+// before them instead of on top of them. Used when the message's thread is not the one
+// being viewed: the operator is not looking, and the tone is what makes them look up.
+function _speakMessage(m, chime) {
+	if (!_msgSpeak || !window.speechSynthesis || !(m.text || '').trim()) {
+		// Still worth a tone if there is nothing sayable -- a photo with no caption is
+		// a real message arriving.
+		if (chime && _msgSpeak) _playMsgTone();
+		return;
+	}
 	// Announce the sender first. Net control is usually not looking at the screen
 	// when this fires, so the text alone leaves them with no idea who called.
 	// _msgSenderName resolves a mobile through its display_id, giving "CRD Stanton".
@@ -7490,6 +7503,10 @@ function _speakMessage(m) {
 	// Chained so two messages arriving close together cannot interleave their halves.
 	_speakChain = _speakChain.then(async () => {
 		if (!_msgSpeak) return;
+		if (chime) {
+			_playMsgTone();
+			await new Promise(r => setTimeout(r, MSG_TONE_MS));
+		}
 		if (who) {
 			await _speakPhrase('From ' + who + '.');
 			await new Promise(r => setTimeout(r, MSG_SPEAK_GAP_MS));

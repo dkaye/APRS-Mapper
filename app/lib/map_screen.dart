@@ -21,6 +21,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'mobile_session.dart';
 import 'arrow_painter.dart';
 import 'background_location.dart';
 import 'config_service.dart';
@@ -541,7 +542,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         .toList();
     if (spoken.isEmpty) return;
     final p = await SharedPreferences.getInstance();
-    if (!(p.getBool('aprs_msg_speak') ?? true)) return;   // the global mute
+    if (!(p.getBool(MobileSession.kPrefSpeakMessages) ?? true)) return;  // the global mute
     if (!mounted) return;
 
     // No batch summarising any more, and none needed. The queue drops anything over
@@ -579,7 +580,37 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     // The chat screen is open and shows arriving messages live via its own poll,
     // so don't also raise a notification/banner. (background_location still acks
     // it so it isn't re-delivered.)
-    if (MessagingScreen.isOpen) return;
+    //
+    // Speech is NOT part of what that screen covers, and this used to return before
+    // reaching it. MessagingScreen.isOpen is one flag for the whole screen, but that
+    // screen only speaks a message whose conversation is the one currently displayed —
+    // anything arriving on another thread, or while the inbox list is showing, was put
+    // in _deferredSpeak and read out only if somebody later opened that thread. So an
+    // operator reading one conversation heard a tone for a call addressed to them and
+    // never heard the words. Worse, the flag stays true when the app is backgrounded
+    // from that screen, which is the ordinary way a phone ends up in a pocket: open
+    // Messages, lock the phone. That was silence too.
+    //
+    // A message addressed to this operator is spoken whenever the speaker is on, full
+    // stop -- no matter which screen is showing or whether the app is visible. Safe to
+    // do here as well as there because AudioQueue dedupes on msgId: whichever path
+    // reaches it first speaks, and the other folds into that one.
+    if (MessagingScreen.isOpen) {
+      if (!WatchBridge.instance.watchWillAnnounce) {
+        final p = await SharedPreferences.getInstance();
+        if (p.getBool(MobileSession.kPrefSpeakMessages) ?? true) {
+          AudioQueue.instance.addSpeech(
+            ts: msg.ts,
+            senderLabel: msg.spokenLabel,
+            text: msg.text,
+            msgId: msg.id,
+            chime: true,
+            onSpoken: () => unawaited(_msgClient.read([msg.id])),
+          );
+        }
+      }
+      return;
+    }
     if (_appLifecycleState != AppLifecycleState.resumed) {
       // Backgrounded: raise a native notification the user can tap to return to
       // the app and open Messages.

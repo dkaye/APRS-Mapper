@@ -151,12 +151,17 @@ class _MessagingScreenState extends State<MessagingScreen> {
   /// Through the shared Speaker, which owns the app's only text-to-speech engine.
   /// This screen used to own a second one; both would have contended for the same
   /// audio session now that the map screen speaks messages from the background.
-  Future<void> _speakMessage(MsgMessage m) {
+  /// `chime` prefixes the alert tone, as one queued item so it lands before the words
+  /// instead of racing them. On for a message addressed to this operator that arrives
+  /// while another thread is being read: they are not looking at it, so the tone is what
+  /// makes them look up, and the map screen's addressed path chimes for the same reason.
+  /// Off in the open thread, where the message appears in front of them as it is read.
+  Future<void> _speakMessage(MsgMessage m, {bool chime = false}) {
     if (!_speak) return Future.value();
     // Through the shared queue, so this cannot start on top of a radio clip and it
     // inherits the five-minute rule with everything else.
-    AudioQueue.instance
-        .addSpeech(ts: m.ts, senderLabel: m.spokenLabel, text: m.text, msgId: m.id);
+    AudioQueue.instance.addSpeech(
+        ts: m.ts, senderLabel: m.spokenLabel, text: m.text, msgId: m.id, chime: chime);
     return Future.value();
   }
 
@@ -239,8 +244,26 @@ class _MessagingScreenState extends State<MessagingScreen> {
       }
     } else {
       if (wristHasIt || mine) return;
-      if (_speak) _deferredSpeak.add(m.id);
-      _playTone();
+      // Arrived on a thread that is not the one being read -- or while the inbox list
+      // is showing.
+      //
+      // Deferring is right for other people's traffic: it is on screen in the inbox,
+      // nobody is waiting on it, and reading out every thread at once would be noise.
+      // It is wrong for a message addressed to THIS operator, which is the one thing
+      // they need to hear without looking. Until 2026-08-29 both were deferred, so
+      // reading one conversation while a call came in on another produced a tone and
+      // nothing else, and the words waited for somebody to open that thread.
+      //
+      // Spoken here as well as from map_screen's addressed path rather than instead of
+      // it: that path is driven by the background-location and watch-bridge polls,
+      // which this screen's own poll can easily beat, and AudioQueue dedupes on msgId
+      // so whichever arrives first speaks and the other folds into it.
+      if (_speak && m.addressedToMe) {
+        _speakMessage(m, chime: true);
+      } else {
+        if (_speak) _deferredSpeak.add(m.id);
+        _playTone();
+      }
     }
   }
 
