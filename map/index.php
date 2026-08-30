@@ -2055,6 +2055,8 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
 #msg-allview-scroll { flex: 1; min-height: 0; overflow-y: auto; background: #f4f6f8; }
 .msg-all-item { padding: 7px 12px; border-bottom: 1px solid #e9e9e9; cursor: pointer; }
 .msg-all-item:hover { background: #eef3f7; }
+.msg-all-item.static { cursor: default; }
+.msg-all-item.static:hover { background: transparent; }
 .msg-all-item .who { font-size: 12px; font-weight: 600; color: #1a5276; display: flex; align-items: center; }
 .msg-all-item .who .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msg-all-item .who .to { color: #888; font-weight: 400; }
@@ -6181,54 +6183,13 @@ function _renderAllView() {
 	// morning down to the newest line every time the radio was keyed.
 	const atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 60
 	                 || !scroll.querySelector('.msg-all-item');
-	scroll.innerHTML = rows.map(m => {
-		const to = m.broadcast ? 'Send to Everyone' : (m.to_label || '');
-		const loc = (typeof m.lat === 'number' && typeof m.lon === 'number')
-			? '<button class="msg-all-loc2" data-mid="' + m.id + '" title="Show where this message was sent from">' + MSG_PIN_SVG + '</button>' : '';
-		// Same copy the thread bubbles offer, for the same reason: this is the view an
-		// operator reads a whole net back from, and a line lifted out of it goes into an
-		// incident report as the words that were said and nothing else. Carries the id
-		// rather than the text, so nothing has to be escaped into an attribute.
-		const copy = m.text
-			? '<button class="msg-all-copy" data-mid="' + m.id + '" title="Copy message text">' + MSG_COPY_SVG + '</button>' : '';
-		// The recording, on the view an operator reads a whole net back from. This is
-		// where a doubtful transcription most needs checking against what was actually
-		// said, and it was the one place the clip could not be reached.
-		//
-		// Same class as the bubble's control on purpose: _setAudioBtn and _audioBtns then
-		// drive both views, so a clip started in one shows as playing in the other rather
-		// than each keeping its own idea of what the single <audio> is doing.
-		const aud = m.audio_url
-			? '<button class="msg-bubble-audio msg-all-audio" data-mid="' + m.id + '" data-src="' + _esc(m.audio_url) + '">'
-			  + MSG_PLAY_SVG + '<span>' + (m.audio_secs ? m.audio_secs.toFixed(1) + 's' : 'Play') + '</span></button>'
-			: '';
-		return '<div class="msg-all-item" data-mid="' + m.id + '" title="Open this conversation to reply"><div class="who"><span class="nm">' + _esc(_msgSenderName(m)) +
-			' <span class="to">→ ' + _esc(to) + '</span></span><span class="tm">' + _esc(_msgFmtStamp(m.ts)) + '</span>' + loc + copy + aud + '</div>' +
-			'<div class="tx">' + (m.photo ? '📷 ' : '') + _hlText(_esc(m.text || (m.photo ? 'Photo' : '')), q) + '</div></div>';
-	}).join('');
+	scroll.innerHTML = rows.map(m => _compactRowHtml(m, q, true)).join('');
 	// Clicking a message opens its conversation so the operator can reply.
 	scroll.querySelectorAll('.msg-all-item').forEach(el => el.addEventListener('click', () => {
 		const m = _allViewRows.find(x => x.id === +el.dataset.mid);
 		if (m) _openFromAllView(m);
 	}));
-	// The map-pin drops a marker where the message was sent from (doesn't open the thread).
-	// stopPropagation, or copying a line would also open its thread and leave the view.
-	scroll.querySelectorAll('.msg-all-copy').forEach(b => b.addEventListener('click', e => {
-		e.stopPropagation();
-		const m = _allViewRows.find(x => x.id === +b.dataset.mid);
-		if (m && m.text) _copyMsgText(m.text, b);
-	}));
-	scroll.querySelectorAll('.msg-all-loc2').forEach(b => b.addEventListener('click', e => {
-		e.stopPropagation();
-		const m = _allViewRows.find(x => x.id === +b.dataset.mid);
-		if (m) _showMsgLocation(m);
-	}));
-	// stopPropagation for the same reason as the two above: playing a clip must not also
-	// open its thread and leave the view somebody is reading back through.
-	scroll.querySelectorAll('.msg-all-audio').forEach(b => b.addEventListener('click', e => {
-		e.stopPropagation();
-		_toggleClip(b);
-	}));
+	_wireCompactRows(scroll);
 	document.getElementById('msg-allview-count').textContent = rows.length + (rows.length === 1 ? ' message' : ' messages') + (q ? ' matching' : '');
 	if (atBottom) scroll.scrollTop = scroll.scrollHeight;   // newest at the bottom
 }
@@ -6417,6 +6378,49 @@ async function _openConversation(cid) {
 	_syncComposerMode();
 	setTimeout(() => document.getElementById('msg-compose-text').focus(), 60);
 }
+/* One line per message: who, to whom, when, the text, and the controls.
+ *
+ * The format Everything has always used, now the format everywhere that is a STREAM
+ * rather than a conversation -- the Event Log and the two monitor feeds. Bubbles are
+ * for a thread with two ends, where which side a message sits on is the fastest way to
+ * see who said it. A log has one author per line and no sides, and on a busy net the
+ * alignment bought nothing while costing about twice the vertical space, so half as
+ * much of the net fitted on screen.
+ *
+ * `q` highlights a search match, and is empty everywhere except Everything.
+ */
+function _compactRowHtml(m, q, clickable) {
+	const to = m.broadcast ? 'Send to Everyone' : (m.to_label || '');
+	const loc = (typeof m.lat === 'number' && typeof m.lon === 'number')
+		? '<button class="msg-all-loc2" data-mid="' + m.id + '" title="Show where this message was sent from">' + MSG_PIN_SVG + '</button>' : '';
+	// Same copy the thread bubbles offer, for the same reason: this is the view an
+	// operator reads a whole net back from, and a line lifted out of it goes into an
+	// incident report as the words that were said and nothing else. Carries the id
+	// rather than the text, so nothing has to be escaped into an attribute.
+	const copy = m.text
+		? '<button class="msg-all-copy" data-mid="' + m.id + '" title="Copy message text">' + MSG_COPY_SVG + '</button>' : '';
+	// The recording, on the view an operator reads a whole net back from. This is
+	// where a doubtful transcription most needs checking against what was actually
+	// said, and it was the one place the clip could not be reached.
+	//
+	// Same class as the bubble's control on purpose: _setAudioBtn and _audioBtns then
+	// drive both views, so a clip started in one shows as playing in the other rather
+	// than each keeping its own idea of what the single <audio> is doing.
+	const aud = m.audio_url
+		? '<button class="msg-bubble-audio msg-all-audio" data-mid="' + m.id + '" data-src="' + _esc(m.audio_url) + '">'
+		  + MSG_PLAY_SVG + '<span>' + (m.audio_secs ? m.audio_secs.toFixed(1) + 's' : 'Play') + '</span></button>'
+		: '';
+	// Only Everything opens a thread from a row. In the log and the monitor feeds there
+	// is nowhere to go -- the log is already open, and monitored traffic has no thread to
+	// reply into by design -- so those rows carry neither the hint nor the pointer, which
+	// would promise a click that does nothing.
+	return '<div class="msg-all-item' + (clickable ? '' : ' static') + '" data-mid="' + m.id + '"'
+		+ (clickable ? ' title="Open this conversation to reply"' : '')
+		+ '><div class="who"><span class="nm">' + _esc(_msgSenderName(m)) +
+		' <span class="to">→ ' + _esc(to) + '</span></span><span class="tm">' + _esc(_msgFmtStamp(m.ts)) + '</span>' + loc + copy + aud + '</div>' +
+		'<div class="tx">' + (m.photo ? '📷 ' : '') + _hlText(_esc(m.text || (m.photo ? 'Photo' : '')), q) + '</div></div>';
+}
+
 function _bubbleHtml(m, c) {
 	const me = (m.from_id === _msgMeId);
 	// On a received message show who it went TO as well as who it came from: that is
@@ -6509,27 +6513,70 @@ function _renderMonitor() {
 		return;
 	}
 	const atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 60;
-	scroll.innerHTML = list.map(m => _bubbleHtml(m, null)).join('');
-	_wireLocButtons(scroll);
+	scroll.innerHTML = list.map(m => _compactRowHtml(m, '', false)).join('');
+	_wireCompactRows(scroll);
 	if (atBottom) setTimeout(() => { scroll.scrollTop = scroll.scrollHeight; }, 0);
 }
+
+/** True where a thread is a STREAM rather than a conversation.
+ *
+ *  The Event Log has one author per line and no sides to take, so bubble alignment
+ *  conveys nothing there and costs about twice the vertical space -- on a busy net that
+ *  is half as much of it on screen. A tracker thread has two ends and keeps its bubbles,
+ *  where which side a message sits on is the fastest way to see who said it. */
+function _isStreamConv(c) { return !!(c && c.kind === 'log'); }
 
 function _renderThread(c) {
 	const scroll = document.getElementById('msg-thread-scroll');
 	const msgs = c.messages || [];
 	if (!msgs.length) { scroll.innerHTML = '<div id="msg-thread-empty">No messages yet. Say hello 👋</div>'; return; }
-	scroll.innerHTML = msgs.map(m => _bubbleHtml(m, c)).join('');
-	_wireLocButtons(scroll);
+	const stream = _isStreamConv(c);
+	scroll.innerHTML = msgs.map(m => stream ? _compactRowHtml(m, '', false) : _bubbleHtml(m, c)).join('');
+	if (stream) _wireCompactRows(scroll); else _wireLocButtons(scroll);
 	setTimeout(() => { scroll.scrollTop = scroll.scrollHeight; }, 0);
 }
 function _appendBubble(c, m) {
 	const scroll = document.getElementById('msg-thread-scroll');
 	if (document.getElementById('msg-thread-empty')) scroll.innerHTML = '';
 	const atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 60;
-	scroll.insertAdjacentHTML('beforeend', _bubbleHtml(m, c));
-	_wireLocButtons(scroll.lastElementChild);
+	const stream = _isStreamConv(c);
+	scroll.insertAdjacentHTML('beforeend', stream ? _compactRowHtml(m, '', false) : _bubbleHtml(m, c));
+	if (stream) _wireCompactRows(scroll.lastElementChild);
+	else _wireLocButtons(scroll.lastElementChild);
 	if (atBottom) scroll.scrollTop = scroll.scrollHeight;
 }
+/** Wire the controls on compact rows: copy, map-pin, play.
+ *
+ *  stopPropagation on all three. In Everything the row itself opens a thread, so a
+ *  click that reaches it would drop the operator out of the view they were reading back
+ *  through; in the log and the monitor feeds it is harmless but the rule is the same
+ *  one, and having it differ per view is how the exception gets forgotten.
+ *
+ *  Idempotent: these renderers redraw on every poll, and re-wiring a button that
+ *  survived would stack a second listener on it. */
+function _wireCompactRows(root) {
+	root.querySelectorAll('.msg-all-copy').forEach(b => {
+		if (b._wired) return; b._wired = true;
+		b.addEventListener('click', e => {
+			e.stopPropagation();
+			const m = _msgFindById(+b.dataset.mid);
+			if (m && m.text) _copyMsgText(m.text, b);
+		});
+	});
+	root.querySelectorAll('.msg-all-loc2').forEach(b => {
+		if (b._wired) return; b._wired = true;
+		b.addEventListener('click', e => {
+			e.stopPropagation();
+			const m = _msgFindById(+b.dataset.mid);
+			if (m) _showMsgLocation(m);
+		});
+	});
+	root.querySelectorAll('.msg-all-audio').forEach(b => {
+		if (b._wired) return; b._wired = true;
+		b.addEventListener('click', e => { e.stopPropagation(); _toggleClip(b); });
+	});
+}
+
 function _wireLocButtons(root) {
 	root.querySelectorAll('.msg-bubble-locbtn').forEach(b => {
 		if (b._wired) return; b._wired = true;
@@ -6559,9 +6606,16 @@ function _wireLocButtons(root) {
 		img.addEventListener('click', e => { e.stopPropagation(); _openMsgPhoto(img.src); });
 	});
 }
+/** A message by id, from anywhere it may be on screen.
+ *
+ *  Threads first, then Everything's rows, then the monitor feed. The last two are not
+ *  in _convs and never will be -- Everything is fetched whole from ?history, and
+ *  monitored traffic is deliberately kept out so it cannot be replied to -- so a lookup
+ *  that only walked conversations found nothing for either, and the copy and map-pin
+ *  controls on those rows would have done nothing at all. */
 function _msgFindById(id) {
 	for (const c of _convs.values()) { const m = (c.messages || []).find(x => x.id === id); if (m) return m; }
-	return null;
+	return _allViewRows.find(x => x.id === id) || _monRecent.find(x => x.id === id) || null;
 }
 
 // ── Composer ─────────────────────────────────────────────────────────────────
