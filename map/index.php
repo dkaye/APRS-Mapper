@@ -2059,6 +2059,10 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
 .msg-all-item .who .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msg-all-item .who .to { color: #888; font-weight: 400; }
 .msg-all-item .who .tm { color: #aaa; font-weight: 400; font-size: 10px; margin-left: auto; padding-left: 6px; font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+/* Smaller here than in a bubble: this row is one line of a scannable list, and the
+   control has to sit beside a timestamp without setting the row's height. */
+.msg-all-item .msg-all-audio { flex: 0 0 auto; margin: 0 0 0 6px; padding: 1px 7px 1px 5px;
+    font-size: 11px; line-height: 1.5; }
 .msg-all-item .tx { font-size: 14px; color: #222; margin-top: 2px; word-break: break-word; line-height: 1.35; }
 .msg-all-item mark { background: #ffe08a; padding: 0 1px; }
 #msg-allview-foot { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-top: 1px solid #eee; font-size: 11px; color: #999; }
@@ -6187,8 +6191,19 @@ function _renderAllView() {
 		// rather than the text, so nothing has to be escaped into an attribute.
 		const copy = m.text
 			? '<button class="msg-all-copy" data-mid="' + m.id + '" title="Copy message text">' + MSG_COPY_SVG + '</button>' : '';
+		// The recording, on the view an operator reads a whole net back from. This is
+		// where a doubtful transcription most needs checking against what was actually
+		// said, and it was the one place the clip could not be reached.
+		//
+		// Same class as the bubble's control on purpose: _setAudioBtn and _audioBtns then
+		// drive both views, so a clip started in one shows as playing in the other rather
+		// than each keeping its own idea of what the single <audio> is doing.
+		const aud = m.audio_url
+			? '<button class="msg-bubble-audio msg-all-audio" data-mid="' + m.id + '" data-src="' + _esc(m.audio_url) + '">'
+			  + MSG_PLAY_SVG + '<span>' + (m.audio_secs ? m.audio_secs.toFixed(1) + 's' : 'Play') + '</span></button>'
+			: '';
 		return '<div class="msg-all-item" data-mid="' + m.id + '" title="Open this conversation to reply"><div class="who"><span class="nm">' + _esc(_msgSenderName(m)) +
-			' <span class="to">→ ' + _esc(to) + '</span></span><span class="tm">' + _esc(_msgFmtStamp(m.ts)) + '</span>' + loc + copy + '</div>' +
+			' <span class="to">→ ' + _esc(to) + '</span></span><span class="tm">' + _esc(_msgFmtStamp(m.ts)) + '</span>' + loc + copy + aud + '</div>' +
 			'<div class="tx">' + (m.photo ? '📷 ' : '') + _hlText(_esc(m.text || (m.photo ? 'Photo' : '')), q) + '</div></div>';
 	}).join('');
 	// Clicking a message opens its conversation so the operator can reply.
@@ -6207,6 +6222,12 @@ function _renderAllView() {
 		e.stopPropagation();
 		const m = _allViewRows.find(x => x.id === +b.dataset.mid);
 		if (m) _showMsgLocation(m);
+	}));
+	// stopPropagation for the same reason as the two above: playing a clip must not also
+	// open its thread and leave the view somebody is reading back through.
+	scroll.querySelectorAll('.msg-all-audio').forEach(b => b.addEventListener('click', e => {
+		e.stopPropagation();
+		_toggleClip(b);
 	}));
 	document.getElementById('msg-allview-count').textContent = rows.length + (rows.length === 1 ? ' message' : ' messages') + (q ? ' matching' : '');
 	if (atBottom) scroll.scrollTop = scroll.scrollHeight;   // newest at the bottom
@@ -7528,8 +7549,7 @@ function _msgAudio() {
 		// indistinguishable from a muted machine, and that ambiguity cost an afternoon
 		// on the phone side -- see the comment on clipFailed().
 		_msgAudioEl.addEventListener('error', () => {
-			const b = _audioBtn(_msgAudioMid);
-			if (b) b.querySelector('span').textContent = 'unavailable';
+			_audioBtns(_msgAudioMid).forEach(b => { b.querySelector('span').textContent = 'unavailable'; });
 			_setAudioBtn(null);
 			_drainClips();     // one bad clip must not stall the rest of the net
 		});
@@ -7537,9 +7557,12 @@ function _msgAudio() {
 	return _msgAudioEl;
 }
 
-function _audioBtn(mid) {
-	return mid == null ? null
-		: document.querySelector('.msg-bubble-audio[data-mid="' + mid + '"]');
+/** Every control for this message. One message can be on screen twice -- as a bubble in
+ *  a thread and as a row in Everything -- and there is one <audio> behind both, so both
+ *  have to agree about what it is doing. */
+function _audioBtns(mid) {
+	return mid == null ? []
+		: [...document.querySelectorAll('.msg-bubble-audio[data-mid="' + mid + '"]')];
 }
 
 /** Put every button back to Play, then mark `mid` as the one playing. */
@@ -7549,11 +7572,10 @@ function _setAudioBtn(mid) {
 		b.innerHTML = MSG_PLAY_SVG + '<span>' + (b.dataset.secs || 'Play') + '</span>';
 	});
 	_msgAudioMid = mid;
-	const b = _audioBtn(mid);
-	if (b) {
+	_audioBtns(mid).forEach(b => {
 		b.classList.add('playing');
 		b.innerHTML = MSG_STOP_SVG + '<span>Playing</span>';
-	}
+	});
 }
 
 /* Arriving radio, played one clip at a time in the order it was heard.
@@ -7600,8 +7622,7 @@ function _toggleClip(btn) {
 	// unintelligible mess as two clips at once, so the spoken queue yields to the radio.
 	try { speechSynthesis.cancel(); } catch {}
 	a.play().catch(() => {
-		const b2 = _audioBtn(mid);
-		if (b2) b2.querySelector('span').textContent = 'unavailable';
+		_audioBtns(mid).forEach(b2 => { b2.querySelector('span').textContent = 'unavailable'; });
 		_setAudioBtn(null);
 	});
 }
