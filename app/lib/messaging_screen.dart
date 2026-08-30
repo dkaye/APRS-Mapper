@@ -620,11 +620,13 @@ class _MessagingScreenState extends State<MessagingScreen> {
   /// The rows that lead into the monitor, in the order they appear at the top of the
   /// inbox. One per thing being followed:
   ///
-  ///   Receive all messages -> "Everyone's traffic"  (the whole feed)
-  ///   Hear radio traffic   -> "Radio audio & text"  (its radio subset -- a transmission
-  ///                           is in both rows when both are on, which is the point: one
-  ///                           row is the net, the other is only what came off the air,
-  ///                           with the clip and the transcription that goes with it)
+  ///   Receive all messages -> "Everyone's Text"      (typed traffic between others)
+  ///   Hear radio traffic   -> "Radio audio & text"   (what came off the air, with the
+  ///                           clip and the transcription that goes with it)
+  ///
+  /// Disjoint: a message is in one row or the other, never both. They overlapped until
+  /// 2026-08-30 -- the first row was the whole feed -- and two rows showing much the
+  /// same thing is why neither read as the answer.
   ///   neither              -> nothing, and the inbox looks as it always did
   ///
   /// "Speak text messages" does not appear here. It governs whether arriving text is
@@ -639,9 +641,13 @@ class _MessagingScreenState extends State<MessagingScreen> {
 
   Widget _monitorEntry({required bool radioOnly}) {
     final mon = MonitorService.instance;
-    final n = radioOnly
-        ? mon.recent.where((m) => m.isRadio).length
-        : mon.recent.length;
+    // Disjoint, so each row holds what its name says. "Everyone's Text" counted the
+    // WHOLE feed until 2026-08-30, radio included, which made the two rows look alike
+    // and neither read as the answer -- the same confusion that got the web's copy of
+    // this row deleted. The web could delete it because Everything already lists every
+    // message; a phone has no Everything (history is operators only), so here the row
+    // stays and is narrowed to what it claims.
+    final n = mon.recent.where((m) => m.isRadio == radioOnly).length;
     return Material(
       color: _kDark.withValues(alpha: 0.06),
       child: ListTile(
@@ -669,7 +675,7 @@ class _MessagingScreenState extends State<MessagingScreen> {
     // monitor poll is a single request whose contents the switches already decide, and
     // asking for the radio subset again would be a second poll of the same rows.
     final all = MonitorService.instance.recent;
-    final items = radioOnly ? all.where((m) => m.isRadio).toList() : all;
+    final items = all.where((m) => m.isRadio == radioOnly).toList();
     if (items.isEmpty) {
       return Center(
         child: Padding(
@@ -679,9 +685,9 @@ class _MessagingScreenState extends State<MessagingScreen> {
                 ? 'Nothing yet.\n\nThis fills as transmissions are received and '
                   'transcribed. It shows what came off the air — none of it addressed '
                   'to you, and none of it will alert you.'
-                : 'Nothing yet.\n\nThis fills as traffic arrives. It shows every '
-                  'message in the event and what the receivers heard — none of it '
-                  'addressed to you, and none of it will alert you.',
+                : 'Nothing yet.\n\nThis fills as messages are typed between other '
+                  'stations. Radio traffic has its own list — none of this is addressed '
+                  'to you, and none of it will alert you.',
             textAlign: TextAlign.center,
             style: const TextStyle(color: Colors.grey),
           ),
