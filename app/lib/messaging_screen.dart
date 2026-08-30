@@ -55,7 +55,24 @@ class _MessagingScreenState extends State<MessagingScreen> {
 
   /// Monitor mode: the event's whole traffic, as a running log. A third place this
   /// screen can be, alongside the inbox and an open thread.
-  bool _monitorOpen = false;
+  /// Which monitor view is open: null for none, `false` for the whole feed, `true` for
+  /// radio only. Two rows can lead here now -- "All radio and text" and "Radio audio" --
+  /// and they differ only in what they filter to, so one flag would not say which.
+  bool? _monitorRadioOnly;
+
+  /// The view actually on screen, which is not always the one that was opened: a switch
+  /// turned off in the settings sheet while its view is open leaves that view with no
+  /// source. Derived rather than corrected in build(), which must not mutate state --
+  /// the stored choice is left alone and simply stops resolving, so turning the switch
+  /// back on returns to where the operator was.
+  bool? get _openMonitorView {
+    final mon = MonitorService.instance;
+    if (_monitorRadioOnly == true && mon.playingRadioAudio) return true;
+    if (_monitorRadioOnly == false && mon.monitoringAll) return false;
+    return null;
+  }
+
+  bool get _monitorOpen => _openMonitorView != null;
   StreamSubscription<List<MsgMessage>>? _monitorSub;
 
   @override
@@ -513,7 +530,7 @@ class _MessagingScreenState extends State<MessagingScreen> {
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        if (_monitorOpen) { setState(() => _monitorOpen = false); return; }
+        if (_monitorOpen) { setState(() => _monitorRadioOnly = null); return; }
         if (_open != null) _backToInbox();
       },
       child: Scaffold(
@@ -523,7 +540,7 @@ class _MessagingScreenState extends State<MessagingScreen> {
           titleSpacing: (inThread || _monitorOpen) ? 0 : null,
           title: Text(
               _monitorOpen
-                  ? (MonitorService.instance.monitoringAll ? 'Everyone’s traffic' : 'Radio')
+                  ? _monitorTitle(radioOnly: _openMonitorView!)
                   : (inThread ? _open!.label : 'Messages'),
               overflow: TextOverflow.ellipsis),
           // On the inbox there is nothing to go back TO — Close is the way out. Without
@@ -534,7 +551,7 @@ class _MessagingScreenState extends State<MessagingScreen> {
               ? IconButton(
                   icon: const Icon(Icons.arrow_back),
                   tooltip: 'Back to conversations',
-                  onPressed: () => setState(() => _monitorOpen = false))
+                  onPressed: () => setState(() => _monitorRadioOnly = null))
               : inThread
                   ? IconButton(icon: const Icon(Icons.arrow_back), tooltip: 'Back to conversations', onPressed: _backToInbox)
                   : null,
@@ -594,21 +611,56 @@ class _MessagingScreenState extends State<MessagingScreen> {
   /// traffic has no thread to reply into, and presenting it as one would invite exactly
   /// the mistake the rest of this feature avoids: answering a question that was asked
   /// of somebody else.
-  Widget _monitorEntry() {
+  /// What a monitor view is called, given what the switches actually let into it.
+  ///
+  /// The title has to describe the CONTENTS, not the button that opened it. "Receive all
+  /// messages" on by itself carries no radio, so calling that view "All radio and text"
+  /// would promise something the feed cannot contain.
+  String _monitorTitle({required bool radioOnly}) {
+    if (radioOnly) return 'Radio audio';
+    return MonitorService.instance.playingRadioAudio
+        ? 'All radio and text'
+        : 'All text messages';
+  }
+
+  /// The rows that lead into the monitor, in the order they appear at the top of the
+  /// inbox. One per thing being followed:
+  ///
+  ///   both switches  -> "All radio and text" (everything) and "Radio audio" (the radio
+  ///                     subset of the same feed -- a transmission is in both, which is
+  ///                     the point: one row is the net, the other is only what came off
+  ///                     the air)
+  ///   radio only     -> "Radio audio"
+  ///   all only       -> "All text messages"
+  ///   neither        -> nothing, and the inbox looks as it always did
+  List<Widget> _monitorEntries() {
     final mon = MonitorService.instance;
-    final n = mon.recent.length;
-    final radioOnly = mon.playingRadioAudio && !mon.monitoringAll;
+    final rows = <Widget>[];
+    if (mon.monitoringAll) rows.add(_monitorEntry(radioOnly: false));
+    if (mon.playingRadioAudio) rows.add(_monitorEntry(radioOnly: true));
+    return rows;
+  }
+
+  Widget _monitorEntry({required bool radioOnly}) {
+    final mon = MonitorService.instance;
+    final n = radioOnly
+        ? mon.recent.where((m) => m.isRadio).length
+        : mon.recent.length;
     return Material(
       color: _kDark.withValues(alpha: 0.06),
       child: ListTile(
-        leading: const Icon(Icons.hearing, color: _kDark),
-        title: Text(radioOnly ? 'Radio' : 'Everyone’s traffic',
+        leading: Icon(radioOnly ? Icons.radio : Icons.hearing, color: _kDark),
+        title: Text(_monitorTitle(radioOnly: radioOnly),
             style: const TextStyle(fontWeight: FontWeight.w600, color: _kDark)),
+        // `skipped` belongs to the feed as a whole, so it is only claimed by the row
+        // that shows the whole feed. Reporting it beside a filtered count would say
+        // that radio entries had been dropped, which is not what the server said.
         subtitle: Text(n == 0
             ? 'Listening — nothing yet'
-            : '$n recent${mon.skippedTotal > 0 ? ' · ${mon.skippedTotal} skipped' : ''}'),
+            : '$n recent'
+              '${!radioOnly && mon.skippedTotal > 0 ? ' · ${mon.skippedTotal} skipped' : ''}'),
         trailing: const Icon(Icons.chevron_right, color: _kDark),
-        onTap: () => setState(() => _monitorOpen = true),
+        onTap: () => setState(() => _monitorRadioOnly = radioOnly),
       ),
     );
   }
@@ -616,17 +668,26 @@ class _MessagingScreenState extends State<MessagingScreen> {
   /// Everything being monitored, oldest at the top, newest at the bottom — the order a
   /// net happened in, which is the order somebody reading back wants it.
   Widget _buildMonitor() {
-    final items = MonitorService.instance.recent;
+    final radioOnly = _openMonitorView ?? false;
+    // One feed, two views of it. Filtered here rather than fetched separately: the
+    // monitor poll is a single request whose contents the switches already decide, and
+    // asking for the radio subset again would be a second poll of the same rows.
+    final all = MonitorService.instance.recent;
+    final items = radioOnly ? all.where((m) => m.isRadio).toList() : all;
     if (items.isEmpty) {
-      return const Center(
+      return Center(
         child: Padding(
-          padding: EdgeInsets.all(24),
+          padding: const EdgeInsets.all(24),
           child: Text(
-            'Nothing yet.\n\nThis fills as traffic arrives. It shows every message in '
-            'the event and what the receivers heard — none of it addressed to you, and '
-            'none of it will alert you.',
+            radioOnly
+                ? 'Nothing yet.\n\nThis fills as transmissions are received and '
+                  'transcribed. It shows what came off the air — none of it addressed '
+                  'to you, and none of it will alert you.'
+                : 'Nothing yet.\n\nThis fills as traffic arrives. It shows every '
+                  'message in the event and what the receivers heard — none of it '
+                  'addressed to you, and none of it will alert you.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.grey),
+            style: const TextStyle(color: Colors.grey),
           ),
         ),
       );
@@ -691,17 +752,17 @@ class _MessagingScreenState extends State<MessagingScreen> {
     if (items.isEmpty && !monitoring) {
       return const Center(child: Padding(padding: EdgeInsets.all(24), child: Text('No conversations yet.\nTap “New message” to start one.', textAlign: TextAlign.center, style: TextStyle(color: Colors.grey))));
     }
-    // The monitor entry is row zero when anything is being followed, so the count is
-    // visible without opening it.
-    final lead = monitoring ? 1 : 0;
+    // The monitor rows come first, so their counts are visible without opening them.
+    // One or two of them depending on the switches -- see _monitorEntries().
+    final lead = monitoring ? _monitorEntries() : const <Widget>[];
     return RefreshIndicator(
       onRefresh: _loadConversations,
       child: ListView.separated(
-        itemCount: items.length + lead,
+        itemCount: items.length + lead.length,
         separatorBuilder: (_, __) => const Divider(height: 1),
         itemBuilder: (_, idx) {
-          if (monitoring && idx == 0) return _monitorEntry();
-          final i = idx - lead;
+          if (idx < lead.length) return lead[idx];
+          final i = idx - lead.length;
           final c = items[i];
           final pv = c.preview;
           return ListTile(
