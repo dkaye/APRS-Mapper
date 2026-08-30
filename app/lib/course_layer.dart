@@ -113,7 +113,19 @@ class _CourseLayerState extends State<CourseLayer> {
         point: at,
         width: 92,
         height: 26,
-        alignment: Alignment.centerLeft,
+        // centerRight, and it reads backwards on purpose.
+        //
+        // flutter_map's `alignment` names where the WIDGET sits relative to the point,
+        // not where the point sits inside the widget -- its own doc says topCenter puts
+        // the widget ABOVE the point. The arithmetic in marker_layer.dart is
+        // `left = 0.5*w*(x+1); Positioned.left = point.dx - (w - left)`, so centerLeft
+        // (x=-1) puts the entire box to the LEFT of the point and put every Dipsea
+        // marker 92 px west of where it belonged.
+        //
+        // centerRight (x=+1) gives Positioned.left == point.dx: the box starts at the
+        // point and runs right, so the dot at the head of the Row is on the coordinate
+        // and the label trails away from it. y=0 keeps it vertically centred.
+        alignment: Alignment.centerRight,
         child: IgnorePointer(
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             Container(
