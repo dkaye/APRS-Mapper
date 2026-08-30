@@ -7744,9 +7744,27 @@ function _initVoice() {
 }
 
 // ── Chronological message helpers (View All feed + map-pin) ──────────────────
+/** MM-DD h:mm:ss AM — the stamp every compact row carries.
+ *
+ *  Twelve-hour, because that is how the net says times out loud and the log is read
+ *  back by the people who were on it.
+ *
+ *  The hour is PADDED, which ordinary 12-hour writing does not do. These are stacked in
+ *  a scannable column whose CSS already asks for tabular figures, and an unpadded hour
+ *  makes every single-digit row a character narrower — so the seconds no longer line up
+ *  and the eye loses the column it was running down.
+ *
+ *  Not toLocaleTimeString: that would follow the viewer's locale and hand a 24-hour
+ *  clock to anybody whose machine is set that way, which is the thing being fixed.
+ *
+ *  The CSV keeps this in its Time column and carries a full ISO timestamp in the next
+ *  one, so nothing that needs to sort or parse is relying on this shape. */
 function _msgFmtStamp(ts) {
 	const d = new Date(ts * 1000), p = n => String(n).padStart(2, '0');
-	return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+	const h = d.getHours(), h12 = h % 12 || 12;
+	return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' '
+	     + p(h12) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds())
+	     + ' ' + (h < 12 ? 'AM' : 'PM');
 }
 function _msgFmtStampFull(ts) { return new Date(ts * 1000).getFullYear() + '-' + _msgFmtStamp(ts); }
 
