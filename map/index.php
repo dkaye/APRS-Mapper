@@ -2069,10 +2069,6 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
    edge, and every row has one where only your own messages have a receipt. Putting the
    receipt first would make the stamp's position depend on who sent the message. */
 .msg-all-item .who .msg-all-ack { color: #7f8c8d; font-weight: 400; font-size: 10px; padding-left: 6px; flex: 0 0 auto; white-space: nowrap; }
-/* Smaller here than in a bubble: this row is one line of a scannable list, and the
-   control has to sit beside a timestamp without setting the row's height. */
-.msg-all-item .msg-all-audio { flex: 0 0 auto; margin: 0 0 0 6px; padding: 1px 7px 1px 5px;
-    font-size: 11px; line-height: 1.5; }
 .msg-all-item .tx { font-size: 14px; color: #222; margin-top: 2px; word-break: break-word; line-height: 1.35; }
 .msg-all-item mark { background: #ffe08a; padding: 0 1px; }
 #msg-allview-foot { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-top: 1px solid #eee; font-size: 11px; color: #999; }
@@ -2160,54 +2156,20 @@ body.msg-resizing { user-select: none; cursor: col-resize; }
    which need room to sit in from the sides; on a row it was added to the row's own and
    made the text measurably narrower than the same row in Everything. */
 #msg-thread-scroll.stream { padding: 0; }
-.msg-bubble-row { display: flex; margin-bottom: 8px; }
-.msg-bubble-row.me { justify-content: flex-end; }
-.msg-bubble {
-    max-width: 80%; padding: 7px 10px 5px; border-radius: 12px; font-size: 14px; line-height: 1.35;
-    background: #fff; color: #222; box-shadow: 0 1px 1px rgba(0,0,0,0.08); word-break: break-word;
-}
-.msg-bubble-row.me .msg-bubble { background: #2980b9; color: #fff; }
-.msg-bubble-sender { font-size: 11px; font-weight: 700; color: #1a5276; margin-bottom: 2px; }
-/* Recipient, shown after the sender on received messages — lighter, so the sender
-   still reads first. */
-.msg-bubble-to { font-weight: 400; color: #7b8a95; }
-.msg-bubble-sender .sid { color: #888; font-weight: 600; }
-.msg-bubble-foot { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
-/* nowrap now that this carries a date as well as a time: the footer is a flex row and a
-   wrapped stamp would push the delivery receipt onto a second line. */
-.msg-bubble-time { font-size: 10px; color: #aaa; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.msg-bubble-row.me .msg-bubble-time { color: #d6e6f2; }
-/* Your own bubbles are solid blue, and the sender line only appears on them for log
-   entries — its default near-black blue would be unreadable there. */
-.msg-bubble-row.me .msg-bubble-sender { color: #eaf3fa; }
-.msg-bubble-row.me .msg-bubble-to { color: #c3dcee; }
-.msg-bubble-row.me .msg-bubble-sender .sid { color: #c3dcee; }
-.msg-bubble-ack { font-size: 10px; color: #cfe0ec; margin-left: auto; }
-.msg-bubble-img { display: block; max-width: 220px; max-height: 260px; width: auto; height: auto; border-radius: 8px; margin-bottom: 4px; cursor: zoom-in; object-fit: cover; }
 .msg-photo-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: flex; align-items: center; justify-content: center; z-index: 12000; cursor: zoom-out; }
 .msg-photo-overlay img { max-width: 94vw; max-height: 94vh; border-radius: 4px; box-shadow: 0 4px 30px rgba(0,0,0,0.5); }
-.msg-bubble-locbtn { background: none; border: none; padding: 0; cursor: pointer; color: #b0b6bb; line-height: 0; }
-.msg-bubble-locbtn:hover { color: #c0392b; }
-.msg-bubble-row.me .msg-bubble-locbtn { color: #cfe0ec; }
-/* The recording, when a Transcriber attached one. A button rather than <audio controls>:
-   a browser's own player is a full-width slab, and a log of forty overs would be forty
-   of them. This says how long the clip is, which is what decides whether to listen. */
-.msg-bubble-audio { display: inline-flex; align-items: center; gap: 5px; margin-top: 5px;
+/* Play/stop for a recording, when a Transcriber attached one.
+   A button rather than <audio controls>: a browser's own player is a full-width slab
+   with a seek bar, and a log of forty overs would be forty of them. This carries the
+   clip's length instead, which is what decides whether to listen. Sized for the row's
+   header line, the only place it appears -- it was born in a chat bubble and kept that
+   name long enough to be a class called "bubble" on something that is not one. */
+.msg-clip-btn { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto;
+    margin: 0 0 0 6px; padding: 1px 7px 1px 5px; border-radius: 12px; cursor: pointer;
     background: rgba(41,128,185,0.10); border: 1px solid rgba(41,128,185,0.28);
-    border-radius: 12px; padding: 3px 9px 3px 7px; cursor: pointer;
-    font: inherit; font-size: 12px; color: #2471a3; line-height: 1.4; }
-.msg-bubble-audio:hover { background: rgba(41,128,185,0.18); }
-.msg-bubble-audio.playing { background: #2980b9; border-color: #2980b9; color: #fff; }
-.msg-bubble-row.me .msg-bubble-audio { background: rgba(255,255,255,0.16);
-    border-color: rgba(255,255,255,0.35); color: #eaf4fb; }
-.msg-bubble-row.me .msg-bubble-audio.playing { background: #fff; color: #2471a3; }
-.msg-bubble-copybtn { background: none; border: none; padding: 0; cursor: pointer; color: #b0b6bb; line-height: 0; }
-.msg-bubble-copybtn:hover { color: #2980b9; }
-.msg-bubble-row.me .msg-bubble-copybtn { color: #cfe0ec; }
-/* Held for a beat after a copy. Clipboard writes are silent, so without this there
-   is no way to tell a successful copy from a click that did nothing. */
-.msg-bubble-copybtn.copied,
-.msg-bubble-row.me .msg-bubble-copybtn.copied { color: #27ae60; }
+    font: inherit; font-size: 11px; line-height: 1.5; color: #2471a3; }
+.msg-clip-btn:hover { background: rgba(41,128,185,0.18); }
+.msg-clip-btn.playing { background: #2980b9; border-color: #2980b9; color: #fff; }
 .msg-receipt { font-size: 10px; color: #d6e6f2; }
 #msg-thread-empty { text-align: center; color: #999; font-size: 13px; padding: 30px 20px; }
 
@@ -6499,7 +6461,7 @@ function _compactRowHtml(m, q, clickable, showAck) {
 	// drive both views, so a clip started in one shows as playing in the other rather
 	// than each keeping its own idea of what the single <audio> is doing.
 	const aud = m.audio_url
-		? '<button class="msg-bubble-audio msg-all-audio" data-mid="' + m.id + '" data-src="' + _esc(m.audio_url) + '">'
+		? '<button class="msg-clip-btn" data-mid="' + m.id + '" data-src="' + _esc(m.audio_url) + '">'
 		  + MSG_PLAY_SVG + '<span>' + (m.audio_secs ? m.audio_secs.toFixed(1) + 's' : 'Play') + '</span></button>'
 		: '';
 	// Only Everything opens a thread from a row. In the log and the monitor feeds there
@@ -6640,7 +6602,7 @@ function _wireCompactRows(root) {
 			if (m) _showMsgLocation(m);
 		});
 	});
-	root.querySelectorAll('.msg-all-audio').forEach(b => {
+	root.querySelectorAll('.msg-clip-btn').forEach(b => {
 		if (b._wired) return; b._wired = true;
 		b.addEventListener('click', e => { e.stopPropagation(); _toggleClip(b); });
 	});
@@ -7792,12 +7754,12 @@ function _msgAudio() {
  *  have to agree about what it is doing. */
 function _audioBtns(mid) {
 	return mid == null ? []
-		: [...document.querySelectorAll('.msg-bubble-audio[data-mid="' + mid + '"]')];
+		: [...document.querySelectorAll('.msg-clip-btn[data-mid="' + mid + '"]')];
 }
 
 /** Put every button back to Play, then mark `mid` as the one playing. */
 function _setAudioBtn(mid) {
-	document.querySelectorAll('.msg-bubble-audio.playing').forEach(b => {
+	document.querySelectorAll('.msg-clip-btn.playing').forEach(b => {
 		b.classList.remove('playing');
 		b.innerHTML = MSG_PLAY_SVG + '<span>' + (b.dataset.secs || 'Play') + '</span>';
 	});
