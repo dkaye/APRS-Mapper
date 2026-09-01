@@ -18,6 +18,11 @@ User=www-data
 Group=www-data
 WorkingDirectory=/home/pi/analyzer/src
 
+# gunicorn 23+ opens a control socket under $HOME. www-data's home is /var/www,
+# which it cannot write, so without this it logs a permission error on every
+# start — harmless to the workers, but noise that hides real errors.
+Environment=HOME=/var/lib/marsaprs
+
 ExecStart=/home/pi/analyzer/venv/bin/gunicorn \
     --workers 2 \
     --bind 127.0.0.1:5001 \

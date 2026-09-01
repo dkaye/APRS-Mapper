@@ -1,7 +1,7 @@
 <?php
 /**
  * track_ip.php — Record client IP + page label for the Clients modal.
- * Include at the top of any PHP entry point: require_once '/var/www/html/track_ip.php';
+ * Include at the top of any PHP entry point: require_once __DIR__ . '/track_ip.php';
  * Then call: track_client_ip('admin');
  */
 function track_client_ip(string $page): void {

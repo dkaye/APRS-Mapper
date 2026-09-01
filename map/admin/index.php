@@ -1,6 +1,6 @@
 <?php
 ini_set('display_errors', '0');
-require_once '/var/www/html/track_ip.php'; track_client_ip('admin');
+require_once __DIR__ . '/../track_ip.php'; track_client_ip('admin');
 /**
  * MARS APRS Map Admin
  *
@@ -354,17 +354,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['save'])) {
         respondError('Cannot write config.yaml — check permissions');
     }
 
-    // If called with &event parameter (from Save As), update the tracking file
-    $eventParam = trim($_GET['event'] ?? '');
-    if ($eventParam && preg_match('/^[a-zA-Z0-9 _\-\.]{1,80}$/', $eventParam)) {
-        if (file_put_contents($currentEventFile, $eventParam, LOCK_EX) === false) {
-            respondError('Cannot update event tracking — check permissions');
-        }
-    }
+    // The &event= branch that used to live here wrote to $currentEventFile, a variable
+    // defined nowhere — so ?save&event= raised an undefined-variable error and returned
+    // 500 every time it was reached. Nothing ever reached it: no caller passes &event=,
+    // and the active event is tracked by the admin/config.yaml symlink that
+    // ?setactiveevent maintains, not by a file. Removed rather than repaired, because
+    // the mechanism it belonged to was replaced by the symlink.
 
     $real = realpath($configPath);
     if ($real) pruneTrackerHistory(dirname($real) . '/tracker_history.yaml', array_column($cfg['trackers'] ?? [], 'callsign'));
-    aprs_admin_log('save_config', $eventParam ? ['event' => $eventParam] : []);
+    aprs_admin_log('save_config');
     respondJson(['ok' => true]);
 }
 
@@ -5947,15 +5946,6 @@ function exportMsgThread(msgs) {
     URL.revokeObjectURL(a.href);
 }
 
-// Sync log name from localStorage into the PHP session so all logged actions
-// carry the user's name even when they were already logged in before the name
-// field was added.
-(function() {
-    const n = localStorage.getItem('aprs_log_name') || '';
-    if (!n) return;
-    const fd = new FormData(); fd.append('logname', n);
-    fetch('?updatename', { method: 'POST', body: fd }).catch(() => {});
-})();
 </script>
 </body>
 </html>

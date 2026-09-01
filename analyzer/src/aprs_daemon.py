@@ -145,6 +145,12 @@ def main_loop():
 if __name__ == '__main__':
     connect_to_database()
     if not read_event_data():
-        sys.exit(0)
+        # Exit 1, not 0. A bare exit(0) is a SUCCESS exit, and Restart=on-failure
+        # correctly declines to act on one — so with no event in config.yaml this
+        # printed a single line, stopped, and reported "inactive (dead)" rather than
+        # "failed". Nothing looked wrong, and it never retried even after the event
+        # name was filled in. StartLimitBurst=5 bounds the retries, so a genuine
+        # misconfiguration now parks the unit in a visible failed state instead.
+        sys.exit(1)
     print("Tracking: " + str(watch_list))
     main_loop()
