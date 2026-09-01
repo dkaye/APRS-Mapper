@@ -3119,8 +3119,22 @@ def main(argv=None):
     last_report, heard = time.time(), 0
     last_any_data = time.time()   # for the deaf-receiver check, not per-transmission
     # Sent at once rather than a minute from now: a channel that has just come back from
-    # a crash loop is exactly the one somebody is watching the page for.
+    # a crash loop is exactly the one somebody is watching the page for. Hence 0.0 -- the
+    # first qualifying pass beats immediately.
+    #
+    # What it waits for is audio_seen, not the clock. Beating on the first loop pass
+    # regardless meant beating before the capture had been checked: with a dead dongle or
+    # an unplugged input the worker dies in milliseconds, systemd restarts it every 10 s
+    # (Restart=always, RestartSec=10), and each restart posted a fresh heartbeat. Against
+    # BEAT_STALE of 300 s the channel manager showed a steady green "Listening" for a
+    # receiver that had never once opened its audio -- the exact failure the fleet's status
+    # display exists to surface, wearing the reassuring answer. Nobody is reading the
+    # journal on an unattended Pi; that page is all there is.
+    #
+    # Gating on real samples keeps both halves: a working channel beats within a fifth of a
+    # second of its first audio, and one that cannot open the device never beats at all.
     last_beat, last_heard_at, heard_total = 0.0, 0, 0
+    audio_seen = False           # has the capture ever actually produced samples?
 
     try:
         while running:
@@ -3131,6 +3145,7 @@ def main(argv=None):
                     chunk = os.read(capture.stdout.fileno(), GATE_FRAME * 2)
                     if chunk:
                         last_any_data = now
+                        audio_seen = True
                         pending += chunk
                         # Whole frames only. The gate's filter is stateful and its hang is
                         # counted in frame-times, so feeding it a short tail would both
@@ -3216,7 +3231,7 @@ def main(argv=None):
                 # only useful to somebody already reading this device's log, which is
                 # nobody until they have a reason to look -- and "the receiver is dead"
                 # is precisely the reason they do not have yet.
-                if now - last_beat >= HEARTBEAT_SECONDS:
+                if audio_seen and now - last_beat >= HEARTBEAT_SECONDS:
                     post_heartbeat(channel, last_heard_at, heard_total)
                     last_beat = now
 
