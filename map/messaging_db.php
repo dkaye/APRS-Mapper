@@ -108,6 +108,37 @@ class MessagingDb
             PRIMARY KEY (message_id, recipient_id)
         );
         CREATE INDEX IF NOT EXISTS idx_deliv_recip ON deliveries(recipient_id, message_id);
+
+        -- Who each participant has chosen not to hear from. Per-blocker rather than
+        -- global: one person finding another intolerable is not the event deciding it,
+        -- and net control must keep hearing everyone. Ejecting a participant outright is
+        -- a separate, admin-only act -- see the `blocked` flag on the tracker record.
+        CREATE TABLE IF NOT EXISTS blocks (
+            event      TEXT NOT NULL,
+            blocker_id INTEGER NOT NULL,
+            blocked_id INTEGER NOT NULL,
+            ts         INTEGER NOT NULL,
+            PRIMARY KEY (event, blocker_id, blocked_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_blocks_blocker ON blocks(event, blocker_id);
+
+        -- Reported messages, awaiting somebody's judgement. The row survives the message
+        -- being deleted, deliberately: "what was reported and what was done about it" is
+        -- the question asked afterwards, and a report that vanishes with its message
+        -- cannot answer it.
+        CREATE TABLE IF NOT EXISTS reports (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            event       TEXT NOT NULL,
+            message_id  INTEGER NOT NULL,
+            reporter_id INTEGER NOT NULL,
+            sender_id   INTEGER NOT NULL,
+            excerpt     TEXT NOT NULL,
+            reason      TEXT NOT NULL DEFAULT '',
+            ts          INTEGER NOT NULL,
+            resolved_ts INTEGER,
+            action      TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_reports_open ON reports(event, resolved_ts);
         SQL);
 
         // Migration: photo attachment columns on messages (one photo per message).
@@ -156,6 +187,98 @@ class MessagingDb
         // does not ask sees exactly what it saw yesterday.
         if (!isset($cols['text_ts']))
             $this->db->exec('ALTER TABLE messages ADD COLUMN text_ts INTEGER');
+    }
+
+    // ── Blocking, reporting, and removing your own words ───────────────────────
+    //
+    // Together these are what App Review's Guideline 1.2 asks of any app where one
+    // participant can put text in front of another. They are also, independently, the
+    // right controls for a volunteer who has been sent something they did not want to
+    // read in the middle of an event.
+
+    /** Stop delivering `$blockedId`'s messages to `$blockerId`. Idempotent. */
+    public function blockUser(string $event, int $blockerId, int $blockedId): void
+    {
+        if ($blockerId === $blockedId) return;   // blocking yourself is a no-op, not an error
+        $this->run('INSERT OR REPLACE INTO blocks (event, blocker_id, blocked_id, ts)
+                    VALUES (:e, :a, :b, :t)',
+                   [':e'=>$event, ':a'=>$blockerId, ':b'=>$blockedId, ':t'=>time()]);
+    }
+
+    public function unblockUser(string $event, int $blockerId, int $blockedId): void
+    {
+        $this->run('DELETE FROM blocks WHERE event=:e AND blocker_id=:a AND blocked_id=:b',
+                   [':e'=>$event, ':a'=>$blockerId, ':b'=>$blockedId]);
+    }
+
+    /** Participant ids this person has blocked, as an int list. */
+    public function blockedIds(string $event, int $blockerId): array
+    {
+        $out = [];
+        foreach ($this->all('SELECT blocked_id FROM blocks WHERE event=:e AND blocker_id=:a',
+                            [':e'=>$event, ':a'=>$blockerId]) as $r) {
+            $out[] = (int)$r['blocked_id'];
+        }
+        return $out;
+    }
+
+    /** The blocked list with names, for a "who have I blocked?" view. */
+    public function blockedList(string $event, int $blockerId): array
+    {
+        return $this->all(
+            'SELECT b.blocked_id AS id, p.display_name AS name, p.kind AS kind, b.ts AS ts
+               FROM blocks b JOIN participants p ON p.id = b.blocked_id
+              WHERE b.event=:e AND b.blocker_id=:a
+              ORDER BY p.display_name',
+            [':e'=>$event, ':a'=>$blockerId]);
+    }
+
+    /** One message, or null. Used to authorise a delete and to stamp a report. */
+    public function message(int $mid): ?array
+    {
+        return $this->one('SELECT * FROM messages WHERE id=:id', [':id'=>$mid]);
+    }
+
+    /** File a report. The text is copied in, because the message may not survive. */
+    public function reportMessage(string $event, int $mid, int $reporterId,
+                                  int $senderId, string $excerpt, string $reason): int
+    {
+        $this->run('INSERT INTO reports (event, message_id, reporter_id, sender_id,
+                                         excerpt, reason, ts)
+                    VALUES (:e, :m, :r, :s, :x, :why, :t)',
+                   [':e'=>$event, ':m'=>$mid, ':r'=>$reporterId, ':s'=>$senderId,
+                    ':x'=>substr($excerpt, 0, 300), ':why'=>substr($reason, 0, 200),
+                    ':t'=>time()]);
+        return (int)$this->db->lastInsertRowID();
+    }
+
+    /** Open reports first, then recently resolved -- the admin's working order. */
+    public function listReports(string $event, int $limit = 200): array
+    {
+        return $this->all(
+            "SELECT r.*, pr.display_name AS reporter_name, ps.display_name AS sender_name,
+                    (SELECT COUNT(*) FROM messages m WHERE m.id = r.message_id) AS still_present
+               FROM reports r
+               LEFT JOIN participants pr ON pr.id = r.reporter_id
+               LEFT JOIN participants ps ON ps.id = r.sender_id
+              WHERE r.event = :e
+              ORDER BY (r.resolved_ts IS NOT NULL), r.ts DESC
+              LIMIT :lim",
+            [':e'=>$event, ':lim'=>$limit]);
+    }
+
+    public function openReportCount(string $event): int
+    {
+        $r = $this->one('SELECT COUNT(*) AS n FROM reports WHERE event=:e AND resolved_ts IS NULL',
+                        [':e'=>$event]);
+        return (int)($r['n'] ?? 0);
+    }
+
+    public function resolveReport(string $event, int $reportId, string $action): void
+    {
+        $this->run('UPDATE reports SET resolved_ts=:t, action=:a
+                     WHERE id=:id AND event=:e AND resolved_ts IS NULL',
+                   [':t'=>time(), ':a'=>substr($action, 0, 40), ':id'=>$reportId, ':e'=>$event]);
     }
 
     // ── Photo attachments ──────────────────────────────────────────────────────
@@ -545,6 +668,11 @@ class MessagingDb
                            [':e'=>$event, ':h'=>$hash]);
         if ($ex) {
             $cid = (int)$ex['id'];
+        } elseif (($recip = $this->reciprocalEntityConversation($event, $operatorId, $deviceIds)) !== null) {
+            // The other person already opened this same conversation from their end. Use
+            // it rather than minting a second thread for the same pair -- see the method
+            // below for what that looked like.
+            $cid = $recip;
         } else {
             // Title is what the conversation list shows (_convLabel falls back to it),
             // so it must read the way the picker row did. The kind distinguishes ONE
@@ -566,6 +694,47 @@ class MessagingDb
         return $cid;
     }
 
+
+    /** The thread the OTHER party already opened with me, if there is one.
+     *
+     *  An entity thread's member_hash is prefixed with the sender's participant id, so
+     *  A-addressing-B and B-addressing-A hash differently and produce two conversations
+     *  for one pair. That prefix is deliberate and must stay: several operators each need
+     *  their own thread with the same person, and collapsing those would put one
+     *  operator's traffic in front of another.
+     *
+     *  Between two PEOPLE it is simply wrong. On 2026-09-06 two phones that had messaged
+     *  each other had two threads and six messages split three and three, and both threads
+     *  rendered with the same label in both inboxes -- the addresser's copy kept its stored
+     *  title, the other's fell back to members-except-me, and those two strings are the
+     *  same string. The reader saw one person listed twice and had to open both to find
+     *  a message.
+     *
+     *  So this is asked only when the sender is not an operator: find a thread one of the
+     *  target's devices opened whose entity is ME. Nothing about the stored row changes --
+     *  the hash still names whoever opened it, and conversationsFor() already shows each
+     *  side the label it should see.
+     */
+    private function reciprocalEntityConversation(string $event, int $senderId, array $deviceIds): ?int
+    {
+        if (!$deviceIds) return null;
+        $me = $this->one('SELECT kind, short_id, display_name FROM participants WHERE id=:i',
+                         [':i'=>$senderId]);
+        // Operators keep one thread per operator, which is the whole point of the prefix.
+        if (!$me || ($me['kind'] ?? '') === 'operator') return null;
+        $mine = self::entityHash((string)($me['short_id'] ?? ''), (string)($me['display_name'] ?? ''));
+        foreach ($deviceIds as $d) {
+            $d = (int)$d;
+            if ($d === $senderId) continue;
+            // kind='entity' only: an 'entity_multi' thread is a whole station's group and
+            // a private reply must never be routed into it.
+            $r = $this->one("SELECT id FROM conversations
+                              WHERE event=:e AND member_hash=:h AND kind='entity'",
+                            [':e'=>$event, ':h'=>$d . '|' . $mine]);
+            if ($r) return (int)$r['id'];
+        }
+        return null;
+    }
     /** [display_id, name] for an entity conversation, or null if it isn't one.
      *  name is '*' for a whole-display_id "(multiple)" thread. Lets the send path
      *  re-resolve an entity's live devices when replying into an existing thread,

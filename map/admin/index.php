@@ -1337,6 +1337,42 @@ if (isset($_GET['messages'])) {
     respondJson($out);
 }
 
+// ── AJAX: reported messages ───────────────────────────────────────────────────
+//
+// The moderation queue. App Store Guideline 1.2 commits the app to acting on a report
+// within 24 hours by removing the content and ejecting whoever sent it, and a commitment
+// with nowhere to see the reports is not one anybody can keep. This is that place, on the
+// page an administrator already has open during an event.
+if (isset($_GET['msgreports'])) {
+    if (!has_permission('messages.manage')) respondError('Missing permission: messages.manage', 403);
+    require_once __DIR__ . '/../messaging_db.php';
+    $ev = trim($currentEventName) !== '' ? trim($currentEventName) : 'default';
+    $db = new MessagingDb();
+    respondJson(['reports' => $db->listReports($ev), 'open' => $db->openReportCount($ev)]);
+}
+
+// Remove the reported message, and say so in the admin log. Deliberately separate from
+// resolving the report: an administrator may judge a report unfounded and close it
+// WITHOUT deleting anything, and the two must not be the same button.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['msgreportaction'])) {
+    if (!has_permission('messages.manage')) respondError('Missing permission: messages.manage', 403);
+    require_once __DIR__ . '/../messaging_db.php';
+    $input  = json_decode(file_get_contents('php://input'), true) ?: [];
+    $rid    = (int)($input['report_id'] ?? 0);
+    $action = (string)($input['action'] ?? '');
+    $mid    = (int)($input['message_id'] ?? 0);
+    if (!$rid || !in_array($action, ['removed', 'dismissed'], true)) {
+        respondError('report_id and a valid action are required', 400);
+    }
+    $ev = trim($currentEventName) !== '' ? trim($currentEventName) : 'default';
+    $db = new MessagingDb();
+    if ($action === 'removed' && $mid) $db->deleteMessage($mid);
+    $db->resolveReport($ev, $rid, $action);
+    aprs_admin_log('message_report_' . $action,
+                   ['report' => $rid, 'message' => $mid, 'event' => $ev]);
+    respondJson(['ok' => true]);
+}
+
 // ── AJAX: delete message thread for current event ─────────────────────────────
 if (isset($_GET['delete_messages'])) {
     if (!has_permission('messages.manage')) respondError('Missing permission: messages.manage', 403);
@@ -1738,6 +1774,15 @@ select.f-file-select:focus { outline: none; border-color: #2980b9; }
 
 <div id="wrap">
     <div id="error-box"></div>
+
+    <!-- ── Reported messages ──
+         Hidden entirely when there is nothing to act on, which is almost always. A
+         permanently-empty section on the page an admin uses during an event is noise;
+         one that appears only when somebody has reported something is a signal. -->
+    <div class="section" id="reports-section" style="display:none">
+        <div class="sec-title"><span>Reported Messages</span><span id="reports-count" style="font-size:12px;color:#c0392b;font-weight:600"></span></div>
+        <div class="sec-body"><div id="reports-list"></div></div>
+    </div>
 
     <!-- ── Event ── -->
     <div class="section">
@@ -3229,6 +3274,103 @@ function appendIgate(g, attach) {
 
 function addIgate() { appendIgate({}, dragAdder['igates-list']); markDirty(true); }
 
+// ── Reported messages ────────────────────────────────────────────────────────
+//
+// The queue behind the 24-hour commitment in the app's terms. Refreshed with the tracker
+// list, because the two are used together: a report names a sender, and ejecting that
+// sender is a button in the Trackers section right above this one.
+
+function fmtReportAge(ts) {
+    const s = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+    if (s < 3600)  return Math.round(s / 60) + 'm ago';
+    if (s < 86400) return Math.round(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+}
+
+async function loadReports() {
+    const sec = document.getElementById('reports-section');
+    if (!sec) return;
+    let data;
+    try {
+        const r = await fetch('?msgreports');
+        if (!r.ok) return;
+        data = await r.json();
+    } catch (e) { console.error('[msgreports]', e); return; }
+
+    const reports = data.reports || [];
+    // Nothing reported means the section is not there at all -- see the markup comment.
+    if (!reports.length) { sec.style.display = 'none'; return; }
+    sec.style.display = '';
+
+    const open = data.open || 0;
+    const countEl = document.getElementById('reports-count');
+    countEl.textContent = open ? (open === 1 ? '1 awaiting review' : open + ' awaiting review') : '';
+
+    const list = document.getElementById('reports-list');
+    list.innerHTML = '';
+    reports.forEach(rep => {
+        const done = rep.resolved_ts != null;
+        const row = document.createElement('div');
+        row.style.cssText = 'padding:8px 4px;border-bottom:1px solid #f0f0f0;'
+                          + (done ? 'opacity:.55' : '');
+
+        const head = document.createElement('div');
+        head.style.cssText = 'font-size:12px;color:#666;margin-bottom:3px';
+        head.textContent = (rep.sender_name || 'unknown') + ' — reported by '
+                         + (rep.reporter_name || 'unknown') + ' · ' + fmtReportAge(rep.ts)
+                         + (rep.reason ? ' · "' + rep.reason + '"' : '');
+        row.appendChild(head);
+
+        // textContent, never innerHTML: this is a string somebody typed into a phone, and
+        // it is being shown on an authenticated admin page.
+        const body = document.createElement('div');
+        body.style.cssText = 'font-size:13px;color:#222;margin-bottom:5px;white-space:pre-wrap;word-break:break-word';
+        body.textContent = rep.excerpt || '(no text)';
+        row.appendChild(body);
+
+        const acts = document.createElement('div');
+        acts.style.cssText = 'display:flex;gap:6px;align-items:center';
+        if (done) {
+            const tag = document.createElement('span');
+            tag.style.cssText = 'font-size:11px;color:#888';
+            tag.textContent = rep.action === 'removed' ? 'message removed' : 'dismissed';
+            acts.appendChild(tag);
+        } else {
+            if (Number(rep.still_present) > 0) {
+                const del = document.createElement('button');
+                del.type = 'button'; del.className = 'btn'; del.textContent = 'Remove message';
+                del.style.cssText = 'color:#c0392b';
+                del.addEventListener('click', () => resolveReport(rep.id, 'removed', rep.message_id));
+                acts.appendChild(del);
+            } else {
+                const gone = document.createElement('span');
+                gone.style.cssText = 'font-size:11px;color:#888';
+                gone.textContent = 'message already deleted';
+                acts.appendChild(gone);
+            }
+            const dis = document.createElement('button');
+            dis.type = 'button'; dis.className = 'btn'; dis.textContent = 'Dismiss';
+            dis.addEventListener('click', () => resolveReport(rep.id, 'dismissed', 0));
+            acts.appendChild(dis);
+        }
+        row.appendChild(acts);
+        list.appendChild(row);
+    });
+}
+
+async function resolveReport(reportId, action, messageId) {
+    if (action === 'removed'
+        && !confirm('Delete this message for everyone? This cannot be undone.')) return;
+    try {
+        const r = await fetch('?msgreportaction', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({report_id: reportId, action: action, message_id: messageId})
+        });
+        if (r.ok) loadReports();
+        else alert('Could not update that report.');
+    } catch { alert('Network error.'); }
+}
+
 // ── Mobile Trackers ─────────────────────────────────────────────────────────────
 
 function esc(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
@@ -4056,6 +4198,7 @@ async function doLoad() {
 
         populateForm(cfg);
         loadMobileTrackers();
+        loadReports();
         applyBeaconDeltas(beaconDeltas);
         setCurrentEvent(filename, cfg.event || '');
         setNewMode(false);

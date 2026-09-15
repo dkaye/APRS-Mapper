@@ -18,6 +18,7 @@
  */
 
 require_once __DIR__ . '/messaging_db.php';
+require_once __DIR__ . '/content_filter.php';
 
 // ── shared helpers ────────────────────────────────────────────────────────────
 function _msg_fail(int $code, string $err): void { http_response_code($code); echo json_encode(['error'=>$err]); exit; }
@@ -383,6 +384,26 @@ function _msg_store_audio(string $event, int $mid, array $file, ?float $secs = n
     return ['filename'=>$fn, 'secs'=>$secs];
 }
 
+/** Drop messages from senders this caller has blocked.
+ *
+ *  Applied on the way out rather than at insert: a block is one participant's private
+ *  decision, so the message still exists, still reaches everyone else, and still shows in
+ *  the administrator's log. Unblocking restores the history rather than leaving a hole,
+ *  which is what a reader expects from a mute.
+ *
+ *  Never applied to the caller's own messages, and blockUser() refuses self-blocks, so
+ *  there is no way to make your own words vanish from your own thread by accident.
+ */
+function _msg_drop_blocked(array $msgs, array $blockedIds): array
+{
+    if (!$blockedIds) return $msgs;
+    $drop = array_flip($blockedIds);
+    return array_values(array_filter($msgs, function ($m) use ($drop) {
+        $from = (int)($m['sender_id'] ?? $m['from_id'] ?? 0);
+        return $from === 0 || !isset($drop[$from]);
+    }));
+}
+
 function messaging_handle(string $action, array $body, array $ctx): void
 {
     header('Content-Type: application/json');
@@ -511,6 +532,14 @@ function messaging_handle(string $action, array $body, array $ctx): void
         // `log`, because those can be two minutes of somebody else's over.
         $text = substr(trim($body['text'] ?? ''), 0, 1000);
         if ($text === '' && !$hasPhoto) _msg_fail(400, 'Message text required');
+        // Refused at the point of sending rather than hidden afterwards: the sender
+        // learns immediately, and nothing objectionable is ever stored or delivered.
+        // Only what a participant typed goes through this -- see content_filter.php on
+        // why a Transcriber's log entries deliberately do not.
+        if ($text !== '' && ($badWord = ht_filter_message($text)) !== null) {
+            _msg_fail(422, 'That message was not sent: it contains language this event '
+                         . 'does not allow ("' . $badWord . '"). Please reword it.');
+        }
         $convId    = isset($body['conversation_id']) ? (int)$body['conversation_id'] : null;
         $recipients= $body['recipients'] ?? [];
         // In a multipart upload `recipients` arrives as a JSON string — decode it.
@@ -631,7 +660,8 @@ function messaging_handle(string $action, array $body, array $ctx): void
 
     case 'poll': {
         $sinceId = (int)($_GET['since_id'] ?? $body['since_id'] ?? 0);
-        $msgs    = $db->pollFor((int)$me['id'], $sinceId);
+        $msgs    = _msg_drop_blocked($db->pollFor((int)$me['id'], $sinceId),
+                                    $db->blockedIds($event, (int)$me['id']));
         $receipts= $db->receiptsForSender((int)$me['id'], $sinceId);
         $lastId  = $sinceId;
         foreach ($msgs as $m) if ($m['id'] > $lastId) $lastId = $m['id'];
@@ -657,7 +687,9 @@ function messaging_handle(string $action, array $body, array $ctx): void
         // A stamp the caller can hand back next time. `time()` rather than the newest
         // row's, so a transcription written between this query and the next answer is
         // still ahead of the cursor and cannot fall through the gap.
-        echo json_encode(['messages'=>$db->thread($conv, $sinceId, $sinceText),
+        echo json_encode(['messages'=>_msg_drop_blocked(
+                              $db->thread($conv, $sinceId, $sinceText),
+                              $db->blockedIds($event, (int)$me['id'])),
                           'conversation_id'=>$conv, 'text_ts'=>time()]);
         exit;
     }
@@ -821,6 +853,11 @@ function messaging_handle(string $action, array $body, array $ctx): void
         // recording. New behaviour is asked for, never assumed.
         $sinceText = (int)($_GET['since_text_ts'] ?? $body['since_text_ts'] ?? 0);
         $res     = $db->monitor($event, $sinceId, $all, $log, (int)$me['id'], $sinceText);
+        // Blocking has to reach the monitor feed too, or "hear everything" quietly means
+        // "hear everything including the person you blocked" -- and on a phone with
+        // speech switched on, it would be read aloud.
+        $res['messages'] = _msg_drop_blocked($res['messages'],
+                                             $db->blockedIds($event, (int)$me['id']));
         echo json_encode([
             'messages' => $res['messages'],
             'skipped'  => $res['skipped'],
@@ -871,6 +908,89 @@ function messaging_handle(string $action, array $body, array $ctx): void
         // does that on its own rename and must not on somebody else's, or renaming
         // another console would change the name shown on this one.
         echo json_encode(['ok'=>true, 'name'=>$newName, 'self'=>$target === (int)$me['id']]);
+        exit;
+    }
+
+    // ── Safety controls (App Store Guideline 1.2) ──────────────────────────
+    //
+    // Three separate powers, deliberately kept separate:
+    //   block   — I stop hearing you. Mine alone, reversible, needs nobody's approval.
+    //   report  — somebody should look at this. Goes to the event administrator.
+    //   delete  — I take back what I said. Only ever your own words.
+
+    case 'block': {
+        $who = trim((string)($body['participant'] ?? ''));
+        $pid = isset($body['participant_id']) ? (int)$body['participant_id'] : 0;
+        if (!$pid && $who !== '') {
+            $p = $db->participantByKey($event, $who);
+            $pid = (int)($p['id'] ?? 0);
+        }
+        if (!$pid) _msg_fail(400, 'participant_id or participant required');
+        if ($pid === (int)$me['id']) _msg_fail(400, 'You cannot block yourself');
+        $db->blockUser($event, (int)$me['id'], $pid);
+        echo json_encode(['ok'=>true, 'blocked'=>$db->blockedList($event, (int)$me['id'])]);
+        exit;
+    }
+
+    case 'unblock': {
+        $pid = (int)($body['participant_id'] ?? 0);
+        if (!$pid) _msg_fail(400, 'participant_id required');
+        $db->unblockUser($event, (int)$me['id'], $pid);
+        echo json_encode(['ok'=>true, 'blocked'=>$db->blockedList($event, (int)$me['id'])]);
+        exit;
+    }
+
+    case 'blocks': {
+        echo json_encode(['blocked'=>$db->blockedList($event, (int)$me['id'])]);
+        exit;
+    }
+
+    case 'report': {
+        $mid = (int)($body['message_id'] ?? 0);
+        if (!$mid) _msg_fail(400, 'message_id required');
+        $m = $db->message($mid);
+        if (!$m || ($m['event'] ?? '') !== $event) _msg_fail(404, 'No such message');
+        // You may only report something you can actually see, or the endpoint becomes a
+        // way to read any message in the event by id -- the same reasoning as `thread`.
+        if (($me['kind'] ?? '') !== 'operator'
+            && !$db->canAccessConversation($event, (int)$m['conversation_id'], (int)$me['id'])) {
+            _msg_fail(403, 'Not a member of this conversation');
+        }
+        $id = $db->reportMessage($event, $mid, (int)$me['id'], (int)$m['sender_id'],
+                                 (string)$m['text'], (string)($body['reason'] ?? ''));
+        echo json_encode(['ok'=>true, 'report_id'=>$id]);
+        exit;
+    }
+
+    case 'delete': {
+        $mid = (int)($body['message_id'] ?? 0);
+        if (!$mid) _msg_fail(400, 'message_id required');
+        $m = $db->message($mid);
+        if (!$m || ($m['event'] ?? '') !== $event) _msg_fail(404, 'No such message');
+        // Your own words, or an administrator acting on a report. Net control holding
+        // the messaging password is NOT enough: `messages.manage` is the permission that
+        // means "may remove other people's messages".
+        $mine    = (int)$m['sender_id'] === (int)$me['id'];
+        $canMod  = (bool)($ctx['authPerm']('messages.manage'));
+        if (!$mine && !$canMod) _msg_fail(403, 'You can only delete your own messages');
+        $db->deleteMessage($mid);
+        echo json_encode(['ok'=>true, 'id'=>$mid]);
+        exit;
+    }
+
+    case 'reports': {   // admin: the moderation queue
+        if (!$ctx['authPerm']('messages.manage')) _msg_fail(403, 'Not authorised');
+        echo json_encode(['reports'=>$db->listReports($event),
+                          'open'=>$db->openReportCount($event)]);
+        exit;
+    }
+
+    case 'resolve_report': {
+        if (!$ctx['authPerm']('messages.manage')) _msg_fail(403, 'Not authorised');
+        $rid = (int)($body['report_id'] ?? 0);
+        if (!$rid) _msg_fail(400, 'report_id required');
+        $db->resolveReport($event, $rid, (string)($body['action'] ?? 'reviewed'));
+        echo json_encode(['ok'=>true]);
         exit;
     }
 
