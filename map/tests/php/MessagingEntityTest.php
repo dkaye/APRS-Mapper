@@ -32,6 +32,71 @@ class MessagingEntityTest extends TestCase
         return $this->db->insertMessage($this->ev, $conv, $from, $text, $to, false);
     }
 
+    // ── two people messaging each other get ONE thread ────────────────────────
+
+    /** The bug this was written for, from live data on 2026-09-06: two phones that had
+     *  messaged each other had two entity threads and six messages split three and three.
+     *  Both rendered with the same label in both inboxes -- the addresser's copy keeps its
+     *  stored title, the other's falls back to members-except-me, and for a two-person
+     *  thread those are the same string. */
+    public function testTwoMobilesMessagingEachOtherShareOneThread(): void
+    {
+        // d1 addresses `other`, then `other` addresses d1 back.
+        $a = $this->db->resolveEntityConversation($this->ev, $this->d1, 'LKL', 'Dirck', [$this->other]);
+        $b = $this->db->resolveEntityConversation($this->ev, $this->other, 'CRD', 'Stanton', [$this->d1]);
+
+        $this->assertSame($a, $b, 'one pair of people is one conversation, whoever spoke first');
+    }
+
+    /** And the history stays together, which is the part the reader actually notices. */
+    public function testTheirHistoryStaysInOneThread(): void
+    {
+        $a = $this->db->resolveEntityConversation($this->ev, $this->d1, 'LKL', 'Dirck', [$this->other]);
+        $this->send($a, $this->d1, 'on my way', [$this->other]);
+        $b = $this->db->resolveEntityConversation($this->ev, $this->other, 'CRD', 'Stanton', [$this->d1]);
+        $this->send($b, $this->other, 'roger', [$this->d1]);
+
+        $this->assertCount(1, $this->db->conversationsFor($this->ev, $this->d1),
+                           'd1 sees one row for this person, not two');
+        $this->assertCount(1, $this->db->conversationsFor($this->ev, $this->other));
+        $this->assertCount(2, $this->db->thread((int)$a),
+                           'both messages in the one thread');
+    }
+
+    /** The prefix exists so that several operators each hold their own thread with the
+     *  same person. Collapsing those would put one operator's traffic in front of
+     *  another, so an operator must never adopt anybody else's thread. */
+    public function testOperatorsStillGetTheirOwnThreadEachWay(): void
+    {
+        // The person writes to the operator first, then the operator writes to them.
+        $fromMobile   = $this->db->resolveEntityConversation($this->ev, $this->d1, 'NC', 'Net Control', [$this->op]);
+        $fromOperator = $this->db->resolveEntityConversation($this->ev, $this->op, 'CRD', 'Stanton', [$this->d1]);
+
+        $this->assertNotSame($fromMobile, $fromOperator,
+                             'an operator keeps its own thread; that is what the id prefix is for');
+    }
+
+    /** A second operator still gets its own thread with the same person, which is the
+     *  case the prefix was designed around and must not regress. */
+    public function testASecondOperatorIsStillSeparate(): void
+    {
+        $op2 = $this->db->upsertParticipant($this->ev, 'operator', 'Aid 3', 'Aid 3', null, null);
+        $one = $this->db->resolveEntityConversation($this->ev, $this->op, 'CRD', 'Stanton', [$this->d1]);
+        $two = $this->db->resolveEntityConversation($this->ev, $op2,      'CRD', 'Stanton', [$this->d1]);
+
+        $this->assertNotSame($one, $two);
+    }
+
+    /** A "(multiple)" thread is a whole station's group. A private reply routed into one
+     *  would be read by everyone at that station, so it is never adopted. */
+    public function testAMultipleThreadIsNeverAdopted(): void
+    {
+        $group = $this->db->resolveEntityConversation($this->ev, $this->other, 'CRD', '*', [$this->d1, $this->d2]);
+        $mine  = $this->db->resolveEntityConversation($this->ev, $this->d1, 'LKL', 'Dirck', [$this->other]);
+
+        $this->assertNotSame($group, $mine);
+    }
+
     // ── finding a person's thread from one of their devices ───────────────────
 
     /** Addressing a device by callsign — what right-clicking a tracker does — must land
