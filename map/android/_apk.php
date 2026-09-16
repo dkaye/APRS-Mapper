@@ -16,8 +16,13 @@
  * phone download would install over the phone app and replace it.
  */
 
-const APK_PHONE = 'aprs-map';
-const APK_WEAR  = 'aprs-wear';
+const APK_PHONE    = 'aprs-map';
+const APK_WEAR     = 'aprs-wear';
+// HamTraqr, the app that replaces APRS Map (com.hamtraqr.app). A different
+// applicationId, so it installs ALONGSIDE APRS Map rather than over it, and the
+// aprs-wear companion -- which shares APRS Map's applicationId -- cannot pair
+// with it. Named for what it is so the file on a volunteer's phone says so.
+const APK_HAMTRAQR = 'hamtraqr';
 
 function apk_list(string $prefix = APK_PHONE): array {
     $out = [];
@@ -44,6 +49,20 @@ function apk_list(string $prefix = APK_PHONE): array {
 function apk_latest(string $prefix = APK_PHONE): ?array {
     $all = apk_list($prefix);
     return $all ? $all[0] : null;
+}
+
+/**
+ * The phone app to hand out: HamTraqr when a build has been uploaded, otherwise
+ * APRS Map. One place decides, so the download link and the landing page can
+ * never offer two different apps. Removing every hamtraqr-*.apk puts APRS Map
+ * back, with nothing else to edit.
+ */
+function apk_phone_latest(): ?array {
+    return apk_latest(APK_HAMTRAQR) ?? apk_latest(APK_PHONE);
+}
+
+function apk_is_hamtraqr(?array $apk): bool {
+    return $apk !== null && strncmp($apk['file'], APK_HAMTRAQR . '-', strlen(APK_HAMTRAQR) + 1) === 0;
 }
 
 function apk_human_size(int $bytes): string {

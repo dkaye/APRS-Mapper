@@ -10,7 +10,7 @@
  */
 require_once __DIR__ . '/_apk.php';
 
-$apk = apk_latest(APK_PHONE);
+$apk = apk_phone_latest();
 if (!$apk) {
     http_response_code(503);
     header('Content-Type: text/plain; charset=utf-8');

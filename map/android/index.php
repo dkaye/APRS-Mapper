@@ -11,8 +11,11 @@ require_once __DIR__ . '/_apk.php';
 // Two independent products from one directory: the phone app and the Wear OS
 // companion. The watch section is hidden entirely when no watch build has been
 // uploaded, rather than showing a dead button.
-$apk  = apk_latest(APK_PHONE);
-$wear = apk_latest(APK_WEAR);
+$apk  = apk_phone_latest();
+$isHT = apk_is_hamtraqr($apk);
+// The watch companion shares APRS Map's applicationId and cannot pair with
+// HamTraqr, so it is not offered beside it -- see _apk.php.
+$wear = $isHT ? null : apk_latest(APK_WEAR);
 $sha     = $apk  ? apk_sha256($apk)  : null;
 $wearSha = $wear ? apk_sha256($wear) : null;
 header('Cache-Control: no-cache, must-revalidate');
@@ -22,7 +25,7 @@ header('Cache-Control: no-cache, must-revalidate');
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MARS APRS — Android App</title>
+<title><?= $isHT ? 'HamTraqr' : 'MARS APRS' ?> — Android App</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
@@ -63,7 +66,7 @@ header('Cache-Control: no-cache, must-revalidate');
 <body>
 <div class="box">
   <div class="hdr">
-    <h1>MARS APRS Tracker — Android</h1>
+    <h1><?= $isHT ? 'HamTraqr' : 'MARS APRS Tracker' ?> — Android</h1>
     <p>Marin Amateur Radio Society</p>
   </div>
   <div class="body">
@@ -91,7 +94,13 @@ header('Cache-Control: no-cache, must-revalidate');
        event coordinator the first time you open the app.</p>
 
     <div class="note">
+<?php if ($isHT): ?>
+      <strong>Had the older APRS Map app?</strong> HamTraqr is a separate app and installs
+      alongside it, not over it. Once HamTraqr is working, uninstall APRS Map so nobody opens
+      the wrong one on event day.
+<?php else: ?>
       Already have the app? Just download and install over the top &mdash; your settings are kept.
+<?php endif; ?>
       <br>iPhone or iPad instead? The app is distributed through TestFlight; see the
       <a class="plain" href="/userguide.html#getting-the-app">User Guide</a>.
     </div>
