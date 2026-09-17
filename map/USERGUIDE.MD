@@ -127,11 +127,16 @@ In addition to the web map at [marsaprs.org](https://marsaprs.org), a native app
 
 #### iPhone / iPad
 
-1. Install **TestFlight** from the App Store (free, by Apple).
-2. Open the HamTraqr link from the event coordinator. It opens in TestFlight.
-3. Tap **Accept**, then **Install**.
+1. On your iPhone or iPad, open
+   **[HamTraqr on the App Store](https://apps.apple.com/app/hamtraqr/id6808391462)**.
+2. Tap **Get**, then confirm the install as you would for any app.
+3. Tap **Open** when it finishes.
 
-For future updates, open TestFlight and tap **Update** next to HamTraqr.
+Requires iOS 15 or later. Updates arrive through the App Store like any other app.
+
+> **Already installed HamTraqr through TestFlight?** Install the App Store version over
+> the top of it — your settings are kept, and you will stop getting TestFlight's
+> "build expires in 90 days" reminders.
 
 #### Android
 

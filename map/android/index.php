@@ -101,8 +101,8 @@ header('Cache-Control: no-cache, must-revalidate');
 <?php else: ?>
       Already have the app? Just download and install over the top &mdash; your settings are kept.
 <?php endif; ?>
-      <br>iPhone or iPad instead? The app is distributed through TestFlight; see the
-      <a class="plain" href="/userguide.html#getting-the-app">User Guide</a>.
+      <br>iPhone or iPad instead? Get HamTraqr from the
+      <a class="plain" href="https://apps.apple.com/app/hamtraqr/id6808391462">App Store</a>.
     </div>
 
     <div class="sha">SHA-256<br><?= htmlspecialchars($sha ?: 'unavailable') ?></div>
