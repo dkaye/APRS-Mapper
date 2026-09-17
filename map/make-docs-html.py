@@ -228,7 +228,7 @@ def build(src_name, dst_name, title):
 DOCS = [
     ("../README.md", "readme.html",    "MARS APRS — README"),
     ("../ADMIN.MD",  "admin.html",     "MARS APRS — Admin Guide"),
-    ("USERGUIDE.MD", "userguide.html", "MARS APRS — User Guide"),
+    ("USERGUIDE.MD", "userguide.html", "HamTraqr — User Guide"),
 ]
 
 for args in DOCS:

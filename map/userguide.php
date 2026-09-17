@@ -1,6 +1,6 @@
 <?php
 /**
- * userguide.php — MARS APRS Map
+ * userguide.php — HamTraqr Map
  *
  * Serves the pre-rendered user guide with an optional back link.
  * Accepts ?back=<url> to set the return link.
@@ -19,7 +19,7 @@ if ($body === false) { $body = '<p style="color:red">User guide not available.</
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MARS APRS — User Guide</title>
+<title>HamTraqr — User Guide</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -202,7 +202,7 @@ if ($body === false) { $body = '<p style="color:red">User guide not available.</
 <body>
 
 <header>
-  <h1>MARS APRS — User Guide</h1>
+  <h1>HamTraqr — User Guide</h1>
   <a href="<?= $backHref ?>"><?= $backText ?></a>
 </header>
 

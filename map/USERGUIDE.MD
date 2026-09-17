@@ -1,10 +1,10 @@
-# APRS Tracker Map — User Guide
+# HamTraqr — User Guide
 
-**Version 1.23.0 · August 15, 2026**
+**Version 2.0.0 · September 17, 2026**
 
 ---
 
-This document is a guide for users of the MARS APRS system. For technical details on the architecture and software see the [README](https://marsaprs.org/readme.html?back=/userguide.html) file.
+This document is a guide for users of HamTraqr, the tracking and messaging system used by the Marin Amateur Radio Society. For technical details on the architecture and software see the [README](https://marsaprs.org/readme.html?back=/userguide.html) file.
 
 ## Contents
 
@@ -128,11 +128,10 @@ In addition to the web map at [marsaprs.org](https://marsaprs.org), a native app
 #### iPhone / iPad
 
 1. Install **TestFlight** from the App Store (free, by Apple).
-2. Open the invitation email from the event coordinator and tap **View in TestFlight**.
-3. If you are a new TestFlight user, enter the redeem code from the email when prompted.
-4. Tap **Install** to install the app.
+2. Open the HamTraqr link from the event coordinator. It opens in TestFlight.
+3. Tap **Accept**, then **Install**.
 
-For future updates, open TestFlight and tap **Update** next to APRS Map.
+For future updates, open TestFlight and tap **Update** next to HamTraqr.
 
 #### Android
 
@@ -222,7 +221,7 @@ Tap **Sharing** (green) in the drawer footer, then tap **Stop Sharing**.
 1. **Notifications** — grant this so the foreground service notification can appear. Without it, Android will stop the background location service when the screen locks.
 2. **Battery optimization** — tap **Allow** so Android does not put the app to sleep between GPS updates.
 
-A persistent notification ("APRS Map — Sharing your location") appears in the notification bar while sharing is active. To confirm it is running: wake the screen and swipe down from the top.
+A persistent notification ("HamTraqr — Sharing your location") appears in the notification bar while sharing is active. To confirm it is running: wake the screen and swipe down from the top.
 
 **First-time setup — iOS:** When you first tap Share Location, iOS may ask to upgrade your location access from "While Using" to "Always". Tap **Change to Always Allow** — this is required for the app to report your position while the screen is off.
 
@@ -239,7 +238,7 @@ The native app does not include every feature available in the browser. The foll
 
 ### Apple Watch (iPhone only)
 
-The iPhone app includes an **Apple Watch** companion. Install it from the iPhone's **Watch** app if it does not appear by itself: **My Watch → APRS Map → Show App on Apple Watch**.
+The iPhone app includes an **Apple Watch** companion. Install it from the iPhone's **Watch** app if it does not appear by itself: **My Watch → HamTraqr → Show App on Apple Watch**.
 
 The watch does **messaging only**. It never shares your position and never beacons — that stays with the phone.
 
@@ -492,7 +491,7 @@ Tap **Sharing** in the drawer footer, then tap **Stop Sharing**.
 
 **Native iOS/Android app:**
 - Location sharing continues in the background while the screen is locked. You do not need to keep the app in the foreground.
-- **Android:** When you first tap Share Location, the app may ask for permission to show notifications and to run without battery restrictions. Grant both — they are required for the app to keep running in the background when the screen is off. A notification ("APRS Map — Sharing your location") will appear in the notification bar while sharing is active; this confirms the background service is running. To confirm the notification is visible, wake the screen and swipe down from the top.
+- **Android:** When you first tap Share Location, the app may ask for permission to show notifications and to run without battery restrictions. Grant both — they are required for the app to keep running in the background when the screen is off. A notification ("HamTraqr — Sharing your location") will appear in the notification bar while sharing is active; this confirms the background service is running. To confirm the notification is visible, wake the screen and swipe down from the top.
 - **iOS:** When you first tap Share Location, iOS may ask to upgrade your location permission from "While Using" to "Always". Tap **Change to Always Allow** — this is required for the app to send your location while the screen is locked.
 
 **App updates:** When a newer version of the native app is available, it shows a dismissable **Update available** prompt on launch. Tap **Update** to get it from the App Store (iOS) or download the latest APK (Android), or **Later** to postpone — updates are never forced.
@@ -1439,7 +1438,7 @@ network.
 
 **If the iGate is not appearing on aprs.fi:**
 
-1. **Check the NetBird Status page.** On the MARS APRS map [marsaprs.org](https://marsaprs.org)
+1. **Check the NetBird Status page.** On the HamTraqr map [marsaprs.org](https://marsaprs.org)
    click on Admin→NetBird. If the iGate is listed, you should see *Online* next to the iGate's ID.
    If the iGate isn't on the list, you can add it via Admin→NetBird→Admin using the iGate's NetBird address.
    If the iGate is listed, but shows as *Disabled*, go to Admin→NetBird→Admin and turn it on. Nothing will happen until

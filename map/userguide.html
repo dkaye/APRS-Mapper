@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MARS APRS — User Guide</title>
+<title>HamTraqr — User Guide</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -174,7 +174,7 @@
 
 <header>
   <div id="hdr-inner" style="display:flex;align-items:baseline;gap:20px">
-    <h1>MARS APRS — User Guide</h1>
+    <h1>HamTraqr — User Guide</h1>
   </div>
 </header>
 <script>
@@ -191,10 +191,10 @@
 </script>
 
 <div id="content">
-<h1 id="aprs-tracker-map-user-guide">APRS Tracker Map — User Guide</h1>
-<p><strong>Version 1.23.0 · August 15, 2026</strong></p>
+<h1 id="hamtraqr-user-guide">HamTraqr — User Guide</h1>
+<p><strong>Version 2.0.0 · September 17, 2026</strong></p>
 <hr />
-<p>This document is a guide for users of the MARS APRS system. For technical details on the architecture and software see the <a href="https://marsaprs.org/readme.html?back=/userguide.html">README</a> file.</p>
+<p>This document is a guide for users of HamTraqr, the tracking and messaging system used by the Marin Amateur Radio Society. For technical details on the architecture and software see the <a href="https://marsaprs.org/readme.html?back=/userguide.html">README</a> file.</p>
 <h2 id="contents">Contents</h2>
 <ul>
 <li><a href="#the-concept-of-events">The Concept of Events</a></li>
@@ -311,11 +311,10 @@ A user with admin privileges can switch to a different default event, which all 
 <h4 id="iphone-ipad">iPhone / iPad</h4>
 <ol>
 <li>Install <strong>TestFlight</strong> from the App Store (free, by Apple).</li>
-<li>Open the invitation email from the event coordinator and tap <strong>View in TestFlight</strong>.</li>
-<li>If you are a new TestFlight user, enter the redeem code from the email when prompted.</li>
-<li>Tap <strong>Install</strong> to install the app.</li>
+<li>Open the HamTraqr link from the event coordinator. It opens in TestFlight.</li>
+<li>Tap <strong>Accept</strong>, then <strong>Install</strong>.</li>
 </ol>
-<p>For future updates, open TestFlight and tap <strong>Update</strong> next to APRS Map.</p>
+<p>For future updates, open TestFlight and tap <strong>Update</strong> next to HamTraqr.</p>
 <h4 id="android">Android</h4>
 <ol>
 <li>On your Android phone or tablet, go to <strong><a href="https://marsaprs.org/android/">marsaprs.org/android</a></strong>
@@ -426,7 +425,7 @@ launches.</p>
 <li><strong>Notifications</strong> — grant this so the foreground service notification can appear. Without it, Android will stop the background location service when the screen locks.</li>
 <li><strong>Battery optimization</strong> — tap <strong>Allow</strong> so Android does not put the app to sleep between GPS updates.</li>
 </ol>
-<p>A persistent notification ("APRS Map — Sharing your location") appears in the notification bar while sharing is active. To confirm it is running: wake the screen and swipe down from the top.</p>
+<p>A persistent notification ("HamTraqr — Sharing your location") appears in the notification bar while sharing is active. To confirm it is running: wake the screen and swipe down from the top.</p>
 <p><strong>First-time setup — iOS:</strong> When you first tap Share Location, iOS may ask to upgrade your location access from "While Using" to "Always". Tap <strong>Change to Always Allow</strong> — this is required for the app to report your position while the screen is off.</p>
 <h3 id="limitations">Limitations</h3>
 <p>The native app does not include every feature available in the browser. The following are only available on the web map:</p>
@@ -457,7 +456,7 @@ launches.</p>
 </tbody>
 </table>
 <h3 id="apple-watch-iphone-only">Apple Watch (iPhone only)</h3>
-<p>The iPhone app includes an <strong>Apple Watch</strong> companion. Install it from the iPhone's <strong>Watch</strong> app if it does not appear by itself: <strong>My Watch → APRS Map → Show App on Apple Watch</strong>.</p>
+<p>The iPhone app includes an <strong>Apple Watch</strong> companion. Install it from the iPhone's <strong>Watch</strong> app if it does not appear by itself: <strong>My Watch → HamTraqr → Show App on Apple Watch</strong>.</p>
 <p>The watch does <strong>messaging only</strong>. It never shares your position and never beacons — that stays with the phone.</p>
 <p><strong>What each device does.</strong> The phone is the loudspeaker and the watch is the microphone. Your phone announces arriving messages aloud even from a pocket, so you hear who is calling without looking at anything; the watch's job is to let you answer. If the watch app is on screen when a message arrives, it reads it out instead — only one of them ever speaks.</p>
 <p><strong>On screen includes a dimmed screen.</strong> With the watch app open you will hear messages from your wrist even with your arm down and the display dimmed, which is the normal way to wear a watch during an event. The phone takes over only when you leave the app.</p>
@@ -685,7 +684,7 @@ in beyond its maximum, the map automatically zooms out to the highest level that
 - If the browser is sent to the background or the screen locks, position updates will stop.</p>
 <p><strong>Native iOS/Android app:</strong>
 - Location sharing continues in the background while the screen is locked. You do not need to keep the app in the foreground.
-- <strong>Android:</strong> When you first tap Share Location, the app may ask for permission to show notifications and to run without battery restrictions. Grant both — they are required for the app to keep running in the background when the screen is off. A notification ("APRS Map — Sharing your location") will appear in the notification bar while sharing is active; this confirms the background service is running. To confirm the notification is visible, wake the screen and swipe down from the top.
+- <strong>Android:</strong> When you first tap Share Location, the app may ask for permission to show notifications and to run without battery restrictions. Grant both — they are required for the app to keep running in the background when the screen is off. A notification ("HamTraqr — Sharing your location") will appear in the notification bar while sharing is active; this confirms the background service is running. To confirm the notification is visible, wake the screen and swipe down from the top.
 - <strong>iOS:</strong> When you first tap Share Location, iOS may ask to upgrade your location permission from "While Using" to "Always". Tap <strong>Change to Always Allow</strong> — this is required for the app to send your location while the screen is locked.</p>
 <p><strong>App updates:</strong> When a newer version of the native app is available, it shows a dismissable <strong>Update available</strong> prompt on launch. Tap <strong>Update</strong> to get it from the App Store (iOS) or download the latest APK (Android), or <strong>Later</strong> to postpone — updates are never forced.</p>
 <hr />
@@ -1755,7 +1754,7 @@ network.</p>
 <p><strong>If the iGate is not appearing on aprs.fi:</strong></p>
 <ol>
 <li>
-<p><strong>Check the NetBird Status page.</strong> On the MARS APRS map <a href="https://marsaprs.org">marsaprs.org</a>
+<p><strong>Check the NetBird Status page.</strong> On the HamTraqr map <a href="https://marsaprs.org">marsaprs.org</a>
    click on Admin→NetBird. If the iGate is listed, you should see <em>Online</em> next to the iGate's ID.
    If the iGate isn't on the list, you can add it via Admin→NetBird→Admin using the iGate's NetBird address.
    If the iGate is listed, but shows as <em>Disabled</em>, go to Admin→NetBird→Admin and turn it on. Nothing will happen until
