@@ -1,0 +1,673 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A QST feature on HamTraqr: a club-built map, messaging and speech-to-text system for Amateur Radio public service events. By Doug Kaye, K6DRK, of the Marin Amateur Radio Society.">
+<meta name="author" content="Doug Kaye, K6DRK">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Net Control on a Map">
+<meta property="og:description" content="Our club spent three seasons building the tool we kept wishing for on race mornings. What it does, what it runs on, and the parts we got wrong first.">
+<meta property="og:site_name" content="Marin Amateur Radio Society">
+<style>
+  html { color-scheme: light dark; }
+  body { margin: 0; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+<title>Net Control on a Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+<style>
+  :root {
+    --paper:      #f6f6f4;
+    --paper-alt:  #eeeeeb;
+    --ink:        #1a1d21;
+    --ink-soft:   #4a5058;
+    --ink-faint:  #7c838b;
+    --rule:       #d8d9d5;
+    --accent:     #a8271f;
+    --accent-dim: #c9564c;
+    --panel:      #232830;
+    --panel-ink:  #e8e9e6;
+    --panel-soft: #a8b0b8;
+    --panel-rule: #3a424c;
+
+    --f-display: 'Archivo', 'Helvetica Neue', Arial, sans-serif;
+    --f-body:    'Source Serif 4', Georgia, 'Times New Roman', serif;
+    --f-mono:    'IBM Plex Mono', 'SF Mono', Menlo, Consolas, monospace;
+
+    --col: 34rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #15181c;
+      --paper-alt:  #1c2026;
+      --ink:        #e6e7e4;
+      --ink-soft:   #a8afb7;
+      --ink-faint:  #7d858e;
+      --rule:       #2e343b;
+      --accent:     #e0645a;
+      --accent-dim: #b84f47;
+      --panel:      #1d2228;
+      --panel-ink:  #e6e7e4;
+      --panel-soft: #98a0a8;
+      --panel-rule: #333b44;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:      #15181c;
+    --paper-alt:  #1c2026;
+    --ink:        #e6e7e4;
+    --ink-soft:   #a8afb7;
+    --ink-faint:  #7d858e;
+    --rule:       #2e343b;
+    --accent:     #e0645a;
+    --accent-dim: #b84f47;
+    --panel:      #1d2228;
+    --panel-ink:  #e6e7e4;
+    --panel-soft: #98a0a8;
+    --panel-rule: #333b44;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-size: 17px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap {
+    max-width: 61rem;
+    margin: 0 auto;
+    padding-inline: 20px;
+    padding-block: 0 4rem;
+  }
+
+  /* ── manuscript slug ───────────────────────────────────────────── */
+  .slug {
+    border-bottom: 2px solid var(--ink);
+    padding-block: 1.6rem 0.9rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem 2.2rem;
+    align-items: baseline;
+    font-family: var(--f-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .slug b { color: var(--accent); font-weight: 600; }
+  .slug .spacer { flex: 1 1 auto; }
+
+  /* ── titles ────────────────────────────────────────────────────── */
+  header.title { padding-block: 3rem 2.4rem; border-bottom: 1px solid var(--rule); }
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: 0.74rem;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 1.1rem;
+  }
+  h1 {
+    font-family: var(--f-display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 7.5vw, 4.1rem);
+    line-height: 1.02;
+    letter-spacing: -0.022em;
+    text-wrap: balance;
+    margin: 0;
+    max-width: 18ch;
+  }
+  .deck {
+    margin: 1.3rem 0 0;
+    max-width: 46ch;
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    text-wrap: balance;
+  }
+  .byline {
+    margin-top: 1.8rem;
+    font-family: var(--f-mono);
+    font-size: 0.82rem;
+    letter-spacing: 0.04em;
+    color: var(--ink);
+  }
+  .byline .call { color: var(--accent); font-weight: 600; }
+
+  /* ── article body with margin rail ─────────────────────────────── */
+  .article { display: grid; grid-template-columns: 1fr; gap: 0; }
+  @media (min-width: 62rem) {
+    .article { grid-template-columns: 9rem minmax(0, var(--col)) 1fr; column-gap: 2.6rem; }
+    .article > * { grid-column: 2; }
+    .article > .rail { grid-column: 1; }
+    .article > .wide { grid-column: 2 / -1; max-width: 46rem; }
+  }
+
+  h2 {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 1.42rem;
+    line-height: 1.2;
+    letter-spacing: -0.012em;
+    text-wrap: balance;
+    margin: 3rem 0 0.2rem;
+  }
+  h2 + p { margin-top: 0.7rem; }
+  p { margin: 0 0 1.15rem; max-width: 65ch; }
+  .lede:first-of-type::first-letter {
+    font-family: var(--f-display);
+    font-weight: 700;
+    float: left;
+    font-size: 3.3rem;
+    line-height: 0.82;
+    padding: 0.11em 0.1em 0 0;
+    color: var(--accent);
+  }
+  em { font-style: italic; }
+  strong { font-weight: 600; }
+  .call, .val {
+    font-family: var(--f-mono);
+    font-size: 0.9em;
+    font-variant-numeric: tabular-nums;
+  }
+  .call { color: var(--accent); font-weight: 500; }
+
+  /* rail markers sit beside the section they name */
+  .rail {
+    font-family: var(--f-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    padding-top: 3.5rem;
+    text-align: right;
+    display: none;
+  }
+  @media (min-width: 62rem) { .rail { display: block; } }
+
+  /* ── pull quote ────────────────────────────────────────────────── */
+  .pull {
+    margin: 2.2rem 0;
+    padding-left: 1.3rem;
+    border-left: 3px solid var(--accent);
+    font-family: var(--f-display);
+    font-weight: 500;
+    font-size: 1.3rem;
+    line-height: 1.32;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    text-wrap: balance;
+  }
+
+  /* ── spec plate sidebars ───────────────────────────────────────── */
+  .plate {
+    background: var(--panel);
+    color: var(--panel-ink);
+    border-radius: 3px;
+    padding: 1.6rem 1.5rem 1.7rem;
+    margin: 2.6rem 0;
+  }
+  .plate h3 {
+    font-family: var(--f-mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent-dim);
+    margin: 0 0 1rem;
+    padding-bottom: 0.7rem;
+    border-bottom: 1px solid var(--panel-rule);
+  }
+  .plate p { color: var(--panel-soft); font-size: 0.95rem; margin-bottom: 0.9rem; }
+  .plate p:last-child { margin-bottom: 0; }
+  .plate .note { font-size: 0.85rem; color: var(--panel-soft); }
+
+  .kit { display: grid; gap: 0; margin: 0; }
+  .kit div {
+    display: flex; flex-wrap: wrap; gap: 0.4rem 1rem;
+    justify-content: space-between; align-items: baseline;
+    padding: 0.55rem 0;
+    border-bottom: 1px dotted var(--panel-rule);
+    font-size: 0.95rem;
+  }
+  .kit div:last-child { border-bottom: none; }
+  .kit dt { color: var(--panel-ink); }
+  .kit dd { margin: 0; font-family: var(--f-mono); font-size: 0.84rem; color: var(--panel-soft); text-align: right; }
+
+  /* ── chart ─────────────────────────────────────────────────────── */
+  .chart { margin: 0.4rem 0 0; }
+  .chart .row { display: grid; grid-template-columns: 4.2rem 1fr; gap: 0.9rem; align-items: center; margin-bottom: 0.7rem; }
+  .chart .who { font-family: var(--f-mono); font-size: 0.82rem; color: var(--panel-ink); }
+  .chart .track { position: relative; height: 1.55rem; background: rgba(255,255,255,0.06); border-radius: 2px; }
+  .chart .bar { position: absolute; inset-block: 0; left: 0; background: var(--accent-dim); border-radius: 2px 0 0 2px; }
+  .chart .bar span {
+    position: absolute; right: 0.5rem; top: 50%; transform: translateY(-50%);
+    font-family: var(--f-mono); font-size: 0.74rem; font-weight: 600;
+    color: #fff; font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  .chart .bar.short span { right: auto; left: calc(100% + 0.5rem); color: var(--panel-ink); }
+  .chart .scale {
+    display: grid; grid-template-columns: 4.2rem 1fr; gap: 0.9rem;
+    margin-top: 0.1rem;
+  }
+  .chart .ticks {
+    display: flex; justify-content: space-between;
+    font-family: var(--f-mono); font-size: 0.68rem; color: var(--panel-soft);
+    font-variant-numeric: tabular-nums;
+    border-top: 1px solid var(--panel-rule); padding-top: 0.3rem;
+  }
+  .chart .caption { font-size: 0.82rem; color: var(--panel-soft); margin: 0.9rem 0 0; line-height: 1.45; }
+
+  /* ── tables ────────────────────────────────────────────────────── */
+  .tablewrap { overflow-x: auto; margin: 1.6rem 0 0.6rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  th, td {
+    text-align: left; padding: 0.5rem 0.9rem 0.5rem 0;
+    border-bottom: 1px solid var(--panel-rule);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  th {
+    font-family: var(--f-mono); font-weight: 500; font-size: 0.72rem;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-dim);
+  }
+  td { font-family: var(--f-mono); font-size: 0.84rem; color: var(--panel-soft); }
+  td:first-child { color: var(--panel-ink); }
+  tr:last-child th, tr:last-child td { border-bottom: none; }
+
+  /* ── lessons list ──────────────────────────────────────────────── */
+  .lessons { margin: 1.6rem 0 0; padding: 0; list-style: none; display: grid; gap: 1.5rem; }
+  .lessons li { max-width: 65ch; }
+  .lessons h4 {
+    font-family: var(--f-display); font-weight: 600; font-size: 1.02rem;
+    margin: 0 0 0.35rem; color: var(--ink);
+  }
+  .lessons p { margin: 0; color: var(--ink-soft); }
+
+  /* ── figure captions (QST convention) ──────────────────────────── */
+  .figs { margin: 2.6rem 0 0; padding: 1.4rem 0 0; border-top: 1px solid var(--rule); }
+  .figs h3 {
+    font-family: var(--f-mono); font-size: 0.72rem; font-weight: 600;
+    letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-faint);
+    margin: 0 0 1rem;
+  }
+  .figs dl { margin: 0; display: grid; gap: 0.9rem; }
+  .figs dt {
+    font-family: var(--f-mono); font-size: 0.76rem; font-weight: 600;
+    color: var(--accent); letter-spacing: 0.04em;
+  }
+  .figs dd { margin: 0.15rem 0 0; color: var(--ink-soft); font-size: 0.95rem; max-width: 65ch; }
+
+  footer.end {
+    margin-top: 3.5rem; padding-top: 1.4rem; border-top: 2px solid var(--ink);
+    font-family: var(--f-mono); font-size: 0.78rem; color: var(--ink-faint);
+    line-height: 1.7;
+  }
+  footer.end a { color: var(--accent); }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <div class="slug">
+    <span>Feature manuscript</span>
+    <span><b>2,480</b> words</span>
+    <span>3 figures &middot; 2 sidebars</span>
+    <span class="spacer"></span>
+    <span>Doug Kaye, K6DRK</span>
+  </div>
+
+  <header class="title">
+    <div class="eyebrow">Public Service</div>
+    <h1>Net&nbsp;Control on a Map</h1>
+    <p class="deck">Our club spent three seasons building the tool we kept wishing for on
+       race mornings. Here is what it does, what it runs on, and the parts we got wrong
+       first.</p>
+    <p class="byline">By <strong>Doug Kaye</strong>, <span class="call">K6DRK</span></p>
+  </header>
+
+  <div class="article">
+
+    <div class="rail">The problem</div>
+
+    <p class="lede">Every public service event I have ever worked began with the same
+      question, asked in the same slightly strained voice about forty minutes in:
+      <em>where is everybody?</em> Net Control has a clipboard with twenty names on it, a
+      repeater, and a course that runs thirteen miles through country where half the
+      volunteers cannot hear each other directly. Somebody at Aid 6 has not checked in for
+      a while. Is that because nothing is happening at Aid 6, or because the operator there
+      drove to the wrong intersection, or because the handheld went flat in the cold?</p>
+
+    <p>The Marin Amateur Radio Society, <span class="call">W6SG</span>, works a fair number
+      of these &mdash; marathons, centuries, a trail ride over Mt. Tamalpais, the odd
+      parade. We are good at the radio part. What we kept being bad at was the part around
+      the radio: knowing where people were, passing a message to a volunteer who was not
+      licensed and had only a phone, and producing any kind of log afterward that told us
+      what had actually happened and when.</p>
+
+    <p>We tried the obvious things. APRS trackers answered the first question for the few
+      people who had them. A group text message answered the second, badly, until the
+      course dropped into a valley. A paper log answered the third for as long as the Net
+      Control operator could write and talk at once, which is not long.</p>
+
+    <p>So in 2023 we started building something, and we have run it at every event since.
+      It is called HamTraqr. This article is what it does, what it costs, and &mdash; the
+      part I would most want to read if somebody else had written it &mdash; the several
+      things we got wrong on the way.</p>
+
+    <div class="rail">What it is</div>
+
+    <h2>Three pieces, one of which is optional</h2>
+
+    <p>The system is a <strong>Map Server</strong>, a <strong>phone app</strong>, and a
+      <strong>Transcriber</strong>. The first two are the system; the third is the one that
+      surprises people.</p>
+
+    <p>The <strong>Map Server</strong> is a Raspberry Pi running a web server. It holds the
+      event &mdash; the course, the aid stations, the roster of trackers &mdash; and it
+      serves a live map to any browser that has the address. It also logs into APRS-IS with
+      the club callsign, so radio trackers on the course appear on the same map as
+      everything else. It is the only piece that needs to be reachable from the internet.</p>
+
+    <p>The <strong>phone app</strong> runs on iOS and Android, including an Apple Watch
+      companion. A volunteer opens it, enters the server address and the event password, and
+      taps <strong>Share Location</strong>. From that moment their position is on the club's
+      map, and they can exchange messages with Net Control. No callsign required, which
+      matters more than it sounds: a great many of the people working an aid station are not
+      hams, and until now they were invisible to us.</p>
+
+    <p>The <strong>Transcriber</strong> is a second job that can run on the same Pi or a
+      different one. It listens to a receiver &mdash; in our case a cheap handheld plugged
+      into a DigiRig Lite &mdash; and turns what it hears into the event log, and into audio
+      that the phones can play. More on that below, because it is the piece I did not expect
+      to become the most used part of the system.</p>
+
+    <div class="rail">On the map</div>
+
+    <h2>What Net Control sees</h2>
+
+    <p>The map shows every tracker as a marker, and the sidebar lists them with a colored dot
+      and the time since the last beacon: green inside two minutes, blue inside five, red
+      past that, at which point the entry reads <strong>stale</strong> instead of a number.
+      That one detail has probably paid for the whole project. "Aid 6 last heard 14 minutes
+      ago" is a fact you can act on; "Aid 6 has not answered twice" is a worry you cannot.</p>
+
+    <p>Marker shape says what kind of station it is: a circle for a radio tracker, a square
+      for a phone, and a triangle for a station that is both. That last case is the common
+      one for us. An operator with an APRS-capable radio <em>and</em> the app on their phone
+      appears once, not twice, with the radio's beacon and the phone's GPS feeding the same
+      marker. Working that out took us longer than it should have.</p>
+
+    <p>Phones beacon on an adaptive schedule rather than a fixed one, which we call Smart
+      Track. The app works out from the GPS whether you are stationary, walking, cycling or
+      driving, and beacons every 120, 60, 30 or 15 seconds accordingly. An aid station that
+      has not moved since six in the morning does not need to report every fifteen seconds,
+      and the battery it saves by not doing so is the battery that is still there at noon.
+      A small icon beside each name shows which mode the phone has chosen, so Net Control can
+      see at a glance that a marker is stale because the operator is parked, not because the
+      phone has died.</p>
+
+    <p class="pull">"Aid 6 last heard 14 minutes ago" is a fact you can act on. "Aid 6 has
+      not answered twice" is a worry you cannot.</p>
+
+    <div class="rail">Messaging</div>
+
+    <h2>Talking to the people who are not on the radio</h2>
+
+    <p>Messaging works the way every volunteer already expects messaging to work, which was
+      a deliberate decision and not a lazy one. Persistent conversations, one-to-one or to a
+      named group or to everyone, delivery and read receipts, dictation, and photo
+      attachments. A medical situation at a turnaround is enormously easier to describe with
+      a picture than with voice over a marginal repeater path.</p>
+
+    <p>Becoming Net Control is not an account. You click <strong>Messaging</strong>, type
+      <span class="val">Net Control</span> as your name, and enter the event's messaging
+      password. That name is what every phone sees, and two consoles cannot hold it at once
+      &mdash; the second is refused. That is the whole of the mechanism that stops two people
+      answering as the same station, and in three seasons it has been enough.</p>
+
+    <p>The messages a phone receives can be <em>spoken aloud</em>, and this is the feature
+      that changed how the system gets used. A volunteer driving a sweep vehicle, or riding,
+      or standing in a road intersection in the rain with gloves on, is not going to look at
+      a screen. With speech switched on, the phone reads incoming traffic out loud from a
+      pocket, with the screen locked, and follows with a notification they can look at later.
+      Three switches in the message bar control it: speak text messages, hear radio traffic,
+      and receive everything rather than only what is addressed to you.</p>
+
+    <div class="rail">The Transcriber</div>
+
+    <h2>Letting the phones hear the net</h2>
+
+    <p>This is the part I would not have predicted. The Transcriber takes receiver audio,
+      splits it into transmissions, and does two things with each one: sends the recording to
+      the Map Server, and runs it through <span class="val">whisper.cpp</span> &mdash; an
+      open-source speech-to-text engine &mdash; to produce a line of text in the event log.</p>
+
+    <p>The text half gives you a searchable, timestamped log of the net that nobody had to
+      type. The audio half gives an unlicensed volunteer, or a licensed one whose handheld
+      cannot hit the repeater from where they are standing, the ability to <em>hear the net</em>
+      through the phone app a second or two after each transmission ends. During our last
+      half marathon the sweep driver was following the entire net from a phone in a cup
+      holder, on a stretch of road where no handheld we own can hear the repeater at all.</p>
+
+    <p>We have recently split those two halves into separate switches, and the reason is
+      worth passing on. A machine's guess at a callsign, read back in a log weeks later by
+      somebody reconstructing an incident, is in some ways worse than no guess at all: it
+      looks authoritative and it may be wrong. One of our operators made exactly that
+      argument, and he was right. So a club can now ask for the recordings and not the
+      transcript. Turning the transcript off is also a real saving rather than text thrown
+      away &mdash; the speech model never runs, and it is the only slow thing in the
+      pipeline.</p>
+
+    <p>Two things temper my enthusiasm here, and I would rather say them than have you
+      discover them. Speech-to-text on amateur radio audio is good, not perfect; it is at its
+      worst on exactly the words a net log most needs right, which are callsigns and
+      place names. We feed it the event's roster in advance, which helps a great deal, and it
+      still gets some wrong. And the courtesy tone on a repeater will happily be transcribed
+      as speech unless something stops it, which took a surprising amount of work to get
+      right.</p>
+
+    <div class="plate wide">
+      <h3>Sidebar 1 &middot; What a station costs</h3>
+      <dl class="kit">
+        <div><dt>Raspberry Pi 5, 8&nbsp;GB &mdash; Transcriber or combined</dt><dd>~$80</dd></div>
+        <div><dt>Raspberry Pi 4, 4&nbsp;GB &mdash; Map Server alone</dt><dd>~$55</dd></div>
+        <div><dt>Power supply, 5&nbsp;V 5&nbsp;A (Pi&nbsp;5) or 3&nbsp;A (Pi&nbsp;4)</dt><dd>~$12</dd></div>
+        <div><dt>SSD, optional but recommended</dt><dd>~$25</dd></div>
+        <div><dt>DigiRig Lite plus the cable for your radio</dt><dd>~$40</dd></div>
+        <div><dt>A handheld you already own, as the receiver</dt><dd>&mdash;</dd></div>
+        <div><dt>Domain and dynamic DNS &mdash; we use Cloudflare</dt><dd>~$10/yr</dd></div>
+      </dl>
+      <p class="note" style="margin-top:1.1rem">Be fussy about the power supply. Pis are
+        notoriously particular about 5&nbsp;V, and an underfed one fails in ways that look
+        like software faults. There is a <span class="val">power-check.sh</span> script in
+        the repository that will tell you whether yours is adequate.</p>
+    </div>
+
+    <div class="rail">Hardware</div>
+
+    <h2>What it runs on, and how hard you can push it</h2>
+
+    <p>One Pi or two is usually settled by geography rather than by load. The Transcriber has
+      to be somewhere a radio can hear the net, which is often Net Control itself. The Map
+      Server only has to be reachable from the internet. If those are the same place, one Pi
+      does both.</p>
+
+    <p>We were sufficiently unsure about capacity that we measured it rather than guessed,
+      and the numbers are in the sidebar below. The short version: a Pi 4 running the Map
+      Server alone did not break a sweat at 300 simulated phones and 100 browsers watching,
+      which is many times larger than any event this is built for. Size the Map Server for
+      the storage you want, not for the crowd.</p>
+
+    <p>Transcription is the job that actually wants a faster machine, and the gap between the
+      two Pis is not marginal.</p>
+
+    <div class="plate wide">
+      <h3>Sidebar 2 &middot; Measured, not estimated</h3>
+
+      <p>Transcription speed, using 53.6 seconds of real net audio &mdash; six clips off an
+        actual event &mdash; best of three runs, variance under 2%. Read the bars as
+        <em>seconds of computing per second of speech</em>. Anything under 1.0 keeps up; the
+        margin is your headroom when overs arrive back to back.</p>
+
+      <div class="chart">
+        <div class="row">
+          <span class="who">Pi 4</span>
+          <span class="track"><span class="bar" style="width:60%"><span>0.60&times;</span></span></span>
+        </div>
+        <div class="row">
+          <span class="who">Pi 5</span>
+          <span class="track"><span class="bar short" style="width:11%"><span>0.11&times;</span></span></span>
+        </div>
+        <div class="scale">
+          <span></span>
+          <span class="ticks"><span>0</span><span>0.25</span><span>0.50</span><span>0.75</span><span>1.00 &mdash; real time</span></span>
+        </div>
+        <p class="caption">A Pi 5 is roughly five times faster at this specific job. A Pi 4
+          works, with 40% headroom, and is fine for a normal net where the radio is quiet most
+          of the time. On a net that is <em>continuously</em> busy a Pi 4 falls behind &mdash;
+          it never loses anything, the log just arrives late.</p>
+      </div>
+
+      <div class="tablewrap">
+        <table>
+          <caption class="note" style="text-align:left;padding-bottom:0.7rem">Map Server load, Pi 4 (4&nbsp;GB): phones beaconing every 15&nbsp;s, browsers polling every 5&nbsp;s.</caption>
+          <tr><th>Simulated load</th><th>Beacon p50</th><th>Beacon p99</th><th>Errors</th><th>Load avg</th></tr>
+          <tr><td>25 phones + 10 watchers</td><td>75 ms</td><td>101 ms</td><td>0</td><td>0.37</td></tr>
+          <tr><td>100 phones + 40 watchers</td><td>74 ms</td><td>100 ms</td><td>0</td><td>0.27</td></tr>
+          <tr><td>300 phones + 100 watchers</td><td>83 ms</td><td>123 ms</td><td>0</td><td>0.44</td></tr>
+        </table>
+      </div>
+      <p class="note">We did not find the limit. At 300 phones a Pi 4 was using well under
+        half of one of its four cores.</p>
+
+      <div class="tablewrap">
+        <table>
+          <caption class="note" style="text-align:left;padding-bottom:0.7rem">The cost of running both jobs on one Pi 4 &mdash; 100 phones against a machine transcribing continuously.</caption>
+          <tr><th></th><th>Map Server alone</th><th>While transcribing</th></tr>
+          <tr><td>Beacon response, p50</td><td>74 ms</td><td>83 ms</td></tr>
+          <tr><td>Beacon response, p99</td><td>100 ms</td><td>308 ms</td></tr>
+          <tr><td>Transcribing 53.6 s</td><td>32.0 s</td><td>31.0&ndash;32.9 s</td></tr>
+          <tr><td>Load average (4 cores)</td><td>0.27</td><td>2.21</td></tr>
+        </table>
+      </div>
+      <p class="note">Both fit on one Pi 4. Transcription was not slowed at all; the phones
+        saw a typical response 9&nbsp;ms worse. The only real cost is the tail, and nobody
+        watching a map notices 300&nbsp;ms.</p>
+    </div>
+
+    <div class="rail">Lessons</div>
+
+    <h2>Five things we got wrong</h2>
+
+    <ul class="lessons">
+      <li>
+        <h4>We built for hams first, and most users are not hams</h4>
+        <p>The early versions assumed a callsign. Then we watched an event where the people
+          who most needed to be on the map &mdash; aid station captains, medical staff, the
+          sweep driver &mdash; did not have one. Removing that assumption did more for the
+          system's usefulness than any feature we added deliberately.</p>
+      </li>
+      <li>
+        <h4>Audio that stops when the screen locks is audio nobody hears</h4>
+        <p>Reading messages aloud is useless if it only happens while the app is in front of
+          you, because the entire point is the volunteer who cannot look. Getting speech to
+          continue reliably from a pocket, on both platforms, took several attempts. There is
+          now a <strong>Test audio</strong> button in the app's help panel, and the advice we
+          give every volunteer is to press it in the car park rather than mid-net. It catches
+          a phone on silent, a volume turned down, and a Bluetooth earpiece that has quietly
+          claimed the audio.</p>
+      </li>
+      <li>
+        <h4>SD cards wear out, and they wear out during the event</h4>
+        <p>Map tiles, recorded audio, message history and logs are all continuous writes. We
+          lost a card mid-season before moving that data onto an SSD and leaving the card
+          holding little but the operating system. Do this at the start, not after.</p>
+      </li>
+      <li>
+        <h4>The real constraint is a person, not a Pi</h4>
+        <p>Every club that could use this needs one member who will own the box: flash the
+          card, run the installer, and be reachable at 6 a.m. on event morning when something
+          is not right. That person is not correlated with club size. If your club does not
+          have one, the software will not fix it, and I would rather say so plainly here than
+          have you find out on a start line.</p>
+      </li>
+      <li>
+        <h4>A silent transcriber usually means a loose plug</h4>
+        <p>Twice now, a Transcriber that appeared to have a software fault turned out to be a
+          USB audio adapter that was not plugged in. The system now says so explicitly rather
+          than reporting a generic error, which is the fix we should have written the first
+          time.</p>
+      </li>
+    </ul>
+
+    <div class="rail">Limits</div>
+
+    <h2>What it is not</h2>
+
+    <p>It is not a replacement for the radio, and we would not run an event that depended on
+      it being up. The phones need cellular coverage; on the parts of our courses that have
+      none, the app is a paperweight and the repeater is what works. That is the correct
+      division of labor, and it is worth saying out loud to a club that might otherwise
+      quietly let the radio discipline slip because the map is usually right.</p>
+
+    <p>There is no hosted service and there will not be one. Each club runs its own server on
+      hardware it owns, which means your event data belongs to you and also means nobody is
+      standing by to fix it for you. It logs into APRS-IS with your club's callsign, so you
+      need one that is not in use elsewhere.</p>
+
+    <div class="rail">Getting it</div>
+
+    <h2>If you want to try it</h2>
+
+    <p>HamTraqr is free and the source is public. The server and Transcriber install from a
+      repository on GitHub with one command each, and it is safe to re-run the installer to
+      upgrade &mdash; configuration, courses and recordings are preserved. The iOS app is on
+      the App Store; the Android build is a download from the project's site rather than the
+      Play Store.</p>
+
+    <p>I am glad to answer questions from any club considering it, and I am especially glad
+      to hear from clubs who try it and find the parts that do not work. Three seasons of our
+      own events have found most of what our own events are capable of finding. Yours will be
+      different.</p>
+
+    <div class="figs wide">
+      <h3>Figure captions</h3>
+      <dl>
+        <dt>Figure 1</dt>
+        <dd>The map during a half marathon, seen from Net Control. Circles are radio
+          trackers, squares are phones, and triangles are stations running both. The sidebar
+          lists every station with the time since its last beacon.</dd>
+        <dt>Figure 2</dt>
+        <dd>A complete Transcriber: a handheld receiver, a DigiRig Lite interface, and a
+          Raspberry Pi 5. This one also runs the Map Server.</dd>
+        <dt>Figure 3</dt>
+        <dd>The event log, assembled without anybody typing it. Each entry carries a
+          timestamp, the transcribed text, and a play button for the original audio.</dd>
+      </dl>
+    </div>
+
+    <footer class="end wide">
+      Doug Kaye, <span class="call">K6DRK</span>, has been licensed since 2021 and is a member
+      of the Marin Amateur Radio Society, <span class="call">W6SG</span>. He spent thirty
+      years building internet software before discovering that the interesting problems had
+      been on 2 meters the whole time. He can be reached at
+      <a href="mailto:doug@rds.com">doug@rds.com</a>.<br><br>
+      Project page and source: <a href="https://hamtraqr.com">hamtraqr.com</a>
+    </footer>
+
+  </div>
+</div>
+</body>
+</html>
